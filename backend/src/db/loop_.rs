@@ -2218,11 +2218,11 @@ mod loop_step_count_tests {
     /// 插一条工艺模板，返回 id。
     ///
     /// loops.process_template_id 有外键约束（SQLite 外键开启时），
-    /// 测试关联工艺前必须先有真实模板行；必填列仅 name/display_name。
+    /// 测试关联工艺前必须先有真实模板行；必填列为 guid/name/display_name。
     /// 工艺正文存在磁盘，DB 只存 source_path 引用，因此此处不插入 definition 列。
     async fn seed_process_template(db: &Database, name: &str) -> i64 {
         db.exec(&format!(
-            "INSERT INTO process_templates (name, display_name) VALUES ('{name}', '{name}')"
+            "INSERT INTO process_templates (guid, name, display_name) VALUES ('guid-{name}', '{name}', '{name}')"
         ))
         .await
         .expect("insert process_template");

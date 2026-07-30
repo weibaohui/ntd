@@ -16,6 +16,8 @@ use crate::services::process::source::read_definition;
 #[derive(Debug, Serialize)]
 pub struct ProcessTemplateListItem {
     pub id: i64,
+    /// 040：全局唯一身份，前端寻址（详情/编辑/安装/复制）一律用它；name 只做展示。
+    pub guid: String,
     pub name: String,
     pub display_name: String,
     pub description: String,
@@ -88,14 +90,14 @@ fn build_process_loop_items(
         .collect()
 }
 
-/// GET /api/v1/processes/{name}/loops — 列出该工艺模板实例化的环路（按创建时间倒序）。
+/// GET /api/v1/processes/{guid}/loops — 列出该工艺模板实例化的环路（按创建时间倒序）。
 pub async fn list_process_loops(
     State(state): State<AppState>,
-    Path(name): Path<String>,
+    Path(guid): Path<String>,
 ) -> Result<impl axum::response::IntoResponse, AppError> {
     let template = state
         .db
-        .get_process_template_by_name(&name)
+        .get_process_template_by_guid(&guid)
         .await?
         .ok_or(AppError::NotFound)?;
     let loops = state.db.list_loops_by_process_template(template.id).await?;
@@ -124,6 +126,7 @@ pub async fn list_process_templates(
         .into_iter()
         .map(|t| ProcessTemplateListItem {
             id: t.id,
+            guid: t.guid,
             name: t.name,
             display_name: t.display_name,
             description: t.description,
@@ -139,14 +142,14 @@ pub async fn list_process_templates(
     Ok(ApiResponse::ok(items))
 }
 
-/// GET /api/bundled/processes/{name} — 查看单个工艺模板详情。
+/// GET /api/bundled/processes/{guid} — 查看单个工艺模板详情（040：按 guid 寻址，同名不歧义）。
 pub async fn get_process_template(
     State(state): State<AppState>,
-    Path(name): Path<String>,
+    Path(guid): Path<String>,
 ) -> Result<impl axum::response::IntoResponse, AppError> {
     let template = state
         .db
-        .get_process_template_by_name(&name)
+        .get_process_template_by_guid(&guid)
         .await?
         .ok_or(AppError::NotFound)?;
     // 工艺正文不在 DB，按 source_path 从磁盘文件实时读取，保证磁盘是唯一真源。
@@ -158,6 +161,7 @@ pub async fn get_process_template(
     Ok(ApiResponse::ok(ProcessTemplateDetail {
         item: ProcessTemplateListItem {
             id: template.id,
+            guid: template.guid.clone(),
             name: template.name.clone(),
             display_name: template.display_name,
             description: template.description,
@@ -173,15 +177,15 @@ pub async fn get_process_template(
     }))
 }
 
-/// POST /api/bundled/processes/{name}/install — 安装工艺模板为 Loop。
+/// POST /api/bundled/processes/{guid}/install — 安装工艺模板为 Loop（040：按 guid 寻址）。
 pub async fn install_process(
     State(state): State<AppState>,
-    Path(name): Path<String>,
+    Path(guid): Path<String>,
     Json(req): Json<InstallProcessRequest>,
 ) -> Result<impl axum::response::IntoResponse, AppError> {
     let template = state
         .db
-        .get_process_template_by_name(&name)
+        .get_process_template_by_guid(&guid)
         .await?
         .ok_or(AppError::NotFound)?;
 
@@ -209,7 +213,7 @@ pub async fn install_process(
     )
     .await
     .map_err(|e| {
-        tracing::error!("安装工艺模板 {} 失败: {}", name, e);
+        tracing::error!("安装工艺模板 {} 失败: {}", guid, e);
         AppError::Internal(e.to_string())
     })?;
 
@@ -226,7 +230,7 @@ pub async fn install_process(
 
 /// 升级工艺实例环路到模板最新版本。
 ///
-/// POST /api/v1/processes/{name}/loops/{loop_id}/upgrade
+/// POST /api/v1/processes/{guid}/loops/{loop_id}/upgrade（040：按 guid 寻址）
 ///
 /// 将指定 Loop 的步骤/阶段升级到工艺模板的最新定义：
 /// 1. 清理旧步骤和阶段及其关联数据
@@ -234,11 +238,11 @@ pub async fn install_process(
 /// 3. 更新 process_template_version
 pub async fn upgrade_process_loop(
     State(state): State<AppState>,
-    Path((name, loop_id)): Path<(String, i64)>,
+    Path((guid, loop_id)): Path<(String, i64)>,
 ) -> Result<impl axum::response::IntoResponse, AppError> {
     let template = state
         .db
-        .get_process_template_by_name(&name)
+        .get_process_template_by_guid(&guid)
         .await?
         .ok_or(AppError::NotFound)?;
 
@@ -257,7 +261,7 @@ pub async fn upgrade_process_loop(
     if loop_model.process_template_id != Some(template.id) {
         return Err(AppError::BadRequest(format!(
             "环路 {} 不属于工艺模板「{}」",
-            loop_id, name
+            loop_id, template.name
         )));
     }
 
@@ -322,7 +326,7 @@ pub struct CreateProcessRequest {
     pub definition: String,
 }
 
-/// PUT /api/v1/processes/{name} — 保存编辑后的用户工艺 YAML。
+/// PUT /api/v1/processes/{guid} — 保存编辑后的用户工艺 YAML（040：按 guid 寻址）。
 ///
 /// 处理流程（3 步，每步职责单一）：
 /// 1. 加载现有工艺，校验 `is_system=false`（系统工艺拒绝直接编辑，返回 409）
@@ -332,15 +336,13 @@ pub struct CreateProcessRequest {
 /// 系统工艺（`is_system=true`）返回 409，提示用户先"复制到用户层"。
 pub async fn update_process(
     State(state): State<AppState>,
-    Path(name): Path<String>,
+    Path(guid): Path<String>,
     Json(req): Json<UpdateProcessRequest>,
 ) -> Result<impl axum::response::IntoResponse, AppError> {
-    // 安全校验：name 不得包含路径分隔符或 ..，防止路径逃逸。
-    validate_process_name(&name)?;
-
+    // guid 仅用于 DB 查询不参与路径拼接（目标路径来自 source_path），无需路径逃逸校验。
     let template = state
         .db
-        .get_process_template_by_name(&name)
+        .get_process_template_by_guid(&guid)
         .await?
         .ok_or(AppError::NotFound)?;
 
@@ -365,7 +367,7 @@ pub async fn update_process(
         definition.process.version = bumped.clone();
         tracing::info!(
             "process {}: version auto-bumped from {} to {}",
-            name, yaml_version, bumped
+            guid, yaml_version, bumped
         );
     }
     let new_yaml = serde_yaml::to_string(&definition)
@@ -461,7 +463,7 @@ pub async fn create_process(
     ))
 }
 
-/// DELETE /api/v1/processes/{name} — 删除用户工艺。
+/// DELETE /api/v1/processes/{guid} — 删除用户工艺（040：按 guid 寻址）。
 ///
 /// 处理流程：
 /// 1. 加载现有工艺，不存在返回 404
@@ -470,14 +472,11 @@ pub async fn create_process(
 /// 4. 删文件 `~/.ntd/processes/<rel_path>` + 删 DB 行
 pub async fn delete_process(
     State(state): State<AppState>,
-    Path(name): Path<String>,
+    Path(guid): Path<String>,
 ) -> Result<impl axum::response::IntoResponse, AppError> {
-    // 安全校验：name 不得包含路径分隔符或 ..
-    validate_process_name(&name)?;
-
     let template = state
         .db
-        .get_process_template_by_name(&name)
+        .get_process_template_by_guid(&guid)
         .await?
         .ok_or(AppError::NotFound)?;
 
@@ -509,11 +508,11 @@ pub async fn delete_process(
             .map_err(|e| AppError::Internal(format!("删除用户工艺文件失败: {}", e)))?;
     }
 
-    // 删 DB 行：按 name 精准删除单条。
-    let affected = state.db.delete_process_template(&name).await?;
+    // 删 DB 行：按 guid 精准删除单条（040 起 name 可重复，不能按 name 删）。
+    let affected = state.db.delete_process_template(&guid).await?;
     if affected == 0 {
         // 文件已删但 DB 行不存在：可能是 DB 与文件不一致，记录 warning 但不阻断。
-        tracing::warn!("删除工艺 {} 时 DB 行不存在（文件已删）", name);
+        tracing::warn!("删除工艺 {} 时 DB 行不存在（文件已删）", guid);
     }
 
     Ok(ApiResponse::ok(serde_json::json!({
@@ -583,73 +582,102 @@ fn validate_name_regex(name: &str) -> Result<(), AppError> {
     Ok(())
 }
 
-/// POST /api/v1/processes/{name}/copy-to-user — 把系统工艺复制到用户层 `~/.ntd/processes/`。
+/// POST /api/v1/processes/{guid}/copy-to-user — 把工艺复制到用户层 `~/.ntd/processes/`（040）。
 ///
-/// 用户层 YAML 文件路径与系统层相对路径一致。
-/// 复制完成后触发用户层 upsert，把工艺标记为 `is_system=false`。
-/// 若用户层已存在同名工艺则返回 409，避免静默覆盖用户自定义。
+/// 040 重写为"纯文件复制 + 副本换新 guid"：
+/// - 副本 guid 与源不同 → DB 里与源模板**同名共存**，原模板不消失（旧版同名覆盖语义废弃）。
+/// - 系统/用户工艺都可复制（用户工艺也能再复制一份变体）。
+/// - 目标相对路径与源一致；文件名冲突时自动加 `-1`/`-2` 后缀，不再 409。
+///
+/// 复制完成后触发用户层重扫入库（`is_system=false`）。
 pub async fn copy_process_to_user(
     State(state): State<AppState>,
-    Path(name): Path<String>,
+    Path(guid): Path<String>,
 ) -> Result<impl axum::response::IntoResponse, AppError> {
-    // 安全校验：name 不得包含路径分隔符或 ..，防止写入目标逃逸出 ~/.ntd/processes/。
-    validate_process_name(&name)?;
-
     let template = state
         .db
-        .get_process_template_by_name(&name)
+        .get_process_template_by_guid(&guid)
         .await?
         .ok_or(AppError::NotFound)?;
 
-    if !template.is_system {
-        return Err(AppError::BadRequest(format!("工艺 {} 已是用户工艺", name)));
-    }
-
-    // 计算用户层目标路径：~/.ntd/processes/<bundled 中相对路径>
-    let user_dir = crate::services::process::user_dir::user_processes_dir()
-        .ok_or_else(|| AppError::Internal("无法获取 home 目录".to_string()))?;
-
-    let rel_path = template
-        .source_path
-        .as_ref()
-        .and_then(|s| s.strip_prefix("bundled://processes/"))
-        .unwrap_or(&name);
-
-    let target_path = user_dir.join(rel_path);
-
-    // 防御性校验：canonicalize 后必须在 user_dir 内。
-    if let Some(parent) = target_path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| AppError::Internal(format!("创建用户工艺目录失败: {}", e)))?;
-    }
-
-    if target_path.exists() {
-        return Err(AppError::BadRequest(format!(
-            "用户层已存在同名工艺 {}，请先手动删除 ~/.ntd/processes/{}",
-            name, rel_path
-        )));
-    }
-
-    // 系统工艺正文按 source_path 从磁盘文件读取，再写入用户层；DB 不存正文，避免二次冗余。
+    // 源工艺正文按 source_path 从磁盘读取；DB 不存正文，避免二次冗余。
     let local_path = state.config_snapshot(|c| c.bundled_source.local_path.clone());
     let definition = read_definition(
         template.source_path.as_deref().unwrap_or_default(),
         &local_path,
     )?;
 
-    std::fs::write(&target_path, &definition)
-        .map_err(|e| AppError::Internal(format!("写入用户工艺文件失败: {}", e)))?;
+    // 副本身份：新 guid 单行替换（行级操作，保住注释与块标量格式）。
+    let new_guid = crate::services::process::guid::new_guid();
+    let copied = crate::services::process::guid::replace_or_insert_guid(&definition, &new_guid)
+        .ok_or_else(|| AppError::Internal("副本 guid 写入失败：源 YAML 缺少 process 块".to_string()))?;
 
-    // 触发用户层 upsert，把刚复制的文件入库为 is_system=false。
+    let target_path = compute_copy_target_path(&template)?;
+
+    atomic_write(&target_path, &copied)?;
+
+    // 触发用户层重扫，把副本入库为 is_system=false。
     if let Err(e) =
         crate::services::process::user_dir::import_user_process_templates(&state).await
     {
         tracing::warn!("复制后导入用户层失败: {}", e);
     }
 
+    let user_dir = crate::services::process::user_dir::user_processes_dir()
+        .ok_or_else(|| AppError::Internal("无法获取 home 目录".to_string()))?;
+    let rel_path = target_path
+        .strip_prefix(&user_dir)
+        .unwrap_or(&target_path)
+        .to_string_lossy()
+        .replace('\\', "/");
     Ok(ApiResponse::ok(serde_json::json!({
         "user_source_path": format!("{}{}", crate::services::process::user_dir::USER_SOURCE_PREFIX, rel_path),
+        "guid": new_guid,
+        "name": template.name,
     })))
+}
+
+/// 计算副本在用户层的目标路径：与源相同的相对路径，文件名冲突时加 `-1`/`-2` 后缀。
+///
+/// 源的 `source_path` 可能是 `bundled://processes/<rel>`（系统）或 `user://<rel>`（用户），
+/// 剥前缀后落到用户层同一相对位置；自动后缀保证反复复制不冲突、不覆盖已有文件。
+fn compute_copy_target_path(
+    template: &crate::db::entity::process_templates::Model,
+) -> Result<std::path::PathBuf, AppError> {
+    let user_dir = crate::services::process::user_dir::user_processes_dir()
+        .ok_or_else(|| AppError::Internal("无法获取 home 目录".to_string()))?;
+
+    let fallback = format!("{}.yaml", template.name);
+    let rel_path = template
+        .source_path
+        .as_ref()
+        .and_then(|s| {
+            s.strip_prefix("bundled://processes/")
+                .or_else(|| s.strip_prefix("user://"))
+        })
+        .unwrap_or(&fallback);
+
+    let candidate = user_dir.join(rel_path);
+    if !candidate.exists() {
+        return Ok(candidate);
+    }
+
+    // 文件名冲突：在主干名后追加 -1/-2/…（如 4p12s-delivery-1.yaml），上限防御死循环。
+    let stem = candidate
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| template.name.clone());
+    let parent = candidate.parent().map(std::path::Path::to_path_buf).unwrap_or(user_dir);
+    for i in 1..100 {
+        let c = parent.join(format!("{stem}-{i}.yaml"));
+        if !c.exists() {
+            return Ok(c);
+        }
+    }
+    Err(AppError::Conflict(format!(
+        "用户层已存在过多 {} 的副本，请手动清理",
+        template.name
+    )))
 }
 
 /// 递增语义化版本号的次版本号（X.Y.Z → X.Y+1.0）。
@@ -707,15 +735,16 @@ pub async fn get_process_stats(
     })))
 }
 
-/// GET /api/v1/processes/{name}/versions — 版本历史。
+/// GET /api/v1/processes/{guid}/versions — 版本历史。
 pub async fn get_process_versions(
     State(state): State<AppState>,
-    Path(name): Path<String>,
+    Path(guid): Path<String>,
 ) -> Result<impl axum::response::IntoResponse, AppError> {
     let templates = state.db.list_process_templates(None).await?;
+    // 040：按 guid 过滤（name 可重复，不能按 name 聚合版本）。
     let versions: Vec<_> = templates
         .iter()
-        .filter(|t| t.name == name)
+        .filter(|t| t.guid == guid)
         .map(|t| serde_json::json!({
             "id": t.id,
             "version": t.version,
@@ -723,19 +752,19 @@ pub async fn get_process_versions(
             "source_path": t.source_path,
         }))
         .collect();
-    Ok(ApiResponse::ok(serde_json::json!({ "name": name, "versions": versions })))
+    Ok(ApiResponse::ok(serde_json::json!({ "guid": guid, "versions": versions })))
 }
 
-/// GET /api/v1/processes/{name}/versions/{v}/diff?base={base_v} — 版本 diff。
+/// GET /api/v1/processes/{guid}/versions/{v}/diff?base={base_v} — 版本 diff。
 pub async fn diff_process_versions(
     State(state): State<AppState>,
-    Path((name, _version)): Path<(String, String)>,
+    Path((guid, _version)): Path<(String, String)>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<impl axum::response::IntoResponse, AppError> {
     let base_version = params.get("base").cloned().unwrap_or_default();
     let templates = state.db.list_process_templates(None).await?;
-    let base = templates.iter().find(|t| t.name == name && t.version == base_version);
-    let target = templates.iter().find(|t| t.name == name && t.version == _version);
+    let base = templates.iter().find(|t| t.guid == guid && t.version == base_version);
+    let target = templates.iter().find(|t| t.guid == guid && t.version == _version);
 
     match (base, target) {
         (Some(b), Some(t)) => {
@@ -745,7 +774,7 @@ pub async fn diff_process_versions(
             let target_def = read_definition(t.source_path.as_deref().unwrap_or_default(), &local_path)?;
             let diff_lines = simple_diff(&base_def, &target_def);
             Ok(ApiResponse::ok(serde_json::json!({
-                "name": name,
+                "guid": guid,
                 "base_version": base_version,
                 "target_version": _version,
                 "diff": diff_lines,
@@ -1010,9 +1039,9 @@ pub async fn add_step_artifact(
 pub fn process_routes() -> Router<AppState> {
     Router::new()
         .route("/api/bundled/processes", axum::routing::get(list_process_templates))
-        .route("/api/bundled/processes/{name}", axum::routing::get(get_process_template))
+        .route("/api/bundled/processes/{guid}", axum::routing::get(get_process_template))
         .route(
-            "/api/bundled/processes/{name}/install",
+            "/api/bundled/processes/{guid}/install",
             axum::routing::post(install_process),
         )
 }
@@ -1021,9 +1050,9 @@ pub fn process_routes() -> Router<AppState> {
 pub fn v1_process_routes() -> Router<AppState> {
     Router::new()
         .route("/api/v1/bundled/processes", axum::routing::get(list_process_templates))
-        .route("/api/v1/bundled/processes/{name}", axum::routing::get(get_process_template))
+        .route("/api/v1/bundled/processes/{guid}", axum::routing::get(get_process_template))
         .route(
-            "/api/v1/bundled/processes/{name}/install",
+            "/api/v1/bundled/processes/{guid}/install",
             axum::routing::post(install_process),
         )
         .route(
@@ -1051,23 +1080,23 @@ pub fn v1_process_routes() -> Router<AppState> {
             axum::routing::post(validate_process),
         )
         .route(
-            "/api/v1/processes/{name}/versions",
+            "/api/v1/processes/{guid}/versions",
             axum::routing::get(get_process_versions),
         )
         .route(
-            "/api/v1/processes/{name}/versions/{version}/diff",
+            "/api/v1/processes/{guid}/versions/{version}/diff",
             axum::routing::get(diff_process_versions),
         )
         .route(
-            "/api/v1/processes/{name}/copy-to-user",
+            "/api/v1/processes/{guid}/copy-to-user",
             axum::routing::post(copy_process_to_user),
         )
         .route(
-            "/api/v1/processes/{name}/loops",
+            "/api/v1/processes/{guid}/loops",
             axum::routing::get(list_process_loops),
         )
         .route(
-            "/api/v1/processes/{name}/loops/{loop_id}/upgrade",
+            "/api/v1/processes/{guid}/loops/{loop_id}/upgrade",
             axum::routing::post(upgrade_process_loop),
         )
         // 029-工艺模板编辑与可视化创建：新增 3 个 CRUD 接口
@@ -1076,7 +1105,7 @@ pub fn v1_process_routes() -> Router<AppState> {
             axum::routing::post(create_process),
         )
         .route(
-            "/api/v1/processes/{name}",
+            "/api/v1/processes/{guid}",
             axum::routing::put(update_process).delete(delete_process),
         )
 }
@@ -1172,6 +1201,7 @@ mod tests {
         // source_path 以 "user://" 开头：应剥前缀，拼接到 user_dir 下。
         let template = process_templates::Model {
             id: 1,
+            guid: "guid-test-process".to_string(),
             name: "test-process".to_string(),
             display_name: "Test".to_string(),
             description: String::new(),
@@ -1201,6 +1231,7 @@ mod tests {
         // source_path 无 "user://" 前缀（或为 None）：应 fallback 到 <name>.yaml。
         let template = process_templates::Model {
             id: 2,
+            guid: "guid-fallback-test".to_string(),
             name: "fallback-test".to_string(),
             display_name: "Fallback".to_string(),
             description: String::new(),

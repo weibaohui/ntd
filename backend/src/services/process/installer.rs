@@ -814,6 +814,7 @@ phases:
         prompt: 执行
 "#;
         let template = process_templates::ActiveModel {
+            guid: ActiveValue::Set("guid-review-prompt-test".to_string()),
             name: ActiveValue::Set("review-prompt-test".to_string()),
             display_name: ActiveValue::Set("评审模板测试".to_string()),
             description: ActiveValue::Set(String::new()),
@@ -863,6 +864,7 @@ phases:
         let ws_id = seed_workspace(&db).await;
 
         let template = process_templates::ActiveModel {
+            guid: ActiveValue::Set("guid-test-delivery".to_string()),
             name: ActiveValue::Set("test-delivery".to_string()),
             display_name: ActiveValue::Set("测试交付工艺".to_string()),
             description: ActiveValue::Set("用于单元测试".to_string()),
@@ -928,6 +930,7 @@ phases:
         // step_template 在 feat/recipe-editor 已改为序列类型，空序列 + 内联 prompt 即表示「不查原型表」。
         let missing_step_def = "process:\n  name: missing-step\nphases:\n  - id: p1\n    name: p1\n    links:\n      - id: l1\n        name: l1\n        step_template: []\n        prompt: 请实现 l1\n        on_success: end\n        on_gate_fail: break\n".to_string();
         let template = process_templates::ActiveModel {
+            guid: ActiveValue::Set("guid-inlined-link".to_string()),
             name: ActiveValue::Set("inlined-link".to_string()),
             display_name: ActiveValue::Set("内联环节".to_string()),
             description: ActiveValue::Set("".to_string()),
@@ -959,6 +962,7 @@ phases:
         let ws_id = seed_workspace(&db).await;
 
         let template = process_templates::ActiveModel {
+            guid: ActiveValue::Set("guid-review-passthrough".to_string()),
             name: ActiveValue::Set("review-passthrough".to_string()),
             display_name: ActiveValue::Set("评审穿透".to_string()),
             description: ActiveValue::Set("".to_string()),
@@ -1057,6 +1061,7 @@ phases:
 "#;
 
         let template = process_templates::ActiveModel {
+            guid: ActiveValue::Set("guid-penetration-test".to_string()),
             name: ActiveValue::Set("penetration-test".to_string()),
             display_name: ActiveValue::Set("穿透测试工艺".to_string()),
             description: ActiveValue::Set(String::new()),
@@ -1182,6 +1187,7 @@ phases:
         on_gate_fail: break
 "#;
         let template = process_templates::ActiveModel {
+            guid: ActiveValue::Set("guid-abnormal-test".to_string()),
             name: ActiveValue::Set("abnormal-test".to_string()),
             display_name: ActiveValue::Set("异常处理测试工艺".to_string()),
             description: ActiveValue::Set(String::new()),
@@ -1238,6 +1244,7 @@ phases:
         // 无 abnormal_handler 段
         let yaml = "process:\n  name: no-abn\n  version: 0.1.0\nphases:\n  - id: p1\n    name: p1\n    links:\n      - id: l1\n        name: l1\n        step_template: []\n        prompt: x\n        on_success: end\n        on_gate_fail: break\n";
         let template = process_templates::ActiveModel {
+            guid: ActiveValue::Set("guid-no-abn".to_string()),
             name: ActiveValue::Set("no-abn".to_string()),
             display_name: ActiveValue::Set("无异常处理".to_string()),
             description: ActiveValue::Set(String::new()),

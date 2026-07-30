@@ -272,7 +272,10 @@ export function LoopDetailPanel({
               label: detail.process_template_display_name || detail.process_template_name,
               techName: detail.process_template_name,
               version: detail.process_template_version || undefined,
-              onClick: onOpenProcess ? () => onOpenProcess(detail.process_template_name!) : undefined,
+              // 040：回跳按 guid 寻址（name 可重复）；旧环路无 guid 时回退 name 让链接不失效。
+              onClick: onOpenProcess
+                ? () => onOpenProcess(detail.process_template_guid ?? detail.process_template_name!)
+                : undefined,
             }]}
           />
         </div>

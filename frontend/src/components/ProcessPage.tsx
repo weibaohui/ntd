@@ -6,7 +6,7 @@ import {
   Modal, Select, message, Descriptions, Input, Alert,
   Space, Tabs, Table, Segmented,
 } from 'antd';
-import { BuildOutlined, ReloadOutlined, EyeOutlined, DownloadOutlined, SearchOutlined, ApartmentOutlined, CodeOutlined, PlusOutlined, EditOutlined } from '@ant-design/icons';
+import { BuildOutlined, ReloadOutlined, EyeOutlined, DownloadOutlined, SearchOutlined, ApartmentOutlined, CodeOutlined, PlusOutlined, EditOutlined, CopyOutlined } from '@ant-design/icons';
 import { PageCard } from '@/components/common/PageCard';
 import bundledApi, { type ProcessTemplate, type ProcessTemplateDetail, type ProcessLoopItem } from '@/api/bundled';
 import { adaptProcessDefinition } from '@/components/process/processFlowAdapter';
@@ -47,32 +47,33 @@ interface ProcessPageProps {
   /** 安装成功后跳转新环路详情（「工艺 → 环路」实例化关系显性化的关键一跳）。 */
   onOpenLoop?: (loopId: number) => void;
   /**
-   * URL 携带的工艺模板唯一名（`/#/processes?name=xxx`）。
+   * URL 携带的工艺模板 guid（`/#/processes?guid=xxx`）。
    * 用于「环路详情 → 来源工艺」回跳后自动打开该工艺详情，形成溯源闭环。
+   * 040 起用 guid：name 允许重复（模板与用户副本同名），只有 guid 能精确定位。
    */
-  processName?: string | null;
+  processGuid?: string | null;
   /**
    * 029：工艺编辑器模式。
    * - `'list'`（默认）：渲染工艺列表页
    * - `'new'`：渲染编辑器空白态，先弹元信息 Modal
-   * - `'edit'`：渲染编辑器，加载 `processName` 对应 YAML
+   * - `'edit'`：渲染编辑器，加载 `processGuid` 对应 YAML
    */
   processMode?: 'list' | 'new' | 'edit';
 }
 
-export function ProcessPage({ workspaceId, onOpenLoop, processName, processMode = 'list' }: ProcessPageProps) {
+export function ProcessPage({ workspaceId, onOpenLoop, processGuid, processMode = 'list' }: ProcessPageProps) {
   // 029：顶层分流，避免在 if return 后写 useState 造成条件 hooks。
   // 列表态走现有逻辑（ProcessListView），编辑器态走占位（M3-M6 填实 ProcessEditor）。
   // pushUrl 从 useViewState 取，用于"创建工艺"按钮导航到编辑器路由。
   const { pushUrl } = useViewState();
   // M3：edit 模式接真实 ProcessEditor，new 模式留占位给 M6
-  if (processMode === 'edit' && processName) {
-    return <ProcessEditor processName={processName} />;
+  if (processMode === 'edit' && processGuid) {
+    return <ProcessEditor processGuid={processGuid} />;
   }
   if (processMode === 'new') {
     return <ProcessEditorPlaceholder mode="new" name={null} />;
   }
-  return <ProcessListView workspaceId={workspaceId} onOpenLoop={onOpenLoop} processName={processName} pushUrl={pushUrl} />;
+  return <ProcessListView workspaceId={workspaceId} onOpenLoop={onOpenLoop} processGuid={processGuid} pushUrl={pushUrl} />;
 }
 
 /**
@@ -105,14 +106,16 @@ function ProcessEditorPlaceholder({ mode, name }: { mode: 'new' | 'edit'; name: 
  * 保留原有的工艺模板库列表、查看详情、安装为 Loop 等功能。
  * 029 新增：接收 pushUrl 用于"创建工艺"按钮导航到编辑器路由。
  */
-function ProcessListView({ workspaceId, onOpenLoop, processName, pushUrl }: Omit<ProcessPageProps, 'processMode'> & { pushUrl: (view: any, opts?: any) => void }) {
+function ProcessListView({ workspaceId, onOpenLoop, processGuid, pushUrl }: Omit<ProcessPageProps, 'processMode'> & { pushUrl: (view: any, opts?: any) => void }) {
   const [processes, setProcesses] = useState<ProcessTemplate[]>([]);
   const [loading, setLoading] = useState(false);
   const [detail, setDetail] = useState<ProcessTemplateDetail | null>(null);
   const [installing, setInstalling] = useState<string | null>(null);
+  // 040：正在复制的工艺 guid（控制卡片「复制」按钮 loading 态）
+  const [copying, setCopying] = useState<string | null>(null);
   const [searchText, setSearchText] = useState('');
   const [recommended, setRecommended] = useState<string[]>([]);
-  const [installModal, setInstallModal] = useState<{ name: string; displayName: string } | null>(null);
+  const [installModal, setInstallModal] = useState<{ guid: string; displayName: string } | null>(null);
   const [instanceLoops, setInstanceLoops] = useState<ProcessLoopItem[]>([]);
   const [instanceLoopsLoading, setInstanceLoopsLoading] = useState(false);
   // 正在升级的环路 id（控制按钮 loading 态）
@@ -158,25 +161,26 @@ function ProcessListView({ workspaceId, onOpenLoop, processName, pushUrl }: Omit
     if (!value.trim()) { setRecommended([]); return; }
     try {
       const resp = await bundledApi.recommendProcesses(value);
-      setRecommended(resp.recommendations.map((r: { template_name: string }) => r.template_name));
+      // 040：推荐高亮按 guid 匹配——name 允许重复后，按 name 会把同名模板一起点亮。
+      setRecommended(resp.recommendations.map((r) => r.template_guid));
     } catch {
       // 推荐失败不影响正常使用。
     }
   };
 
-  const handleShowDetail = async (name: string) => {
+  const handleShowDetail = async (guid: string) => {
     try {
-      const data = await bundledApi.getProcess(name);
+      const data = await bundledApi.getProcess(guid);
       setDetail(data);
     } catch (e) {
       message.error('加载工艺模板详情失败');
     }
   };
 
-  const fetchInstanceLoops = async (templateName: string) => {
+  const fetchInstanceLoops = async (templateGuid: string) => {
     setInstanceLoopsLoading(true);
     try {
-      const list = await bundledApi.listProcessLoops(templateName);
+      const list = await bundledApi.listProcessLoops(templateGuid);
       setInstanceLoops(list);
     } catch {
       // 实例环路列表加载失败（如该工艺尚未安装）不弹框，静默空列表。
@@ -186,25 +190,25 @@ function ProcessListView({ workspaceId, onOpenLoop, processName, pushUrl }: Omit
     }
   };
 
-  // URL 携带 name 参数时自动打开详情：环路详情「来源工艺」回跳的目标落地。
+  // URL 携带 guid 参数时自动打开详情：环路详情「来源工艺」回跳的目标落地。
   // cancelled 防御快速切换路由造成的竞态：晚返回的请求发现已卸载/切换就丢弃。
   useEffect(() => {
-    if (!processName) return;
+    if (!processGuid) return;
     let cancelled = false;
-    bundledApi.getProcess(processName)
+    bundledApi.getProcess(processGuid)
       .then((data) => { if (!cancelled) setDetail(data); })
       .catch(() => { if (!cancelled) message.error('加载工艺模板详情失败'); });
     return () => { cancelled = true; };
-  }, [processName]);
+  }, [processGuid]);
 
   // 升级实例环路到最新版本：调 API 后刷新实例列表
-  const handleUpgradeLoop = async (templateName: string, loopId: number) => {
+  const handleUpgradeLoop = async (templateGuid: string, loopId: number) => {
     setUpgradingLoopId(loopId);
     try {
-      const result = await bundledApi.upgradeProcessLoop(templateName, loopId);
+      const result = await bundledApi.upgradeProcessLoop(templateGuid, loopId);
       message.success(`已升级到 ${result.loop_name}（${result.phase_count} 阶段 / ${result.step_count} 步骤）`);
       // 刷新实例环路列表
-      await fetchInstanceLoops(templateName);
+      await fetchInstanceLoops(templateGuid);
     } catch {
       message.error('升级失败');
     } finally {
@@ -212,15 +216,30 @@ function ProcessListView({ workspaceId, onOpenLoop, processName, pushUrl }: Omit
     }
   };
 
-  const handleInstall = (name: string, displayName: string) => {
-    setInstallModal({ name, displayName });
+  const handleInstall = (guid: string, displayName: string) => {
+    setInstallModal({ guid, displayName });
+  };
+
+  // 040：把模板复制为我的工艺——后端纯文件复制 + 副本换新 guid，原模板保留。
+  // 成功后切到「我的」视图，用户立即看到新卡片并可点编辑，形成「模板 → 可编辑副本」闭环。
+  const handleCopyToUser = async (guid: string) => {
+    setCopying(guid);
+    try {
+      const result = await bundledApi.copyProcessToUser(guid);
+      message.success(`已复制为我的工艺：${result.name}`);
+      handleScopeChange('mine');
+    } catch {
+      message.error('复制失败');
+    } finally {
+      setCopying(null);
+    }
   };
 
   const doInstall = async () => {
     if (!installModal || !workspaceId) { message.warning('请先在左上角选择工作空间'); return; }
-    setInstalling(installModal.name);
+    setInstalling(installModal.guid);
     try {
-      const result = await bundledApi.installProcess(installModal.name, workspaceId);
+      const result = await bundledApi.installProcess(installModal.guid, workspaceId);
       message.success(`已安装「${result.loop_name}」，正在打开环路详情…`);
       setInstallModal(null);
       // 安装即实例化：直接跳到新环路详情，让用户立即看到工艺的运行时形态；
@@ -260,39 +279,48 @@ function ProcessListView({ workspaceId, onOpenLoop, processName, pushUrl }: Omit
   };
 
   // 单张工艺卡片渲染（039 从网格 JSX 中抽出，控制列表渲染块的嵌套层级与函数长度）。
-  // 闭包复用 recommended/installing 等状态；系统工艺不渲染「编辑」按钮——
-  // 拆视图后「我的」视图自然全部可编辑，「模板」视图自然全部只读，无需新增判断。
+  // 040：寻址/高亮统一按 guid（name 可重复）；系统工艺展示「复制」按钮把模板转成可编辑的我的工艺。
   const renderProcessCard = (p: ProcessTemplate) => (
     <Card
       hoverable
       title={p.display_name || p.name}
       extra={
         <Space>
-          {recommended.includes(p.name) && <Tag color="gold">推荐</Tag>}
+          {recommended.includes(p.guid) && <Tag color="gold">推荐</Tag>}
           <Tag color={complexityColor(p.complexity)}>{complexityLabel(p.complexity)}</Tag>
         </Space>
       }
       actions={[
-        <Button key="view" type="text" icon={<EyeOutlined />} onClick={() => handleShowDetail(p.name)}>
+        <Button key="view" type="text" icon={<EyeOutlined />} onClick={() => handleShowDetail(p.guid)}>
           详情
         </Button>,
         <Button
           key="install"
           type="text"
           icon={<DownloadOutlined />}
-          loading={installing === p.name}
-          onClick={() => handleInstall(p.name, p.display_name || p.name)}
+          loading={installing === p.guid}
+          onClick={() => handleInstall(p.guid, p.display_name || p.name)}
         >
           安装
         </Button>,
-        /* 029：用户工艺直接编辑，跳路由进编辑器；系统工艺只读（编辑会被同步覆盖）。
-           系统工艺编辑入口保留在详情 Modal 里（含复制到用户层提示）。 */
-        !p.is_system && (
+        /* 040：系统工艺给「复制为我的工艺」入口（040 的初心交互）；
+           用户工艺（我的视图）给「编辑」入口直接进编辑器。两者互斥，按 is_system 二选一。 */
+        p.is_system ? (
+          <Button
+            key="copy"
+            type="text"
+            icon={<CopyOutlined />}
+            loading={copying === p.guid}
+            onClick={() => handleCopyToUser(p.guid)}
+          >
+            复制
+          </Button>
+        ) : (
           <Button
             key="edit"
             type="text"
             icon={<EditOutlined />}
-            onClick={() => pushUrl('processes', { processMode: 'edit', name: p.name })}
+            onClick={() => pushUrl('processes', { processMode: 'edit', guid: p.guid })}
           >
             编辑
           </Button>
@@ -417,9 +445,9 @@ function ProcessListView({ workspaceId, onOpenLoop, processName, pushUrl }: Omit
             key="install"
             type="primary"
             icon={<DownloadOutlined />}
-            loading={installing === detail?.name}
+            loading={installing === detail?.guid}
             disabled={!workspaceId}
-            onClick={() => detail && handleInstall(detail.name, detail.display_name || detail.name)}
+            onClick={() => detail && handleInstall(detail.guid, detail.display_name || detail.name)}
           >
             安装到当前工作空间
           </Button>,
@@ -431,7 +459,7 @@ function ProcessListView({ workspaceId, onOpenLoop, processName, pushUrl }: Omit
             defaultActiveKey="flow"
             onChange={(key) => {
               if (key === 'instances') {
-                fetchInstanceLoops(detail.name);
+                fetchInstanceLoops(detail.guid);
               }
             }}
             items={[
@@ -495,7 +523,7 @@ function ProcessListView({ workspaceId, onOpenLoop, processName, pushUrl }: Omit
                             <Button
                               type="link" size="small"
                               loading={upgradingLoopId === rec.id}
-                              onClick={() => handleUpgradeLoop(detail!.name, rec.id)}
+                              onClick={() => handleUpgradeLoop(detail!.guid, rec.id)}
                             >更新</Button>
                           </Space>
                         ),
@@ -517,7 +545,7 @@ function ProcessListView({ workspaceId, onOpenLoop, processName, pushUrl }: Omit
                           icon={<EditOutlined />}
                           onClick={() => {
                             setDetail(null);
-                            pushUrl('processes', { processMode: 'edit', name: detail.name });
+                            pushUrl('processes', { processMode: 'edit', guid: detail.guid });
                           }}
                         >
                           编辑工艺
@@ -525,11 +553,23 @@ function ProcessListView({ workspaceId, onOpenLoop, processName, pushUrl }: Omit
                       </div>
                     )}
                     {detail && detail.is_system && (
+                      // 040：系统工艺警示条旁直接给「复制为我的工艺」按钮——
+                      // 旧版文案写着"请先复制到用户层"却没按钮，交互是断的，这里补上。
                       <Alert
                         type="warning"
                         showIcon
                         message="系统工艺编辑后会被同步覆盖"
-                        description="请先「复制到用户层」后再编辑。"
+                        description={
+                          <Button
+                            type="link"
+                            icon={<CopyOutlined />}
+                            style={{ padding: 0 }}
+                            loading={copying === detail.guid}
+                            onClick={() => detail && handleCopyToUser(detail.guid)}
+                          >
+                            复制为我的工艺后编辑
+                          </Button>
+                        }
                         style={{ marginBottom: 12 }}
                       />
                     )}
@@ -569,10 +609,10 @@ function ProcessListView({ workspaceId, onOpenLoop, processName, pushUrl }: Omit
       <CreateProcessMetaModal
         open={createModalOpen}
         onClose={() => setCreateModalOpen(false)}
-        onCreated={(name) => {
+        onCreated={(guid) => {
           setCreateModalOpen(false);
-          // 跳路由进编辑器（edit 模式 + 新工艺 name）
-          pushUrl('processes', { processMode: 'edit', name });
+          // 040：跳路由进编辑器，按 guid 定位新工艺（name 不再唯一）
+          pushUrl('processes', { processMode: 'edit', guid });
         }}
       />
     </PageCard>

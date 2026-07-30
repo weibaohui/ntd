@@ -191,9 +191,9 @@ function getInitialBlackboardFile(): string | null {
   return params.get('file');
 }
 
-function getInitialProcessName(): string | null {
+function getInitialProcessGuid(): string | null {
   const params = getHashSearchParams();
-  return params.get('name');
+  return params.get('guid');
 }
 
 /**
@@ -222,12 +222,13 @@ interface NavOpts {
   workspace?: number | null;
   slug?: string | null;
   file?: string | null;
-  name?: string | null;
+  /** 040：工艺模板 guid（processes 视图定位模板/编辑器目标；name 可重复后只能用 guid 寻址）。 */
+  guid?: string | null;
   /**
    * 029：工艺编辑器模式。
    * - `'list'`（默认）：渲染工艺列表页
    * - `'new'`：渲染编辑器空白态，先弹元信息 Modal
-   * - `'edit'`：渲染编辑器，加载 `name` 对应 YAML
+   * - `'edit'`：渲染编辑器，加载 `guid` 对应 YAML
    *
    * 与看板 `mode`（BoardMode）通过 query key 区分：看板用 `?mode=`，工艺用 `?processMode=`。
    */
@@ -278,9 +279,9 @@ function buildHashUrl(view: View, opts?: NavOpts): string {
     // blackboard 视图的 file 参数标识当前查看的文件
     params.set('file', opts.file);
   }
-  if (view === 'processes' && opts?.name) {
-    // processes 视图的 name 参数定位工艺模板，用于「环路 → 来源工艺」回跳自动开详情
-    params.set('name', opts.name);
+  if (view === 'processes' && opts?.guid) {
+    // processes 视图的 guid 参数定位工艺模板，用于「环路 → 来源工艺」回跳自动开详情
+    params.set('guid', opts.guid);
   }
   // 029：工艺编辑器模式。list（默认）渲染列表页，new/edit 渲染编辑器。
   // 用独立 query key `processMode` 避免与看板 `mode` 冲突。
@@ -328,15 +329,15 @@ export function useViewState() {
   const [boardMode, setBoardMode] = useState<BoardMode>(getInitialBoardMode);
   const [wikiSlug, setWikiSlug] = useState<string | null>(getInitialWikiSlug);
   const [blackboardFile, setBlackboardFile] = useState<string | null>(getInitialBlackboardFile);
-  const [processName, setProcessName] = useState<string | null>(getInitialProcessName);
+  const [processGuid, setProcessGuid] = useState<string | null>(getInitialProcessGuid);
   // 029：工艺编辑器模式。list（默认）= 列表页，new/edit = 编辑器态。
-  // 与 processName 配套：edit 模式下 processName 指向被编辑的工艺 name。
+  // 与 processGuid 配套：edit 模式下 processGuid 指向被编辑的工艺 guid（040 起按 guid 寻址）。
   const [processMode, setProcessMode] = useState<'list' | 'new' | 'edit'>(getInitialProcessMode);
 
   // setters 集中传入 syncFromHash，避免每个回调都重复一遍
   const setters = {
     setActiveView, setTodoDetailId, setLoopDetailId, setTaskDetailId, setPostRecordId,
-    setActiveTab, setBoardMode, setWikiSlug, setBlackboardFile, setProcessName, setProcessMode,
+    setActiveTab, setBoardMode, setWikiSlug, setBlackboardFile, setProcessGuid, setProcessMode,
   };
 
   const pushUrl = useCallback((view: View, opts?: NavOpts) => {
@@ -428,7 +429,7 @@ export function useViewState() {
     boardMode,
     wikiSlug,
     blackboardFile,
-    processName,
+    processGuid,
     // 029：工艺编辑器模式。list（默认）= 列表页，new/edit = 编辑器态。
     // ProcessPage 根据 mode 分流：list 渲染列表，new/edit 渲染 ProcessEditor。
     processMode,
@@ -458,13 +459,13 @@ function syncStateFromOptions(
     setBoardMode: (m: BoardMode) => void;
     setWikiSlug: (s: string | null) => void;
     setBlackboardFile: (f: string | null) => void;
-    setProcessName: (n: string | null) => void;
+    setProcessGuid: (g: string | null) => void;
     setProcessMode: (m: 'list' | 'new' | 'edit') => void;
   },
 ): void {
   const {
     setActiveView, setTodoDetailId, setLoopDetailId, setTaskDetailId, setPostRecordId,
-    setActiveTab, setBoardMode, setWikiSlug, setBlackboardFile, setProcessName, setProcessMode,
+    setActiveTab, setBoardMode, setWikiSlug, setBlackboardFile, setProcessGuid, setProcessMode,
   } = setters;
   setActiveView(view);
   // todos: id+recordId 表示帖子页；仅 id 表示详情；都没有表示列表
@@ -476,7 +477,7 @@ function syncStateFromOptions(
   setBoardMode(opts?.mode ?? 'memorial');
   setWikiSlug(view === 'wiki' ? (opts?.slug ?? null) : null);
   setBlackboardFile(view === 'blackboard' ? (opts?.file ?? null) : null);
-  setProcessName(view === 'processes' ? (opts?.name ?? null) : null);
+  setProcessGuid(view === 'processes' ? (opts?.guid ?? null) : null);
   // 029：工艺编辑器模式仅在 processes view 下生效，其他 view 一律 fallback 到 'list'。
   // 避免跨视图串台：如 /#/dashboard?processMode=new 不应让 dashboard 渲染编辑器。
   setProcessMode(view === 'processes' ? (opts?.processMode ?? 'list') : 'list');
@@ -497,7 +498,7 @@ function syncFromHash(setters: {
   setBoardMode: (m: BoardMode) => void;
   setWikiSlug: (s: string | null) => void;
   setBlackboardFile: (f: string | null) => void;
-  setProcessName: (n: string | null) => void;
+  setProcessGuid: (g: string | null) => void;
   setProcessMode: (m: 'list' | 'new' | 'edit') => void;
 }): void {
   const segments = getHashPathSegments();
@@ -507,7 +508,7 @@ function syncFromHash(setters: {
   const mode = params.get('mode') as BoardMode | null;
   const slug = params.get('slug');
   const file = params.get('file');
-  const name = params.get('name');
+  const guid = params.get('guid');
   // 029：工艺编辑器模式。非法值（如 ?processMode=foo）一律 fallback 到 'list'。
   const rawProcessMode = params.get('processMode');
   const processMode: 'list' | 'new' | 'edit' =
@@ -524,7 +525,7 @@ function syncFromHash(setters: {
   setters.setBoardMode(resolvedMode);
   setters.setWikiSlug(view === 'wiki' ? (slug || null) : null);
   setters.setBlackboardFile(view === 'blackboard' ? (file || null) : null);
-  setters.setProcessName(view === 'processes' ? (name || null) : null);
+  setters.setProcessGuid(view === 'processes' ? (guid || null) : null);
   // 029：工艺编辑器模式仅在 processes view 下生效，其他 view 即使带 ?processMode=new 也忽略。
   setters.setProcessMode(view === 'processes' ? processMode : 'list');
 }

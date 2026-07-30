@@ -15,12 +15,26 @@ impl Database {
     }
 
     /// 按名称查找工艺模板。
+    ///
+    /// 040 起 name 不再唯一，本函数只用于"是否存在同名"的预检（如新建工艺查重），
+    /// 寻址场景一律用 `get_process_template_by_guid`。
     pub async fn get_process_template_by_name(
         &self,
         name: &str,
     ) -> Result<Option<process_templates::Model>, sea_orm::DbErr> {
         process_templates::Entity::find()
             .filter(process_templates::Column::Name.eq(name.to_string()))
+            .one(&self.conn)
+            .await
+    }
+
+    /// 按 guid 查找工艺模板（040：guid 是全局唯一身份，路由寻址与 reconcile 都用它）。
+    pub async fn get_process_template_by_guid(
+        &self,
+        guid: &str,
+    ) -> Result<Option<process_templates::Model>, sea_orm::DbErr> {
+        process_templates::Entity::find()
+            .filter(process_templates::Column::Guid.eq(guid.to_string()))
             .one(&self.conn)
             .await
     }
@@ -51,6 +65,7 @@ impl Database {
     #[allow(clippy::too_many_arguments)]
     pub async fn upsert_system_process_template(
         &self,
+        guid: &str,
         name: &str,
         display_name: &str,
         description: &str,
@@ -60,13 +75,17 @@ impl Database {
         source_path: &str,
     ) -> Result<i64, sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();
+        // 040：upsert 键从 name 改为 guid——同步更新保留原行 id，
+        // loops.process_template_id 关联不再因"先删后插"被清空。
         let existing = process_templates::Entity::find()
-            .filter(process_templates::Column::Name.eq(name.to_string()))
+            .filter(process_templates::Column::Guid.eq(guid.to_string()))
             .one(&self.conn)
             .await?;
 
         if let Some(m) = existing {
             let mut am: process_templates::ActiveModel = m.into();
+            // name 也更新：远端模板改名时 guid 不变，原地改名而非新增一行。
+            am.name = ActiveValue::Set(name.to_string());
             am.display_name = ActiveValue::Set(display_name.to_string());
             am.description = ActiveValue::Set(description.to_string());
             am.category = ActiveValue::Set(category.to_string());
@@ -79,6 +98,7 @@ impl Database {
             Ok(updated.id)
         } else {
             let am = process_templates::ActiveModel {
+                guid: ActiveValue::Set(guid.to_string()),
                 name: ActiveValue::Set(name.to_string()),
                 display_name: ActiveValue::Set(display_name.to_string()),
                 description: ActiveValue::Set(description.to_string()),
@@ -172,12 +192,14 @@ impl Database {
     /// 与 `upsert_system_process_template` 的区别：
     /// - `is_system=false`，标记为用户自定义工艺
     /// - `workspace_id=NULL`，本需求先支持全局用户工艺
-    /// - 同名工艺覆盖系统层（`name` 为唯一键，第二次 upsert 改写 `is_system` 从 true 变 false）
     ///
+    /// 040 起 upsert 键为 guid：用户副本与系统模板 guid 不同，同名共存、不再互相覆盖；
+    /// 用户在 YAML 里改名（guid 不变）时原地更新，不再残留旧行。
     /// 工艺正文只存于磁盘（~/.ntd/processes/），DB 仅存 `source_path` 引用。
     #[allow(clippy::too_many_arguments)]
     pub async fn upsert_user_process_template(
         &self,
+        guid: &str,
         name: &str,
         display_name: &str,
         description: &str,
@@ -188,13 +210,14 @@ impl Database {
     ) -> Result<i64, sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();
         let existing = process_templates::Entity::find()
-            .filter(process_templates::Column::Name.eq(name.to_string()))
+            .filter(process_templates::Column::Guid.eq(guid.to_string()))
             .one(&self.conn)
             .await?;
 
-        // 用户层覆盖系统层：无论是新增还是更新，都写入 is_system=false、workspace_id=NULL。
+        // 无论是新增还是更新，都写入 is_system=false、workspace_id=NULL（用户层语义）。
         if let Some(m) = existing {
             let mut am: process_templates::ActiveModel = m.into();
+            am.name = ActiveValue::Set(name.to_string());
             am.display_name = ActiveValue::Set(display_name.to_string());
             am.description = ActiveValue::Set(description.to_string());
             am.category = ActiveValue::Set(category.to_string());
@@ -208,6 +231,7 @@ impl Database {
             Ok(updated.id)
         } else {
             let am = process_templates::ActiveModel {
+                guid: ActiveValue::Set(guid.to_string()),
                 name: ActiveValue::Set(name.to_string()),
                 display_name: ActiveValue::Set(display_name.to_string()),
                 description: ActiveValue::Set(description.to_string()),
@@ -226,15 +250,18 @@ impl Database {
         }
     }
 
-    /// 删除所有系统工艺模板（`is_system=true`），保留用户工艺。
+    /// 删除不在给定 guid 集合内的系统工艺模板（040：同步 reconcile 的"删除下架"步骤）。
     ///
-    /// "先删后插"策略：系统同步开始前调用，确保远程删除的工艺在本地也消失。
-    /// 用户工艺（`is_system=false`）不受影响，保证用户自定义不被同步误删。
-    pub async fn delete_all_system_process_templates(
+    /// 替代旧的"先删后插"：只删除远端仓库真正移除的模板，
+    /// 仍在仓库中的模板保留原行（id 不变，loops 关联不断）。
+    /// 用户工艺（`is_system=false`）不受影响。
+    pub async fn delete_system_process_templates_not_in(
         &self,
+        guids: &[String],
     ) -> Result<u64, sea_orm::DbErr> {
         let result = process_templates::Entity::delete_many()
             .filter(process_templates::Column::IsSystem.eq(true))
+            .filter(process_templates::Column::Guid.is_not_in(guids.iter().cloned()))
             .exec(&self.conn)
             .await?;
         Ok(result.rows_affected)
@@ -255,18 +282,18 @@ impl Database {
 
     /// 按 name 删除单个工艺模板（用户工艺删除流程专用）。
     ///
-    /// 与 `delete_all_system_process_templates` 的区别：
-    /// - 按 `name` 精准删除单条，而非批量删除 `is_system=true` 的记录
+    /// 按 guid 精准删除单条工艺模板。
+    ///
     /// - 不区分 `is_system`，调用方需在 handler 层做来源校验
     ///   （系统工艺拒绝删除，返回 409）
-    /// - 返回受影响行数：0 表示该 name 不存在（调用方应先
-    ///   `get_process_template_by_name` 判 404）
+    /// - 返回受影响行数：0 表示该 guid 不存在（调用方应先
+    ///   `get_process_template_by_guid` 判 404）
     pub async fn delete_process_template(
         &self,
-        name: &str,
+        guid: &str,
     ) -> Result<u64, sea_orm::DbErr> {
         let result = process_templates::Entity::delete_many()
-            .filter(process_templates::Column::Name.eq(name.to_string()))
+            .filter(process_templates::Column::Guid.eq(guid.to_string()))
             .exec(&self.conn)
             .await?;
         Ok(result.rows_affected)
@@ -282,17 +309,63 @@ mod tests {
     /// name 按字典序排列（system < user），便于断言全量列表的顺序稳定性。
     async fn seed_two_templates(db: &Database) {
         db.upsert_system_process_template(
-            "sys-tpl", "系统模板", "系统", "测试", "standard", "1.0.0",
+            "guid-sys-001", "sys-tpl", "系统模板", "系统", "测试", "standard", "1.0.0",
             "bundled://processes/test/sys-tpl.yaml",
         )
         .await
         .unwrap();
         db.upsert_user_process_template(
-            "user-tpl", "用户模板", "用户", "测试", "light", "0.1.0",
+            "guid-user-001", "user-tpl", "用户模板", "用户", "测试", "light", "0.1.0",
             "user://test/user-tpl.yaml",
         )
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_upsert_by_guid_rename_updates_in_place() {
+        // 040：同 guid 改名应原地更新（修复旧 name 键下"YAML 改名残留旧行"的问题）。
+        let db = Database::new(":memory:").await.unwrap();
+        db.upsert_user_process_template(
+            "guid-fixed", "old-name", "旧名", "", "测试", "light", "0.1.0",
+            "user://test/a.yaml",
+        )
+        .await
+        .unwrap();
+        db.upsert_user_process_template(
+            "guid-fixed", "new-name", "新名", "", "测试", "light", "0.2.0",
+            "user://test/a.yaml",
+        )
+        .await
+        .unwrap();
+
+        let all = db.list_process_templates(None).await.unwrap();
+        assert_eq!(all.len(), 1, "同 guid 二次 upsert 不应新增行");
+        assert_eq!(all[0].name, "new-name");
+    }
+
+    #[tokio::test]
+    async fn test_delete_system_process_templates_not_in() {
+        // 040 reconcile：只删 guid 不在集合内的系统行，用户行与集合内系统行保留。
+        let db = Database::new(":memory:").await.unwrap();
+        seed_two_templates(&db).await;
+        db.upsert_system_process_template(
+            "guid-sys-obsolete", "obsolete", "已下架", "", "测试", "standard", "1.0.0",
+            "bundled://processes/test/obsolete.yaml",
+        )
+        .await
+        .unwrap();
+
+        let deleted = db
+            .delete_system_process_templates_not_in(&["guid-sys-001".to_string()])
+            .await
+            .unwrap();
+        assert_eq!(deleted, 1);
+
+        let all = db.list_process_templates(None).await.unwrap();
+        assert_eq!(all.len(), 2);
+        assert!(all.iter().all(|t| t.name != "obsolete"));
+        assert!(all.iter().any(|t| !t.is_system), "用户行不应被误删");
     }
 
     #[tokio::test]

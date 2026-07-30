@@ -37,6 +37,7 @@ mod v75;
 mod v76;
 mod v77;
 mod v78;
+mod v79;
 
 pub use v2_v5::read_applied_versions;
 pub use v2_v5::drop_column_if_exists;
@@ -127,6 +128,9 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         // V78 在 V77 之后：工艺定义正文移出 process_templates 表，
         // 改为只存 source_path 并按路径从磁盘文件读取，磁盘成为唯一真源。
         Box::new(v78::V78ProcessDefinitionToFile),
+        // V79 在 V78 之后：process_templates 引入 guid 身份列并重建表，
+        // 支撑需求 040「工艺模板 GUID 身份」——name 放开唯一，复制同名共存
+        Box::new(v79::V79ProcessTemplateGuid),
     ]
 }
 

@@ -9,7 +9,8 @@
 // - M6 会加新建工艺元信息 Modal + 空工艺渲染。
 //
 // 数据流（M4 单向，可视化 → ProcessDefinition）：
-//   路由 processName → bundledApi.getProcess → detail.definition / is_system
+//   路由 processGuid → bundledApi.getProcess → detail.definition / is_system
+//   （040 起按 guid 寻址：name 允许重复，guid 才是唯一身份）
 //   → parseYaml(result.definition) → setDefinition(parsed)
 //   → ProcessVisualEditor 渲染 React Flow
 //   → 用户拖连线 / 删节点 → onDefinitionChange(newDefinition)
@@ -47,8 +48,8 @@ import { ProcessEditorToolbar } from './ProcessEditorToolbar';
 import { parseYaml, yamlDump } from './processYamlValidator';
 
 export interface ProcessEditorProps {
-  // 工艺名（从路由参数取，作为 bundledApi.getProcess 的参数）
-  processName: string;
+  // 工艺 guid（从路由参数取，作为 bundledApi.getProcess 等 API 的寻址参数）
+  processGuid: string;
 }
 
 // ProcessEditor 组件实现。
@@ -60,7 +61,7 @@ export interface ProcessEditorProps {
 // - isSystem：是否系统工艺（M3 已有）
 // - definition：工艺定义对象（M4 新增，React Flow 的 source of truth）
 // - selectedNodeId：当前选中的节点 YAML id（M4 新增，属性面板切换用）
-export function ProcessEditor({ processName }: ProcessEditorProps): JSX.Element {
+export function ProcessEditor({ processGuid }: ProcessEditorProps): JSX.Element {
   // 从 ThemeProvider 获取当前主题模式
   const { themeMode } = useTheme();
 
@@ -97,7 +98,7 @@ export function ProcessEditor({ processName }: ProcessEditorProps): JSX.Element 
   const [propertyPanelCollapsed, setPropertyPanelCollapsed] = useState(false);
 
   // ── 加载工艺详情副作用 ──────────────────────────
-  // 依赖 [processName]：工艺名变化时重新加载
+  // 依赖 [processGuid]：目标工艺变化时重新加载
   useEffect(() => {
     // 标记加载开始
     setLoading(true);
@@ -112,7 +113,7 @@ export function ProcessEditor({ processName }: ProcessEditorProps): JSX.Element 
     const loadDetail = async () => {
       try {
         // 调用 M1 已有的 API 客户端获取工艺详情
-        const result = await bundledApi.getProcess(processName);
+        const result = await bundledApi.getProcess(processGuid);
         // 设置详情和 Monaco 文本
         setDetail(result);
         setYamlText(result.definition);
@@ -129,7 +130,7 @@ export function ProcessEditor({ processName }: ProcessEditorProps): JSX.Element 
         }
       } catch {
         // 加载失败时 message.error 提示
-        message.error(`加载工艺「${processName}」失败`);
+        message.error(`加载工艺「${processGuid}」失败`);
       } finally {
         // 无论成功失败都关闭 loading
         setLoading(false);
@@ -138,15 +139,17 @@ export function ProcessEditor({ processName }: ProcessEditorProps): JSX.Element 
 
     // 触发异步加载
     void loadDetail();
-  }, [processName]);
+  }, [processGuid]);
 
   // ── 复制系统工艺到用户层 ──────────────────────────
   // 成功后 message.success 提示用户重新打开编辑器
   // （M3 不自动刷新状态，避免复杂的状态重置逻辑；M5 会优化）
   const handleCopyToUser = async () => {
     try {
-      await bundledApi.copyProcessToUser(processName);
-      message.success(`已复制到用户层，请重新打开编辑器`);
+      const copied = await bundledApi.copyProcessToUser(processGuid);
+      // 040：副本是新 guid 的独立工艺，直接跳副本编辑器，不用手动重新打开。
+      message.success('已复制为我的工艺，正在打开副本…');
+      window.location.hash = `#/processes?processMode=edit&guid=${copied.guid}`;
     } catch {
       message.error('复制到用户层失败');
     }
@@ -204,13 +207,13 @@ export function ProcessEditor({ processName }: ProcessEditorProps): JSX.Element 
     [isSyncing],
   );
 
-  // ── M5：保存回调（PUT /api/v1/processes/{name}）─────────
+  // ── M5：保存回调（PUT /api/v1/processes/{guid}）─────────
   // 用 yamlText（Monaco 当前文本）而非 definition，因为用户可能在 YAML tab
   // 直接编辑未触发 debounced parseYaml 的中间态。yamlText 永远是最新文本。
   const handleSave = useCallback(async () => {
     setIsSaving(true);
     try {
-      await bundledApi.putProcess(processName, yamlText);
+      await bundledApi.putProcess(processGuid, yamlText);
       message.success('工艺已保存');
       // 保存成功：清未保存标记，不跳路由不清表单（保留当前 definition + 节点位置）
       setIsDirty(false);
@@ -221,13 +224,13 @@ export function ProcessEditor({ processName }: ProcessEditorProps): JSX.Element 
     } finally {
       setIsSaving(false);
     }
-  }, [processName, yamlText]);
+  }, [processGuid, yamlText]);
 
-  // ── M5：删除回调（DELETE /api/v1/processes/{name}）─────
+  // ── M5：删除回调（DELETE /api/v1/processes/{guid}）─────
   // 弹 Modal.confirm 二次确认，确认后调 DELETE，成功跳路由回列表页
   const handleDelete = useCallback(() => {
     Modal.confirm({
-      title: `确认删除工艺「${processName}」？`,
+      title: `确认删除工艺「${detail?.name ?? processGuid}」？`,
       content: '此操作不可恢复。',
       okText: '删除',
       okType: 'danger',
@@ -235,7 +238,7 @@ export function ProcessEditor({ processName }: ProcessEditorProps): JSX.Element 
       onOk: async () => {
         setIsDeleting(true);
         try {
-          await bundledApi.deleteProcess(processName);
+          await bundledApi.deleteProcess(processGuid);
           message.success('工艺已删除');
           // 先置 isDirty=false 避免离开拦截误触发（hashchange 监听在任务 #7）
           setIsDirty(false);
@@ -248,7 +251,7 @@ export function ProcessEditor({ processName }: ProcessEditorProps): JSX.Element 
         }
       },
     });
-  }, [processName]);
+  }, [processGuid]);
 
   // ── 返回工艺列表页 ─────────────────────────────────
   // 仅设置 location.hash 触发 hashchange；若 isDirty，离开拦截的 hashchange
@@ -325,7 +328,7 @@ export function ProcessEditor({ processName }: ProcessEditorProps): JSX.Element 
   if (!detail) {
     return (
       <div style={loadingContainerStyle}>
-        <Empty description={`工艺「${processName}」不存在或加载失败`} />
+        <Empty description={`工艺「${processGuid}」不存在或加载失败`} />
       </div>
     );
   }
@@ -335,7 +338,7 @@ export function ProcessEditor({ processName }: ProcessEditorProps): JSX.Element 
     <div style={editorContainerStyle}>
       {/* M5：顶部工具栏（保存/删除 + 未保存红点） */}
       <ProcessEditorToolbar
-        processName={processName}
+        processName={detail.name}
         displayName={detail.display_name}
         isSystem={isSystem}
         isDirty={isDirty}

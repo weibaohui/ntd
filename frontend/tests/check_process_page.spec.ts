@@ -42,8 +42,11 @@ test.describe('Process Library 工艺模板库', () => {
       const first = listBody.data[0];
       expect(first.name).toBeDefined();
       expect(first.display_name).toBeDefined();
+      // 040：列表项必须带 guid（按 guid 寻址）
+      expect(first.guid).toBeDefined();
 
-      const detailResp = await request.get(`${BASE}/api/bundled/processes/${encodeURIComponent(first.name)}`);
+      // 040：详情接口按 guid 寻址（name 可重复后不能按 name 取详情）
+      const detailResp = await request.get(`${BASE}/api/bundled/processes/${encodeURIComponent(first.guid)}`);
       expect(detailResp.ok()).toBeTruthy();
       const detailBody = await detailResp.json();
       expect(detailBody.data.definition).toBeDefined();
@@ -114,5 +117,34 @@ test.describe('039 工艺列表我的/模板双视图', () => {
       // 「我的」空态应引导创建工艺
       await expect(page.locator('text=暂无自定义工艺')).toBeVisible({ timeout: 5000 });
     }
+  });
+});
+
+// 040：模板「复制为我的工艺」——副本换新 guid、与模板同名共存、原模板不消失
+test.describe('040 工艺模板复制为我的工艺', () => {
+  test('复制后模板仍在、我的视图多出同名副本（guid 不同），并清理副本', async ({ request }) => {
+    const sys = (await (await request.get(`${BASE}/api/bundled/processes?is_system=true`)).json()).data;
+    test.skip(!sys || sys.length === 0, '无系统模板，跳过（需先同步 ntd-resource）');
+
+    const src = sys[0];
+    const copyResp = await request.post(`${BASE}/api/v1/processes/${encodeURIComponent(src.guid)}/copy-to-user`);
+    expect(copyResp.ok()).toBeTruthy();
+    const copy = (await copyResp.json()).data;
+    // 副本是新 guid、同名
+    expect(copy.guid).toBeDefined();
+    expect(copy.guid).not.toBe(src.guid);
+    expect(copy.name).toBe(src.name);
+
+    // 模板视图：原模板仍在（核心回归——旧同名复制会让模板消失）
+    const sysAfter = (await (await request.get(`${BASE}/api/bundled/processes?is_system=true`)).json()).data;
+    expect(sysAfter.some((p: { guid: string }) => p.guid === src.guid)).toBe(true);
+
+    // 我的视图：副本以新 guid 出现
+    const usrAfter = (await (await request.get(`${BASE}/api/bundled/processes?is_system=false`)).json()).data;
+    expect(usrAfter.some((p: { guid: string }) => p.guid === copy.guid)).toBe(true);
+
+    // 清理副本，避免污染开发库
+    const delResp = await request.delete(`${BASE}/api/v1/processes/${encodeURIComponent(copy.guid)}`);
+    expect([200, 204]).toContain(delResp.status());
   });
 });

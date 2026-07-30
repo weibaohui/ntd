@@ -15,6 +15,8 @@ pub struct RecommendRequest {
 /// 单条推荐结果。
 #[derive(Debug, Serialize)]
 pub struct RecommendResult {
+    /// 040：同名模板共存后推荐高亮按 guid 匹配，避免两个同名片同时亮。
+    pub template_guid: String,
     pub template_name: String,
     pub display_name: String,
     pub complexity: String,
@@ -99,6 +101,7 @@ fn score_template(template: &process_templates::Model, desc_lower: &str) -> Opti
 
     let display = if template.display_name.is_empty() { &template.name } else { &template.display_name };
     Some(RecommendResult {
+        template_guid: template.guid.clone(),
         template_name: template.name.clone(),
         display_name: display.clone(),
         complexity: template.complexity.clone(),
@@ -138,6 +141,7 @@ fn fill_recommendations(results: &mut Vec<RecommendResult>, templates: &[process
     for t in templates {
         if !results.iter().any(|r| r.template_name == t.name) {
             results.push(RecommendResult {
+                template_guid: t.guid.clone(),
                 template_name: t.name.clone(),
                 display_name: t.display_name.clone(),
                 complexity: t.complexity.clone(),
@@ -157,6 +161,7 @@ mod tests {
     fn make_template(name: &str, complexity: &str) -> process_templates::Model {
         process_templates::Model {
             id: 1,
+            guid: format!("guid-{name}"),
             name: name.to_string(),
             display_name: name.to_string(),
             description: String::new(),

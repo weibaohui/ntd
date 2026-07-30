@@ -41,8 +41,8 @@ export interface CreateProcessMetaModalProps {
   open: boolean;
   // 关闭回调（遮罩/取消按钮触发）
   onClose: () => void;
-  // 创建成功回调（传入新工艺的 name，供父组件跳路由）
-  onCreated: (name: string) => void;
+  // 创建成功回调（040：传入新工艺的 guid，供父组件按 guid 跳编辑器路由）
+  onCreated: (guid: string) => void;
 }
 
 // Modal 组件实现。
@@ -83,6 +83,8 @@ export function CreateProcessMetaModal({
       // 构造元信息输入（空串可选字段让纯函数自动跳过）
       const meta: ProcessMetaInput = {
         name: values.name,
+        // 040：新建工艺即时生成 guid 写入 YAML，作为其稳定身份
+        guid: crypto.randomUUID(),
         display_name: values.display_name,
         description: values.description,
         category: values.category,
@@ -101,9 +103,9 @@ export function CreateProcessMetaModal({
         definition: yamlText,
       });
       message.success('工艺已创建');
-      // 成功后重置表单 + 通知父组件跳路由
+      // 成功后重置表单 + 通知父组件按 guid 跳编辑器路由
       form.resetFields();
-      onCreated(meta.name);
+      onCreated(meta.guid);
     } catch (err) {
       // validateFields 抛出的 ValidationError 形如 { errorFields: [...] }，
       // 用 errorFields 判别校验失败（Form 内部已反馈，这里静默退出）

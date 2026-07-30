@@ -18,9 +18,11 @@ describe('buildEmptyProcessYaml', () => {
     // 仅 name + display_name，输出应含必填字段、无可选字段
     const yaml = buildEmptyProcessYaml({
       name: 'test-process',
+      guid: 'guid-test-process',
       display_name: '测试工艺',
     });
     expect(yaml).toContain('name: test-process');
+    expect(yaml).toContain('guid: guid-test-process');
     expect(yaml).toContain('display_name: 测试工艺');
     // 未提供可选字段不应输出
     expect(yaml).not.toContain('description:');
@@ -33,6 +35,7 @@ describe('buildEmptyProcessYaml', () => {
     // 全字段，输出应含所有元信息
     const yaml = buildEmptyProcessYaml({
       name: 'full-process',
+      guid: 'guid-full-process',
       display_name: '完整工艺',
       description: '这是一个测试工艺',
       category: 'research',
@@ -51,6 +54,7 @@ describe('buildEmptyProcessYaml', () => {
     // phases 恒为空数组（空工艺）
     const yaml = buildEmptyProcessYaml({
       name: 'empty',
+      guid: 'guid-empty',
       display_name: '空工艺',
     });
     // yaml.dump 输出空数组为 `phases: []`（行内风）
@@ -61,6 +65,7 @@ describe('buildEmptyProcessYaml', () => {
     // dump 后再 parse 能还原结构
     const meta = {
       name: 'rt',
+      guid: 'guid-rt',
       display_name: '往返',
       description: '往返测试',
       category: 'writing',
@@ -74,6 +79,7 @@ describe('buildEmptyProcessYaml', () => {
     const obj = parsed.parsed as Record<string, unknown>;
     expect(obj['process']).toEqual({
       name: 'rt',
+      guid: 'guid-rt',
       display_name: '往返',
       description: '往返测试',
       category: 'writing',
@@ -87,6 +93,7 @@ describe('buildEmptyProcessYaml', () => {
     // 空串可选字段应被跳过（与 undefined 一致）
     const yaml = buildEmptyProcessYaml({
       name: 'skip',
+      guid: 'guid-skip',
       display_name: '跳过空串',
       description: '',
       category: '',

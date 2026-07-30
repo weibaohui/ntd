@@ -11,6 +11,7 @@ pub mod audit;
 pub mod delivery_state;
 pub mod gate_evaluator;
 pub mod gates;
+pub mod guid;
 pub mod installer;
 pub mod phase_driver;
 pub mod recommender;

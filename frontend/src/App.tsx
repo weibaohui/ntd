@@ -53,7 +53,7 @@ function AppContent() {
   const { state, dispatch, clearSelection } = useApp();
   // 028：路由统一为 /#/todos + /#/todos/:id + /#/todos/:id/posts/:rid + /#/loops + /#/loops/:id
   // todoDetailId / loopDetailId / postRecordId 均来自 path 段，刷新可恢复
-  const { activeView, todoDetailId, loopDetailId, taskDetailId, postRecordId, activePanel, processName, processMode, showView, pushUrl, replaceUrl, backToList } = useViewState();
+  const { activeView, todoDetailId, loopDetailId, taskDetailId, postRecordId, activePanel, processGuid, processMode, showView, pushUrl, replaceUrl, backToList } = useViewState();
   const { themeMode, toggleTheme } = useTheme();
   // 底部执行日志面板的显隐开关：来自设置-界面显示，关掉后即使有运行中任务也不渲染面板。
   const { visible: consolePanelVisible, setVisible: setConsolePanelVisible } = useConsolePanel();
@@ -195,10 +195,10 @@ function AppContent() {
   }, [clearSelection, pushUrl]);
 
   // 跳转来源工艺详情：环路详情「来源工艺」行的目标。
-  // 携带 name 参数，ProcessPage 据此自动打开该工艺的详情 Modal。
-  const handleOpenProcess = useCallback((templateName: string) => {
+  // 040：携带 guid 参数，ProcessPage 据此自动打开该工艺的详情 Modal。
+  const handleOpenProcess = useCallback((templateGuid: string) => {
     clearSelection();
-    pushUrl('processes', { name: templateName });
+    pushUrl('processes', { guid: templateGuid });
   }, [clearSelection, pushUrl]);
 
   const handleSmartCreateSubmitted = () => {
@@ -435,7 +435,7 @@ function AppContent() {
                 <ProcessPage
                   workspaceId={state.selectedWorkspace}
                   onOpenLoop={handleSelectLoop}
-                  processName={processName}
+                  processGuid={processGuid}
                   processMode={processMode}
                 />
               ) : (

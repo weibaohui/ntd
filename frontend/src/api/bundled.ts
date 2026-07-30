@@ -202,6 +202,8 @@ export interface InstallSkillResponse {
  */
 export interface ProcessTemplate {
   id: number;
+  /** 040：全局唯一身份，寻址（详情/编辑/安装/复制）一律用 guid；name 只做展示，允许重复。 */
+  guid: string;
   name: string;
   display_name: string;
   description: string;
@@ -458,17 +460,17 @@ export const bundledApi = {
   },
 
   /**
-   * 获取工艺模板详情
+   * 获取工艺模板详情（040：按 guid 寻址，同名模板不歧义）
    */
-  async getProcess(name: string): Promise<ProcessTemplateDetail> {
-    return unwrap(await api.get(`/api/bundled/processes/${encodeURIComponent(name)}`));
+  async getProcess(guid: string): Promise<ProcessTemplateDetail> {
+    return unwrap(await api.get(`/api/bundled/processes/${encodeURIComponent(guid)}`));
   },
 
   /**
    * 安装工艺模板到指定工作空间
    */
-  async installProcess(name: string, workspaceId: number): Promise<InstallProcessResponse> {
-    return unwrap(await api.post(`/api/bundled/processes/${encodeURIComponent(name)}/install`, {
+  async installProcess(guid: string, workspaceId: number): Promise<InstallProcessResponse> {
+    return unwrap(await api.post(`/api/bundled/processes/${encodeURIComponent(guid)}/install`, {
       workspace_id: workspaceId,
     }));
   },
@@ -477,23 +479,23 @@ export const bundledApi = {
    * 列出该工艺模板实例化的环路（按创建时间倒序）。
    * 工艺详情「实例环路」Tab 用，支撑「工艺 → 环路」向下钻取。
    */
-  async listProcessLoops(name: string): Promise<ProcessLoopItem[]> {
-    return unwrap(await api.get(`/api/v1/processes/${encodeURIComponent(name)}/loops`));
+  async listProcessLoops(guid: string): Promise<ProcessLoopItem[]> {
+    return unwrap(await api.get(`/api/v1/processes/${encodeURIComponent(guid)}/loops`));
   },
 
   /**
    * 升级工艺实例环路到模板最新版本（重新安装步骤/阶段）。
    */
-  async upgradeProcessLoop(name: string, loopId: number): Promise<InstallProcessResponse> {
-    return unwrap(await api.post(`/api/v1/processes/${encodeURIComponent(name)}/loops/${loopId}/upgrade`, {}));
+  async upgradeProcessLoop(guid: string, loopId: number): Promise<InstallProcessResponse> {
+    return unwrap(await api.post(`/api/v1/processes/${encodeURIComponent(guid)}/loops/${loopId}/upgrade`, {}));
   },
 
   /**
-   * 把系统工艺复制到用户层 ~/.ntd/processes/，避免被 bundled 同步覆盖。
-   * 复制完成后工艺标记为 is_system=false。
+   * 复制工艺到用户层 ~/.ntd/processes/（040）。
+   * 副本换新 guid 与源同名共存，原模板不消失；返回副本的 guid/name/路径。
    */
-  async copyProcessToUser(name: string): Promise<{ user_source_path: string }> {
-    return unwrap(await api.post(`/api/v1/processes/${encodeURIComponent(name)}/copy-to-user`, {}));
+  async copyProcessToUser(guid: string): Promise<{ user_source_path: string; guid: string; name: string }> {
+    return unwrap(await api.post(`/api/v1/processes/${encodeURIComponent(guid)}/copy-to-user`, {}));
   },
 
   /**
@@ -504,8 +506,8 @@ export const bundledApi = {
    * body 为 JSON `{ definition: yamlText }`，对齐后端 `Json<UpdateProcessRequest>` extractor
    * （axum Json extractor 强制 Content-Type: application/json，发 text/yaml raw body 会被 415 拒）。
    */
-  async putProcess(name: string, yamlText: string): Promise<void> {
-    await api.put(`/api/v1/processes/${encodeURIComponent(name)}`, { definition: yamlText });
+  async putProcess(guid: string, yamlText: string): Promise<void> {
+    await api.put(`/api/v1/processes/${encodeURIComponent(guid)}`, { definition: yamlText });
   },
 
   /**
@@ -534,8 +536,8 @@ export const bundledApi = {
    * 系统工艺拒绝删除（409）；有实例 Loop 的工艺拒绝删除（409）。
    * 前端 Toolbar 仅在 !isSystem 时渲染删除按钮，这里是兜底防线。
    */
-  async deleteProcess(name: string): Promise<void> {
-    await api.delete(`/api/v1/processes/${encodeURIComponent(name)}`);
+  async deleteProcess(guid: string): Promise<void> {
+    await api.delete(`/api/v1/processes/${encodeURIComponent(guid)}`);
   },
 
   /**
@@ -551,7 +553,7 @@ export const bundledApi = {
   },
 
   /** 工艺推荐 */
-  async recommendProcesses(description: string): Promise<{ recommendations: Array<{ template_name: string; display_name: string; complexity: string; score: number; reasons: string[] }> }> {
+  async recommendProcesses(description: string): Promise<{ recommendations: Array<{ template_guid: string; template_name: string; display_name: string; complexity: string; score: number; reasons: string[] }> }> {
     return unwrap(await api.post('/api/v1/processes/recommend', { description }));
   },
 

@@ -14,10 +14,12 @@
 
 import { yamlDump } from './processYamlValidator';
 
-// 元信息输入，Modal 表单收集的 6 字段
+// 元信息输入，Modal 表单收集的 6 字段 + 040 的 guid
 export interface ProcessMetaInput {
-  // 工艺唯一标识（路由参数用，必填）
+  // 工艺标识名（文件名/展示用，040 起不再唯一）
   name: string;
+  // 040：稳定身份（UUID v4），随文件走；由调用方（Modal）用 crypto.randomUUID() 生成
+  guid: string;
   // 列表页显示名（必填）
   display_name: string;
   // 工艺描述（可空）
@@ -45,8 +47,10 @@ export interface ProcessMetaInput {
 // 可选字段用 undefined 让 yamlDump 自动跳过，避免输出 null。
 export function buildEmptyProcessYaml(meta: ProcessMetaInput): string {
   // 构造工艺对象：process 块只含提供的字段，phases 恒为空数组
+  // 040：guid 紧跟 name 之后，作为工艺的稳定身份写入文件
   const processObj: Record<string, unknown> = {
     name: meta.name,
+    guid: meta.guid,
     display_name: meta.display_name,
   };
   // 可选字段仅在提供时加入（undefined 会被 yamlDump 跳过）

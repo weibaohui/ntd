@@ -52,8 +52,10 @@ export interface LoopDto {
   process_template_id?: number | null;
   /** 实例化时的工艺版本快照（「来源工艺」面包屑展示用） */
   process_template_version?: string | null;
-  /** 来源工艺模板唯一名（面包屑跳转工艺详情用） */
+  /** 来源工艺模板唯一名（面包屑展示用；040 起不再唯一） */
   process_template_name?: string | null;
+  /** 来源工艺模板 guid（040：面包屑回跳按 guid 寻址） */
+  process_template_guid?: string | null;
   /** 来源工艺模板显示名（面包屑展示用） */
   process_template_display_name?: string | null;
   created_at: string | null;
@@ -252,8 +254,10 @@ export interface LoopDetail {
   process_template_id?: number | null;
   /** 实例化时的工艺版本快照（「来源工艺」面包屑展示用） */
   process_template_version?: string | null;
-  /** 来源工艺模板唯一名（面包屑跳转工艺详情用） */
+  /** 来源工艺模板唯一名（面包屑展示用；040 起不再唯一） */
   process_template_name?: string | null;
+  /** 来源工艺模板 guid（040：面包屑回跳按 guid 寻址） */
+  process_template_guid?: string | null;
   /** 来源工艺模板显示名（面包屑展示用） */
   process_template_display_name?: string | null;
 }

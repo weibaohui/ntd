@@ -146,6 +146,9 @@ pub struct LoopDto {
     /// 来源工艺模板唯一名（面包屑跳转用）；由 handler 注入，From 不查库。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub process_template_name: Option<String>,
+    /// 来源工艺模板 guid（040：面包屑/回跳按 guid 寻址）；由 handler 注入，From 不查库。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_template_guid: Option<String>,
     /// 来源工艺模板显示名（面包屑展示用）；由 handler 注入，From 不查库。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub process_template_display_name: Option<String>,
@@ -173,6 +176,7 @@ impl From<loops::Model> for LoopDto {
             // 模板名称属跨表关联数据，不在 ORM 转换时隐式查询；
             // 由 handler 通过 with_process_template 在事务边界外注入（与 with_tags 同模式）。
             process_template_name: None,
+            process_template_guid: None,
             process_template_display_name: None,
             created_at: m.created_at,
             updated_at: m.updated_at,
@@ -194,6 +198,7 @@ impl LoopDto {
     pub fn with_process_template(mut self, meta: Option<process_templates::Model>) -> Self {
         if let Some(t) = meta {
             self.process_template_name = Some(t.name);
+            self.process_template_guid = Some(t.guid);
             self.process_template_display_name = Some(t.display_name);
         }
         self
@@ -694,6 +699,7 @@ mod loop_dto_tests {
     fn minimal_template_model() -> process_templates::Model {
         process_templates::Model {
             id: 7,
+            guid: "guid-4p12s".into(),
             name: "4p12s-delivery".into(),
             display_name: "标准需求交付工艺".into(),
             description: String::new(),
