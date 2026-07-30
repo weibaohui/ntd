@@ -327,6 +327,8 @@ export function TasksPage({ workspaceId }: TasksPageProps) {
             workspaceId={wsId}
             selectedTaskId={selectedTaskId}
             onSelectTask={handleSelectTask}
+            // 批量删除成功后复用既有 refreshKey 链路重拉列表，避免子组件另造刷新入口。
+            onChanged={() => setRefreshKey((k) => k + 1)}
           />
         </PageCard>
         <CreateTaskModal

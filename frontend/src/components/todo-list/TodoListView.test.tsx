@@ -61,8 +61,8 @@ function renderText(node: unknown): string {
 
 describe('renderLoopColumn / renderProcessColumn', () => {
   const refs: LoopRefSummary[] = [
-    { loop_id: 17, loop_name: '门禁测试', process_template_id: 101, process_template_name: '标准工艺' },
-    { loop_id: 18, loop_name: '环路2', process_template_id: 101, process_template_name: '标准工艺' },
+    { loop_id: 17, loop_name: '门禁测试', process_template_id: 101, process_template_name: '标准工艺', process_template_version: '1.2.0' },
+    { loop_id: 18, loop_name: '环路2', process_template_id: 101, process_template_name: '标准工艺', process_template_version: '1.2.0' },
     { loop_id: 19, loop_name: '裸环路' },
   ];
 
@@ -79,11 +79,11 @@ describe('renderLoopColumn / renderProcessColumn', () => {
     expect(renderText(renderLoopColumn([]))).toBe('-');
   });
 
-  it('renderProcessColumn_dedupesByTemplateIdAndUsesHashIdName', () => {
+  it('renderProcessColumn_dedupesByTemplateIdAndUsesUnifiedFormat', () => {
     const html = renderText(renderProcessColumn(refs));
-    // 模板 101 被两个环路引用，应只出现一次
-    expect(html).toContain('#101 标准工艺');
-    expect((html.match(/#101 标准工艺/g) || []).length).toBe(1);
+    // 模板 101 被两个环路引用，应只出现一次，且格式统一为 #id-名称-版本
+    expect(html).toContain('#101-标准工艺-1.2.0');
+    expect((html.match(/#101-标准工艺-1\.2\.0/g) || []).length).toBe(1);
     // 裸环路无模板，不应出现其 loop 信息
     expect(html).not.toContain('裸环路');
   });

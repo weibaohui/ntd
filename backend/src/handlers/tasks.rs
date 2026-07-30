@@ -33,6 +33,8 @@ pub struct TaskItem {
     pub template_id: Option<i64>,
     pub loop_id: Option<i64>,
     pub template_name: Option<String>,
+    /// 工艺版本：任务列表「工艺」列需要与事项/环路保持同一格式。
+    pub template_version: Option<String>,
     pub complexity: Option<String>,
     pub latest_execution_status: Option<String>,
     pub latest_execution_requirement: Option<String>,
@@ -99,6 +101,7 @@ pub async fn list_tasks(
             template_name: pt.as_ref().map(|p| {
                 if p.display_name.is_empty() { p.name.clone() } else { p.display_name.clone() }
             }),
+                template_version: pt.as_ref().map(|p| p.version.clone()),
                 complexity: pt.as_ref().map(|p| p.complexity.clone()),
                 latest_execution_status: exec_status,
                 latest_execution_requirement: exec_req,

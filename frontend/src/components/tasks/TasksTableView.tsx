@@ -15,6 +15,7 @@ import {
   formatDateShort,
 } from '@/components/tasks/constants';
 import bundledApi from '@/api/bundled';
+import { formatProcessText } from '@/utils/processText';
 
 const { Text } = Typography;
 
@@ -25,6 +26,8 @@ interface TasksTableViewProps {
   workspaceId: number;
   selectedTaskId: number | null;
   onSelectTask: (taskId: number | null) => void;
+  /** 列表数据被本组件修改（如批量删除成功）后，通知父组件刷新。 */
+  onChanged: () => void;
 }
 
 /** 状态筛选项：all = 不筛。 */
@@ -40,7 +43,7 @@ const STATUS_FILTER_OPTIONS = [
  * 构造 Table 列定义。
  *
  * 列顺序与宽度：
- *   ID(60) | 标题(flex) | 状态(100) | 复杂度(80) | 模板(120) | 最近执行(110) | 创建时间(110)
+ *   ID(60) | 标题(flex) | 状态(100) | 复杂度(80) | 工艺(220) | 最近执行(110) | 创建时间(110)
  *
  * 标题列 ellipsis：防止长标题撑爆行宽。
  * 状态/最近执行列用 Tag：颜色与 STATUS_COLOR 一致。
@@ -83,13 +86,15 @@ function buildColumns(): ColumnsType<TaskItem> {
         ),
     },
     {
-      title: '工艺模板',
-      dataIndex: 'template_name',
-      key: 'template_name',
-      width: 130,
+      title: '工艺',
+      key: 'process',
+      width: 220,
       ellipsis: true,
-      render: (name?: string) =>
-        name ? <Tag>{name}</Tag> : <Text type="secondary">—</Text>,
+      // 与事项/环路列表统一：#工艺id-工艺名称-工艺版本；无模板来源显示 —。
+      render: (_, task) => {
+        const text = formatProcessText(task.template_id, task.template_name, task.template_version);
+        return text === '-' ? <Text type="secondary">—</Text> : <Tag>{text}</Tag>;
+      },
     },
     {
       title: '最近执行',
@@ -175,6 +180,7 @@ export function TasksTableView({
   workspaceId,
   selectedTaskId,
   onSelectTask,
+  onChanged,
 }: TasksTableViewProps) {
   // 自带筛选态：状态。
   // 复杂度筛选在这里不加，避免 toolbar 过于拥挤；用户可切到 card 视图做复杂度筛选。
@@ -215,6 +221,9 @@ export function TasksTableView({
           const result = await bundledApi.batchDeleteTasks(workspaceId, ids);
           message.success(`已删除 ${result.deleted} 个任务`);
           setSelectedIds([]);
+          // 任务数据由父组件 TasksPage 持有；删除成功后必须触发父级刷新，
+          // 否则表格仍显示已删除任务，用户可能误以为删除未生效。
+          onChanged();
         } catch {
           message.error('删除失败');
         }
@@ -265,7 +274,8 @@ export function TasksTableView({
           dataSource={visibleTasks}
           loading={loading}
           size="small"
-          scroll={{ x: 1200 }}
+          // 工艺列从 130 扩到 220 以容纳 #id-名称-版本 三段式文本，scroll.x 同步加宽。
+          scroll={{ x: 1290 }}
           pagination={{
             pageSize: 20,
             showSizeChanger: true,

@@ -28,6 +28,7 @@ import { useBatchActions } from './useBatchActions'; // .tsx 含 JSX（批量 Mo
 import { ExecutorBadge } from '@/components/ExecutorBadge';
 import { ExpertBadge } from '@/components/ExpertBadge';
 import { formatRelativeTime } from '@/utils/datetime';
+import { formatProcessText } from '@/utils/processText';
 import type { LoopRefSummary, Tag as TagType, TodoCenterItem } from '@/types';
 
 /** 状态 → 中文 + 颜色映射；与事项中心卡片 StatusTag 保持一致口径。 */
@@ -65,26 +66,27 @@ function renderTagList(tagIds: number[] | undefined, tags: TagType[], max = 3): 
   );
 }
 
-/** 工艺列：展示引用该事项的环路所基于的工艺模板，格式 #模板ID 模板名，按模板去重。 */
+/** 工艺列：展示引用该事项的环路所基于的工艺模板，格式 #模板ID-模板名-版本，按模板去重。 */
 export function renderProcessColumn(refs: LoopRefSummary[] | undefined): ReactNode {
   if (!refs || refs.length === 0) return '-';
   // 多个环路可能基于同一模板，按 template_id 去重避免重复展示
   const seen = new Set<number>();
-  const templates: { id: number; name: string }[] = [];
+  const templates: { id: number; name?: string; version?: string }[] = [];
   for (const r of refs) {
     if (r.process_template_id == null) continue;
     if (seen.has(r.process_template_id)) continue;
     seen.add(r.process_template_id);
     templates.push({
       id: r.process_template_id,
-      name: r.process_template_name ?? `#${r.process_template_id}`,
+      name: r.process_template_name,
+      version: r.process_template_version,
     });
   }
   if (templates.length === 0) return '-';
   return (
     <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
       {templates.map(t => (
-        <Tag key={t.id}>{`#${t.id} ${t.name}`}</Tag>
+        <Tag key={t.id}>{formatProcessText(t.id, t.name, t.version)}</Tag>
       ))}
     </span>
   );

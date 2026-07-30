@@ -2055,8 +2055,8 @@ mod todo_center_tests {
         ref_map.insert(
             42,
             vec![
-                crate::models::LoopRefSummary { loop_id: 5, loop_name: "L5".into(), process_template_id: None, process_template_name: None },
-                crate::models::LoopRefSummary { loop_id: 8, loop_name: "L8".into(), process_template_id: None, process_template_name: None },
+                crate::models::LoopRefSummary { loop_id: 5, loop_name: "L5".into(), process_template_id: None, process_template_name: None, process_template_version: None },
+                crate::models::LoopRefSummary { loop_id: 8, loop_name: "L8".into(), process_template_id: None, process_template_name: None, process_template_version: None },
             ],
         );
         let mut aggs = empty_aggs();

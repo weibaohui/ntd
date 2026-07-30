@@ -42,11 +42,15 @@ fn group_loop_refs_by_todo(
             let process_template_id: Option<i64> = row.try_get_by("process_template_id").ok();
             let process_template_name: Option<String> =
                 row.try_get_by::<String, _>("process_template_name").ok();
+            // 版本同样允许 NULL：手工环路或历史数据没有快照时由前端显示占位符。
+            let process_template_version: Option<String> =
+                row.try_get_by::<String, _>("process_template_version").ok();
             map.entry(todo_id).or_default().push(crate::models::LoopRefSummary {
                 loop_id,
                 loop_name,
                 process_template_id,
                 process_template_name,
+                process_template_version,
             });
         }
     }
@@ -885,7 +889,8 @@ impl Database {
         // ORDER BY todo_id, loop_id 保证输出稳定可测
         let sql = format!(
             "SELECT ls.todo_id, l.id as loop_id, l.name as loop_name, \
-                    pt.id as process_template_id, pt.display_name as process_template_name \
+                    pt.id as process_template_id, pt.display_name as process_template_name, \
+                    COALESCE(l.process_template_version, pt.version) as process_template_version \
              FROM loop_steps ls \
              INNER JOIN loops l ON l.id = ls.loop_id \
              LEFT JOIN process_templates pt ON pt.id = l.process_template_id \
@@ -2226,7 +2231,7 @@ mod loop_step_count_tests {
         let loop_no_tpl = seed_loop(&db, "环路2").await;
         // 把环路1 关联到工艺模板
         db.exec(&format!(
-            "UPDATE loops SET process_template_id = {tpl} WHERE id = {loop_with_tpl}"
+            "UPDATE loops SET process_template_id = {tpl}, process_template_version = '9.9.9' WHERE id = {loop_with_tpl}"
         ))
         .await
         .expect("bind template");
@@ -2243,9 +2248,11 @@ mod loop_step_count_tests {
         assert_eq!(refs.len(), 2);
         assert_eq!(refs[0].process_template_id, Some(tpl));
         assert_eq!(refs[0].process_template_name.as_deref(), Some("工艺A"));
+        assert_eq!(refs[0].process_template_version.as_deref(), Some("9.9.9"));
         // 未绑模板的环路2 → None
         assert_eq!(refs[1].process_template_id, None);
         assert_eq!(refs[1].process_template_name, None);
+        assert_eq!(refs[1].process_template_version, None);
     }
 
     /// 插一条工艺模板，返回 id。
