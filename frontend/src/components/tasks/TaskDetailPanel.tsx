@@ -126,7 +126,7 @@ function DetailHeader({
           )}
         </div>
         <div className={styles.metaRow}>
-          <span>模板：{template?.display_name ?? '—'}</span>
+          <span>工艺：{template?.display_name ?? '—'}</span>
           <span className={styles.metaDivider}>·</span>
           <span>版本：{template?.version ?? '—'}</span>
         </div>

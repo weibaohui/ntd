@@ -155,7 +155,12 @@ pub async fn get_task_detail(
     }).collect();
     Ok(ApiResponse::ok(serde_json::json!({
         "task": { "id": task.id, "title": task.title, "status": task.status, "workspace_id": task.workspace_id, "loop_id": task.loop_id },
-        "template": template.map(|t| serde_json::json!({"name":t.name,"display_name":t.display_name,"complexity":t.complexity,"version":t.version})),
+        "template": template.map(|t| {
+            // 版本优先取环路的 process_template_version（执行时的快照），
+            // 而非工艺模板表的最新版本——用户关注的是「执行当时的工艺版本」。
+            let version = loop_.as_ref().and_then(|l| l.process_template_version.clone()).unwrap_or(t.version.clone());
+            serde_json::json!({"name":t.name,"display_name":t.display_name,"complexity":t.complexity,"version":version})
+        }),
         "loop": loop_.map(|l| serde_json::json!({"id":l.id,"name":l.name,"status":l.status,"workspace_id":l.workspace_id,"workspace_path":l.workspace_path})),
         "steps": steps,
         "executions": executions,
