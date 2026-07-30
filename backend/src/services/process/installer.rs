@@ -807,7 +807,7 @@ phases:
         name: 有评审模板
         prompt: 执行
         review_prompt: |
-          你是严格评审。输出：{original_output}
+          你是严格评审。输出：{{original_output}}
           最后输出 RATING: 0-100
       - id: without-rp
         name: 无评审模板
@@ -845,7 +845,7 @@ phases:
             .as_ref()
             .expect("review_prompt 应已写入");
         assert!(rp.contains("你是严格评审"), "review_prompt 正文应保留");
-        assert!(rp.contains("{original_output}"), "占位符应原样保留");
+        assert!(rp.contains("{{original_output}}"), "占位符应原样保留");
         // 无 review_prompt 的环节：NULL（评审时回退环路级/默认）
         let without_rp = steps
             .iter()

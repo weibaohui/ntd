@@ -1535,12 +1535,18 @@ impl LoopRunner {
             } else {
                 original_output.to_string()
             };
-            // 占位符替换：环节内联模板支持 {{双括号}} 变量，评审 prompt 中引用即可自动替换。
+            // 占位符替换：约定 {{双括号}}；同时兼容历史/手写的 {单括号}
+            // （旧默认模板、部分环节内联 prompt 曾用单括号）——双括号先替换消除后，
+            // 单括号兜底再替换一次，确保占位符始终注入而非原样残留。
             let review_prompt = template_prompt
                 .replace("{{original_prompt}}", step_prompt)
                 .replace("{{max_output_chars}}", &MAX_OUTPUT_CHARS.to_string())
                 .replace("{{original_output}}", &truncated)
-                .replace("{{acceptance_criteria}}", criteria.unwrap_or(""));
+                .replace("{{acceptance_criteria}}", criteria.unwrap_or(""))
+                .replace("{original_prompt}", step_prompt)
+                .replace("{max_output_chars}", &MAX_OUTPUT_CHARS.to_string())
+                .replace("{original_output}", &truncated)
+                .replace("{acceptance_criteria}", criteria.unwrap_or(""));
 
             // 4) 标记评审状态为 pending
             let _ = self.ctx.db.set_record_last_review_status(record_id, "pending").await;
@@ -2352,7 +2358,7 @@ mod tests {
     async fn test_resolve_review_template_inline_wins() {
         let (runner, _db) = make_test_runner().await;
         // 内联模板非空 → 直接作为正文，跳过查表，用哨兵 id 0 归属评审实例 todo
-        let inline = "我的评审模板 {original_output} {acceptance_criteria}";
+        let inline = "我的评审模板 {{original_output}} {{acceptance_criteria}}";
         let (prompt, owning_id, name) = crate::executor_service::auto_review::resolve_review_template(
             &runner.ctx.db, Some(inline), None,
         )

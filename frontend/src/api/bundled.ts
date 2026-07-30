@@ -506,8 +506,10 @@ export const bundledApi = {
    * body 为 JSON `{ definition: yamlText }`，对齐后端 `Json<UpdateProcessRequest>` extractor
    * （axum Json extractor 强制 Content-Type: application/json，发 text/yaml raw body 会被 415 拒）。
    */
-  async putProcess(guid: string, yamlText: string): Promise<void> {
-    await api.put(`/api/v1/processes/${encodeURIComponent(guid)}`, { definition: yamlText });
+  async putProcess(guid: string, yamlText: string): Promise<{ definition: string }> {
+    // 后端 update_process 会自动递增版本号并回传含新版本的完整 YAML，
+    // 前端需用它回刷 Monaco，避免陈旧 version 下次保存触发误判（需求 042）。
+    return unwrap(await api.put(`/api/v1/processes/${encodeURIComponent(guid)}`, { definition: yamlText }));
   },
 
   /**

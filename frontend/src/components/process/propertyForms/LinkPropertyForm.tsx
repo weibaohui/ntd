@@ -26,6 +26,7 @@ import {
   Typography,
 } from 'antd';
 import { DeleteOutlined, PlusOutlined, CloseOutlined } from '@ant-design/icons';
+import { DefaultReviewPromptButton } from '@/components/common/DefaultReviewPromptButton';
 import type {
   ProcessDefinition,
   LinkDefinition,
@@ -479,6 +480,8 @@ export function LinkPropertyForm({
               </code>
             </Tooltip>
           ))}
+          {/* 一键填入系统默认评审 prompt（DEFAULT_REVIEWER_PROMPT 常量），直接覆盖原内容 */}
+          <DefaultReviewPromptButton onApply={(t) => handleFieldChange('review_prompt', t)} />
         </div>
       </Form.Item>
 

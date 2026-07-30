@@ -8,6 +8,7 @@ import { useState, useEffect } from 'react';
 import { Table, Button, Space, Modal, Form, Input, Popconfirm, Empty, Select, App as AntApp } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
 import * as dbReviewTemplates from '@/utils/database/reviewTemplates';
+import { DefaultReviewPromptButton } from '@/components/common/DefaultReviewPromptButton';
 import type { ReviewTemplate } from '@/types/reviewTemplate';
 import { getProjectDirectories } from '@/utils/database/todos';
 
@@ -260,6 +261,10 @@ export function ReviewTemplatesPanel({ workspaceId }: ReviewTemplatesPanelProps)
           >
             <Input.TextArea rows={10} placeholder="你是一个评审师…" />
           </Form.Item>
+          {/* 一键填入系统默认评审 prompt（DEFAULT_REVIEWER_PROMPT 常量） */}
+          <div style={{ marginTop: -8, marginBottom: 16 }}>
+            <DefaultReviewPromptButton onApply={(t) => form.setFieldValue('prompt', t)} />
+          </div>
         </Form>
       </Modal>
     </div>

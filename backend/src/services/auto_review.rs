@@ -174,9 +174,9 @@ mod tests {
     // 重构后仍保留这个常量供 DAO 与启动路径使用，
     // 防止有人手抖把内容删成空字符串或换行符。
     //
-    // 占位符必须是 {{双花括号}}：compose_review_prompt / apply_rating_gate 的 .replace
-    // 只认双花括号。历史上曾误用 {单花括号}，导致走到默认模板时占位符原样发给 AI
-    // （{original_output} 等不被替换）。此断言钉死双花括号约定，防回归。
+    // 占位符约定 {{双花括号}}；compose_review_prompt / apply_rating_gate 的 .replace
+    // 优先匹配双花括号，并兜底兼容单花括号。历史上默认模板曾误用单花括号，导致占位符
+    // 原样发给 AI。此断言钉死「常量本身用双花括号」的约定，防回归。
     #[test]
     fn default_reviewer_prompt_contains_required_placeholders() {
         assert!(DEFAULT_REVIEWER_PROMPT.contains("{{original_prompt}}"));

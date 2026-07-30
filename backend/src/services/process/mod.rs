@@ -44,6 +44,10 @@ pub struct ProcessDefinition {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ProcessMeta {
     pub name: String,
+    /// 工艺稳定身份（040）。update 写盘必须保留并对齐 DB template.guid，
+    /// 否则 import 会按漂移后的磁盘 guid 新建 DB 行、原行 version 永不更新（需求 042 回归根因）。
+    #[serde(default)]
+    pub guid: String,
     #[serde(default)]
     pub display_name: String,
     #[serde(default)]
@@ -150,7 +154,7 @@ pub struct LinkDefinition {
     #[serde(default)]
     pub acceptance_criteria: String,
     /// 环节级评审模板正文（完整替代默认评审模板，需求 033）。
-    /// 非空时作为评审 prompt 模板，仍支持 {original_output}/{acceptance_criteria} 等占位符替换；
+    /// 非空时作为评审 prompt 模板，仍支持 {{original_output}}/{{acceptance_criteria}} 等占位符替换；
     /// 空串 = 未设置，评审时回退到环路级 `review_template_id` → 全局默认模板。
     #[serde(default)]
     pub review_prompt: String,

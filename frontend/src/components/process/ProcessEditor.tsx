@@ -213,7 +213,10 @@ export function ProcessEditor({ processGuid }: ProcessEditorProps): JSX.Element 
   const handleSave = useCallback(async () => {
     setIsSaving(true);
     try {
-      await bundledApi.putProcess(processGuid, yamlText);
+      const res = await bundledApi.putProcess(processGuid, yamlText);
+      // 回刷 Monaco 为后端递增后的真值 YAML：避免陈旧 version 下次保存时
+      // yaml_version != template.version 触发跳过 bump 并回写旧版本（需求 042 回归根因）。
+      setYamlText(res.definition);
       message.success('工艺已保存');
       // 保存成功：清未保存标记，不跳路由不清表单（保留当前 definition + 节点位置）
       setIsDirty(false);

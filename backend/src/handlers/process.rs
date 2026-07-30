@@ -359,17 +359,29 @@ pub async fn update_process(
         serde_yaml::from_str(&req.definition)
             .map_err(|e| AppError::BadRequest(format!("YAML 结构校验失败: {}", e)))?;
 
-    // 每次更新自动递增次版本号（X.Y.Z → X.Y+1.0），让用户能区分已安装 Loop 与最新工艺。
-    // 若 YAML 中的版本与 DB 一致则递增，不一致说明用户已手动改过，尊重用户版本。
+    // 以 DB template 的 guid 为准写盘（需求 042）：前端 YAML 的 guid 可能与 DB 不一致
+    // （历史 guid 漂移，如 040 迁移残留），强制对齐避免 import 按「新 guid」新建行、
+    // 原 DB 行 version 永不更新——这是版本号递增失效的隐藏根因。
+    definition.process.guid = template.guid.clone();
+
+    // 每次编辑保存都自动递增次版本号（X.Y.Z → X.Y+1.0），让用户能区分已安装 Loop 与最新工艺。
+    // 基准取「前端提交版本」与「DB 当前版本」的较大者（需求 042）：
+    // - 正常情况两者相等，正常 +1；
+    // - 历史 guid/version 漂移导致两者不一致时取较大者，保证「编辑后版本必然增加」且不倒退
+    //   （旧逻辑 `yaml_version == template.version` 在漂移时不递增，造成「保存后版本不变」）；
+    // - 用户手动改大版本则在其上 +1，改小则按较大者（DB）递增（防回退）。
     let yaml_version = definition.process.version.clone();
-    if yaml_version == template.version {
-        let bumped = bump_semver_minor(&yaml_version);
-        definition.process.version = bumped.clone();
-        tracing::info!(
-            "process {}: version auto-bumped from {} to {}",
-            guid, yaml_version, bumped
-        );
-    }
+    let base = if version_below(&yaml_version, &template.version) {
+        template.version.clone()
+    } else {
+        yaml_version.clone()
+    };
+    let bumped = bump_semver_minor(&base);
+    definition.process.version = bumped.clone();
+    tracing::info!(
+        "process {}: version auto-bumped (base={}, yaml={}, db={}) -> {}",
+        guid, base, yaml_version, template.version, bumped
+    );
     let new_yaml = serde_yaml::to_string(&definition)
         .map_err(|e| AppError::Internal(format!("YAML 序列化失败: {}", e)))?;
 
@@ -387,8 +399,11 @@ pub async fn update_process(
     }
 
     let now = crate::models::utc_timestamp();
+    // 回传 new_yaml（definition）：含递增后版本号的完整 YAML，供前端回刷 Monaco，
+    // 避免陈旧 version 下次保存触发误判（需求 042 回归修复核心）。
     Ok(ApiResponse::ok(serde_json::json!({
         "updated_at": now,
+        "definition": new_yaml,
     })))
 }
 
@@ -690,6 +705,18 @@ fn bump_semver_minor(version: &str) -> String {
         format!("{}.{}.0", parts[0], minor + 1)
     } else {
         format!("{}.1", version)
+    }
+}
+
+/// 判断版本 a 是否严格低于 b（语义化版本比较；非标准格式回退字符串比较）。
+///
+/// update_process 防倒退用：前端 Monaco 未回刷时会提交陈旧 version，这里拦截
+/// 「提交版本 < 磁盘版本」的情况，确保写盘版本不回退（需求 042）。
+fn version_below(a: &str, b: &str) -> bool {
+    match (semver::Version::parse(a.trim()), semver::Version::parse(b.trim())) {
+        (Ok(va), Ok(vb)) => va < vb,
+        // 非标准版本号无法语义比较时退回字符串比较；相等不算 below。
+        _ => a < b,
     }
 }
 
@@ -1393,5 +1420,30 @@ mod tests {
             let result = ensure_gate_approvable("human_approval", status);
             assert!(result.is_err(), "status={status} 应拒绝");
         }
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // version_below：update_process 防倒退兜底的版本比较（需求 042）
+    // ──────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_version_below_semver_comparison() {
+        // 标准语义版本：minor/major 差异都能正确比较。
+        assert!(version_below("1.0.0", "1.1.0"));
+        assert!(version_below("1.1.0", "1.2.0"));
+        assert!(version_below("1.0.0", "2.0.0"));
+        // 相等不算 below（不应误触发防倒退）。
+        assert!(!version_below("1.1.0", "1.1.0"));
+        // 高于不算 below（用户手动改大版本应被尊重）。
+        assert!(!version_below("1.2.0", "1.1.0"));
+    }
+
+    #[test]
+    fn test_version_below_non_semver_falls_back_to_string() {
+        // 非标准版本号无法语义比较时退回字符串比较，保证仍有确定行为。
+        assert!(version_below("abc", "xyz"));
+        assert!(!version_below("xyz", "abc"));
+        // 一边非标准一边标准 → 无法配对 parse，退回字符串比较。
+        assert!(version_below("1.0", "1.0.0"));
     }
 }

@@ -28,6 +28,11 @@ export async function listReviewTemplateOptions(workspaceId?: number): Promise<R
   return unwrap(await api.get('/api/v1/review-templates/options', { params }));
 }
 
+/** 取系统内置默认评审 prompt（常量真源）。供「使用默认值」按钮一键填入。 */
+export async function getDefaultReviewPrompt(): Promise<string> {
+  return unwrap(await api.get('/api/v1/review-templates/default-prompt'));
+}
+
 /** 创建模板。后端校验 name/prompt 非空。 */
 export async function createReviewTemplate(req: CreateReviewTemplateRequest): Promise<ReviewTemplate> {
   return unwrap(await api.post('/api/v1/review-templates', req));

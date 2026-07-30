@@ -8,8 +8,8 @@
 //! - `name`：在 loop 编辑器下拉里展示用，业务层保证唯一（DAO 在
 //!   create/update 时校验；不在 schema 上加 UNIQUE 约束以兼容历史脏数据）。
 //! - `description`：下拉副标题，nullable 允许"裸名"模板存在。
-//! - `prompt`：评审师提示词原文，**含占位符**（`{original_prompt}`、
-//!   `{acceptance_criteria}` 等），由调用方在运行时替换。
+//! - `prompt`：评审师提示词原文，**含占位符**（`{{original_prompt}}`、
+//!   `{{acceptance_criteria}}` 等），由调用方在运行时替换。
 //! - `id`：INTEGER PRIMARY KEY（**无 AUTOINCREMENT**），允许重用已删除 id，
 //!   让遗留 type=1 todo 升级时能迁入到原 id，保留 loops.review_template_id FK。
 

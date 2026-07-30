@@ -579,6 +579,47 @@ pub(crate) async fn inject_workspace_prompt(
     format!("{}\n---\n{}", prompt, message)
 }
 
+/// 注入工作空间运行背景（名称/地址）到 message 最外层（需求 042）。
+///
+/// 把工作空间名称与路径格式化为 `# 运行背景` 前言，前置到整段 prompt 最外层
+/// （盖在专家角色定义之前），让执行器先知道运行环境。
+///
+/// 与 `inject_workspace_prompt`（需求 022 的 workspace 共识 system_prompt）的区别：
+/// 那个读用户手填的 system_prompt，本函数读 project_directories 的 name/path。
+///
+/// 失败策略与 `inject_workspace_prompt` 一致：workspace_id 缺失或查询失败时静默返回原 message，
+/// 不阻断执行——背景注入是增强项，不应让 DB 故障拖垮 todo 执行。
+pub(crate) async fn inject_workspace_background(
+    db: &Database,
+    workspace_id: Option<i64>,
+    message: &str,
+) -> String {
+    // workspace_id 缺失（如 loop 评审路径未带）→ 跳过注入，原样返回
+    let Some(wid) = workspace_id else {
+        return message.to_string();
+    };
+    // 查询失败/无此工作空间：静默回退原 message，不阻断执行
+    let ws = match db.get_project_directory_by_id(wid).await {
+        Ok(Some(w)) => w,
+        Ok(None) => return message.to_string(),
+        Err(e) => {
+            tracing::warn!("读取工作空间 {} 失败，跳过背景注入: {}", wid, e);
+            return message.to_string();
+        }
+    };
+    // name 缺省或为空时回退 path，保证展示始终有可读标识
+    let name = ws
+        .name
+        .as_deref()
+        .filter(|n| !n.is_empty())
+        .unwrap_or(ws.path.as_str());
+    // 前置运行背景到最外层：背景 → 分隔线 → 原 message（已含专家上下文与任务）
+    format!(
+        "# 运行背景\n工作空间：{}\n地址：{}\n---\n{}",
+        name, ws.path, message
+    )
+}
+
 /// 注入专家上下文：如果 todo 关联了专家，将专家角色定义和技能信息拼接到 message 前面。
 ///
 /// 失败时静默返回原 message，不阻断执行——专家 prompt 注入是增强项，
@@ -1218,5 +1259,41 @@ mod tests {
         .unwrap();
         let result = inject_workspace_prompt(&db, Some(1), "做某事").await;
         assert_eq!(result, format!("{}\n---\n做某事", prompt));
+    }
+
+    /// inject_workspace_background：workspace_id=None 时直接返回原 message（不查库）。
+    #[tokio::test]
+    async fn test_inject_workspace_background_none_returns_original() {
+        let db = Database::new(":memory:").await.unwrap();
+        let original = "原任务";
+        let result = inject_workspace_background(&db, None, original).await;
+        assert_eq!(result, original);
+    }
+
+    /// inject_workspace_background：有工作空间时前置「# 运行背景」+ 名称 + 地址，原 message 在末尾。
+    #[tokio::test]
+    async fn test_inject_workspace_background_prepends_name_and_path() {
+        let db = Database::new(":memory:").await.unwrap();
+        let ws = db
+            .get_or_create_project_directory("/tmp/ws1", Some("我的项目"))
+            .await
+            .unwrap();
+        let result = inject_workspace_background(&db, Some(ws.id), "原任务").await;
+        assert!(result.starts_with("# 运行背景\n"), "应以 # 运行背景 开头");
+        assert!(result.contains("工作空间：我的项目"));
+        assert!(result.contains("地址：/tmp/ws1"));
+        assert!(result.ends_with("原任务"), "原 message 应在末尾");
+    }
+
+    /// inject_workspace_background：name 缺省时回退用 path 作展示名，保证始终有可读标识。
+    #[tokio::test]
+    async fn test_inject_workspace_background_name_missing_falls_back_to_path() {
+        let db = Database::new(":memory:").await.unwrap();
+        let ws = db
+            .get_or_create_project_directory("/tmp/ws2", None)
+            .await
+            .unwrap();
+        let result = inject_workspace_background(&db, Some(ws.id), "msg").await;
+        assert!(result.contains("工作空间：/tmp/ws2"), "name 缺省应回退 path");
     }
 }
