@@ -66,7 +66,7 @@ export interface StepInfo {
 }
 
 /** 门禁类型 → 中文标签。 */
-function gateLabel(type: string): string {
+export function gateLabel(type: string): string {
   const map: Record<string, string> = {
     artifact_present: '产物存在', ai_criteria_review: 'AI 评审',
     human_approval: '人工审批', script_check: '脚本校验',
@@ -75,7 +75,7 @@ function gateLabel(type: string): string {
 }
 
 /** 把单条门禁的关键判定条件拼成短文本。 */
-function gateDetailText(gate: GateDefinition): string {
+export function gateDetailText(gate: GateDefinition): string {
   const parts: string[] = [];
   if (gate.type === 'ai_criteria_review' && typeof gate.min_score === 'number') {
     parts.push(`阈值 ≥ ${gate.min_score} 分`);

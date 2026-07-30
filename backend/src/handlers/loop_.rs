@@ -448,3 +448,136 @@ pub fn v1_routes() -> axum::Router<AppState> {
         .route("/{id}/executions", get(list_executions_v1))
         .route("/{id}/executions/{eid}", get(get_execution_v1))
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+
+    // ====== aggregate_tokens_from_step_dtos ======
+
+    /// 空列表应返回全零汇总。
+    #[test]
+    fn test_aggregate_tokens_from_step_dtos_empty() {
+        let result = aggregate_tokens_from_step_dtos(&[]);
+        assert_eq!(result.total_input_tokens, 0);
+        assert_eq!(result.total_output_tokens, 0);
+        assert_eq!(result.total_cache_read_input_tokens, 0);
+        assert_eq!(result.total_cache_creation_input_tokens, 0);
+        assert_eq!(result.total_cost_usd, 0.0);
+    }
+
+    /// 单条 DTO：正确读取各 token 字段。
+    #[test]
+    fn test_aggregate_tokens_from_step_dtos_single() {
+        let dtos = vec![LoopStepExecutionDto {
+            input_tokens: Some(100),
+            output_tokens: Some(50),
+            cache_read_input_tokens: Some(10),
+            cache_creation_input_tokens: Some(5),
+            total_cost_usd: Some(0.002),
+            ..Default::default()
+        }];
+        let result = aggregate_tokens_from_step_dtos(&dtos);
+        assert_eq!(result.total_input_tokens, 100);
+        assert_eq!(result.total_output_tokens, 50);
+        assert_eq!(result.total_cache_read_input_tokens, 10);
+        assert_eq!(result.total_cache_creation_input_tokens, 5);
+        assert!((result.total_cost_usd - 0.002).abs() < f64::EPSILON);
+    }
+
+    /// 多条 DTO：验证正确累加。
+    #[test]
+    fn test_aggregate_tokens_from_step_dtos_multi() {
+        let dtos = vec![
+            LoopStepExecutionDto {
+                input_tokens: Some(100),
+                output_tokens: Some(50),
+                total_cost_usd: Some(0.001),
+                ..Default::default()
+            },
+            LoopStepExecutionDto {
+                input_tokens: Some(200),
+                output_tokens: Some(30),
+                total_cost_usd: Some(0.002),
+                ..Default::default()
+            },
+        ];
+        let result = aggregate_tokens_from_step_dtos(&dtos);
+        assert_eq!(result.total_input_tokens, 300);
+        assert_eq!(result.total_output_tokens, 80);
+        assert!((result.total_cost_usd - 0.003).abs() < f64::EPSILON);
+    }
+
+    /// 部分字段为 None 时跳过，不影响其他字段求和。
+    #[test]
+    fn test_aggregate_tokens_from_step_dtos_partial_none() {
+        let dtos = vec![
+            LoopStepExecutionDto {
+                input_tokens: Some(100),
+                output_tokens: None,
+                ..Default::default()
+            },
+            LoopStepExecutionDto {
+                input_tokens: None,
+                output_tokens: Some(50),
+                ..Default::default()
+            },
+        ];
+        let result = aggregate_tokens_from_step_dtos(&dtos);
+        assert_eq!(result.total_input_tokens, 100);
+        assert_eq!(result.total_output_tokens, 50);
+    }
+
+    // ====== BatchDeleteLoopsRequest deserialization ======
+
+    #[test]
+    fn test_batch_delete_loops_request_deserialize() {
+        let json = serde_json::json!({"ids": [1, 2, 3]});
+        let req: BatchDeleteLoopsRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(req.ids, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn test_batch_delete_loops_request_empty_ids() {
+        let json = serde_json::json!({"ids": []});
+        let req: BatchDeleteLoopsRequest = serde_json::from_value(json).unwrap();
+        assert!(req.ids.is_empty());
+    }
+
+    // ====== LoopStatsQuery deserialization ======
+
+    #[test]
+    fn test_loop_stats_query_with_hours() {
+        let json = serde_json::json!({"hours": 24});
+        let q: LoopStatsQuery = serde_json::from_value(json).unwrap();
+        assert_eq!(q.hours, Some(24));
+    }
+
+    #[test]
+    fn test_loop_stats_query_hours_none() {
+        let json = serde_json::json!({});
+        let q: LoopStatsQuery = serde_json::from_value(json).unwrap();
+        assert_eq!(q.hours, None);
+    }
+
+    // ====== ExecutionPageQuery deserialization ======
+
+    #[test]
+    fn test_execution_page_query_all_fields() {
+        let json = serde_json::json!({"page": 2, "limit": 50, "hours": 48});
+        let q: ExecutionPageQuery = serde_json::from_value(json).unwrap();
+        assert_eq!(q.page, Some(2));
+        assert_eq!(q.limit, Some(50));
+        assert_eq!(q.hours, Some(48));
+    }
+
+    #[test]
+    fn test_execution_page_query_defaults() {
+        let json = serde_json::json!({});
+        let q: ExecutionPageQuery = serde_json::from_value(json).unwrap();
+        assert_eq!(q.page, None);
+        assert_eq!(q.limit, None);
+        assert_eq!(q.hours, None);
+    }
+}

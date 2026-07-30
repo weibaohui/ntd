@@ -311,6 +311,7 @@ impl From<loop_executions::Model> for LoopExecutionDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct LoopStepExecutionDto {
     pub id: i64,
     pub loop_execution_id: i64,

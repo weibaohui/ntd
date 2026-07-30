@@ -11,7 +11,7 @@
 //! 不抽象 DAO trait，因为 codebase 其它 db 文件都这样做）。
 use sea_orm::{
     ActiveModelTrait, ActiveValue, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter,
-    QueryOrder, QuerySelect, Set, DbBackend,
+    QueryOrder, QuerySelect, DbBackend,
 };
 
 use crate::db::entity::{
@@ -225,20 +225,6 @@ impl Database {
             .one(&self.conn)
             .await?;
         Ok(existing.map(|l| l.id))
-    }
-
-    /// 仅更新 loops.description（用于任务创建时写入需求文本）。
-    pub async fn set_loop_description(&self, id: i64, description: &str) -> Result<(), sea_orm::DbErr> {
-        use sea_orm::ConnectionTrait;
-        let sql = "UPDATE loops SET description = ?1, updated_at = ?2 WHERE id = ?3";
-        let now = crate::models::utc_timestamp();
-        self.conn
-            .execute(sea_orm::Statement::from_sql_and_values(
-                sea_orm::DbBackend::Sqlite, sql,
-                [description.into(), now.into(), id.into()],
-            ))
-            .await?;
-        Ok(())
     }
 
     pub async fn delete_loop(&self, id: i64) -> Result<(), sea_orm::DbErr> {
@@ -493,83 +479,6 @@ impl Database {
         Ok(Some(new_id))
     }
 
-    /// 复制 loop 及其所有 step；execution 不复制（044：触发器已下线，不再复制触发器）。
-    ///
-    /// 用于 UI 的「另存为」/「复制为新版本」按钮。
-    /// 复制时 name 追加「(副本)」后缀，status 由 create_loop 内部固定为 paused，
-    /// 创建/更新时间在 create_loop 内写入当前时间。
-    pub async fn duplicate_loop(
-        &self,
-        source_id: i64,
-    ) -> Result<Option<loops::Model>, sea_orm::DbErr> {
-        let source = match self.get_loop(source_id).await? {
-            Some(l) => l,
-            None => return Ok(None),
-        };
-        let new_loop = self
-            .create_loop(
-                &format!("{}(副本)", source.name),
-                &source.description,
-                source.workspace_id,
-                source.workspace_path.as_deref(),
-                Some(source.limits_config.as_str()),
-                source.abnormal_handler_todo_id,
-                &source.abnormal_handler_trigger_on,
-            )
-            .await?;
-
-        // 044：loop_triggers 表已下线，复制不再复制触发器。
-
-        // 复制 steps：两遍走（与 batch_copy_loops_to_workspace 一致）。
-        // 第一遍创建所有 step 并建立 旧id→新id 映射，goto 字段暂置 None；
-        // 第二遍把 success_goto_step_id / fail_goto_step_id 从「源 step id」重映射到「新 step id」。
-        // 旧实现直接写源 step id，新 step 拿到的是全新自增 id，导致副本的 goto 指向源 loop 的
-        // 步骤（悬空或错误），运行到 goto 分支时报 step not found / 跳错分支。
-        let steps = self.list_loop_steps_by_loop(source_id).await?;
-        // (old_step_id, new_step_id, old_success_goto, old_fail_goto)
-        let mut step_map: Vec<(i64, i64, Option<i64>, Option<i64>)> = Vec::new();
-        for s in &steps {
-            let new_step = self
-                .create_loop_step(
-                    new_loop.id,
-                    &s.name,
-                    &s.description,
-                    s.todo_id,
-                    s.enabled != 0,
-                    &s.on_success,
-                    None, // success_goto 第二遍再补
-                    &s.on_rating_fail,
-                    None, // fail_goto 第二遍再补
-                    &s.review_type,
-                )
-                .await?;
-            step_map.push((s.id, new_step.id, s.success_goto_step_id, s.fail_goto_step_id));
-        }
-
-        // 第二遍：更新有 goto 引用的 step，把旧 step_id 换成新 step_id
-        let old_to_new: std::collections::HashMap<i64, i64> =
-            step_map.iter().map(|(old, new, _, _)| (*old, *new)).collect();
-        for (_old_id, new_id, old_success_goto, old_fail_goto) in &step_map {
-            let new_success_goto = old_success_goto.and_then(|g| old_to_new.get(&g).copied());
-            let new_fail_goto = old_fail_goto.and_then(|g| old_to_new.get(&g).copied());
-            if new_success_goto.is_some() || new_fail_goto.is_some() {
-                let existing = loop_steps::Entity::find_by_id(*new_id).one(&self.conn).await?;
-                if let Some(c) = existing {
-                    let mut am: loop_steps::ActiveModel = c.into();
-                    if let Some(goto) = new_success_goto {
-                        am.success_goto_step_id = ActiveValue::Set(Some(goto));
-                    }
-                    if let Some(goto) = new_fail_goto {
-                        am.fail_goto_step_id = ActiveValue::Set(Some(goto));
-                    }
-                    am.update(&self.conn).await?;
-                }
-            }
-        }
-
-        Ok(Some(new_loop))
-    }
-
     // ====== Loop Steps ======
 
     pub async fn list_loop_steps_by_loop(
@@ -814,43 +723,6 @@ impl Database {
         am.insert(&self.conn).await
     }
 
-    /// 参数数量由 loop_steps 表 schema 决定
-    #[allow(clippy::too_many_arguments)]
-    pub async fn update_loop_step(
-        &self,
-        id: i64,
-        name: &str,
-        description: &str,
-        todo_id: i64,
-        enabled: bool,
-        on_success: &str,
-        success_goto_step_id: Option<i64>,
-        on_rating_fail: &str,
-        fail_goto_step_id: Option<i64>,
-        review_type: &str,
-    ) -> Result<(), sea_orm::DbErr> {
-        let existing = loop_steps::Entity::find_by_id(id).one(&self.conn).await?;
-        if let Some(c) = existing {
-            let mut am: loop_steps::ActiveModel = c.into();
-            am.name = ActiveValue::Set(name.to_string());
-            am.description = ActiveValue::Set(description.to_string());
-            am.todo_id = ActiveValue::Set(todo_id);
-            am.enabled = ActiveValue::Set(if enabled { 1 } else { 0 });
-            am.on_success = ActiveValue::Set(on_success.to_string());
-            am.success_goto_step_id = ActiveValue::Set(success_goto_step_id);
-            am.on_rating_fail = ActiveValue::Set(on_rating_fail.to_string());
-            am.fail_goto_step_id = ActiveValue::Set(fail_goto_step_id);
-            am.review_type = ActiveValue::Set(review_type.to_string());
-            am.update(&self.conn).await?;
-        }
-        Ok(())
-    }
-
-    pub async fn delete_loop_step(&self, id: i64) -> Result<(), sea_orm::DbErr> {
-        loop_steps::Entity::delete_by_id(id).exec(&self.conn).await?;
-        Ok(())
-    }
-
     /// 仅更新步骤的 goto 跳转目标（用于导入时的伪ID解析）
     pub async fn update_loop_step_goto(
         &self,
@@ -867,33 +739,6 @@ impl Database {
             if fail_goto_step_id.is_some() {
                 am.fail_goto_step_id = ActiveValue::Set(fail_goto_step_id);
             }
-            am.update(&self.conn).await?;
-        }
-        Ok(())
-    }
-
-    /// 批量重排阶段。前端拖拽排序后调用,传入完整的新顺序。
-    /// `ordered_ids` 的顺序即新的 order_index(从 0 开始递增)。
-    pub async fn reorder_loop_steps(
-        &self,
-        loop_id: i64,
-        ordered_ids: &[i64],
-    ) -> Result<(), sea_orm::DbErr> {
-        // 1. 先把所有相关 step 取出,确保 ordered_ids 全部属于 loop_id
-        let steps = self.list_loop_steps_by_loop(loop_id).await?;
-        let valid: std::collections::HashSet<i64> = steps.iter().map(|s| s.id).collect();
-        for (idx, id) in ordered_ids.iter().enumerate() {
-            if !valid.contains(id) {
-                return Err(sea_orm::DbErr::Custom(format!(
-                    "step #{} 不属于 loop #{}",
-                    id, loop_id
-                )));
-            }
-            // valid 已确认 id 存在，find 必定返回 Some
-            let step = steps.iter().find(|s| s.id == *id)
-                .ok_or_else(|| sea_orm::DbErr::Custom(format!("step {} not found in loop {}", id, loop_id)))?;
-            let mut am: loop_steps::ActiveModel = step.clone().into();
-            am.order_index = Set(idx as i32);
             am.update(&self.conn).await?;
         }
         Ok(())
