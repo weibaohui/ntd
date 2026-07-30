@@ -1,40 +1,33 @@
-// Loop Studio 右栏 detail 容器。
+// Loop Studio 右栏 detail 容器（044 起只读化）。
 //
 // 对齐参考设计: 详情面板分成上下分段:
-// - Header: 标题 + 操作 (触发/复制/启用暂停/编辑/删除)
+// - Header: 标题 + 操作 (仅删除；启停在「基本信息」的 Switch)
 // - 基本信息: 启用 Switch + 工作空间
-// - 执行环节: 横向卡片列表（按顺序执行）, 最重要放在最前
-// - 触发条件: 默认折叠, 仅展示已启用/共多少摘要
+// - 执行环节: 横向卡片列表（按顺序执行）, 最重要放在最前（只读展示）
 // - 执行历史: 折叠区, 默认收起 (不常用)
 //
-// (对齐 LoopDto 的可编辑字段)。
+// 044（环路瘦身）：环路是工艺的运行时承载，触发/复制/导出/编辑/触发器配置
+// 全部下线；定义变更只能改工艺 YAML 后重新 install/upgrade。
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import {
-  Skeleton, App as AntApp, Button, Space, Tooltip, Popconfirm, Empty,
+  Skeleton, App as AntApp, Empty,
   Collapse, Switch, Spin,
 } from 'antd';
 import {
-  ThunderboltOutlined,
-  CopyOutlined,
-  DeleteOutlined,
-  EditOutlined,
   ExclamationCircleOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
-  ExportOutlined,
 } from '@ant-design/icons';
 import * as dbLoops from '@/utils/database/loops';
 import type { LoopDetail } from '@/types/loop';
-import { CopyButton } from '@/components/CopyButton';
 import { TraceBreadcrumb } from '@/components/common/TraceBreadcrumb';
 import { getWorkspaceDisplayName, useProjectDirectories } from '@/utils/workspaceDisplay';
-import { LoopFormModal } from './LoopFormModal';
-import { LoopTriggersPanel, TRIGGER_META } from './loop-studio/triggers';
 import { LoopStepsPanel } from './LoopStudioStepsPanel';
 import { LoopExecutionsPanel } from './loop-studio/executions';
 import { ProcessExecutionBoard } from '@/components/process/ProcessExecutionBoard';
-// 按钮组（触发/复制/导出/编辑/删除）抽到 LoopDetailActions，与 LoopDetailPage 的 titleSuffix 共用。
+// 删除按钮抽到 LoopDetailActions，与 LoopDetailPage 的 titleSuffix 共用。
+import { LoopDetailActions } from './LoopDetailActions';
 import type { LoopDetailActionsProps } from './LoopDetailActions';
 
 interface LoopDetailPanelProps {
@@ -43,8 +36,6 @@ interface LoopDetailPanelProps {
   workspaceId: number | null;
   /** 可用标签列表（复用 Todo 的标签体系） */
   tags: Array<{ id: number; name: string; color: string }>;
-  onTrigger: () => void;
-  onDuplicate: () => void;
   onDelete: () => void;
   onToggleStatus: () => void;
   onChanged: () => void;
@@ -53,9 +44,9 @@ interface LoopDetailPanelProps {
   /** 点击流程图节点上的事项标题跳转事项详情；未注入时标题不可点击。 */
   onOpenTodo?: (todoId: number) => void;
   hideTitleRow?: boolean;
-  /** 独立路由场景：把操作按钮上下文上报给外层 PageCard titleSuffix。
+  /** 独立路由场景：把删除按钮上下文上报给外层 PageCard titleSuffix。
    *  hideTitleRow=true 时内层标题行（含按钮）整体隐藏，外层通过此回调拿到按钮上下文
-   *  在 PageCard 标题行渲染触发/复制/导出/编辑/删除，避免按钮连带消失。 */
+   *  在 PageCard 标题行渲染删除按钮，避免按钮连带消失。 */
   onActionsReady?: (ctx: LoopDetailActionsProps | null) => void;
 }
 
@@ -63,8 +54,6 @@ export function LoopDetailPanel({
   loopId,
   workspaceId,
   tags,
-  onTrigger,
-  onDuplicate,
   onDelete,
   onToggleStatus,
   onChanged,
@@ -76,47 +65,11 @@ export function LoopDetailPanel({
   const { message: antMessage } = AntApp.useApp();
   const [detail, setDetail] = useState<LoopDetail | null>(null);
   const [loading, setLoading] = useState(true);
-  // 基础信息编辑 modal 开关 (替代之前的 inline 编辑)
-  const [editing, setEditing] = useState(false);
   // 工作空间目录（低基数集合，详情展示时把 path 转成 name 用）
   const { dirs: projectDirs } = useProjectDirectories();
 
-  // 导出环路。useCallback 包裹：onActionsReady 上报的 ctx 引用 handleExport，
-  // 稳定化避免每次渲染都重报，进而触发 setActionsCtx -> 重渲染 -> 重报的无限循环。
-  const handleExport = useCallback(async () => {
-    try {
-      const yaml = await dbLoops.exportLoop(workspaceId ?? 0, loopId);
-      const blob = new Blob([yaml], { type: 'application/x-yaml' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${detail?.name || 'loop'}.loop.yaml`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      antMessage.success('导出成功');
-    } catch (err: any) {
-      antMessage.error(err?.message || '导出失败');
-    }
-  }, [workspaceId, loopId, detail, antMessage]);
   // 执行记录总数，由 LoopExecutionsPanel 通过回调更新
   const [executionTotal, setExecutionTotal] = useState(0);
-  // 从 loop.limits_config 解析出的限制值，传递给子面板做兜底校验
-  const [maxStepExecutions, setMaxStepExecutions] = useState<number | null>(null);
-  const [maxTotalTokens, setMaxTotalTokens] = useState<number | null>(null);
-  // 编辑弹窗预填数据，从 detail 提取
-  // 工作空间以 id（project_directories.id）为主键，path 仅作为展示兜底。
-  const [editInitialData, setEditInitialData] = useState<{
-    name: string; description: string;
-    workspace_id: number | null;
-    workspace_path?: string | null;
-    webhook_enabled: boolean;
-    icon: string; review_template_id: number | null;
-    tag_ids: number[]; limits_config: string | null;
-    abnormal_handler_prompt: string | null;
-    abnormal_handler_trigger_on: string;
-  } | null>(null);
 
   // 防切换竞态：ref 始终持有最新 loopId。reload 与 executionTotal 的请求 resolve 后
   // 与 ref 比较，不一致说明期间已切到别的 loop，丢弃 stale 响应避免覆盖新 loop 的数据。
@@ -132,14 +85,6 @@ export function LoopDetailPanel({
       .then((d) => {
         if (latestLoopIdRef.current !== id) return; // 已切换到别的 loop，丢弃
         setDetail(d);
-        // 解析 limits_config 缓存限制值，传递给子面板做跳转自身时的兜底校验
-        try {
-          const lc = JSON.parse(d.limits_config || '{}');
-          setMaxStepExecutions(lc.max_step_executions ?? null);
-          setMaxTotalTokens(lc.max_total_tokens ?? null);
-        } catch {
-          // 忽略解析错误
-        }
       })
       .catch(() => {
         if (latestLoopIdRef.current !== id) return; // 切换后的错误不弹窗
@@ -163,51 +108,16 @@ export function LoopDetailPanel({
       .catch(() => { /* 静默 */ });
   }, [loopId]);
 
-  // 打开编辑 modal：从 detail 提取预填数据
-  const handleOpenEdit = useCallback(() => {
-    if (!detail) return;
-    setEditInitialData({
-      name: detail.name,
-      description: detail.description,
-      workspace_id: detail.workspace_id,
-      webhook_enabled: detail.webhook_enabled,
-      icon: detail.icon,
-      review_template_id: detail.review_template_id ?? null,
-      tag_ids: detail.tag_ids ?? [],
-      limits_config: detail.limits_config,
-      abnormal_handler_prompt: detail.abnormal_handler_prompt ?? null,
-      abnormal_handler_trigger_on: detail.abnormal_handler_trigger_on ?? '["capped_step","capped_token","failed"]',
-    });
-    setEditing(true);
-  }, [detail]);
-
-  // 独立路由场景：把操作按钮上下文上报给外层 PageCard 的 titleSuffix。
+  // 独立路由场景：把删除按钮上下文上报给外层 PageCard 的 titleSuffix。
   // detail 为空时上报 null（加载中），外层相应不渲染按钮。
-  // 依赖 handleExport/handleOpenEdit（均 useCallback 稳定）+ props 回调，避免每次渲染重报。
-  // 放在 handleOpenEdit 定义之后，避免 block-scoped 变量 used-before-declaration。
   useEffect(() => {
     if (!onActionsReady) return;
     if (!detail) {
       onActionsReady(null);
       return;
     }
-    onActionsReady({
-      detail,
-      onTrigger,
-      onDuplicate,
-      onExport: handleExport,
-      onEdit: handleOpenEdit,
-      onDelete,
-    });
-  }, [detail, onTrigger, onDuplicate, handleExport, handleOpenEdit, onDelete, onActionsReady]);
-
-  // 编辑保存后的回调：刷新详情 + 通知父组件
-  const handleEditSaved = useCallback(() => {
-    setEditing(false);
-    setEditInitialData(null);
-    reload();
-    onChanged();
-  }, [reload, onChanged]);
+    onActionsReady({ onDelete });
+  }, [detail, onDelete, onActionsReady]);
 
   if (loading && !detail) {
     return <Skeleton active style={{ padding: 24 }} />;
@@ -221,7 +131,7 @@ export function LoopDetailPanel({
     <div className="loop-detail-panel detail-panel" style={{ padding: 'var(--space-xl)' }}>
       {!hideTitleRow && (
         <>
-          {/* Header: 标签色条 + 标题 + 操作按钮 */}
+          {/* Header: 标签色条 + 标题 + 删除按钮（044：触发/复制/导出/编辑已下线） */}
           <div className="loop-detail-header" style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
             {(() => {
               const tag = tags.find(t => detail.tag_ids?.includes(t.id));
@@ -231,35 +141,7 @@ export function LoopDetailPanel({
               {detail.name}
             </h2>
             <span style={{ color: 'var(--color-text-tertiary, #94a3b8)', fontSize: 12 }}>#{detail.id}</span>
-            <Space size={4}>
-              <Tooltip title="手动触发">
-                <Button
-                  size="small" type="primary"
-                  icon={<ThunderboltOutlined />}
-                  onClick={onTrigger}
-                  disabled={detail.status !== 'enabled'}
-                />
-              </Tooltip>
-              <Tooltip title="复制">
-                <Button type="text" size="small" icon={<CopyOutlined />} onClick={onDuplicate} />
-              </Tooltip>
-              <Tooltip title="导出">
-                <Button type="text" size="small" icon={<ExportOutlined />} onClick={handleExport} />
-              </Tooltip>
-              <Tooltip title="编辑">
-                <Button type="text" size="small" icon={<EditOutlined />} onClick={handleOpenEdit} />
-              </Tooltip>
-              <Popconfirm
-                title="删除 loop"
-                description="将级联删除 triggers/steps,无法恢复"
-                okType="danger"
-                onConfirm={onDelete}
-              >
-                <Tooltip title="删除">
-                  <Button type="text" size="small" icon={<DeleteOutlined />} />
-                </Tooltip>
-              </Popconfirm>
-            </Space>
+            <LoopDetailActions onDelete={onDelete} />
           </div>
         </>
       )}
@@ -331,32 +213,6 @@ export function LoopDetailPanel({
                 <span>{displayName}</span>
               );
             })() : <EmptyValue />
-          } />
-          <DetailField label="Webhook" value={
-            detail.webhook_enabled ? (
-              <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                <span
-                  style={{
-                    fontSize: 12,
-                    fontWeight: 500,
-                    color: 'var(--color-text, #0f172a)',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }}
-                  title={`${window.location.origin}/webhook/trigger/loop/${detail.id}`}
-                >
-                  {`${window.location.origin}/webhook/trigger/loop/${detail.id}`}
-                </span>
-                <CopyButton
-                  size="small"
-                  text={`${window.location.origin}/webhook/trigger/loop/${detail.id}`}
-                  onCopy={() => antMessage.success('已复制 Webhook 地址')}
-                />
-              </span>
-            ) : (
-              <span style={{ color: 'var(--color-text-tertiary, #94a3b8)' }}>未启用</span>
-            )
           } />
           {/* 待人工审批提示 */}
           {detail.pending_approval_count > 0 && (
@@ -431,60 +287,17 @@ export function LoopDetailPanel({
         </div>
       </DetailSection>
 
-      {/* 执行环节: DAG 流程图 */}
+      {/* 执行环节: DAG 流程图（044 起只读，定义变更请改工艺 YAML） */}
       <DetailSection title="执行环节" extra={
         <span style={{ fontSize: 11, color: 'var(--color-text-tertiary, #94a3b8)' }}>
           {detail.steps.length} 个环节按顺序执行
         </span>
       }>
         <LoopStepsPanel
-          loopId={loopId}
           steps={detail.steps}
-          onChanged={() => { reload(); onChanged(); }}
-          maxStepExecutions={maxStepExecutions}
-          maxTotalTokens={maxTotalTokens}
-          workspaceId={detail.workspace_id}
           onOpenTodo={onOpenTodo}
         />
       </DetailSection>
-
-      {/* 触发条件: 默认折叠, 仅展示摘要计数 */}
-      <div style={{
-        background: 'var(--color-bg-elevated, #ffffff)',
-        border: '1px solid var(--color-border, #e2e8f0)',
-        borderRadius: 8,
-        marginBottom: 12,
-        overflow: 'hidden',
-      }}>
-        <Collapse
-          ghost
-          expandIconPlacement="end"
-          defaultActiveKey={[]}
-          items={[
-            {
-              key: 'triggers',
-              label: (
-                <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--color-text, #0f172a)' }}>
-                  触发条件
-                  <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--color-text-tertiary, #94a3b8)', marginLeft: 8 }}>
-                    {detail.triggers.filter(t => t.enabled).length} / {Object.keys(TRIGGER_META).length} 已启用
-                  </span>
-                </span>
-              ),
-              children: (
-                <div style={{ paddingTop: 4 }}>
-                  <LoopTriggersPanel
-                    loopId={loopId}
-                    triggers={detail.triggers}
-                    onChanged={() => { reload(); onChanged(); }}
-                    workspaceId={detail.workspace_id}
-                  />
-                </div>
-              ),
-            },
-          ]}
-        />
-      </div>
 
       {/* 折叠区: 执行历史 */}
       <div style={{
@@ -528,20 +341,6 @@ export function LoopDetailPanel({
           ]}
         />
       </div>
-
-      {/* 编辑基础信息 modal — 复用 LoopFormModal 组件 */}
-      <LoopFormModal
-        open={editing}
-        mode="edit"
-        loopId={loopId}
-        initialData={editInitialData ?? undefined}
-        tags={tags}
-        onSaved={handleEditSaved}
-        onClose={() => {
-          setEditing(false);
-          setEditInitialData(null);
-        }}
-      />
     </div>
   );
 }

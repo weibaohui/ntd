@@ -3,19 +3,17 @@
 // 设计要点 (对齐参考设计):
 // - 顶部 tab 过滤: 全部 / 已启用 / 已暂停 / 草稿, 每个带计数
 // - 卡片布局 (替代之前的纯文本行):
-//   · 左侧 3px 颜色条 (loop.color)
+//   · 左侧 3px 颜色条 (按标签色)
 //   · 名称 + 描述(产品) + 状态徽章
-//   · 触发器数 / 阶段数 / 最近执行图标
+//   · 环节数 / 最近执行图标（044：触发器已下线，不再展示触发器计数）
 //   · 底部 3px 进度条, 颜色按 last_execution_status 决定 (无则灰色)
 // - 单击切换 selectedId, 父组件维护; 当前选中卡片左侧条加亮 + 边框高亮
 
 import { useMemo, useState } from 'react';
-import { Button, Tag, Segmented, Checkbox } from 'antd';
+import { Tag, Segmented, Checkbox } from 'antd';
 import {
   ClockCircleOutlined,
   ApartmentOutlined,
-  ThunderboltOutlined,
-  PlusOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
   LoadingOutlined,
@@ -33,7 +31,6 @@ interface LoopListPanelProps {
   loops: LoopListItem[];
   selectedId: number | null;
   onSelect: (id: number) => void;
-  onCreate?: () => void;
   // —— 多选支持（ActionToolbar 工具栏选中态）——
   selectedIds?: number[];
   onToggleSelect?: (id: number) => void;
@@ -85,7 +82,7 @@ function countByStatus(loops: LoopListItem[], filter: StatusFilter): number {
 }
 
 export function LoopListPanel({
-  loops, selectedId, onSelect, onCreate,
+  loops, selectedId, onSelect,
   selectedIds, onToggleSelect, projectDirs, tags = [],
 }: LoopListPanelProps) {
   // 状态过滤状态, 默认全部; 本地持有, 切 loop 时不重置
@@ -139,14 +136,10 @@ export function LoopListPanel({
         {filtered.length === 0 ? (
           loops.length === 0 ? (
             <div style={{ padding: '40px 16px', textAlign: 'center' }}>
+              {/* 044：环路仅由工艺 install/upgrade 产生，空态引导去工艺页安装，不再提供手工新建 */}
               <div style={{ color: 'var(--color-text-tertiary, #94a3b8)', fontSize: 13, marginBottom: 16 }}>
-                暂无环路，创建第一个环路开始自动化
+                暂无环路，请先在「工艺」页安装工艺模板
               </div>
-              {onCreate && (
-                <Button type="primary" icon={<PlusOutlined />} onClick={onCreate}>
-                  新建环路
-                </Button>
-              )}
             </div>
           ) : (
             <div style={{ padding: '40px 16px', textAlign: 'center', color: 'var(--color-text-tertiary, #94a3b8)', fontSize: 13 }}>
@@ -295,9 +288,8 @@ function LoopCard({ loop, selected, onClick, checked, onToggleCheck, projectDirs
         </div>
       )}
 
-      {/* meta: 触发器/环节数/最近执行 + 时间 */}
+      {/* meta: 环节数/最近执行 + 时间（044：触发器已下线，不再展示触发器计数） */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 11, color: 'var(--color-text-tertiary, #94a3b8)' }}>
-        <span><ThunderboltOutlined /> {loop.trigger_count}</span>
         <span><ApartmentOutlined /> {loop.step_count}</span>
         {loop.pending_approval_count > 0 && (
           <span style={{

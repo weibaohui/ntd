@@ -856,6 +856,8 @@ impl LoopRunner {
                 loop_execution_id, step.id, step.review_type, step.todo_id, initial_status,
             );
             // 4f. 创建 step execution 记录
+            // 044：min_rating/unrated_policy 已从 loop_steps 移除，创建快照时不再透传；
+            // 阈值改由 phase_driver 评价 gate_config 后回写。
             let step_exec = self
                 .ctx
                 .db
@@ -865,8 +867,6 @@ impl LoopRunner {
                     step.todo_id,
                     initial_status,
                     sequence_counter,
-                    step.min_rating,
-                    &step.unrated_policy,
                 )
                 .await
                 .map_err(|e| e.to_string())?;
@@ -1012,49 +1012,11 @@ impl LoopRunner {
             }
 
             // 4h. 评分闸门（旧 Loop 兼容路径：无 gate_config/expected_artifacts 的步骤）。
-            let (gate_passed, step_rating, error_msg) = if step_status == "success" && step.min_rating.is_some() {
-                // 人工审批类型：暂停等待，不自动评审
-                // 提取结论后写回 pending_approval 状态，然后退出主循环。
-                if step.review_type == "human" {
-                    let conclusion = self.extract_conclusion(record_id).await;
-                    self.ctx
-                        .db
-                        .finish_step_execution(
-                            step_exec.id, "pending_approval", Some(record_id), None, None, Some(&conclusion),
-                        )
-                        .await
-                        .map_err(|e| e.to_string())?;
-                    // 标记审批状态为等待中；失败仅记录日志，不中断 loop 暂停流程，
-                    // 因为 step_execution 已经写为 pending_approval 状态，前端可继续操作。
-                    if let Err(e) = self.ctx.db.set_step_execution_approval_status(step_exec.id, "pending").await {
-                        warn!("loop #{} step #{}: failed to set approval_status to pending: {}", loop_id, step.id, e);
-                    }
-                    info!("loop #{} step #{} waiting for human approval", loop_id, step.id);
-                    // 发送 WebSocket 事件触发前端刷新（让执行历史列表显示"待审批"标记）
-                    let _ = self.tx.send(crate::executor_service::ExecEvent::ReviewStatusChanged {
-                        record_id,
-                        todo_id: 0,
-                        review_status: "pending_approval".to_string(),
-                    });
-                    // 暂停循环（不写最终状态，loop execution 保持 running）
-                    // 返回 Paused 而非 Finished，避免误发 LoopFinished 事件
-                    return Ok(LoopRunOutcome::Paused);
-                }
-                // AI 自动评审：min_rating 已在条件分支中确认为 Some，此处用 ok_or 转为 Result
-                let min_rating_val = step.min_rating.ok_or("min_rating was None despite is_some() check")?;
-                self
-                    .apply_rating_gate(
-                        record_id,
-                        min_rating_val,
-                        &todo.prompt,
-                        todo.acceptance_criteria.as_deref(),
-                        step.review_prompt.as_deref(),
-                        loop_.review_template_id,
-                    )
-                    .await?
-            } else {
-                (step_status == "success", None, None)
-            };
+            // 044：loop_steps 已移除 min_rating，旧评分制评审整体下线；人工审批改由
+            // phase_driver 的 human_approval 门禁处理（4g 分支已 return）。此处对未走
+            // 门禁路径的步骤，直接按执行状态判定通过与否，不再做评分。
+            let (gate_passed, step_rating, error_msg): (bool, Option<i32>, Option<String>) =
+                (step_status == "success", None, None);
 
             let final_step_status = if gate_passed { "success" } else { "failed" };
 
@@ -1425,280 +1387,13 @@ impl LoopRunner {
         }
     }
 
-    /// 复用或新建评审实例 todo。
-    ///
-    /// 设计：同一 `review_template_id` 全局共享一条评审实例 todo,
-    /// 避免「每次 loop 执行都新建评审 todo」把 todos 表刷屏。
-    /// 已有 → `reset_review_instance_for_reuse`(保留 id + execution_records 关联)
-    /// 没有 → `create_review_instance_todo`(parent_todo_id=0,loop step 没有单一源 todo)
-    /// 抽成单独方法便于 loop_runner.rs 内复用,且控制函数行数 ≤ 30。
-    async fn reuse_or_create_review_instance(
-        &self,
-        template_id: i64,
-        template_name: &str,
-        review_prompt: &str,
-        review_executor: Option<&str>,
-        workspace_id: i64,
-    ) -> Result<i64, sea_orm::DbErr> {
-        match self
-            .ctx
-            .db
-            .find_review_instance_by_template(template_id)
-            .await?
-        {
-            Some(existing) => {
-                self.ctx
-                    .db
-                    .reset_review_instance_for_reuse(existing.id, review_prompt, review_executor, workspace_id)
-                    .await?;
-                Ok(existing.id)
-            }
-            None => {
-                self.ctx
-                    .db
-                    .create_review_instance_todo(
-                        0,
-                        template_id,
-                        template_name,
-                        review_prompt.to_string(),
-                        review_executor.map(|s| s.to_string()),
-                        workspace_id,
-                    )
-                    .await
-            }
-        }
-    }
+    // 044：reuse_or_create_review_instance（旧评分制评审实例复用）随 apply_rating_gate
+    // 一同下线——新评审由 gate_config 的 ai_criteria_review 门禁统一处理，不再在 loop_runner
+    // 内联创建评审 todo。
 
-    /// 评分闸门：检查 execution_record 的 rating 与阈值比较。
-    /// 若未评分且环节有验收标准，自动发起评审。
-    /// 无评分 = 0 分（不通过，除非 min_rating ≤ 0）。
-    /// 返回 (是否通过, 评分, 失败原因说明).
-    async fn apply_rating_gate(
-        &self,
-        record_id: i64,
-        min_rating: i32,
-        step_prompt: &str,
-        step_acceptance_criteria: Option<&str>,
-        // 环节内联评审模板（需求 033）：非空时整体替代环路级/默认评审模板
-        step_review_prompt: Option<&str>,
-        review_template_id: Option<i64>,
-    ) -> Result<(bool, Option<i32>, Option<String>), String> {
-        info!(
-            "apply_rating_gate: record #{} min_rating={} step_acceptance_criteria={:?} has_step_review_prompt={} review_template_id={:?}",
-            record_id,
-            min_rating,
-            step_acceptance_criteria,
-            step_review_prompt.map(|s| !s.is_empty()).unwrap_or(false),
-            review_template_id
-        );
-        // 先检查是否已有评分
-        let rec = self
-            .ctx
-            .db
-            .get_execution_record(record_id)
-            .await
-            .map_err(|e| e.to_string())?
-            .ok_or_else(|| format!("execution record #{} not found", record_id))?;
-
-        if let Some(rating) = rec.rating {
-            let passed = rating >= min_rating;
-            info!("rating gate: record #{} rating={} min_rating={} {}",
-                record_id, rating, min_rating, if passed { "PASS" } else { "FAIL" });
-            return Ok((passed, Some(rating), None));
-        }
-
-        // 触发条件：环节有验收标准 或 有环节内联评审模板（review_prompt），二选一即发起自动评审。
-        // 两者皆空则跳过评审（末尾视为 0 分不通过）。min_rating 仍由外层作为评分阈值前置。
-        let criteria = step_acceptance_criteria.filter(|s| !s.trim().is_empty());
-        let inline_prompt = step_review_prompt.filter(|s| !s.trim().is_empty());
-        if criteria.is_some() || inline_prompt.is_some() {
-            info!(
-                "apply_rating_gate: record #{} entering auto-review (has_criteria={} has_review_prompt={})",
-                record_id,
-                criteria.is_some(),
-                inline_prompt.is_some()
-            );
-            info!("rating gate: record #{} triggering auto-review", record_id);
-
-            // 1) 选取评审模板正文与归属：环节内联优先（跳过查表），否则环路级 → 全局默认。
-            //    设计 034：评审已由统一路径在 finalize_normal_completion 中完成，
-            //    此分支仅作为兜底（避免统一路径因异常未能写出评分时阻塞门禁判定）。
-            let (template_prompt, owning_id, owning_name) =
-                match crate::executor_service::auto_review::resolve_review_template(
-                    &self.ctx.db, inline_prompt, review_template_id,
-                ).await {
-                    Ok(t) => t,
-                    Err(e) => {
-                        warn!("rating gate: failed to get review template: {}", e);
-                        return Ok((false, None, Some(format!("获取评审模板失败: {}", e))));
-                    }
-                };
-            // 兜底路径无 workspace 上下文，用 0 默认值（评审实例复用不受影响）。
-            let owning_ws = 0i64;
-
-            // 2) 获取执行记录的 result + executor
-            // executor 从已跑过的 record 继承 (review_template 不带 executor)。
-            let original_output = rec.result.as_deref().unwrap_or_default();
-            let review_executor = rec.executor.clone();
-
-            // 3) 合成评审 prompt
-            use crate::services::auto_review::MAX_OUTPUT_CHARS;
-            let truncated: String = if original_output.chars().count() > MAX_OUTPUT_CHARS {
-                let mut s: String = original_output.chars().take(MAX_OUTPUT_CHARS).collect();
-                s.push_str("\n\n[...以下被截断...]");
-                s
-            } else {
-                original_output.to_string()
-            };
-            // 占位符替换：约定 {{双括号}}；同时兼容历史/手写的 {单括号}
-            // （旧默认模板、部分环节内联 prompt 曾用单括号）——双括号先替换消除后，
-            // 单括号兜底再替换一次，确保占位符始终注入而非原样残留。
-            let review_prompt = template_prompt
-                .replace("{{original_prompt}}", step_prompt)
-                .replace("{{max_output_chars}}", &MAX_OUTPUT_CHARS.to_string())
-                .replace("{{original_output}}", &truncated)
-                .replace("{{acceptance_criteria}}", criteria.unwrap_or(""))
-                .replace("{original_prompt}", step_prompt)
-                .replace("{max_output_chars}", &MAX_OUTPUT_CHARS.to_string())
-                .replace("{original_output}", &truncated)
-                .replace("{acceptance_criteria}", criteria.unwrap_or(""));
-
-            // 4) 标记评审状态为 pending
-            let _ = self.ctx.db.set_record_last_review_status(record_id, "pending").await;
-            let _ = self.ctx.db.set_record_last_reviewed_at(record_id).await;
-            let _ = self.tx.send(crate::executor_service::ExecEvent::ReviewStatusChanged {
-                record_id,
-                todo_id: 0,
-                review_status: "pending".to_string(),
-            });
-
-            // 5) 评审实例 todo 复用策略:同一 review_template 全局共享一条 todo,
-            //    避免「每次 loop 执行都新建评审 todo」把 todos 表刷屏。
-            //    parent_todo_id=0: loop step 没有单一 source todo。
-            //    executor 继承自被评审的 record。
-            //    - 已有 → reset prompt/executor/status,保留 id 和 execution_records 关联
-            //    - 没有 → 新建
-            let review_todo_id = match self.reuse_or_create_review_instance(
-                owning_id,
-                &owning_name,
-                &review_prompt,
-                review_executor.as_deref(),
-                owning_ws,
-            ).await {
-                Ok(id) => id,
-                Err(e) => {
-                    warn!("rating gate: failed to reuse/create review instance todo: {}", e);
-                    let _ = self.ctx.db.set_record_last_review_status(record_id, "failed").await;
-                    return Ok((false, None, Some(format!("创建评审实例失败: {}", e))));
-                }
-            };
-
-            // 6) 执行评审
-            let request = RunTodoExecutionRequest {
-                db: self.ctx.db.clone(),
-                executor_registry: self.ctx.executor_registry.clone(),
-                tx: self.tx.clone(),
-                task_manager: self.ctx.task_manager.clone(),
-                config: self.ctx.config.clone(),
-                todo_id: review_todo_id,
-                message: review_prompt,
-                req_executor: review_executor,
-                req_model: None,
-                trigger_type: "auto_review".to_string(),
-                params: None,
-                resume_session_id: None,
-                resume_message: None,
-                source_todo_id: None,
-                source_todo_title: None,
-                loop_step_execution_id: None,
-                step_id: None,
-                feishu_bot_id: None,
-                feishu_receive_id: None,
-            feishu_receive_id_type: None,
-                workspace_path: None,
-                workspace_id: None,
-                // loop 内的评审执行：注入专家上下文，让评审 todo 也尊重其 expert_name 绑定
-                expert_manager: Some(self.ctx.expert_manager.clone()),
-            };
-            let exec_result = crate::executor_service::run_todo_execution(request).await;
-            let review_record_id = match exec_result.record_id {
-                Some(id) => id,
-                None => {
-                    warn!("rating gate: review execution returned no record_id");
-                    let _ = self.ctx.db.set_record_last_review_status(record_id, "failed").await;
-                    return Ok((false, None, Some("评审执行未返回记录ID".to_string())));
-                }
-            };
-
-            // 6) 轮询评审完成（最多等 300 秒）
-            let max_wait = std::time::Duration::from_secs(300);
-            let poll_interval = std::time::Duration::from_millis(500);
-            let start_poll = std::time::Instant::now();
-            let review_status_str = loop {
-                if start_poll.elapsed() > max_wait {
-                    warn!("rating gate: review record #{} timed out", review_record_id);
-                    let _ = self.ctx.db.set_record_last_review_status(record_id, "failed").await;
-                    let _ = self.tx.send(crate::executor_service::ExecEvent::ReviewStatusChanged {
-                        record_id, todo_id: 0,
-                        review_status: "failed".to_string(),
-                    });
-                    return Ok((false, None, Some("评审超时".to_string())));
-                }
-                if let Ok(Some(r)) = self.ctx.db.get_execution_record(review_record_id).await {
-                    use crate::models::ExecutionStatus;
-                    if !matches!(r.status, ExecutionStatus::Running) {
-                        break r.status.to_string();
-                    }
-                }
-                tokio::time::sleep(poll_interval).await;
-            };
-
-            // 7) 解析评分
-            let review_result = self.ctx.db.get_execution_record(review_record_id).await
-                .ok().flatten()
-                .and_then(|r| r.result);
-            let rating = crate::services::auto_review::parse_rating_from_result(
-                review_result.as_deref()
-            );
-            if let Some(r) = rating {
-                let _ = self.ctx.db.update_execution_record_rating(record_id, Some(r)).await;
-            }
-
-            // 8) 链接评审记录
-            let _ = self.ctx.db.link_review_to_source(
-                review_record_id, record_id, &review_status_str
-            ).await;
-            let _ = self.ctx.db.set_record_last_review_status(record_id, &review_status_str).await;
-            let _ = self.tx.send(crate::executor_service::ExecEvent::ReviewStatusChanged {
-                record_id, todo_id: 0,
-                review_status: review_status_str.to_string(),
-            });
-
-            info!("rating gate: review done record #{} rating={:?} status={}",
-                record_id, rating, review_status_str);
-
-            if let Some(r) = rating {
-                let passed = r >= min_rating;
-                info!("rating gate: record #{} final rating={} min_rating={} {}",
-                    record_id, r, min_rating, if passed { "PASS" } else { "FAIL" });
-                return Ok((passed, Some(r), None));
-            }
-
-            // 有验收标准、评审也执行了，但未能提取到有效评分
-            info!(
-                "apply_rating_gate: record #{} auto-review done but no rating extracted, treating as FAIL",
-                record_id
-            );
-            return Ok((false, None, Some("自动评审已完成但未能提取有效评分，请检查评审模板输出格式".to_string())));
-        }
-
-        // 无评分且（无验收标准 且 无 review_prompt）= 视为 0 分，不通过
-        info!(
-            "apply_rating_gate: record #{} no rating and no acceptance_criteria/review_prompt, treating as FAIL",
-            record_id
-        );
-        Ok((false, None, Some("环节未设置验收标准或评审模板，无法触发自动评审".to_string())))
-    }
+    // 044：apply_rating_gate（旧评分制评审闸门）已随 min_rating/review_template_id
+    // 列一同下线。评审与人工审批改由 phase_driver 的 gate_config（ai_criteria_review /
+    // human_approval 门禁）统一处理，不再在 loop_runner 内联评分。
 
     /// 触发异常处理 Todo 并写入 loop_step_execution 记录。
     ///
@@ -2155,10 +1850,7 @@ mod tests {
             description: String::new(),
             order_index: 0,
             todo_id: 100 + id,
-            run_mode: "sequential".to_string(),
-            skip_on_source_failed: 0,
-            min_rating: None,
-            unrated_policy: "skip".to_string(),
+            // 044：run_mode/skip_on_source_failed/min_rating/unrated_policy 列已下线
             on_success: on_success.to_string(),
             success_goto_step_id: success_goto,
             on_rating_fail: on_rating_fail.to_string(),
@@ -2408,15 +2100,14 @@ mod tests {
         let todo_a = db.create_todo_with_extras("task A", "do A", None, None, false, ws_id, "/tmp/ws").await.unwrap();
         let todo_b = db.create_todo_with_extras("task B", "do B", None, None, false, ws_id, "/tmp/ws").await.unwrap();
         // 创建 loop 属于同一工作空间
-        let loop_model = db.create_loop("test-loop", "", Some(ws_id), Some("/tmp/ws"), false, "loop", None, None, None, "[]").await.unwrap();
+        let loop_model = db.create_loop("test-loop", "", Some(ws_id), Some("/tmp/ws"), None, None, "[]").await.unwrap();
         // 构造步骤列表（使用真实的 step model 但手动构建，无需写入 DB，因为
         // check_workspace_consistency 只通过 todo_id 查 DB，不查 step 表本身）
         let steps = vec![
             loop_steps::Model {
                 id: 1, loop_id: loop_model.id, name: "步骤A".to_string(),
                 description: String::new(), order_index: 0, todo_id: todo_a,
-                run_mode: "sequential".to_string(), skip_on_source_failed: 0,
-                min_rating: None, unrated_policy: "skip".to_string(),
+                // 044：run_mode/skip_on_source_failed/min_rating/unrated_policy 列已下线
                 on_success: "next".to_string(), success_goto_step_id: None,
                 on_rating_fail: "break".to_string(), fail_goto_step_id: None,
                 review_type: "ai".to_string(),
@@ -2433,8 +2124,6 @@ mod tests {
             loop_steps::Model {
                 id: 2, loop_id: loop_model.id, name: "步骤B".to_string(),
                 description: String::new(), order_index: 1, todo_id: todo_b,
-                run_mode: "sequential".to_string(), skip_on_source_failed: 0,
-                min_rating: None, unrated_policy: "skip".to_string(),
                 on_success: "next".to_string(), success_goto_step_id: None,
                 on_rating_fail: "break".to_string(), fail_goto_step_id: None,
                 review_type: "ai".to_string(),
@@ -2463,13 +2152,11 @@ mod tests {
         let todo_a = db.create_todo_with_extras("task A", "do A", None, None, false, ws1, "/tmp/ws1").await.unwrap();
         let todo_b = db.create_todo_with_extras("task B", "do B", None, None, false, ws2, "/tmp/ws2").await.unwrap();
         // loop 属于 ws1
-        let loop_model = db.create_loop("test-loop", "", Some(ws1), Some("/tmp/ws1"), false, "loop", None, None, None, "[]").await.unwrap();
+        let loop_model = db.create_loop("test-loop", "", Some(ws1), Some("/tmp/ws1"), None, None, "[]").await.unwrap();
         let steps = vec![
             loop_steps::Model {
                 id: 1, loop_id: loop_model.id, name: "步骤A".to_string(),
                 description: String::new(), order_index: 0, todo_id: todo_a,
-                run_mode: "sequential".to_string(), skip_on_source_failed: 0,
-                min_rating: None, unrated_policy: "skip".to_string(),
                 on_success: "next".to_string(), success_goto_step_id: None,
                 on_rating_fail: "break".to_string(), fail_goto_step_id: None,
                 review_type: "ai".to_string(),
@@ -2486,8 +2173,6 @@ mod tests {
             loop_steps::Model {
                 id: 2, loop_id: loop_model.id, name: "步骤B".to_string(),
                 description: String::new(), order_index: 1, todo_id: todo_b,
-                run_mode: "sequential".to_string(), skip_on_source_failed: 0,
-                min_rating: None, unrated_policy: "skip".to_string(),
                 on_success: "next".to_string(), success_goto_step_id: None,
                 on_rating_fail: "break".to_string(), fail_goto_step_id: None,
                 review_type: "ai".to_string(),
@@ -2519,13 +2204,11 @@ mod tests {
         let todo_a = db.create_todo_with_executor("task A", "do A", None).await.unwrap();
         let todo_b = db.create_todo_with_executor("task B", "do B", None).await.unwrap();
         // loop: workspace_id=None（也视为未分配）
-        let loop_model = db.create_loop("test-loop", "", None, None, false, "loop", None, None, None, "[]").await.unwrap();
+        let loop_model = db.create_loop("test-loop", "", None, None, None, None, "[]").await.unwrap();
         let steps = vec![
             loop_steps::Model {
                 id: 1, loop_id: loop_model.id, name: "步骤A".to_string(),
                 description: String::new(), order_index: 0, todo_id: todo_a,
-                run_mode: "sequential".to_string(), skip_on_source_failed: 0,
-                min_rating: None, unrated_policy: "skip".to_string(),
                 on_success: "next".to_string(), success_goto_step_id: None,
                 on_rating_fail: "break".to_string(), fail_goto_step_id: None,
                 review_type: "ai".to_string(),
@@ -2542,8 +2225,6 @@ mod tests {
             loop_steps::Model {
                 id: 2, loop_id: loop_model.id, name: "步骤B".to_string(),
                 description: String::new(), order_index: 1, todo_id: todo_b,
-                run_mode: "sequential".to_string(), skip_on_source_failed: 0,
-                min_rating: None, unrated_policy: "skip".to_string(),
                 on_success: "next".to_string(), success_goto_step_id: None,
                 on_rating_fail: "break".to_string(), fail_goto_step_id: None,
                 review_type: "ai".to_string(),
@@ -2570,14 +2251,12 @@ mod tests {
         let (runner, db) = make_test_runner().await;
         let ws_id = create_workspace(&db, 1).await;
         let todo_a = db.create_todo_with_extras("task A", "do A", None, None, false, ws_id, "/tmp/ws").await.unwrap();
-        let loop_model = db.create_loop("test-loop", "", Some(ws_id), Some("/tmp/ws"), false, "loop", None, None, None, "[]").await.unwrap();
+        let loop_model = db.create_loop("test-loop", "", Some(ws_id), Some("/tmp/ws"), None, None, "[]").await.unwrap();
         // 两个 step 引用同一个 todo
         let steps = vec![
             loop_steps::Model {
                 id: 1, loop_id: loop_model.id, name: "步骤A-1".to_string(),
                 description: String::new(), order_index: 0, todo_id: todo_a,
-                run_mode: "sequential".to_string(), skip_on_source_failed: 0,
-                min_rating: None, unrated_policy: "skip".to_string(),
                 on_success: "next".to_string(), success_goto_step_id: None,
                 on_rating_fail: "break".to_string(), fail_goto_step_id: None,
                 review_type: "ai".to_string(),
@@ -2594,8 +2273,6 @@ mod tests {
             loop_steps::Model {
                 id: 2, loop_id: loop_model.id, name: "步骤A-2".to_string(),
                 description: String::new(), order_index: 1, todo_id: todo_a,
-                run_mode: "sequential".to_string(), skip_on_source_failed: 0,
-                min_rating: None, unrated_policy: "skip".to_string(),
                 on_success: "next".to_string(), success_goto_step_id: None,
                 on_rating_fail: "break".to_string(), fail_goto_step_id: None,
                 review_type: "ai".to_string(),

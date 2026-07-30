@@ -170,8 +170,9 @@ mod tests {
 
     /// 建一个 loop，workspace_id 可选（None 模拟旧数据未归属）。
     async fn create_loop(db: &Database, ws_id: Option<i64>) -> i64 {
+        // 044：create_loop 已下线 webhook_enabled/icon/review_template_id 等参数
         db.create_loop(
-            "test-loop", "", ws_id, None, false, "", None, None, None, "",
+            "test-loop", "", ws_id, None, None, None, "",
         )
         .await
         .expect("create loop must succeed")

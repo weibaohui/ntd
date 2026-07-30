@@ -4,10 +4,13 @@
 //! - 实体是 SeaORM 自动派生的,直接对应数据库行
 //! - 这里定义的是面向 API 层的 DTO,经过 snake_case / camelCase 转换、字段精简、
 //!   嵌套结构组装,直接给前端消费
+//!
+//! 044（环路瘦身）：触发器、webhook、评审模板、手工创建/更新/触发/审批评分制等
+//! 概念整体下线，本文件只保留只读查询与运行态（启停/标签/门禁审批）所需的 DTO。
 use serde::{Deserialize, Serialize};
 
 use crate::db::entity::{
-    loop_executions, loop_step_executions, loop_steps, loop_triggers, loops, process_templates,
+    loop_executions, loop_step_executions, loop_steps, loops, process_templates,
 };
 use crate::db::loop_::{LoopFullView, LoopListRow};
 
@@ -16,7 +19,6 @@ use crate::db::loop_::{LoopFullView, LoopListRow};
 pub struct LoopListItem {
     #[serde(flatten)]
     pub loop_: LoopDto,
-    pub trigger_count: i32,
     pub step_count: i32,
     pub last_execution_status: String,
     pub last_execution_at: Option<String>,
@@ -29,7 +31,6 @@ impl From<LoopListRow> for LoopListItem {
     fn from(row: LoopListRow) -> Self {
         Self {
             loop_: row.loop_.into(),
-            trigger_count: row.trigger_count,
             step_count: row.step_count,
             last_execution_status: row.last_execution_status,
             last_execution_at: row.last_execution_at,
@@ -53,6 +54,7 @@ impl LoopListItem {
 /// 一次聚合所有 loop 的规模/成功率/触发器分布/Token,避免前端逐 loop 拉取造成的 N+1。
 /// total_loops/active_loops 来自 loops 配置表(不受时间窗影响);
 /// 其余执行类指标来自 loop_executions,按 hours 过滤 started_at。
+/// 044：触发器入口已下线，trigger_type_distribution 仅反映历史执行的触发来源。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoopStats {
     pub total_loops: i64,
@@ -81,7 +83,6 @@ pub struct LoopTriggerTypeCount {
 pub struct LoopDetail {
     #[serde(flatten)]
     pub loop_: LoopDto,
-    pub triggers: Vec<LoopTriggerDto>,
     pub steps: Vec<LoopStepDto>,
     /// 待人工审批的环节执行数（approval_status='pending' 的 loop_step_executions 数量）
     #[serde(default)]
@@ -109,7 +110,6 @@ impl From<LoopFullView> for LoopDetail {
             .collect();
         Self {
             loop_: view.loop_.into(),
-            triggers: view.triggers.into_iter().map(Into::into).collect(),
             steps,
             pending_approval_count: view.pending_approval_count,
         }
@@ -125,13 +125,10 @@ pub struct LoopDto {
     /// 路径不再作为 API 字段返回——cwd 在后端内部从 project_directories 解析，
     /// 前端展示用 project_directories.name，避免长路径重复上送。
     pub workspace_id: Option<i64>,
-    pub webhook_enabled: bool,
     pub status: String,
     /// 标签 ID 列表（单选，复用 Todo 的标签体系）
     #[serde(default)]
     pub tag_ids: Vec<i64>,
-    pub icon: String,
-    pub review_template_id: Option<i64>,
     pub limits_config: String,
     /// 异常处理提示词快照（工艺定义）；NULL=未配置异常处理。需求 035。
     pub abnormal_handler_prompt: Option<String>,
@@ -163,11 +160,8 @@ impl From<loops::Model> for LoopDto {
             name: m.name,
             description: m.description,
             workspace_id: m.workspace_id,
-            webhook_enabled: m.webhook_enabled,
             status: m.status,
             tag_ids: vec![],
-            icon: m.icon,
-            review_template_id: m.review_template_id,
             limits_config: m.limits_config,
             abnormal_handler_prompt: m.abnormal_handler_prompt,
             abnormal_handler_trigger_on: m.abnormal_handler_trigger_on,
@@ -206,31 +200,6 @@ impl LoopDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LoopTriggerDto {
-    pub id: i64,
-    pub loop_id: i64,
-    pub trigger_type: String,
-    pub config: String,
-    pub enabled: bool,
-    pub priority: i32,
-    pub created_at: Option<String>,
-}
-
-impl From<loop_triggers::Model> for LoopTriggerDto {
-    fn from(m: loop_triggers::Model) -> Self {
-        Self {
-            id: m.id,
-            loop_id: m.loop_id,
-            trigger_type: m.trigger_type,
-            config: m.config,
-            enabled: m.enabled != 0,
-            priority: m.priority,
-            created_at: m.created_at,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoopStepDto {
     #[serde(flatten)]
     pub step: LoopStepRawDto,
@@ -253,13 +222,13 @@ pub struct LoopStepRawDto {
     pub order_index: i32,
     /// 关联的 todo id
     pub todo_id: i64,
-    pub run_mode: String,
-    pub skip_on_source_failed: bool,
-    pub min_rating: Option<i32>,
-    pub unrated_policy: String,
+    /// 成功时策略: "next" | "goto" | "end"
     pub on_success: String,
+    /// on_success="goto" 时的目标 step_id
     pub success_goto_step_id: Option<i64>,
+    /// 评分不通过时策略: "break" | "skip" | "goto" | "end"
     pub on_rating_fail: String,
+    /// on_rating_fail="goto" 时的目标 step_id
     pub fail_goto_step_id: Option<i64>,
     /// 评审类型: "ai" = AI 自动评审, "human" = 人工审批
     pub review_type: String,
@@ -282,10 +251,6 @@ impl From<loop_steps::Model> for LoopStepRawDto {
             description: m.description,
             order_index: m.order_index,
             todo_id: m.todo_id,
-            run_mode: m.run_mode,
-            skip_on_source_failed: m.skip_on_source_failed != 0,
-            min_rating: m.min_rating,
-            unrated_policy: m.unrated_policy,
             on_success: m.on_success,
             success_goto_step_id: m.success_goto_step_id,
             on_rating_fail: m.on_rating_fail,
@@ -356,11 +321,11 @@ pub struct LoopStepExecutionDto {
     pub started_at: Option<String>,
     pub finished_at: Option<String>,
     pub error_message: Option<String>,
-    /// 自动评审评分（0-100），来自关联的 execution_record
+    /// 历史快照：旧评分制评审得分（0-100）。044 起新执行不再写入，仅为历史记录展示保留
     pub rating: Option<i32>,
-    /// 评分未达阈值时的策略（skip / pass）
+    /// 历史快照：旧评分制未达标策略，仅为历史记录展示保留
     pub unrated_policy: Option<String>,
-    /// 评分阈值
+    /// 历史快照：旧评分制阈值，仅为历史记录展示保留
     pub min_rating: Option<i32>,
     /// 环节名称，来自 loop_steps 表
     pub step_name: Option<String>,
@@ -372,6 +337,11 @@ pub struct LoopStepExecutionDto {
     pub approval_status: Option<String>,
     /// 审批人的备注/意见
     pub approval_comment: Option<String>,
+    /// 待审批的 human_approval 门禁 ID（044 门禁制审批）：
+    /// 仅当环节处于 pending_approval 且存在 pending 门禁时由 handler 注入，
+    /// 前端凭它调门禁审批接口，无需再查审计接口。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_gate_id: Option<i64>,
     /// 本次环节执行消耗的 token（从 execution_record.usage JSON 解析）
     pub input_tokens: Option<i64>,
     pub output_tokens: Option<i64>,
@@ -400,22 +370,13 @@ impl From<loop_step_executions::Model> for LoopStepExecutionDto {
             conclusion: m.conclusion,
             approval_status: m.approval_status,
             approval_comment: m.approval_comment,
+            pending_gate_id: None, // 由 handler 在 pending_approval 时查询门禁注入
             input_tokens: None,
             output_tokens: None,
             cache_read_input_tokens: None,
             cache_creation_input_tokens: None,
             total_cost_usd: None,
         }
-    }
-}
-
-impl LoopStepExecutionDto {
-    pub fn with_review(mut self, rating: Option<i32>, policy: Option<String>, threshold: Option<i32>, name: Option<String>) -> Self {
-        self.rating = rating;
-        self.unrated_policy = policy;
-        self.min_rating = threshold;
-        self.step_name = name;
-        self
     }
 }
 
@@ -440,172 +401,12 @@ pub struct LoopExecutionDetail {
     pub token_summary: LoopExecutionTokenSummary,
 }
 
-// ====== 请求体（创建/更新）======
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct CreateLoopRequest {
-    pub name: String,
-    #[serde(default)]
-    pub description: String,
-    /// 工作空间 ID（project_directories.id），必填、唯一键。
-    /// 不再接受路径——避免 path 不唯一带来的歧义。
-    /// 使用 #[serde(default)]：v1 路由从 URL 路径覆盖此值，body 中不传也不影响。
-    #[serde(default)]
-    pub workspace_id: Option<i64>,
-    #[serde(default)]
-    pub webhook_enabled: bool,
-    #[serde(default)]
-    pub tag_ids: Vec<i64>,
-    #[serde(default = "default_icon")]
-    pub icon: String,
-    pub review_template_id: Option<i64>,
-    #[serde(default)]
-    pub limits_config: Option<String>,
-    /// 异常处理触发条件 JSON 数组（手工 loop 无异常处理 prompt，此值仅记录不生效）
-    #[serde(default = "default_abnormal_trigger_on")]
-    pub abnormal_handler_trigger_on: String,
-}
-
-fn default_icon() -> String { "loop".to_string() }
-fn default_abnormal_trigger_on() -> String { "[\"capped_step\",\"capped_token\",\"failed\"]".to_string() }
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct UpdateLoopRequest {
-    pub name: String,
-    pub description: String,
-    /// 工作空间 ID（project_directories.id）。
-    /// None=保持当前工作空间，Some(id)=迁移到该工作空间。
-    /// 不接受路径——handler 一律按 id 解析 cwd 路径写入两列。
-    #[serde(default)]
-    pub workspace_id: Option<i64>,
-    #[serde(default)]
-    pub webhook_enabled: bool,
-    pub icon: String,
-    pub review_template_id: Option<i64>,
-    #[serde(default)]
-    pub limits_config: Option<String>,
-    /// 异常处理触发条件 JSON 数组（手工 loop 无异常处理 prompt，此值仅记录不生效）
-    #[serde(default = "default_abnormal_trigger_on")]
-    pub abnormal_handler_trigger_on: String,
-    /// 可选更新的标签 ID（单选）；传空数组或无字段表示不更新标签
-    #[serde(default)]
-    pub tag_ids: Option<Vec<i64>>,
-}
+// ====== 请求体（仅保留运行态：启停）======
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct UpdateLoopStatusRequest {
     /// enabled | paused
     pub status: String,
-}
-
-/// 手动触发 Loop 的请求体，支持传递参数到 prompt 占位符。
-/// 对应 CLI 命令：`ntd loop trigger <id> --param key=value`
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TriggerLoopRequest {
-    /// 触发时传递的参数，会注入到 step prompt 的 {{params.key}} 占位符。
-    /// 例如：`{"project_name": "myproject"}` 会将 prompt 中的 `{{project_name}}` 替换为 `myproject`。
-    #[serde(default)]
-    pub params: std::collections::HashMap<String, String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CreateTriggerRequest {
-    pub trigger_type: String,
-    #[serde(default = "default_trigger_config")]
-    pub config: String,
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-    #[serde(default)]
-    pub priority: i32,
-}
-
-fn default_trigger_config() -> String { "{}".to_string() }
-fn default_true() -> bool { true }
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct UpdateTriggerRequest {
-    pub trigger_type: String,
-    pub config: String,
-    pub enabled: bool,
-    pub priority: i32,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct CreateLoopStepRequest {
-    pub name: String,
-    #[serde(default)]
-    pub description: String,
-    pub todo_id: i64,
-    #[serde(default = "default_run_mode")]
-    pub run_mode: String,
-    #[serde(default)]
-    pub skip_on_source_failed: bool,
-    #[serde(default)]
-    pub min_rating: Option<i32>,
-    #[serde(default = "default_unrated_policy")]
-    pub unrated_policy: String,
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-    #[serde(default = "default_on_success")]
-    pub on_success: String,
-    #[serde(default)]
-    pub success_goto_step_id: Option<i64>,
-    #[serde(default = "default_on_rating_fail")]
-    pub on_rating_fail: String,
-    #[serde(default)]
-    pub fail_goto_step_id: Option<i64>,
-    /// 评审类型: "ai" | "human"（默认 "ai"）
-    #[serde(default = "default_review_type")]
-    pub review_type: String,
-}
-
-fn default_run_mode() -> String { "sequential".to_string() }
-fn default_unrated_policy() -> String { "skip".to_string() }
-fn default_on_success() -> String { "next".to_string() }
-fn default_on_rating_fail() -> String { "break".to_string() }
-fn default_review_type() -> String { "ai".to_string() }
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct UpdateLoopStepRequest {
-    pub name: String,
-    pub description: String,
-    pub todo_id: i64,
-    pub run_mode: String,
-    pub skip_on_source_failed: bool,
-    pub min_rating: Option<i32>,
-    pub unrated_policy: String,
-    pub enabled: bool,
-    pub on_success: String,
-    pub success_goto_step_id: Option<i64>,
-    pub on_rating_fail: String,
-    pub fail_goto_step_id: Option<i64>,
-    /// 评审类型: "ai" | "human"（默认 "ai"）
-    #[serde(default = "default_review_type")]
-    pub review_type: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct ApproveStepExecutionRequest {
-    /// 审批人给出的评分 (0-100)
-    pub rating: i32,
-    /// 审批人的备注/意见（可选）
-    #[serde(default)]
-    pub comment: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct ReorderLoopStepsRequest {
-    /// 新顺序的 step id 列表
-    pub ordered_ids: Vec<i64>,
-}
-
-/// 触发器类型的辅助校验。
-pub fn validate_trigger_type(t: &str) -> Result<(), String> {
-    match t {
-        "manual" | "cron" | "feishu_message" | "feishu_command"
-        | "todo_completed" | "todo_state_changed" | "tag_added" => Ok(()),
-        _ => Err(format!("未知的 trigger_type: {}", t)),
-    }
 }
 
 pub fn validate_loop_status(s: &str) -> Result<(), String> {
@@ -651,20 +452,6 @@ pub fn step_execution_color(status: &str) -> &'static str {
     }
 }
 
-// 触发器类型 → 图标提示(给前端用,避免把映射表塞到前端)
-pub fn trigger_type_icon(t: &str) -> &'static str {
-    match t {
-        "manual" => "play",
-        "cron" => "clock",
-        "feishu_message" => "message",
-        "feishu_command" => "command",
-        "todo_completed" => "check",
-        "todo_state_changed" => "sync",
-        "tag_added" => "tag",
-        _ => "trigger",
-    }
-}
-
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod loop_dto_tests {
@@ -679,11 +466,7 @@ mod loop_dto_tests {
             description: String::new(),
             workspace_path: None,
             workspace_id: None,
-            webhook_enabled: false,
             status: "paused".into(),
-            color: "#722ed1".into(),
-            icon: "loop".into(),
-            review_template_id: None,
             limits_config: "{}".into(),
             abnormal_handler_todo_id: None,
             abnormal_handler_trigger_on: "[]".into(),

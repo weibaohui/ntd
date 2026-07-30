@@ -388,18 +388,9 @@ pub async fn update_todo_tags(
 ) -> Result<ApiResponse<()>, AppError> {
     // V1 隔离：校验 todo 归属路径 workspace
     workspace_guard::verify_todo_belongs_to_ws(&state.db, id, ws_id).await?;
-    // 先查询之前关联的 tag（用于计算新增的 tag）
-    let old_tag_ids: std::collections::HashSet<i64> = state.db.get_todo_tag_ids(id).await.unwrap_or_default().into_iter().collect();
     state.db.set_todo_tags(id, &req.tag_ids).await?;
-    // Loop Studio: 对每个新增的 tag 派发 tag_added 触发器
-    if let Some(dispatcher) = state.loop_trigger_dispatcher.as_ref() {
-        for &tag_id in &req.tag_ids {
-            if !old_tag_ids.contains(&tag_id) {
-                // 只派发新增的 tag（已存在的 tag 不重复触发）
-                let _ = dispatcher.dispatch_tag_added(tag_id, id).await;
-            }
-        }
-    }
+    // 044：tag_added 触发器随 loop_triggers 表下线，不再向 loop dispatcher 派发，
+    // 因此也不再需要在更新前读取旧 tag 集合。
     Ok(ApiResponse::ok(()))
 }
 

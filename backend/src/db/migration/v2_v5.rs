@@ -749,11 +749,12 @@ mod v15_review_templates_tests {
         .expect("insert type=1 todo must succeed")
         .expect("RETURNING id must yield a value");
 
-        // 2) 插一条 loop, review_template_id 指向 todo_id (V14 已经允许)
+        // 2) 插一条引用该 todo 的 loop（仅作上下文）。
+        //    044：loops.review_template_id 列已下线，不再写入该列。
         let loop_id: i64 = query_one_i64(
             db,
-            "INSERT INTO loops (name, status, review_template_id, created_at, updated_at) \
-             VALUES ('loop-A', 'enabled', $1, \
+            "INSERT INTO loops (name, status, created_at, updated_at) \
+             VALUES ('loop-A', 'enabled', \
                      strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), \
                      strftime('%Y-%m-%dT%H:%M:%SZ', 'now')) \
              RETURNING id",
@@ -761,13 +762,6 @@ mod v15_review_templates_tests {
         .await
         .expect("insert loop must succeed")
         .expect("RETURNING id must yield a value");
-        // review_template_id 需要再 UPDATE 一次（SQLite 参数在 RETURNING 与 multi-stmt 上有别扭）
-        db.exec(&format!(
-            "UPDATE loops SET review_template_id = {} WHERE id = {}",
-            todo_id, loop_id
-        ))
-        .await
-        .expect("set loop.review_template_id must succeed");
 
         (todo_id, loop_id)
     }

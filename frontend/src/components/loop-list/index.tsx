@@ -3,8 +3,9 @@
 // 设计要点（028-列表详情独立路由-设计 §4.1）：
 // 1. 替代原 LoopPage 的列表部分；环路详情已独立到 LoopDetailPage（URL: /#/loops/:id）。
 // 2. 拉取环路列表 → 注入 LoopListView 渲染 table。
-// 3. 顶部 header：搜索框 + 刷新 + 新建 + 工作空间配置入口（原 LoopMobilePage 的
+// 3. 顶部 header：搜索框 + 刷新 + 工作空间配置入口（原 LoopMobilePage 的
 //    WorkspaceLoopConfigPage 入口迁到这里，保持列表页能直接管理评审模板）。
+//    044：环路只由工艺 install/upgrade 产生，「新建」按钮已下线。
 // 4. 监听 loopUpdateCount 触发重拉，让外部（如 LoopDetailPage 删了一个环路）能联动刷新。
 // 5. 单函数 ≤ 30 行：数据拉取/过滤/回调已拆到子模块。
 
@@ -50,8 +51,6 @@ function useLoopListData(workspaceId: number | null, loopUpdateCount: number) {
 }
 
 interface LoopListPageProps {
-  /** 新建环路入口（顶部「新建」按钮）。 */
-  onCreateLoop: () => void;
   /** 点击行跳转：由父组件 pushUrl('loops', { id })。 */
   onSelectLoop: (id: number) => void;
   /** 触发外部计数变化，让父组件刷新 LoopDetailPage 等。 */
@@ -70,7 +69,6 @@ interface LoopListPageProps {
  * 4. 把过滤后的列表传给 LoopListView 渲染 table。
  */
 export function LoopListPage({
-  onCreateLoop,
   onSelectLoop,
   onLoopChanged,
   loopUpdateCount = 0,
@@ -83,7 +81,8 @@ export function LoopListPage({
   const { items, loading, reload } = useLoopListData(workspaceId, loopUpdateCount);
 
   // 行操作回调（已拆到 useLoopRowActions）
-  const { handleTrigger, handleDuplicate, handleDelete, handleToggleStatus } = useLoopRowActions({
+  // 044：触发/复制已随手工环路能力下线，只剩删除与启停
+  const { handleDelete, handleToggleStatus } = useLoopRowActions({
     workspaceId, onReload: reload, onLoopChanged,
   });
 
@@ -121,7 +120,6 @@ export function LoopListPage({
           workspaceId={workspaceId}
           onSearchChange={setSearchKeyword}
           onReload={reload}
-          onCreate={onCreateLoop}
           onOpenConfig={handleOpenLoopConfig}
         />
       }
@@ -133,8 +131,6 @@ export function LoopListPage({
         loading={loading}
         tags={state.tags}
         onSelectLoop={onSelectLoop}
-        onTrigger={handleTrigger}
-        onDuplicate={handleDuplicate}
         onDelete={handleDelete}
         onToggleStatus={handleToggleStatus}
         onRefresh={reload}

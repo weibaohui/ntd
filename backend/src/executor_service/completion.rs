@@ -859,17 +859,16 @@ async fn maybe_run_auto_review(
         return;
     }
 
-    // 环路步骤：查出 step 内联 review_prompt + 所属 loop 的 review_template_id
-    // 用于 prompt 三级回退。非环路步骤传 None，回退到默认模板。
-    let (step_review_prompt, loop_review_template_id) = if trigger_type.starts_with("loop_stage") {
-        match db.find_loop_step_with_loop_review_template(todo_id).await {
-            Ok(Some((review_prompt, review_template_id))) => {
-                (review_prompt, review_template_id)
-            }
-            _ => (None, None),
-        }
+    // 环路步骤：查出 step 内联 review_prompt，用于评审 prompt 回退。
+    // 044：loops.review_template_id 已下线（评审模板归环节），环路级模板回退取消，
+    // 非环路步骤传 None，回退到默认模板。
+    let step_review_prompt = if trigger_type.starts_with("loop_stage") {
+        db.find_loop_step_review_prompt_by_todo(todo_id)
+            .await
+            .ok()
+            .flatten()
     } else {
-        (None, None)
+        None
     };
 
     run_auto_review(
@@ -881,7 +880,8 @@ async fn maybe_run_auto_review(
         todo_id,
         record_id,
         step_review_prompt,
-        loop_review_template_id,
+        // 044：环路级评审模板已下线，统一回退到默认模板
+        None,
     )
     .await;
 }

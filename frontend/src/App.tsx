@@ -33,7 +33,6 @@ import { ExecutionPanel } from './components/ExecutionPanel';
 import { TodoDrawer } from './components/TodoDrawer';
 import { SmartCreateModal } from './components/SmartCreateModal';
 import { QuickCaptureModal } from './components/QuickCaptureModal';
-import { LoopFormModal } from './components/LoopFormModal';
 import { LeftRail, type LeftRailKey } from './components/shell/LeftRail';
 import { MobileHeader } from './components/shell/MobileHeader';
 import { FloatingActionButton } from '@/components/shell/FloatingActionButton';
@@ -86,7 +85,6 @@ function AppContent() {
     }
   });
   const [appConfig, setAppConfig] = useState<Config | null>(null);
-  const [loopCreateModalOpen, setLoopCreateModalOpen] = useState(false);
   // 028：loopDetailId 已从 URL path 段派生，不再需要 selectedLoopId React state
   const [loopUpdateCount, setLoopUpdateCount] = useState(0);
   // 刷新回调：触发 loopUpdateCount 递增，LoopListPage/LoopDetailPage 通过 useEffect 监听该值自动重载
@@ -372,9 +370,9 @@ function AppContent() {
           )}
 
           {/* 环路列表页（URL: /#/loops） */}
+          {/* 044：环路仅由工艺 install/upgrade 产生，列表页不再有「新建环路」入口 */}
           {activeView === 'loops' && loopDetailId == null && (
             <LoopListPage
-              onCreateLoop={() => setLoopCreateModalOpen(true)}
               onSelectLoop={handleSelectLoop}
               onLoopChanged={() => setLoopUpdateCount(c => c + 1)}
               loopUpdateCount={loopUpdateCount}
@@ -533,21 +531,6 @@ function AppContent() {
         }}
         onTemporaryClose={() => setConsolePanelDismissed(true)}
         onPermanentClose={() => setConsolePanelVisible(false)}
-      />
-
-      {/* Loop Create Modal */}
-      <LoopFormModal
-        open={loopCreateModalOpen}
-        mode="create"
-        tags={state.tags}
-        onSaved={(newLoopId) => {
-          // 028：创建成功后跳转到环路详情独立页 /#/loops/:id
-          if (newLoopId) pushUrl('loops', { id: newLoopId });
-          setLoopUpdateCount(c => c + 1);
-          setLoopCreateModalOpen(false);
-        }}
-        onClose={() => setLoopCreateModalOpen(false)}
-        defaultWorkspaceId={state.selectedWorkspace}
       />
 
       {/* Wiki 对话全局漂浮窗口 */}

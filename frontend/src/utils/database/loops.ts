@@ -3,24 +3,19 @@
 // 后端 v1 路由（backend/src/handlers/loop_.rs 的 v1_routes）嵌套在
 // /api/v1/workspaces/{ws}/loops 下，workspaceId 必须在 URL 路径段中显式传入。
 // 所有函数的第一个参数都是 workspaceId（即 project_directories.id）。
+//
+// 需求 044（环路瘦身）：create/update/trigger/触发器 CRUD/环节 CRUD/duplicate/
+// export/import/旧评分审批等 API 已随后端下线，本文件只保留只读查询与
+// 运行态操作（启停 / 删除 / 批量）。人工审批改走门禁制接口（@/api/bundled 的 approveGate）。
 
 import { api, unwrap } from './client';
 import type {
-  CreateLoopRequest,
-  CreateLoopStepRequest,
-  CreateTriggerRequest,
   LoopDetail,
   LoopExecutionDetail,
   LoopExecutionListQuery,
   LoopExecutionListResponse,
   LoopListItem,
-  LoopStepDto,
-  LoopTriggerDto,
-  LoopTriggerResponse,
-  UpdateLoopRequest,
   UpdateLoopStatusRequest,
-  UpdateLoopStepRequest,
-  UpdateTriggerRequest,
 } from '@/types/loop';
 
 // ====== Loop 主体 ======
@@ -62,19 +57,9 @@ export async function getLoopStats(workspaceId: number, hours?: number): Promise
   return unwrap(await api.get(`/api/v1/workspaces/${workspaceId}/loops/stats${qs}`));
 }
 
-/** 单个 loop 详情,含 triggers/steps/hooks/todo_map。 */
+/** 单个 loop 详情,含 steps/todo_map。 */
 export async function getLoop(workspaceId: number, id: number): Promise<LoopDetail> {
   return unwrap(await api.get(`/api/v1/workspaces/${workspaceId}/loops/${id}`));
-}
-
-/** 新建 loop,后端强制 status=paused。 */
-export async function createLoop(workspaceId: number, req: CreateLoopRequest): Promise<LoopListItem> {
-  return unwrap(await api.post(`/api/v1/workspaces/${workspaceId}/loops`, req));
-}
-
-/** 全量更新 loop 基本字段。 */
-export async function updateLoop(workspaceId: number, id: number, req: UpdateLoopRequest): Promise<LoopListItem> {
-  return unwrap(await api.put(`/api/v1/workspaces/${workspaceId}/loops/${id}`, req));
 }
 
 /** 删除 loop,级联清子表。 */
@@ -97,62 +82,6 @@ export async function updateLoopStatus(
   req: UpdateLoopStatusRequest,
 ): Promise<LoopListItem> {
   return unwrap(await api.put(`/api/v1/workspaces/${workspaceId}/loops/${id}/status`, req));
-}
-
-/** 复制 loop(返回新 loop)。 */
-export async function duplicateLoop(workspaceId: number, id: number): Promise<LoopListItem> {
-  return unwrap(await api.post(`/api/v1/workspaces/${workspaceId}/loops/${id}/duplicate`, {}));
-}
-
-/** 手动触发 loop,返回新创建的 execution_id。 */
-export async function triggerLoop(workspaceId: number, id: number): Promise<LoopTriggerResponse> {
-  return unwrap(await api.post(`/api/v1/workspaces/${workspaceId}/loops/${id}/trigger`, {}));
-}
-
-// ====== Triggers ======
-
-export async function createTrigger(
-  workspaceId: number,
-  loopId: number,
-  req: CreateTriggerRequest,
-): Promise<LoopTriggerDto> {
-  return unwrap(await api.post(`/api/v1/workspaces/${workspaceId}/loops/${loopId}/triggers`, req));
-}
-
-export async function updateTrigger(
-  workspaceId: number,
-  loopId: number,
-  triggerId: number,
-  req: UpdateTriggerRequest,
-): Promise<LoopTriggerDto> {
-  return unwrap(await api.put(`/api/v1/workspaces/${workspaceId}/loops/${loopId}/triggers/${triggerId}`, req));
-}
-
-export async function deleteTrigger(workspaceId: number, loopId: number, triggerId: number): Promise<void> {
-  await api.delete(`/api/v1/workspaces/${workspaceId}/loops/${loopId}/triggers/${triggerId}`);
-}
-
-// ====== Steps ======
-
-export async function createLoopStep(
-  workspaceId: number,
-  loopId: number,
-  req: CreateLoopStepRequest,
-): Promise<LoopStepDto> {
-  return unwrap(await api.post(`/api/v1/workspaces/${workspaceId}/loops/${loopId}/steps`, req));
-}
-
-export async function updateLoopStep(
-  workspaceId: number,
-  loopId: number,
-  stepId: number,
-  req: UpdateLoopStepRequest,
-): Promise<LoopStepDto> {
-  return unwrap(await api.put(`/api/v1/workspaces/${workspaceId}/loops/${loopId}/steps/${stepId}`, req));
-}
-
-export async function deleteLoopStep(workspaceId: number, loopId: number, stepId: number): Promise<void> {
-  await api.delete(`/api/v1/workspaces/${workspaceId}/loops/${loopId}/steps/${stepId}`);
 }
 
 // ====== Executions ======
@@ -188,24 +117,6 @@ export async function getExecutionById(
   return unwrap(await api.get(`/api/v1/workspaces/${workspaceId}/loop-executions/${executionId}`));
 }
 
-/**
- * 人工审批环节执行。
- * POST /api/v1/workspaces/{ws}/loops/{loopId}/executions/{executionId}/steps/{stepExecutionId}/approve
- */
-export async function approveStepExecution(
-  workspaceId: number,
-  loopId: number,
-  executionId: number,
-  stepExecutionId: number,
-  rating: number,
-  comment?: string,
-): Promise<{ step_execution_id: number; rating: number; status: string }> {
-  return unwrap(await api.post(
-    `/api/v1/workspaces/${workspaceId}/loops/${loopId}/executions/${executionId}/steps/${stepExecutionId}/approve`,
-    { rating, comment },
-  ));
-}
-
 // ─── 批量操作 ───────────────────────────────────────────────────
 
 /**
@@ -235,21 +146,4 @@ export async function batchCopyLoopsWorkspace(
   workspace_id: number,
 ): Promise<{ updated_count: number; total: number }> {
   return unwrap(await api.post(`/api/v1/workspaces/${workspaceId}/loops/batch/copy-workspace`, { ids, workspace_id }));
-}
-
-
-// ====== Loop 导入导出 ======
-
-/** 导出单个环路为 YAML（原生 fetch，不走 axios 拦截器，手动写 v1 路径） */
-export async function exportLoop(workspaceId: number, id: number): Promise<string> {
-  const response = await fetch(`/api/v1/workspaces/${workspaceId}/loops/${id}/export`);
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  return response.text();
-}
-
-/** 导出指定工作空间的所有环路为单个 YAML（原生 fetch，手动写 v1 路径） */
-export async function exportAllLoops(workspaceId: number): Promise<string> {
-  const response = await fetch(`/api/v1/workspaces/${workspaceId}/loops/export`);
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  return response.text();
 }

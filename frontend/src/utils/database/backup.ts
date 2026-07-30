@@ -189,33 +189,3 @@ export async function previewLoopImport(workspaceId: number, yaml: string): Prom
   }
   return body.data;
 }
-
-export interface LoopImportResult {
-  success: boolean;
-  created: {
-    loops: number;
-    todos: number;
-    review_templates: number;
-    tags: number;
-    triggers: number;
-    steps: number;
-  };
-  warnings: { type: string; message: string }[];
-}
-
-/**
- * 合并导入 loops。
- * workspaceId 为 URL 路径段（v1 workspace-scoped 上下文空间）。
- * workspace_id 全局传 null（逐条由 workspace_overrides 指定）。
- * workspace_overrides: loop name → workspace_id（用户逐行选择，仅含已指定的非空项）。
- * skip_names: 用户选择「跳过」的同名环路名集合，后端不创建/覆盖、同名保留原样。
- */
-export async function mergeLoops(
-  workspaceId: number,
-  yaml: string,
-  workspace_id: number | null,
-  workspace_overrides?: Record<string, number>,
-  skip_names?: string[],
-): Promise<{ success: boolean; created: LoopImportResult['created']; updated: LoopImportResult['created']; skipped: string[]; warnings: { type: string; message: string }[] }> {
-  return unwrap(await api.post(`/api/v1/workspaces/${workspaceId}/loops/merge`, { yaml, workspace_id, workspace_overrides, skip_names }));
-}

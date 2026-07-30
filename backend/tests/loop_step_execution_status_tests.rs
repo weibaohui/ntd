@@ -19,13 +19,15 @@ async fn setup_db() -> Database {
 /// 再以指定初始状态创建 step_execution，返回其 id 与所属 loop_execution_id。
 async fn build_step_execution(db: &Database, initial_status: &str) -> (i64, i64) {
     let todo_id = db.create_todo("approval-test-todo", "").await.unwrap();
+    // 044：create_loop 已下线 webhook_enabled/icon/review_template_id 等参数
     let lp = db
-        .create_loop("approval-loop", "", None, None, false, "", None, None, None, "[]")
+        .create_loop("approval-loop", "", None, None, None, None, "[]")
         .await
         .unwrap();
+    // 044：create_loop_step 已下线 run_mode/skip_on_source_failed/min_rating/unrated_policy 参数
     let step = db
         .create_loop_step(
-            lp.id, "step_1", "", todo_id, "sequence", false, None, "skip",
+            lp.id, "step_1", "", todo_id,
             true, "next", None, "fail", None, "human",
         )
         .await
@@ -34,8 +36,9 @@ async fn build_step_execution(db: &Database, initial_status: &str) -> (i64, i64)
         .create_loop_execution(lp.id, None, "manual", "{}", 1)
         .await
         .unwrap();
+    // 044：create_loop_step_execution 已下线 min_rating/unrated_policy 快照参数
     let step_exec = db
-        .create_loop_step_execution(lp_exec.id, step.id, todo_id, initial_status, 0, None, "skip")
+        .create_loop_step_execution(lp_exec.id, step.id, todo_id, initial_status, 0)
         .await
         .unwrap();
     (step_exec.id, lp_exec.id)

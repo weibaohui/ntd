@@ -107,13 +107,12 @@ async fn create_loop_from_template(
     process_template_version: &str,
 ) -> Result<loops::Model, sea_orm::DbErr> {
     let now = utc_timestamp();
+    // 044：loops 已移除 webhook_enabled/icon/review_template_id/color，安装时不再写入。
     let am = loops::ActiveModel {
         name: ActiveValue::Set(name.to_string()),
         description: ActiveValue::Set(description.to_string()),
         workspace_id: ActiveValue::Set(Some(workspace_id)),
         workspace_path: ActiveValue::Set(Some(workspace_path.to_string())),
-        webhook_enabled: ActiveValue::Set(false),
-        icon: ActiveValue::Set("loop".to_string()),
         status: ActiveValue::Set("paused".to_string()),
         limits_config: ActiveValue::Set(limits_config.to_string()),
         abnormal_handler_trigger_on: ActiveValue::Set(abnormal_handler_trigger_on.to_string()),
@@ -283,10 +282,8 @@ async fn create_loop_step_for_link(
         description: ActiveValue::Set(String::new()),
         order_index: ActiveValue::Set(order_index),
         todo_id: ActiveValue::Set(todo_id),
-        run_mode: ActiveValue::Set("sequential".to_string()),
-        skip_on_source_failed: ActiveValue::Set(0),
-        min_rating: ActiveValue::Set(None),
-        unrated_policy: ActiveValue::Set("skip".to_string()),
+        // 044：loop_steps 已移除 run_mode/skip_on_source_failed/min_rating/unrated_policy，
+        // 评审与流转改由 gate_config + on_success/on_rating_fail 表达。
         on_success: ActiveValue::Set(link.on_success.clone()),
         success_goto_step_id: ActiveValue::Set(None),
         // `on_gate_fail` 是设计上优先的失败策略（spec §F4.5）。
@@ -644,16 +641,13 @@ pub async fn upgrade_process_template_loop(
     )
     .await?;
 
-    // 更新 Loop：名称、描述、限制配置（保留原有 icon/review_template 等配置）
+    // 更新 Loop：名称、描述、限制配置（044 后 loops 仅保留这些可更新字段）
     db.update_loop(
         loop_id,
         &loop_name,
         &definition.process.description,
         Some(workspace_id),
         None, /* workspace_path 保留旧路径，不覆盖 */
-        loop_model.webhook_enabled,
-        &loop_model.icon,
-        loop_model.review_template_id,
         Some(&limits_config),
         abnormal_handler_todo_id,
         &abnormal_handler_trigger_on,

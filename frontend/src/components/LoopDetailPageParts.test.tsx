@@ -11,8 +11,6 @@ vi.mock('antd', () => {
 });
 
 vi.mock('@/utils/database/loops', () => ({
-  triggerLoop: vi.fn(),
-  duplicateLoop: vi.fn(),
   deleteLoop: vi.fn(),
   getLoop: vi.fn(),
   updateLoopStatus: vi.fn(),
@@ -25,39 +23,7 @@ describe('useLoopDetailActions', () => {
 
   beforeEach(() => { vi.clearAllMocks(); });
 
-  describe('handleTrigger', () => {
-    it('workspace 为空时静默返回', async () => {
-      const { result } = renderHook(() => useLoopDetailActions({ loopId: 5, workspaceId: null, onLoopChanged: mockOnLoopChanged }));
-      await act(() => result.current.handleTrigger());
-      expect(dbLoops.triggerLoop).not.toHaveBeenCalled();
-    });
-
-    it('触发成功后弹消息并回调', async () => {
-      vi.mocked(dbLoops.triggerLoop).mockResolvedValueOnce({ execution_id: 88 } as never);
-      const { result } = renderHook(() => useLoopDetailActions({ loopId: 5, workspaceId: 1, onLoopChanged: mockOnLoopChanged }));
-      await act(() => result.current.handleTrigger());
-      expect(dbLoops.triggerLoop).toHaveBeenCalledWith(1, 5);
-      expect(message.success).toHaveBeenCalledWith(expect.stringContaining('#88'));
-      expect(mockOnLoopChanged).toHaveBeenCalledOnce();
-    });
-  });
-
-  describe('handleDuplicate', () => {
-    it('workspace 为空时静默返回', async () => {
-      const { result } = renderHook(() => useLoopDetailActions({ loopId: 5, workspaceId: null, onLoopChanged: mockOnLoopChanged }));
-      await act(() => result.current.handleDuplicate());
-      expect(dbLoops.duplicateLoop).not.toHaveBeenCalled();
-    });
-
-    it('复制成功后弹消息并回调', async () => {
-      vi.mocked(dbLoops.duplicateLoop).mockResolvedValueOnce(undefined as never);
-      const { result } = renderHook(() => useLoopDetailActions({ loopId: 5, workspaceId: 1, onLoopChanged: mockOnLoopChanged }));
-      await act(() => result.current.handleDuplicate());
-      expect(dbLoops.duplicateLoop).toHaveBeenCalledWith(1, 5);
-      expect(message.success).toHaveBeenCalledWith(expect.stringContaining('复制'));
-      expect(mockOnLoopChanged).toHaveBeenCalledOnce();
-    });
-  });
+  // 044：触发/复制已随手工环路能力下线，仅保留删除与启停的测试
 
   describe('handleDelete', () => {
     it('删除成功后弹消息并回调', async () => {

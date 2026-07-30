@@ -4,7 +4,6 @@
 import { Typography, Descriptions, Tag, Table } from 'antd';
 import {
   EXECUTOR_VS_EXPERT_VS_MODEL,
-  TRIGGER_TYPES,
   GATE_TYPES,
   type ConceptNode,
 } from '@/components/onboarding/concepts';
@@ -36,24 +35,6 @@ function ExecutorVsExpertTable() {
   );
 }
 
-/** 触发器类型表（仅 loop 概念展示）。 */
-function TriggerTypesTable() {
-  return (
-    <div style={{ marginTop: 16 }}>
-      <Text strong style={{ display: 'block', marginBottom: 8 }}>
-        触发器 8 种类型
-      </Text>
-      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-        {TRIGGER_TYPES.map((t) => (
-          <Tag key={t.type} style={{ marginBottom: 4 }}>
-            {t.type} · {t.label}
-          </Tag>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 /** 门禁类型表（仅 loop/todo 概念展示）。 */
 function GateTypesTable() {
   return (
@@ -80,7 +61,7 @@ function GateTypesTable() {
  * 2. 数据快照按 concept.id 拉对应 API 首条记录。
  * 3. 空态时展示 YAML 示例 + 跳转入口。
  * 4. 底部「去 XX 页」按钮调 pushUrl 路由跳转。
- * 5. 特定概念附加对比表：executor 展示三者对比，loop 展示触发器+门禁类型。
+ * 5. 特定概念附加对比表：executor 展示三者对比，loop/todo 展示门禁类型。
  */
 export function ConceptDetailSection({ concept }: ConceptDetailSectionProps) {
   return (
@@ -113,7 +94,6 @@ export function ConceptDetailSection({ concept }: ConceptDetailSectionProps) {
       />
       {/* 特定概念附加对比表 */}
       {concept.id === 'executor' && <ExecutorVsExpertTable />}
-      {concept.id === 'loop' && <TriggerTypesTable />}
       {(concept.id === 'loop' || concept.id === 'todo') && <GateTypesTable />}
     </section>
   );

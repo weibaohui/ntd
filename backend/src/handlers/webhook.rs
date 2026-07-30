@@ -44,51 +44,8 @@ pub async fn trigger_webhook_with_todo_post_json(
     .await
 }
 
-/// Trigger endpoint for loop webhook (with loop_id) - GET
-pub async fn trigger_webhook_with_loop_get(
-    State(state): State<AppState>,
-    Path(loop_id): Path<i64>,
-    axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
-) -> Result<impl IntoResponse, AppError> {
-    trigger_loop_webhook_internal(Arc::new(state), loop_id, "GET", params, None, None).await
-}
-
-/// Trigger endpoint for loop webhook (with loop_id) - POST with JSON body
-pub async fn trigger_webhook_with_loop_post(
-    State(state): State<AppState>,
-    Path(loop_id): Path<i64>,
-    axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
-    Json(body): Json<serde_json::Value>,
-) -> Result<impl IntoResponse, AppError> {
-    let body_str = serde_json::to_string(&body).ok();
-    let content_type = Some("application/json".to_string());
-    trigger_loop_webhook_internal(Arc::new(state), loop_id, "POST", params, content_type, body_str).await
-}
-
-async fn trigger_loop_webhook_internal(
-    state: Arc<AppState>,
-    loop_id: i64,
-    method: &str,
-    query_params: HashMap<String, String>,
-    content_type: Option<String>,
-    body: Option<String>,
-) -> Result<impl IntoResponse, AppError> {
-    let Some(loop_) = state.db.get_loop(loop_id).await? else {
-        return Err(AppError::NotFound);
-    };
-    if !loop_.webhook_enabled {
-        return Err(AppError::BadRequest("Webhook 未启用".to_string()));
-    }
-    let dispatcher = state
-        .loop_trigger_dispatcher
-        .as_ref()
-        .ok_or_else(|| AppError::Internal("loop dispatcher not ready".to_string()))?;
-    let execution_id = dispatcher
-        .dispatch_loop_webhook(loop_id, method, &query_params, body.as_deref(), content_type.as_deref())
-        .await
-        .ok_or_else(|| AppError::BadRequest("loop 不存在或未启用".to_string()))?;
-    Ok((StatusCode::OK, axum::Json(serde_json::json!({ "success": true, "execution_id": execution_id }))).into_response())
-}
+// 044：loop webhook 触发端点（trigger_webhook_with_loop_get/post 及其 internal）
+// 已随 loop_triggers 表与 loops.webhook_enabled 列下线，仅保留 todo webhook 路径。
 
 async fn trigger_todo_webhook_internal(
     state: Arc<AppState>,
@@ -211,8 +168,5 @@ pub fn v1_routes() -> Router<AppState> {
             "/api/v1/webhooks/todo/{id}/trigger",
             get(trigger_webhook_with_todo).post(trigger_webhook_with_todo_post_json),
         )
-        .route(
-            "/api/v1/webhooks/loop/{id}/trigger",
-            get(trigger_webhook_with_loop_get).post(trigger_webhook_with_loop_post),
-        )
+    // 044：/api/v1/webhooks/loop/{id}/trigger 路由随 loop webhook 功能下线。
 }

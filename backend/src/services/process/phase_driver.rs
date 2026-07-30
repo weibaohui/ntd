@@ -91,12 +91,10 @@ pub async fn execute_step(
     // ai_criteria_review 门禁只比对已有 rating 与 min_score，不依赖此字段。
     let acceptance_criteria: Option<&str> = None;
 
-    // 兼容旧字段 min_rating / review_type。
-    let effective_gate_config = gate_evaluator::infer_gates_from_fallback(
-        &step.gate_config,
-        step.min_rating,
-        &step.review_type,
-    );
+    // 044：loop_steps 已移除 min_rating/review_type 的评分制回退门禁合成。
+    // 门禁配置完全以 step.gate_config 为准；review_type=human 的语义已由
+    // gate_config 里的 human_approval 门禁承载，无需再从旧字段推断。
+    let effective_gate_config = step.gate_config.clone();
     let execution_result = execution_record
         .and_then(|r| r.result.as_deref());
 
@@ -201,10 +199,10 @@ pub async fn execute_step(
     // 门禁详情文本解析失败时回退 execution_record.rating（评审分数的权威落库处）。
     let rating = resolve_step_rating(&gate_summary, execution_rating);
 
-    // 阈值：gate_config 风格步骤的 min_rating 在门禁配置里（ai_criteria_review.min_score），
-    // step.min_rating 为 NULL；持久化到 step_execution，前端才能显示「阈值 N」。
-    let review_threshold =
-        extract_review_threshold(&effective_gate_config).or(step.min_rating);
+    // 阈值：gate_config 风格步骤的阈值在门禁配置里（ai_criteria_review.min_score），
+    // 持久化到 step_execution，前端才能显示「阈值 N」。
+    // 044：step.min_rating 已下线，阈值仅来自 gate_config。
+    let review_threshold = extract_review_threshold(&effective_gate_config);
     if let Some(min) = review_threshold {
         db.set_step_execution_min_rating(step_exec.id, min).await?;
     }

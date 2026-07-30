@@ -14,8 +14,6 @@ vi.mock('@/hooks/useApp', () => ({
 
 vi.mock('@/utils/database/loops', () => ({
   listLoops: vi.fn().mockResolvedValue([]),
-  triggerLoop: vi.fn().mockResolvedValue({ execution_id: 1 }),
-  duplicateLoop: vi.fn().mockResolvedValue(undefined),
   deleteLoop: vi.fn().mockResolvedValue(undefined),
   updateLoopStatus: vi.fn().mockResolvedValue(undefined),
 }));
@@ -47,8 +45,6 @@ vi.mock('@/components/loop-list/LoopListView', () => ({
     loading: boolean;
     tags: Array<{ id: number; name: string; color: string }>;
     onSelectLoop: (id: number) => void;
-    onTrigger: (loop: LoopListItem) => void;
-    onDuplicate: (loop: LoopListItem) => void;
     onDelete: (loop: LoopListItem) => void;
     onToggleStatus: (loop: LoopListItem) => void;
     onRefresh: () => void;
@@ -71,7 +67,7 @@ vi.mock('@/components/settings/workspace/WorkspaceLoopConfigPage', () => ({
 }));
 
 describe('LoopListPage', () => {
-  const mockOnCreateLoop = vi.fn();
+  // 044：环路列表不再有「新建」入口，测试移除 onCreateLoop 相关用例
   const mockOnSelectLoop = vi.fn();
   const mockOnLoopChanged = vi.fn();
 
@@ -82,7 +78,6 @@ describe('LoopListPage', () => {
   it('renders page card with correct title', async () => {
     render(
       <LoopListPage
-        onCreateLoop={mockOnCreateLoop}
         onSelectLoop={mockOnSelectLoop}
         onLoopChanged={mockOnLoopChanged}
       />,
@@ -95,7 +90,6 @@ describe('LoopListPage', () => {
   it('calls onSelectLoop when row is clicked', async () => {
     render(
       <LoopListPage
-        onCreateLoop={mockOnCreateLoop}
         onSelectLoop={mockOnSelectLoop}
         onLoopChanged={mockOnLoopChanged}
       />,
@@ -105,25 +99,9 @@ describe('LoopListPage', () => {
     expect(mockOnSelectLoop).toHaveBeenCalledWith(1);
   });
 
-  it('renders create button and calls onCreateLoop when clicked', async () => {
-    render(
-      <LoopListPage
-        onCreateLoop={mockOnCreateLoop}
-        onSelectLoop={mockOnSelectLoop}
-        onLoopChanged={mockOnLoopChanged}
-      />,
-    );
-
-    const createBtn = screen.getByRole('button', { name: /新建/i });
-    expect(createBtn).toBeInTheDocument();
-    fireEvent.click(createBtn);
-    expect(mockOnCreateLoop).toHaveBeenCalledTimes(1);
-  });
-
   it('renders search input', async () => {
     render(
       <LoopListPage
-        onCreateLoop={mockOnCreateLoop}
         onSelectLoop={mockOnSelectLoop}
         onLoopChanged={mockOnLoopChanged}
       />,
@@ -136,7 +114,6 @@ describe('LoopListPage', () => {
   it('renders refresh button', async () => {
     render(
       <LoopListPage
-        onCreateLoop={mockOnCreateLoop}
         onSelectLoop={mockOnSelectLoop}
         onLoopChanged={mockOnLoopChanged}
       />,

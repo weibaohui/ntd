@@ -4,7 +4,8 @@
 // 1. 用 Ant Design `Table` 替代原 LoopListPanel 的卡片布局，单栏宽屏展示更多列。
 // 2. 点击行 / 名称链接 → 调用 onSelectLoop 由父组件跳转到 `/#/loops/:id`。
 // 3. 批量操作通过 `useBatchActions` hook 复用，与 TodoListView 共享同一套 Modal。
-// 4. 单行操作（触发 / 复制 / 删除 / 启停状态）走 Dropdown 菜单，不挤占行宽。
+// 4. 单行操作（删除 / 启停状态）走 Dropdown 菜单，不挤占行宽。
+//    044：触发/复制菜单项已随手工环路能力下线。
 // 5. 单函数 ≤ 30 行：列定义、行操作菜单、状态渲染、批量按钮已拆到 LoopListViewParts。
 
 import { useEffect, useMemo, useState } from 'react';
@@ -28,10 +29,6 @@ interface LoopListViewProps {
   tags: TagType[];
   /** 当前行点击跳转：由父组件 pushUrl('loops', { id })。 */
   onSelectLoop: (id: number) => void;
-  /** 单行触发入口（菜单「触发」）。 */
-  onTrigger: (loop: LoopListItem) => void;
-  /** 单行复制入口（菜单「复制」）。 */
-  onDuplicate: (loop: LoopListItem) => void;
   /** 单行删除入口（菜单「删除」）。 */
   onDelete: (loop: LoopListItem) => void;
   /** 单行切换状态入口（菜单「启用/暂停」）。 */
@@ -54,8 +51,6 @@ export function LoopListView({
   loading,
   tags,
   onSelectLoop,
-  onTrigger,
-  onDuplicate,
   onDelete,
   onToggleStatus,
   onRefresh,
@@ -83,15 +78,13 @@ export function LoopListView({
   const columns = useMemo(() => buildColumns({
     tags,
     onSelectLoop,
-    onTrigger,
-    onDuplicate,
     onDelete,
     onToggleStatus,
-  }), [tags, onSelectLoop, onTrigger, onDuplicate, onDelete, onToggleStatus]);
+  }), [tags, onSelectLoop, onDelete, onToggleStatus]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-      {/* 顶部工具栏：批量操作按钮（刷新/新建在 PageCard 顶部 header，避免重复） */}
+      {/* 顶部工具栏：批量操作按钮（刷新在 PageCard 顶部 header，避免重复） */}
       <div
         style={{
           display: 'flex',

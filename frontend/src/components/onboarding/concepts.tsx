@@ -82,21 +82,17 @@ export const CONCEPTS: readonly ConceptNode[] = [
     navTarget: 'loops',
     fields: [
       { name: '来源工艺', desc: '这个环路是从哪套工艺装出来的' },
-      { name: '运行状态', desc: '启用 / 暂停，控制能不能被触发器调起' },
+      { name: '运行状态', desc: '启用 / 暂停，控制能不能被任务调起执行' },
       { name: '阶段', desc: '工艺里的大步骤在这里变成可执行的具体节点' },
       { name: '环节', desc: '每个节点要干的事，都挂着一个「事项」当干活指令' },
-      { name: '触发器', desc: '8 种开关：手动 / 定时 / 钩子 / 飞书 / 事项驱动 ...' },
       { name: '限流', desc: '最多跑几次、最多烧多少 token，防 AI 失控狂跑' },
     ],
+    // 044：触发器已整体下线，环路只由「创建任务」唯一入口驱动执行。
     yamlExample: `# 一个环路长这样
 名字: 4 阶段 12 环节交付实例
 从哪套工艺装的: 4 阶段 12 环节交付 (版本 1.0.0)
 状态: 启用
-# 下面是什么开关能把它跑起来
-触发器:
-  - 类型: 手动          # 你点一下才跑
-  - 类型: 钚子          # 别人 POST 这个 URL 就跑
-  - 类型: 飞书命令      # 在飞书群里发 /ntd run 就跑
+# 怎么把它跑起来：在「任务」页创建一个任务，选这条环路即可执行一次
 # 防它失控狂跑的保险
 限流:
   最多跑几次: 20
@@ -197,9 +193,11 @@ export const CONCEPTS: readonly ConceptNode[] = [
 /**
  * 关系图节点（SVG 告标）。
  *
- * 呚标系 viewBox 1000x400，手动布局：
+ * 坐标系 viewBox 1000x400，手动布局：
  *   - 主链（工艺→环路→事项→执行记录）走横向中线 y=200
- *   - 支线（模板库/触发器/执行器专家模型）走上下两侧
+ *   - 支线（模板库/执行器专家模型）走上下两侧
+ *
+ * 044：触发器节点已随触发能力下线移除。
  */
 export interface GraphNode {
   id: string;
@@ -230,12 +228,11 @@ export const GRAPH_NODES: readonly GraphNode[] = [
   // 030：主链节点的 highlights 追加 blackboard/kanban —— 高亮是单向声明，
   // 主链侧不声明的话 hover 主链节点时观察层两个新节点不会亮（需求场景 C）。
   { id: 'process', label: '工艺', x: 120, y: 200, highlights: ['loop', 'todo'], conceptId: 'process', isMain: true },
-  { id: 'loop', label: '环路', x: 400, y: 200, highlights: ['process', 'todo', 'task', 'trigger', 'blackboard'], conceptId: 'loop', isMain: true },
-  { id: 'todo', label: '事项', x: 680, y: 200, highlights: ['loop', 'execution', 'trigger', 'executor', 'expert', 'model', 'skill', 'blackboard'], conceptId: 'todo', isMain: true },
+  { id: 'loop', label: '环路', x: 400, y: 200, highlights: ['process', 'todo', 'task', 'blackboard'], conceptId: 'loop', isMain: true },
+  { id: 'todo', label: '事项', x: 680, y: 200, highlights: ['loop', 'execution', 'executor', 'expert', 'model', 'skill', 'blackboard'], conceptId: 'todo', isMain: true },
   { id: 'execution', label: '执行记录', x: 900, y: 200, highlights: ['todo', 'blackboard', 'kanban'], isMain: true },
-  // 支线节点：与 6 核心概念 + 触发器 + skill 对齐，isMain 缺省 false 圆圈较小
+  // 支线节点：与 6 核心概念 + skill 对齐，isMain 缺省 false 圆圈较小
   { id: 'task', label: '任务', x: 400, y: 340, highlights: ['loop'], conceptId: 'task' },
-  { id: 'trigger', label: '触发器', x: 440, y: 60, highlights: ['loop', 'todo'] },
   { id: 'executor', label: '执行器', x: 680, y: 60, highlights: ['todo', 'expert', 'model'], conceptId: 'executor' },
   { id: 'expert', label: '专家', x: 760, y: 340, highlights: ['todo', 'executor', 'model'], conceptId: 'expert' },
   { id: 'skill', label: '技能 Skill', x: 580, y: 340, highlights: ['todo', 'expert'] },
@@ -292,11 +289,8 @@ export const GRAPH_EDGES: readonly GraphEdge[] = [
   { from: 'loop', to: 'todo', label: '编排引用', isMain: true },
   { from: 'todo', to: 'execution', label: '触发执行', isMain: true },
   // 支线（带箭头方向，细线浅色与主航线区分）
-  // 任务：用户主动意图，选环路跑一次
+  // 任务：用户主动意图，选环路跑一次（044：环路唯一执行入口）
   { from: 'task', to: 'loop', label: '选择执行' },
-  // 触发器：同时驱动环路和事项（8 种类型里 todo_completed/todo_state_changed/tag_added 驱动事项）
-  { from: 'trigger', to: 'loop', label: '驱动环路' },
-  { from: 'trigger', to: 'todo', label: '驱动事项' },
   // 执行器/专家/模型：事项的运行时三要素
   { from: 'executor', to: 'todo', label: '运行时' },
   { from: 'expert', to: 'todo', label: '人格' },
@@ -312,32 +306,30 @@ export const GRAPH_EDGES: readonly GraphEdge[] = [
 ] as const;
 
 /**
- * 快速开始 5 步定义。
+ * 快速开始 4 步定义（044：触发器下线后从 5 步收敛为 4 步）。
  *
  * checkApi 字段决定步骤完成判断拉哪个 API：
- *   processes → bundledApi.getProcesses() 非空
- *   triggers  → dbLoops.listLoops() 后查任一 loop 的非 manual 触发器
- *   tasks     → bundledApi.listTasks() 非空
+ *   processes  → bundledApi.getProcesses() 非空
+ *   tasks      → bundledApi.listTasks() 非空
  *   executions → db.getExecutionRecords() 非空
- *   artifacts → 通过 loop_executions 的产物判断（简化：任一 loop 有产物）
+ *   artifacts  → 通过 loop_executions 的产物判断（简化：与 executions 同源）
  */
 export interface QuickStartStep {
-  /** 序号，1-5。 */
+  /** 序号，1-4。 */
   index: number;
   /** 步骤标题。 */
   title: string;
   /** 跳转目标视图。 */
   navTarget: View;
   /** 完成判断数据源。 */
-  checkApi: 'processes' | 'triggers' | 'tasks' | 'executions' | 'artifacts';
+  checkApi: 'processes' | 'tasks' | 'executions' | 'artifacts';
 }
 
 export const QUICK_START_STEPS: readonly QuickStartStep[] = [
   { index: 1, title: '安装工艺', navTarget: 'processes', checkApi: 'processes' },
-  { index: 2, title: '配置触发器', navTarget: 'loops', checkApi: 'triggers' },
-  { index: 3, title: '创建任务', navTarget: 'tasks', checkApi: 'tasks' },
-  { index: 4, title: '监控执行', navTarget: 'memorial', checkApi: 'executions' },
-  { index: 5, title: '验收产物', navTarget: 'loops', checkApi: 'artifacts' },
+  { index: 2, title: '创建任务', navTarget: 'tasks', checkApi: 'tasks' },
+  { index: 3, title: '监控执行', navTarget: 'memorial', checkApi: 'executions' },
+  { index: 4, title: '验收产物', navTarget: 'loops', checkApi: 'artifacts' },
 ] as const;
 
 /** 顶部 sticky Tab 的三个 key，与 ConceptNavPage 的 section id 对齐。 */
@@ -360,18 +352,6 @@ export const EXECUTOR_VS_EXPERT_VS_MODEL: Array<{
   { concept: '执行器', essence: '运行时 CLI 工具', example: 'claudecode / mobilecoder / opencode' },
   { concept: '专家', essence: '人格 + Skills 组合', example: 'product-manager / architect / code-reviewer' },
   { concept: '模型', essence: '具体跑哪个 LLM', example: 'glm-5.2 / claude-sonnet-5 / gpt-4o' },
-] as const;
-
-/** 触发器 8 种类型 + 中文标签，用于环路详细说明区。 */
-export const TRIGGER_TYPES: ReadonlyArray<{ type: string; label: string }> = [
-  { type: 'manual', label: '手动触发' },
-  { type: 'cron', label: '定时调度' },
-  { type: 'webhook', label: 'Webhook' },
-  { type: 'feishu_message', label: '飞书消息' },
-  { type: 'feishu_command', label: '飞书命令' },
-  { type: 'todo_completed', label: '事项完成' },
-  { type: 'todo_state_changed', label: '事项状态变化' },
-  { type: 'tag_added', label: '标签添加' },
 ] as const;
 
 /** 门禁 4 种类型 + 中文标签，用于环路/事项详细说明区。 */

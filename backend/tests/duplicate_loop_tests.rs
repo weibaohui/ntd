@@ -21,59 +21,26 @@ async fn setup_db() -> Database {
 async fn build_loop_with_goto(db: &Database) -> (i64, i64, i64) {
     // create_todo 返回新 todo 的 id（i64）。
     let todo_id = db.create_todo("goto-test-todo", "").await.unwrap();
-    // workspace_id 传 None：duplicate_loop 不依赖 workspace，只需 loop 本身存在。
+    // 044：create_loop 已下线 webhook_enabled/icon/review_template_id 等参数
     let lp = db
-        .create_loop(
-            "src-loop",
-            "",
-            None,
-            None,
-            false,
-            "",
-            None,
-            None,
-            None,
-            "[]",
-        )
+        .create_loop("src-loop", "", None, None, None, None, "[]")
         .await
         .unwrap();
 
     // 先建 step_b（goto 为空），拿到其 id 后再建 step_a 的 goto 指向它。
+    // 044：create_loop_step 已下线 run_mode/skip_on_source_failed/min_rating/unrated_policy 参数
     let step_b = db
         .create_loop_step(
-            lp.id,
-            "step_b",
-            "",
-            todo_id,
-            "sequence",
-            false,
-            None,
-            "skip",
-            true,
-            "next",
-            None,
-            "fail",
-            None,
-            "none",
+            lp.id, "step_b", "", todo_id,
+            true, "next", None, "fail", None, "none",
         )
         .await
         .unwrap();
     let step_a = db
         .create_loop_step(
-            lp.id,
-            "step_a",
-            "",
-            todo_id,
-            "sequence",
-            false,
-            None,
-            "skip",
-            true,
-            "goto",
-            Some(step_b.id), // success_goto 指向源 loop 的 step_b
-            "fail",
-            None,
-            "none",
+            lp.id, "step_a", "", todo_id,
+            true, "goto", Some(step_b.id), // success_goto 指向源 loop 的 step_b
+            "fail", None, "none",
         )
         .await
         .unwrap();

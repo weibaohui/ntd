@@ -3,7 +3,7 @@
 import { useState, useCallback } from 'react';
 import { Drawer, Descriptions, Tag, Button, Skeleton, Empty, App as AntApp } from 'antd';
 import { ArrowRightOutlined, ReadOutlined } from '@ant-design/icons';
-import * as dbLoops from '@/utils/database/loops';
+import bundledApi from '@/api/bundled';
 import * as dbExecutions from '@/utils/database/executions';
 import type { LogEntry } from '@/types';
 import { LogDrawer } from '@/components/todo-post/LogDrawer';
@@ -37,9 +37,9 @@ export function StepExecList({ stepExecs, loopId, workspaceId, executionId, onAp
     }
   }, []);
 
-  // 人工审批状态
+  // 人工审批状态：记录正在提交审批的环节 id，避免重复点击；
+  // 044 起改门禁制（通过/拒绝二选一），不再需要评分滑块。
   const [approvingId, setApprovingId] = useState<number | null>(null);
-  const [approveRating, setApproveRating] = useState<number>(70);
   const [approveComment, setApproveComment] = useState<string>('');
 
   const handleCardClick = useCallback(async (s: any) => {
@@ -56,16 +56,18 @@ export function StepExecList({ stepExecs, loopId, workspaceId, executionId, onAp
     }
   }, []);
 
-  // 人工审批提交
-  const handleApprove = useCallback(async (stepExecutionId: number) => {
+  // 门禁制人工审批：通过/拒绝二选一，调门禁审批接口。
+  // gateId 由后端在 step execution 的 pending_gate_id 字段注入（仅 pending_approval 时有值）。
+  const handleApprove = useCallback(async (stepExecutionId: number, gateId: number | null, approved: boolean) => {
+    if (gateId == null) {
+      message.error('未找到待审批门禁');
+      return;
+    }
     setApprovingId(stepExecutionId);
     try {
-      const { approveStepExecution } = dbLoops;
-      await approveStepExecution(workspaceId, loopId, executionId, stepExecutionId, approveRating, approveComment || undefined);
-      message.success('审批已提交');
-      // 重置审批表单状态为初始值，防止下一张待审卡片复用上次的评分与备注；
-      // 70 分是默认通过评分，空字符串确保备注框干净。
-      setApproveRating(70);
+      await bundledApi.approveGate(workspaceId, loopId, executionId, stepExecutionId, gateId, approved, approveComment || undefined);
+      message.success(approved ? '已通过' : '已拒绝');
+      // 重置备注，避免下一张待审卡片复用上次的意见
       setApproveComment('');
       onApproved();
     } catch (e: any) {
@@ -73,7 +75,7 @@ export function StepExecList({ stepExecs, loopId, workspaceId, executionId, onAp
     } finally {
       setApprovingId(null);
     }
-  }, [loopId, executionId, approveRating, approveComment, message, onApproved]);
+  }, [workspaceId, loopId, executionId, approveComment, message, onApproved]);
 
   if (stepExecs.length === 0) {
     return <Empty description="无环节执行记录" />;
@@ -206,7 +208,7 @@ export function StepExecList({ stepExecs, loopId, workspaceId, executionId, onAp
                 </div>
               )}
 
-              {/* 人工审批操作区域：pending_approval 状态时显示 */}
+              {/* 人工审批操作区域：pending_approval 状态时显示（044 门禁制：通过/拒绝二选一） */}
               {s.status === 'pending_approval' && (
                 <div
                   onClick={(e) => e.stopPropagation()}
@@ -221,20 +223,6 @@ export function StepExecList({ stepExecs, loopId, workspaceId, executionId, onAp
                   <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-warning, #f59e0b)', marginBottom: 6 }}>
                     ⏳ 等待人工审批
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>评分</span>
-                    <input
-                      type="range"
-                      min={0}
-                      max={100}
-                      value={approveRating}
-                      onChange={(e) => setApproveRating(Number(e.target.value))}
-                      style={{ flex: 1, minWidth: 60 }}
-                    />
-                    <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text)', minWidth: 24, textAlign: 'right' }}>
-                      {approveRating}
-                    </span>
-                  </div>
                   <input
                     type="text"
                     placeholder="审批意见（可选）"
@@ -248,15 +236,26 @@ export function StepExecList({ stepExecs, loopId, workspaceId, executionId, onAp
                       marginBottom: 6, boxSizing: 'border-box',
                     }}
                   />
-                  <Button
-                    size="small"
-                    type="primary"
-                    loading={approvingId === s.id}
-                    onClick={() => handleApprove(s.id)}
-                    style={{ width: '100%', fontSize: 11 }}
-                  >
-                    提交审批
-                  </Button>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <Button
+                      size="small"
+                      type="primary"
+                      loading={approvingId === s.id}
+                      onClick={() => handleApprove(s.id, s.pending_gate_id ?? null, true)}
+                      style={{ flex: 1, fontSize: 11 }}
+                    >
+                      通过
+                    </Button>
+                    <Button
+                      size="small"
+                      danger
+                      loading={approvingId === s.id}
+                      onClick={() => handleApprove(s.id, s.pending_gate_id ?? null, false)}
+                      style={{ flex: 1, fontSize: 11 }}
+                    >
+                      拒绝
+                    </Button>
+                  </div>
                 </div>
               )}
             </div>

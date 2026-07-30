@@ -197,51 +197,8 @@ async fn evaluate_single_gate(
     }
 }
 
-/// 从旧 `min_rating` 与 `review_type` 隐式生成门禁配置 JSON 数组。
-///
-/// 当 `gate_config` 为空或 `[]` 时有此降级：
-/// - `min_rating` 有值 → 生成 `ai_criteria_review` 门禁；
-/// - `review_type == "human"` → 生成 `human_approval` 门禁。
-pub fn infer_gates_from_fallback(
-    gate_config_json: &str,
-    min_rating: Option<i32>,
-    review_type: &str,
-) -> String {
-    // 如果已有显式门禁，直接返回。
-    if let Ok(gates) = serde_json::from_str::<Vec<GateDefinition>>(gate_config_json) {
-        if !gates.is_empty() {
-            return gate_config_json.to_string();
-        }
-    }
-
-    let mut inferred = Vec::new();
-
-    if review_type == "human" {
-        inferred.push(GateDefinition {
-            name: "人工审批".to_string(),
-            gate_type: "human_approval".to_string(),
-            artifact: None,
-            criteria_ref: None,
-            min_score: None,
-            script: None,
-            timeout_secs: None,
-        });
-    }
-
-    if let Some(rating) = min_rating {
-        inferred.push(GateDefinition {
-            name: format!("AI 评审（min_rating={}）", rating),
-            gate_type: "ai_criteria_review".to_string(),
-            artifact: None,
-            criteria_ref: None,
-            min_score: Some(rating),
-            script: None,
-            timeout_secs: None,
-        });
-    }
-
-    serde_json::to_string(&inferred).unwrap_or_else(|_| "[]".to_string())
-}
+// 044：infer_gates_from_fallback（从旧 min_rating/review_type 推断门禁）已下线——
+// loop_steps 不再持有这两列，门禁配置完全以 gate_config 为权威来源。
 
 #[cfg(test)]
 #[allow(
@@ -251,33 +208,6 @@ pub fn infer_gates_from_fallback(
 )]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_infer_gates_from_fallback_empty_keeps_existing() {
-        let result = infer_gates_from_fallback(r#"[{"name":"Test","type":"artifact_present"}]"#, Some(80), "ai");
-        assert!(result.contains("artifact_present"));
-    }
-
-    #[test]
-    fn test_infer_gates_from_fallback_min_rating() {
-        let result = infer_gates_from_fallback("[]", Some(70), "ai");
-        assert!(result.contains("ai_criteria_review"));
-        assert!(!result.contains("human_approval"));
-    }
-
-    #[test]
-    fn test_infer_gates_from_fallback_human_review() {
-        let result = infer_gates_from_fallback("[]", None, "human");
-        assert!(result.contains("human_approval"));
-        assert!(!result.contains("ai_criteria_review"));
-    }
-
-    #[test]
-    fn test_infer_gates_from_fallback_both() {
-        let result = infer_gates_from_fallback("[]", Some(60), "human");
-        assert!(result.contains("ai_criteria_review"));
-        assert!(result.contains("human_approval"));
-    }
 
     /// 模拟完整 evaluate_step_gates 流程：创建 DB 门禁记录并验证。
     #[tokio::test]
