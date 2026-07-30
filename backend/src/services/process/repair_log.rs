@@ -3,9 +3,8 @@
 //! 每次返工、门禁失败、人工审批拒绝时追加条目。
 //! 只追加不覆盖，保留完整修复历史。
 
+use std::io::Write;
 use std::path::Path;
-
-use tokio::io::AsyncWriteExt;
 
 /// repair-log 写入错误。
 #[derive(Debug, thiserror::Error)]
@@ -31,25 +30,26 @@ pub async fn append_repair_entry(
     max_rework: i32,
     target_step_name: &str,
 ) -> Result<(), RepairLogError> {
+    // 用 std::fs 同步写入：与 delivery_state 同理，避免 tokio::fs 在 #[tokio::test]
+    // (current_thread) runtime 下偶发数据丢失（write_all 返回 Ok 但数据未落盘）。
     let dir = Path::new(workspace_path).join(".ntd");
-    tokio::fs::create_dir_all(&dir).await?;
+    std::fs::create_dir_all(&dir)?;
 
     let filepath = dir.join("repair-log.md");
     let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
     // 读取已有内容，计算条目序号。
-    let existing = tokio::fs::read_to_string(&filepath).await.unwrap_or_default();
+    let existing = std::fs::read_to_string(&filepath).unwrap_or_default();
     let entry_count = existing.matches("## 条目").count() + 1;
 
-    let mut file = tokio::fs::OpenOptions::new()
+    let mut file = std::fs::OpenOptions::new()
         .append(true)
         .create(true)
-        .open(&filepath)
-        .await?;
+        .open(&filepath)?;
 
     // 如果文件为空，先写标题头。
     if existing.is_empty() {
-        file.write_all(b"# Repair Log\n\n").await?;
+        file.write_all(b"# Repair Log\n\n")?;
     }
 
     let entry = format!(
@@ -61,7 +61,7 @@ pub async fn append_repair_entry(
         entry_count, now, step_name, reason, rework_count, max_rework, step_name, target_step_name,
     );
 
-    file.write_all(entry.as_bytes()).await?;
+    file.write_all(entry.as_bytes())?;
     Ok(())
 }
 
@@ -83,9 +83,9 @@ mod tests {
         assert!(filepath.exists(), "repair-log.md should exist");
 
         let content = std::fs::read_to_string(&filepath).unwrap();
-        assert!(content.contains("生成 PRD"));
-        assert!(content.contains("1/3"));
-        assert!(content.contains("AI 评审未通过"));
+        assert!(content.contains("生成 PRD"), "应包含环节名, 实际: {content}");
+        assert!(content.contains("1/3"), "应包含返工次数, 实际: {content}");
+        assert!(content.contains("AI 评审未通过"), "应包含原因, 实际: {content}");
     }
 
     #[tokio::test]
@@ -100,8 +100,9 @@ mod tests {
             .await
             .unwrap();
 
-        let content = std::fs::read_to_string(tmp.path().join(".ntd/repair-log.md")).unwrap();
-        assert_eq!(content.matches("## 条目").count(), 2);
+        let filepath = tmp.path().join(".ntd/repair-log.md");
+        let content = std::fs::read_to_string(&filepath).unwrap();
+        assert_eq!(content.matches("## 条目").count(), 2, "应追加 2 个条目, 实际: {content}");
         assert!(content.contains("第一次失败"));
         assert!(content.contains("第二次失败"));
         assert!(content.contains("step B → step A"));

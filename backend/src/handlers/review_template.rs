@@ -129,6 +129,16 @@ pub async fn delete_review_template(
     Ok(Json(ApiResponse::ok(true)))
 }
 
+/// 返回系统内置默认评审 prompt（`DEFAULT_REVIEWER_PROMPT` 常量）。
+///
+/// 供前端「使用默认值」按钮调用：常量即真源，不依赖 review_templates 表的种子行
+/// 是否存在或名字是否被改。只读、无副作用、不查库，因此无需 State。
+pub async fn get_default_review_prompt() -> Result<Json<ApiResponse<String>>, AppError> {
+    Ok(Json(ApiResponse::ok(
+        crate::services::auto_review::DEFAULT_REVIEWER_PROMPT.to_string(),
+    )))
+}
+
 /// v1 API 路由（/api/v1/review-templates/*）。
 ///
 /// 与 `review_template_routes()`（mod.rs）并行，前缀全部改为 `/api/v1/`。
@@ -144,6 +154,11 @@ pub fn v1_routes() -> Router<AppState> {
         .route(
             "/api/v1/review-templates/options",
             get(list_review_template_options),
+        )
+        // 默认评审 prompt（常量真源，供「使用默认值」按钮；须在 {id} 前注册避免被当 id 捕获）
+        .route(
+            "/api/v1/review-templates/default-prompt",
+            get(get_default_review_prompt),
         )
         // 按 id 取/更新/删除单条
         .route(

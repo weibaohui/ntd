@@ -10,6 +10,12 @@ export interface ExpectedArtifact {
   locator?: string;
 }
 
+/** spec 模板文件引用（name + path），执行时注入 AI 上下文供其重点阅读 */
+export interface StepTemplateRef {
+  name: string;
+  path: string;
+}
+
 /** 门禁 */
 export interface GateDefinition {
   name: string;
@@ -18,19 +24,25 @@ export interface GateDefinition {
   criteria_ref?: string;
   min_score?: number;
   script?: string;
+  /** AI 评审等待评分的超时秒数。null/0=不等待直接判定失败；正数=最多等 N 秒出分后判定。 */
+  timeout_secs?: number;
 }
 
 /** 环节（Link）定义 */
 export interface LinkDefinition {
   id: string;
   name: string;
-  step_template?: string;
+  step_template?: StepTemplateRef[];
+  /** 环节级验收标准（内联，原由原型表提供，现随 step_template 解耦） */
+  acceptance_criteria?: string;
   prompt?: string;
   executor?: string;
   expert?: string;
   skills?: string[];
   model?: string;
   review_type?: string;
+  /** 环节级评审模板正文（完整模板，含占位符）；空 = 未设置，回退环路级/默认 */
+  review_prompt?: string;
   expected_artifacts?: ExpectedArtifact[];
   gates?: GateDefinition[];
   on_success?: string;
@@ -38,12 +50,12 @@ export interface LinkDefinition {
   max_rework?: number;
 }
 
-/** 阶段定义 */
+/** 阶段定义
+ * 验收标准只归环节（见 LinkDefinition.acceptance_criteria）；阶段不再挂验收标准（需求 036）。 */
 export interface PhaseDefinition {
   id: string;
   name: string;
   spec?: string;
-  acceptance_criteria?: string;
   links?: LinkDefinition[];
 }
 
@@ -63,11 +75,19 @@ export interface ProcessLimits {
   max_total_tokens?: number;
 }
 
+/** 工艺异常处理配置（YAML abnormal_handler 段，需求 035）。 */
+export interface AbnormalHandlerConfig {
+  /** 异常处理提示词，可含 {{loop_name}} {{abnormal_status}} {{error_detail}} 等占位符。空=未配置。 */
+  prompt?: string;
+  /** 触发条件：capped_step / capped_token / failed */
+  trigger_on?: string[];
+}
+
 /** 工艺完整定义（YAML 顶层） */
 export interface ProcessDefinition {
   process: ProcessMeta;
   limits?: ProcessLimits;
   phases?: PhaseDefinition[];
   step_templates?: unknown[];
-  abnormal_handler?: unknown;
+  abnormal_handler?: AbnormalHandlerConfig;
 }

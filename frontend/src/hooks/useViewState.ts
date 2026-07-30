@@ -7,6 +7,7 @@
  *   /#/todos/:id/posts/:rid   事项某次执行记录的帖子页
  *   /#/loops                  环路列表（table 形态）
  *   /#/loops/:id              环路详情 #id（独立页）
+ *   /#/tasks/:id              任务详情 #id（独立页）
  *   /#/dashboard              仪表盘
  *   /#/settings?tab=system    设置-系统标签
  *   /#/memorial?mode=kanban   看板-看板视图
@@ -152,6 +153,13 @@ function getInitialLoopDetailId(): number | null {
   return getPathIdAt(segs, 1);
 }
 
+/** 任务详情 id：来自 path 段 `tasks/:id` 中的 :id。 */
+function getInitialTaskDetailId(): number | null {
+  const segs = getHashPathSegments();
+  if (segs[0] !== 'tasks') return null;
+  return getPathIdAt(segs, 1);
+}
+
 /** 帖子记录 id：来自 path 段 `todos/:id/posts/:rid` 中的 :rid。 */
 function getInitialPostRecordId(): number | null {
   const segs = getHashPathSegments();
@@ -183,9 +191,24 @@ function getInitialBlackboardFile(): string | null {
   return params.get('file');
 }
 
-function getInitialProcessName(): string | null {
+function getInitialProcessGuid(): string | null {
   const params = getHashSearchParams();
-  return params.get('name');
+  return params.get('guid');
+}
+
+/**
+ * 029：从 hash query 解析工艺编辑器模式。
+ * - `'new'` / `'edit'` → 对应编辑器态
+ * - 缺失或非法值 → `'list'`（默认列表页）
+ *
+ * 只在 `processes` view 下生效；其他 view 即使带 `?processMode=new` 也忽略，
+ * 避免跨视图串台（syncFromHash 里会按 view 过滤）。
+ */
+function getInitialProcessMode(): 'list' | 'new' | 'edit' {
+  const params = getHashSearchParams();
+  const mode = params.get('processMode');
+  if (mode === 'new' || mode === 'edit') return mode;
+  return 'list';
 }
 
 /** 导航参数：todos/loops 用 id/recordId 构造 path 段；其他视图用 query。 */
@@ -199,7 +222,17 @@ interface NavOpts {
   workspace?: number | null;
   slug?: string | null;
   file?: string | null;
-  name?: string | null;
+  /** 040：工艺模板 guid（processes 视图定位模板/编辑器目标；name 可重复后只能用 guid 寻址）。 */
+  guid?: string | null;
+  /**
+   * 029：工艺编辑器模式。
+   * - `'list'`（默认）：渲染工艺列表页
+   * - `'new'`：渲染编辑器空白态，先弹元信息 Modal
+   * - `'edit'`：渲染编辑器，加载 `guid` 对应 YAML
+   *
+   * 与看板 `mode`（BoardMode）通过 query key 区分：看板用 `?mode=`，工艺用 `?processMode=`。
+   */
+  processMode?: 'list' | 'new' | 'edit';
 }
 
 /**
@@ -225,6 +258,13 @@ function buildHashUrl(view: View, opts?: NavOpts): string {
     }
     return `#/loops`;
   }
+  // 任务命名空间：path 段驱动，与 todos/loops 一致
+  if (view === 'tasks') {
+    if (opts?.id != null) {
+      return `#/tasks/${opts.id}`;
+    }
+    return `#/tasks`;
+  }
   // 其他视图保持 query 参数风格
   const path = `/${view}`;
   const params = new URLSearchParams();
@@ -239,9 +279,14 @@ function buildHashUrl(view: View, opts?: NavOpts): string {
     // blackboard 视图的 file 参数标识当前查看的文件
     params.set('file', opts.file);
   }
-  if (view === 'processes' && opts?.name) {
-    // processes 视图的 name 参数定位工艺模板，用于「环路 → 来源工艺」回跳自动开详情
-    params.set('name', opts.name);
+  if (view === 'processes' && opts?.guid) {
+    // processes 视图的 guid 参数定位工艺模板，用于「环路 → 来源工艺」回跳自动开详情
+    params.set('guid', opts.guid);
+  }
+  // 029：工艺编辑器模式。list（默认）渲染列表页，new/edit 渲染编辑器。
+  // 用独立 query key `processMode` 避免与看板 `mode` 冲突。
+  if (view === 'processes' && opts?.processMode && opts.processMode !== 'list') {
+    params.set('processMode', opts.processMode);
   }
   const qs = params.toString();
   return qs ? `#${path}?${qs}` : `#${path}`;
@@ -275,20 +320,24 @@ export function viewToNavKey(view: View): string {
 
 export function useViewState() {
   const [activeView, setActiveView] = useState<View>(getInitialView);
-  // 028：todoDetailId / loopDetailId / postRecordId 来自 path 段，刷新可恢复
+  // 028：todoDetailId / loopDetailId / taskDetailId / postRecordId 来自 path 段，刷新可恢复
   const [todoDetailId, setTodoDetailId] = useState<number | null>(getInitialTodoDetailId);
   const [loopDetailId, setLoopDetailId] = useState<number | null>(getInitialLoopDetailId);
+  const [taskDetailId, setTaskDetailId] = useState<number | null>(getInitialTaskDetailId);
   const [postRecordId, setPostRecordId] = useState<number | null>(getInitialPostRecordId);
   const [activeTab, setActiveTab] = useState<string | null>(getInitialTab);
   const [boardMode, setBoardMode] = useState<BoardMode>(getInitialBoardMode);
   const [wikiSlug, setWikiSlug] = useState<string | null>(getInitialWikiSlug);
   const [blackboardFile, setBlackboardFile] = useState<string | null>(getInitialBlackboardFile);
-  const [processName, setProcessName] = useState<string | null>(getInitialProcessName);
+  const [processGuid, setProcessGuid] = useState<string | null>(getInitialProcessGuid);
+  // 029：工艺编辑器模式。list（默认）= 列表页，new/edit = 编辑器态。
+  // 与 processGuid 配套：edit 模式下 processGuid 指向被编辑的工艺 guid（040 起按 guid 寻址）。
+  const [processMode, setProcessMode] = useState<'list' | 'new' | 'edit'>(getInitialProcessMode);
 
   // setters 集中传入 syncFromHash，避免每个回调都重复一遍
   const setters = {
-    setActiveView, setTodoDetailId, setLoopDetailId, setPostRecordId,
-    setActiveTab, setBoardMode, setWikiSlug, setBlackboardFile, setProcessName,
+    setActiveView, setTodoDetailId, setLoopDetailId, setTaskDetailId, setPostRecordId,
+    setActiveTab, setBoardMode, setWikiSlug, setBlackboardFile, setProcessGuid, setProcessMode,
   };
 
   const pushUrl = useCallback((view: View, opts?: NavOpts) => {
@@ -351,17 +400,19 @@ export function useViewState() {
       pushUrl('todos', { id: todoDetailId });
       return;
     }
-    // 事项/环路详情返回列表
+    // 事项/环路/任务详情返回列表
     if (activeView === 'todos') { replaceUrl('todos'); return; }
     if (activeView === 'loops') { replaceUrl('loops'); return; }
+    if (activeView === 'tasks') { replaceUrl('tasks'); return; }
     pushUrl(activeView);
   }, [activeView, todoDetailId, postRecordId, pushUrl, replaceUrl]);
 
   // MobileHeader 需要知道当前是否处于「详情态」以决定返回按钮显隐；
-  // 由 todoDetailId/loopDetailId 派生，保持兼容旧 activePanel: 'detail' | 'list' 接口。
+  // 由 todoDetailId/loopDetailId/taskDetailId 派生，保持兼容旧 activePanel: 'detail' | 'list' 接口。
   // 帖子页同样视为 detail 态，MobileHeader 返回按钮可触发 backToList 回到父事项详情。
   const activePanel: Panel = (activeView === 'todos' && todoDetailId != null)
     || (activeView === 'loops' && loopDetailId != null)
+    || (activeView === 'tasks' && taskDetailId != null)
     ? 'detail'
     : 'list';
 
@@ -370,6 +421,7 @@ export function useViewState() {
     // 028：详情 id（path 段驱动）
     todoDetailId,
     loopDetailId,
+    taskDetailId,
     postRecordId,
     // 派生：仅用于 MobileHeader 返回按钮显隐
     activePanel,
@@ -377,7 +429,10 @@ export function useViewState() {
     boardMode,
     wikiSlug,
     blackboardFile,
-    processName,
+    processGuid,
+    // 029：工艺编辑器模式。list（默认）= 列表页，new/edit = 编辑器态。
+    // ProcessPage 根据 mode 分流：list 渲染列表，new/edit 渲染 ProcessEditor。
+    processMode,
     showView,
     selectTodo,
     selectWiki,
@@ -398,28 +453,34 @@ function syncStateFromOptions(
     setActiveView: (v: View) => void;
     setTodoDetailId: (id: number | null) => void;
     setLoopDetailId: (id: number | null) => void;
+    setTaskDetailId: (id: number | null) => void;
     setPostRecordId: (id: number | null) => void;
     setActiveTab: (t: string | null) => void;
     setBoardMode: (m: BoardMode) => void;
     setWikiSlug: (s: string | null) => void;
     setBlackboardFile: (f: string | null) => void;
-    setProcessName: (n: string | null) => void;
+    setProcessGuid: (g: string | null) => void;
+    setProcessMode: (m: 'list' | 'new' | 'edit') => void;
   },
 ): void {
   const {
-    setActiveView, setTodoDetailId, setLoopDetailId, setPostRecordId,
-    setActiveTab, setBoardMode, setWikiSlug, setBlackboardFile, setProcessName,
+    setActiveView, setTodoDetailId, setLoopDetailId, setTaskDetailId, setPostRecordId,
+    setActiveTab, setBoardMode, setWikiSlug, setBlackboardFile, setProcessGuid, setProcessMode,
   } = setters;
   setActiveView(view);
   // todos: id+recordId 表示帖子页；仅 id 表示详情；都没有表示列表
   setTodoDetailId(view === 'todos' ? (opts?.id ?? null) : null);
   setPostRecordId(view === 'todos' ? (opts?.recordId ?? null) : null);
   setLoopDetailId(view === 'loops' ? (opts?.id ?? null) : null);
+  setTaskDetailId(view === 'tasks' ? (opts?.id ?? null) : null);
   setActiveTab(opts?.tab ?? null);
   setBoardMode(opts?.mode ?? 'memorial');
   setWikiSlug(view === 'wiki' ? (opts?.slug ?? null) : null);
   setBlackboardFile(view === 'blackboard' ? (opts?.file ?? null) : null);
-  setProcessName(view === 'processes' ? (opts?.name ?? null) : null);
+  setProcessGuid(view === 'processes' ? (opts?.guid ?? null) : null);
+  // 029：工艺编辑器模式仅在 processes view 下生效，其他 view 一律 fallback 到 'list'。
+  // 避免跨视图串台：如 /#/dashboard?processMode=new 不应让 dashboard 渲染编辑器。
+  setProcessMode(view === 'processes' ? (opts?.processMode ?? 'list') : 'list');
 }
 
 /**
@@ -431,12 +492,14 @@ function syncFromHash(setters: {
   setActiveView: (v: View) => void;
   setTodoDetailId: (id: number | null) => void;
   setLoopDetailId: (id: number | null) => void;
+  setTaskDetailId: (id: number | null) => void;
   setPostRecordId: (id: number | null) => void;
   setActiveTab: (t: string | null) => void;
   setBoardMode: (m: BoardMode) => void;
   setWikiSlug: (s: string | null) => void;
   setBlackboardFile: (f: string | null) => void;
-  setProcessName: (n: string | null) => void;
+  setProcessGuid: (g: string | null) => void;
+  setProcessMode: (m: 'list' | 'new' | 'edit') => void;
 }): void {
   const segments = getHashPathSegments();
   const view = parseViewFromSegments(segments);
@@ -445,17 +508,24 @@ function syncFromHash(setters: {
   const mode = params.get('mode') as BoardMode | null;
   const slug = params.get('slug');
   const file = params.get('file');
-  const name = params.get('name');
+  const guid = params.get('guid');
+  // 029：工艺编辑器模式。非法值（如 ?processMode=foo）一律 fallback 到 'list'。
+  const rawProcessMode = params.get('processMode');
+  const processMode: 'list' | 'new' | 'edit' =
+    rawProcessMode === 'new' || rawProcessMode === 'edit' ? rawProcessMode : 'list';
   const resolvedMode = mode && ALL_BOARD_MODES.includes(mode) ? mode : 'memorial';
 
   setters.setActiveView(view);
-  // todos/loops 详情 id 仅在对应 view 下提取，避免跨视图串台
+  // todos/loops/tasks 详情 id 仅在对应 view 下提取，避免跨视图串台
   setters.setTodoDetailId(view === 'todos' ? getPathIdAt(segments, 1) : null);
   setters.setPostRecordId(view === 'todos' && segments[2] === 'posts' ? getPathIdAt(segments, 3) : null);
   setters.setLoopDetailId(view === 'loops' ? getPathIdAt(segments, 1) : null);
+  setters.setTaskDetailId(view === 'tasks' ? getPathIdAt(segments, 1) : null);
   setters.setActiveTab(tab || null);
   setters.setBoardMode(resolvedMode);
   setters.setWikiSlug(view === 'wiki' ? (slug || null) : null);
   setters.setBlackboardFile(view === 'blackboard' ? (file || null) : null);
-  setters.setProcessName(view === 'processes' ? (name || null) : null);
+  setters.setProcessGuid(view === 'processes' ? (guid || null) : null);
+  // 029：工艺编辑器模式仅在 processes view 下生效，其他 view 即使带 ?processMode=new 也忽略。
+  setters.setProcessMode(view === 'processes' ? processMode : 'list');
 }

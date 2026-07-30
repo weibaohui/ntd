@@ -122,7 +122,8 @@ export function LoopListView({
           dataSource={items}
           loading={loading}
           size="small"
-          scroll={{ x: 1200 }}
+          // 工艺名称/版本两列合并为单列「工艺」后，scroll.x 从 1440 收回 1360。
+          scroll={{ x: 1360 }}
           pagination={{
             pageSize: 20,
             showSizeChanger: true,

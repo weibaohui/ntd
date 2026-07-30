@@ -65,13 +65,12 @@ export function ProcessTemplatesTab({ refreshTick }: { refreshTick?: number }) {
     loadProcesses();
   }, [loadProcesses, refreshTick]);
 
-  // 复制系统工艺到用户层。点击后调用 copyProcessToUser，成功后刷新列表，
-  // 对应工艺的来源从"系统"变为"用户"。
+  // 复制系统工艺到用户层。040 起按 guid 寻址：副本换新 guid，与模板同名共存、模板不消失。
   const handleCopyToUser = async (record: ProcessTemplate) => {
-    setCopying(record.name);
+    setCopying(record.guid);
     try {
-      const result = await bundledApi.copyProcessToUser(record.name);
-      message.success(`已复制到用户层：${result.user_source_path}`);
+      const result = await bundledApi.copyProcessToUser(record.guid);
+      message.success(`已复制为用户工艺：${result.user_source_path}`);
       await loadProcesses();
     } catch (e: any) {
       message.error('复制失败: ' + (e?.message || e));
@@ -80,10 +79,10 @@ export function ProcessTemplatesTab({ refreshTick }: { refreshTick?: number }) {
     }
   };
 
-  // 查看工艺详情：弹出 Modal 展示 YAML 定义。
+  // 查看工艺详情：弹出 Modal 展示 YAML 定义（040：按 guid 取详情）。
   const handleView = async (record: ProcessTemplate) => {
     try {
-      const detail = await bundledApi.getProcess(record.name);
+      const detail = await bundledApi.getProcess(record.guid);
       setDetail(detail);
       setDetailOpen(true);
     } catch (e: any) {
@@ -162,7 +161,7 @@ export function ProcessTemplatesTab({ refreshTick }: { refreshTick?: number }) {
                 type="text"
                 size="small"
                 icon={<CopyOutlined />}
-                loading={copying === record.name}
+                loading={copying === record.guid}
                 onClick={() => handleCopyToUser(record)}
               >
                 复制到用户层
@@ -240,7 +239,8 @@ export function ProcessTemplatesTab({ refreshTick }: { refreshTick?: number }) {
             <Text type="secondary">YAML 定义：</Text>
             <pre
               style={{
-                background: '#f5f5f5',
+                // YAML 预览底色用主题填充色：亮色浅灰，暗色切到 surface 灰
+                background: 'var(--color-fill-tertiary)',
                 padding: 12,
                 borderRadius: 4,
                 maxHeight: 400,

@@ -17,9 +17,12 @@ import {
   Input,
   Empty,
 } from 'antd';
-import { ThunderboltOutlined, CaretRightOutlined } from '@ant-design/icons';
+import { ThunderboltOutlined, CaretRightOutlined, ClockCircleOutlined } from '@ant-design/icons';
 import bundledApi from '@/api/bundled';
+// 执行历史行的时间文本组装逻辑抽在同目录 helpers.ts，保持本文件 JSX 声明式。
+import { formatExecTimeInfo } from './helpers';
 import { ProcessExecutionBoard } from '@/components/process/ProcessExecutionBoard';
+import type { GateDefinition } from '@/types/process';
 import { complexityColor, complexityLabel, statusColor } from './constants';
 import styles from './TaskDetailPanel.module.css';
 
@@ -30,6 +33,8 @@ interface TaskDetailPanelProps {
   workspaceId: number;
   /** 再次执行成功后回调，让宿主重拉列表保持口径一致。 */
   onTriggered?: () => void;
+  /** 任务标题加载完成后回调，供外层 PageCard 动态更新标题（详情标题功能）。 */
+  onTitleReady?: (title: string) => void;
 }
 
 interface StepInfo {
@@ -38,7 +43,9 @@ interface StepInfo {
   order_index: number;
   skill_names: string[];
   expected_artifacts: Array<{ name: string; path?: string; locator?: string; type: string }>;
-  gate_config: Array<{ name: string; type: string }>;
+  // 后端 get_task_detail 返回的是完整 gate_config JSON；这里复用工艺类型，
+  // 让 AI 评审门禁的 min_score 等判定条件能在工艺要求 tab 展示出来。
+  gate_config: GateDefinition[];
 }
 
 interface ExecInfo {
@@ -50,6 +57,8 @@ interface ExecInfo {
   completed_steps: number;
   failed_steps: number;
   requirement?: string;
+  /** 待人工审批的环节数：>0 时在执行历史行上显示引导标记（NTD-004）。 */
+  pending_approval_count?: number;
 }
 
 interface TaskDetailData {
@@ -69,6 +78,23 @@ function gateLabel(type: string): string {
     script_check: '脚本校验',
   };
   return map[type] ?? type;
+}
+
+/** 把单条门禁的关键判定条件拼成短文本；无额外参数时返回空串，保持 Tag 简洁。 */
+function gateDetailText(gate: GateDefinition): string {
+  const parts: string[] = [];
+  // AI 评审门禁必须暴露通过阈值，否则用户无法理解「评分达标」到底要求多少分。
+  if (gate.type === 'ai_criteria_review' && typeof gate.min_score === 'number') {
+    parts.push(`阈值 ≥ ${gate.min_score} 分`);
+  }
+  // timeout_secs 仅正数有意义：表示最多等待 AI 出分的秒数，0/null 不展示。
+  if (gate.type === 'ai_criteria_review' && typeof gate.timeout_secs === 'number' && gate.timeout_secs > 0) {
+    parts.push(`等待 ≤ ${gate.timeout_secs}s`);
+  }
+  // 产物存在门禁的补充信息是产物名；script_check 的补充信息是脚本路径。
+  if (gate.type === 'artifact_present' && gate.artifact) parts.push(`产物 ${gate.artifact}`);
+  if (gate.type === 'script_check' && gate.script) parts.push(`脚本 ${gate.script}`);
+  return parts.join('；');
 }
 
 /** 执行状态 → Progress 状态语义（success/exception/active/normal）。 */
@@ -102,7 +128,7 @@ function DetailHeader({
           )}
         </div>
         <div className={styles.metaRow}>
-          <span>模板：{template?.display_name ?? '—'}</span>
+          <span>工艺：{template?.display_name ?? '—'}</span>
           <span className={styles.metaDivider}>·</span>
           <span>版本：{template?.version ?? '—'}</span>
         </div>
@@ -150,9 +176,12 @@ function StepItem({ step }: { step: StepInfo }) {
         )}
         {step.gate_config.length > 0 && (
           <StepMetaRow label="门禁">
-            {step.gate_config.map((g, i) => (
-              <Tag key={i} style={{ fontSize: 12 }}>{g.name} ({gateLabel(g.type)})</Tag>
-            ))}
+            {step.gate_config.map((g, i) => {
+              // 有判定参数时追加到类型标签后面，例如 AI 评审会显示「阈值 ≥ 80 分」。
+              const detail = gateDetailText(g);
+              const suffix = detail ? `${gateLabel(g.type)} · ${detail}` : gateLabel(g.type);
+              return <Tag key={i} style={{ fontSize: 12 }}>{g.name} ({suffix})</Tag>;
+            })}
           </StepMetaRow>
         )}
       </div>
@@ -177,7 +206,7 @@ function OverviewTab({
   return (
     <div className={styles.paneBody}>
       <Descriptions column={1} size="small" title="基本信息">
-        <Descriptions.Item label="模板">{template?.display_name ?? '—'}</Descriptions.Item>
+        <Descriptions.Item label="工艺模板">{template?.display_name ?? '—'}</Descriptions.Item>
         <Descriptions.Item label="版本">{template?.version ?? '—'}</Descriptions.Item>
         <Descriptions.Item label="复杂度">
           {template?.complexity
@@ -247,6 +276,9 @@ function ExecTab({
       {executions.map((e) => {
         // 该执行是否处于展开态：决定箭头旋转与详情框显隐。
         const expanded = activeExec === e.id;
+        // 时间信息只算一次：进行中返回「开始时间」，已结束追加「耗时」；
+        // 无 started_at（schema 上不会发生，纯防御）返回空串，下方判空跳过渲染。
+        const timeText = formatExecTimeInfo(e.started_at, e.finished_at);
         return (
           <div
             key={e.id}
@@ -273,10 +305,23 @@ function ExecTab({
                   <Tag color={statusColor(e.status)}>{e.status}</Tag>
                   <Text>#{e.id} {e.completed_steps}/{e.total_steps} 完成</Text>
                   {e.failed_steps > 0 && <Tag color="orange">失败 {e.failed_steps}</Tag>}
+                  {/* 待审批引导：审批按钮在展开后的工艺看板里，
+                      此处用醒目 Tag 告诉用户"需要展开处理"，否则 loop 会永久停在该环节。 */}
+                  {(e.pending_approval_count ?? 0) > 0 && (
+                    <Tag color="warning">⏳ {e.pending_approval_count} 条待审批，展开处理</Tag>
+                  )}
+                  {/* 时间信息区：开始时间（本地、分钟精度）+ 已结束时的耗时。
+                      用时钟图标做视觉锚点，与前面的状态/进度 Tag 区分层次。 */}
+                  {timeText && (
+                    <Text type="secondary">
+                      <ClockCircleOutlined /> {timeText}
+                    </Text>
+                  )}
                 </Space>
-                <div className={styles.execRowDesc}>
-                  {e.requirement || <Text type="secondary">{e.started_at ?? ''}</Text>}
-                </div>
+                {/* 需求描述行：仅在本次执行带了需求文本时渲染。
+                    历史回退逻辑（无需求时显示原始 started_at ISO 串）已移除——
+                    时间信息已由上方专用时间区展示，未格式化的 UTC ISO 串没有可读性。 */}
+                {e.requirement && <div className={styles.execRowDesc}>{e.requirement}</div>}
               </div>
               {/* 右侧：旋转的箭头 + 文案，明确当前是展开还是收起。 */}
               <div className={styles.execRowAction}>
@@ -307,7 +352,7 @@ function ExecTab({
  * 3. 三个 Tab：概览（信息+最近执行进度）/工艺要求（轻量步骤列表）/执行历史（列表+全宽看板）。
  * 4. 「再次执行」打开 Modal 调 createTaskExecution 创建新执行。
  */
-export function TaskDetailPanel({ taskId, workspaceId, onTriggered }: TaskDetailPanelProps) {
+export function TaskDetailPanel({ taskId, workspaceId, onTriggered, onTitleReady }: TaskDetailPanelProps) {
   const [loading, setLoading] = useState(false);
   const [detail, setDetail] = useState<TaskDetailData | null>(null);
   const [activeExec, setActiveExec] = useState<number | null>(null);
@@ -324,6 +369,10 @@ export function TaskDetailPanel({ taskId, workspaceId, onTriggered }: TaskDetail
       .getTaskDetail(workspaceId, taskId)
       .then((raw) => {
         if (alive) setDetail(raw as TaskDetailData);
+        // 详情标题：数据加载后通知外层 PageCard 更新标题。
+        if (alive && onTitleReady && (raw as TaskDetailData).task?.title) {
+          onTitleReady((raw as TaskDetailData).task.title);
+        }
       })
       .catch(() => {
         if (alive) message.error('加载失败');

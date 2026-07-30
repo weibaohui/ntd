@@ -32,6 +32,12 @@ mod v70;
 mod v71;
 mod v72;
 mod v73;
+mod v74;
+mod v75;
+mod v76;
+mod v77;
+mod v78;
+mod v79;
 
 pub use v2_v5::read_applied_versions;
 pub use v2_v5::drop_column_if_exists;
@@ -107,6 +113,24 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         // 版本管理（previous_version_id）+ 四流闭预留表（洞察/治理/资产流）
         Box::new(v72::V72ProcessManagementV2),
         Box::new(v73::V73TaskManagement),
+        // V74 在 V73 之后：回填历史环节 todo 的 auto_review_enabled，
+        // 配合 installer 穿透修复「工艺选 AI 评审却从不打分」的存量数据
+        Box::new(v74::V74BackfillAutoReview),
+        // V75 在 V74 之后：loop_steps 新增 review_prompt 列，
+        // 支撑需求 033「环节评审模板」——环节内联完整评审模板，按环节定制评审
+        Box::new(v75::V75AddLoopStepReviewPrompt),
+        // V76 在 V75 之后：loops 新增 abnormal_handler_prompt 列，
+        // 支撑需求 035「工艺驱动异常处理」——异常处理提示词改为工艺 YAML 定义
+        Box::new(v76::V76AddLoopAbnormalHandlerPrompt),
+        // V77 在 V76 之后：删除 loop_phases.acceptance_criteria 死列，
+        // 支撑需求 036「验收标准归环节」——阶段级验收标准移除，只归环节
+        Box::new(v77::V77DropLoopPhaseAcceptanceCriteria),
+        // V78 在 V77 之后：工艺定义正文移出 process_templates 表，
+        // 改为只存 source_path 并按路径从磁盘文件读取，磁盘成为唯一真源。
+        Box::new(v78::V78ProcessDefinitionToFile),
+        // V79 在 V78 之后：process_templates 引入 guid 身份列并重建表，
+        // 支撑需求 040「工艺模板 GUID 身份」——name 放开唯一，复制同名共存
+        Box::new(v79::V79ProcessTemplateGuid),
     ]
 }
 

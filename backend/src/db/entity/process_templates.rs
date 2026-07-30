@@ -9,7 +9,10 @@ use serde::{Deserialize, Serialize};
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i64,
-    /// 唯一标识，如 `4p12s-delivery`、`superpowers-task`。
+    /// 稳定身份（040）：UUID v4，写在工艺 YAML 的 `process.guid` 字段里，随文件走。
+    /// 路由寻址、同步 reconcile、复制共存的区分键都用它；name 只做展示，允许重复。
+    pub guid: String,
+    /// 标识名，如 `4p12s-delivery`。040 起不再唯一（同名模板按 guid 区分）。
     pub name: String,
     /// 人类可读名称。
     pub display_name: String,
@@ -21,10 +24,8 @@ pub struct Model {
     pub complexity: String,
     /// 语义化版本，如 `1.0.0`。
     pub version: String,
-    /// 工艺完整定义（YAML/JSON），包含 phases、links、limits 等。
-    #[sea_orm(column_type = "Text")]
-    pub definition: String,
     /// 来源路径，如 `bundled://processes/software/4p12s-delivery.yaml`。
+    /// 工艺完整定义（YAML）不再落库，始终按此路径从磁盘文件实时读取，磁盘是唯一真源。
     pub source_path: Option<String>,
     /// 所属工作空间 ID；NULL 表示系统内置。
     pub workspace_id: Option<i64>,

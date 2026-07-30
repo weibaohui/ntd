@@ -9,6 +9,10 @@ use crate::db::entity::{todo_tags, todos};
 use crate::db::Database;
 use crate::models::{ComputedBucket, Todo, TodoBackup, TodoCenterItem, TodoStatus, compute_bucket};
 
+/// todo_type 取值：异常处理载体 Todo（工艺安装时按 abnormal_handler.prompt 创建）。
+/// 模式与 todo_type=2 评审实例对称；事项列表以「异常处理」标签区分。需求 035。
+pub const TODO_TYPE_ABNORMAL_HANDLER: i32 = 3;
+
 pub struct TodoUpdate<'a> {
     pub id: i64,
     pub title: &'a str,
@@ -889,6 +893,7 @@ impl Database {
         review_template_name: &str,
         composed_prompt: String,
         executor: Option<String>,
+        workspace_id: i64,
     ) -> Result<i64, sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();
         let title = format!("[评审] {}", review_template_name);
@@ -904,10 +909,66 @@ impl Database {
             parent_todo_id: ActiveValue::Set(Some(parent_todo_id)),
             review_template_id: ActiveValue::Set(Some(review_template_id)),
             auto_review_enabled: ActiveValue::Set(Some(false)),
+            // 继承原 todo 的 workspace，使评审实例在原工作空间中可见
+            workspace_id: ActiveValue::Set(Some(workspace_id)),
             ..Default::default()
         };
         let inserted = am.insert(&self.conn).await?;
         Ok(inserted.id)
+    }
+
+    /// 创建一个「异常处理」载体 todo（todo_type=3，需求 035）。
+    ///
+    /// 工艺安装时为 `abnormal_handler.prompt` 自动创建，作为运行时执行异常处理的容器，
+    /// 让异常处理不再依赖工艺外的「手选 Todo」。模式与 todo_type=2 评审实例对称：
+    /// - `prompt` = 工艺 abnormal_handler.prompt（运行时再注入异常上下文 + 占位符替换）
+    /// - `todo_type` = 3
+    /// - `auto_review_enabled` = false（异常处理本身不评审，防止无限嵌套）
+    /// - `parent_todo_id` = 0（异常处理无单一源 todo，与评审实例 loop 触发一致）
+    /// - `executor` = None（运行时落默认执行器）
+    pub async fn create_abnormal_handler_todo(
+        &self,
+        title: String,
+        prompt: String,
+        workspace_id: i64,
+    ) -> Result<i64, sea_orm::DbErr> {
+        let now = crate::models::utc_timestamp();
+        let am = todos::ActiveModel {
+            title: ActiveValue::Set(title),
+            // todos.prompt 列是 Option<String>；载体 todo 一定有 prompt（= 工艺 prompt）
+            prompt: ActiveValue::Set(Some(prompt)),
+            status: ActiveValue::Set(Some(TodoStatus::Pending.to_string())),
+            created_at: ActiveValue::Set(Some(now.clone())),
+            updated_at: ActiveValue::Set(Some(now)),
+            todo_type: ActiveValue::Set(Some(TODO_TYPE_ABNORMAL_HANDLER)),
+            parent_todo_id: ActiveValue::Set(Some(0)),
+            auto_review_enabled: ActiveValue::Set(Some(false)),
+            // 继承工作空间，使异常处理载体 todo 在对应工作空间可见
+            workspace_id: ActiveValue::Set(Some(workspace_id)),
+            ..Default::default()
+        };
+        let inserted = am.insert(&self.conn).await?;
+        Ok(inserted.id)
+    }
+
+    /// 更新指定 todo 的 prompt（需求 035：工艺升级时刷新异常处理载体 todo 的 prompt）。
+    ///
+    /// 仅当 todo 存在时更新；不存在返回 Err，由调用方决定是否新建。
+    pub async fn update_todo_prompt(
+        &self,
+        id: i64,
+        prompt: &str,
+    ) -> Result<(), sea_orm::DbErr> {
+        let now = crate::models::utc_timestamp();
+        let existing = todos::Entity::find_by_id(id).one(&self.conn).await?;
+        let Some(m) = existing else {
+            return Err(sea_orm::DbErr::Custom(format!("todo {id} not found")));
+        };
+        let mut am: todos::ActiveModel = m.into();
+        am.prompt = ActiveValue::Set(Some(prompt.to_string()));
+        am.updated_at = ActiveValue::Set(Some(now));
+        am.update(&self.conn).await?;
+        Ok(())
     }
 
     /// 根据 review_template_id 查找一条未删除的评审实例 todo (todo_type=2)。
@@ -939,6 +1000,7 @@ impl Database {
         id: i64,
         new_prompt: &str,
         new_executor: Option<&str>,
+        workspace_id: i64,
     ) -> Result<(), sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();
         let am = todos::ActiveModel {
@@ -947,6 +1009,8 @@ impl Database {
             executor: ActiveValue::Set(new_executor.map(|s| s.to_string())),
             status: ActiveValue::Set(Some(TodoStatus::Pending.to_string())),
             updated_at: ActiveValue::Set(Some(now)),
+            // 复用场景下 source todo 可能在不同 workspace；同步更新使评审实例跟随当前 source
+            workspace_id: ActiveValue::Set(Some(workspace_id)),
             ..Default::default()
         };
         self.exec_update(am).await
@@ -975,6 +1039,20 @@ impl Database {
             ..Default::default()
         };
         self.exec_update(am).await
+    }
+
+    /// 批量软删除事项（返回成功删除数）。
+    /// 注意：调用方应在 handler 层校验每个 todo 的可删除性（引用校验等）。
+    pub async fn batch_delete_todos(&self, ids: &[i64]) -> Result<u64, sea_orm::DbErr> {
+        if ids.is_empty() { return Ok(0); }
+        let now = crate::models::utc_timestamp();
+        let res = todos::Entity::update_many()
+            .col_expr(todos::Column::DeletedAt, Some(now).into())
+            .filter(todos::Column::Id.is_in(ids.to_vec()))
+            .filter(todos::Column::DeletedAt.is_null())
+            .exec(&self.conn)
+            .await?;
+        Ok(res.rows_affected)
     }
 
     pub async fn get_todo(&self, id: i64) -> Result<Option<Todo>, sea_orm::DbErr> {
@@ -1625,11 +1703,11 @@ mod review_instance_reuse_tests {
         let db = fresh_db().await;
         let template_id = seed_template(&db, "默认评审").await;
         let first_id = db
-            .create_review_instance_todo(0, template_id, "默认评审", "p1".into(), None)
+            .create_review_instance_todo(0, template_id, "默认评审", "p1".into(), None, 0)
             .await
             .expect("create first");
         let second_id = db
-            .create_review_instance_todo(0, template_id, "默认评审", "p2".into(), None)
+            .create_review_instance_todo(0, template_id, "默认评审", "p2".into(), None, 0)
             .await
             .expect("create second");
         // 多条匹配 → 返回最新 (id 大的那条)
@@ -1661,7 +1739,7 @@ mod review_instance_reuse_tests {
         let db = fresh_db().await;
         let template_id = seed_template(&db, "X").await;
         let id = db
-            .create_review_instance_todo(0, template_id, "X", "p".into(), None)
+            .create_review_instance_todo(0, template_id, "X", "p".into(), None, 0)
             .await
             .expect("create");
         // 软删除
@@ -1685,8 +1763,8 @@ mod review_instance_reuse_tests {
         let db = fresh_db().await;
         let t1 = seed_template(&db, "T1").await;
         let t2 = seed_template(&db, "T2").await;
-        db.create_review_instance_todo(0, t1, "T1", "p".into(), None).await.expect("c1");
-        db.create_review_instance_todo(0, t2, "T2", "p".into(), None).await.expect("c2");
+        db.create_review_instance_todo(0, t1, "T1", "p".into(), None, 0).await.expect("c1");
+        db.create_review_instance_todo(0, t2, "T2", "p".into(), None, 0).await.expect("c2");
         let f1 = db.find_review_instance_by_template(t1).await.expect("f1");
         let f2 = db.find_review_instance_by_template(t2).await.expect("f2");
         assert_eq!(f1.unwrap().review_template_id, Some(t1));
@@ -1700,10 +1778,10 @@ mod review_instance_reuse_tests {
         let db = fresh_db().await;
         let template_id = seed_template(&db, "R").await;
         let id = db
-            .create_review_instance_todo(0, template_id, "R", "old-prompt".into(), Some("claude".to_string()))
+            .create_review_instance_todo(0, template_id, "R", "old-prompt".into(), Some("claude".to_string()), 0)
             .await
             .expect("create");
-        db.reset_review_instance_for_reuse(id, "new-prompt", Some("pi"))
+        db.reset_review_instance_for_reuse(id, "new-prompt", Some("pi"), 0)
             .await
             .expect("reset");
         let found = db
@@ -1724,10 +1802,10 @@ mod review_instance_reuse_tests {
         let db = fresh_db().await;
         let template_id = seed_template(&db, "N").await;
         let id = db
-            .create_review_instance_todo(0, template_id, "N", "p".into(), Some("claude".to_string()))
+            .create_review_instance_todo(0, template_id, "N", "p".into(), Some("claude".to_string()), 0)
             .await
             .expect("create");
-        db.reset_review_instance_for_reuse(id, "p2", None)
+        db.reset_review_instance_for_reuse(id, "p2", None, 0)
             .await
             .expect("reset");
         let found = db.find_review_instance_by_template(template_id).await.expect("find").unwrap();
@@ -1977,8 +2055,8 @@ mod todo_center_tests {
         ref_map.insert(
             42,
             vec![
-                crate::models::LoopRefSummary { loop_id: 5, loop_name: "L5".into() },
-                crate::models::LoopRefSummary { loop_id: 8, loop_name: "L8".into() },
+                crate::models::LoopRefSummary { loop_id: 5, loop_name: "L5".into(), process_template_id: None, process_template_name: None, process_template_version: None },
+                crate::models::LoopRefSummary { loop_id: 8, loop_name: "L8".into(), process_template_id: None, process_template_name: None, process_template_version: None },
             ],
         );
         let mut aggs = empty_aggs();

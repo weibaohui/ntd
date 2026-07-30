@@ -11,15 +11,17 @@ pub mod audit;
 pub mod delivery_state;
 pub mod gate_evaluator;
 pub mod gates;
+pub mod guid;
 pub mod installer;
 pub mod phase_driver;
 pub mod recommender;
 pub mod repair_log;
 pub mod rework_tracker;
+pub mod source;
 pub mod transition_resolver;
 pub mod user_dir;
 
-/// 工艺模板完整定义（从 `process_templates.definition` YAML 解析）。
+/// 工艺模板完整定义（从 `source_path` 指向的磁盘 YAML 文件解析，DB 不再存正文）。
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ProcessDefinition {
     /// 工艺元信息
@@ -42,6 +44,10 @@ pub struct ProcessDefinition {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ProcessMeta {
     pub name: String,
+    /// 工艺稳定身份（040）。update 写盘必须保留并对齐 DB template.guid，
+    /// 否则 import 会按漂移后的磁盘 guid 新建 DB 行、原行 version 永不更新（需求 042 回归根因）。
+    #[serde(default)]
+    pub guid: String,
     #[serde(default)]
     pub display_name: String,
     #[serde(default)]
@@ -76,9 +82,15 @@ pub struct ProcessLimits {
 }
 
 /// 异常处理配置。
+///
+/// 工艺即权威：异常处理提示词由工艺 YAML 定义（`prompt`），安装时写入环路，
+/// 运行时注入异常上下文后执行。废弃旧的 `todo_template`（历史上未解析、不生效）。
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct AbnormalHandlerConfig {
-    pub todo_template: Option<String>,
+    /// 异常处理提示词，可含 {{loop_name}} {{abnormal_status}} {{error_detail}} 等占位符。
+    /// 空/缺省 = 未配置异常处理。
+    #[serde(default)]
+    pub prompt: Option<String>,
     #[serde(default)]
     pub trigger_on: Vec<String>,
 }
@@ -94,13 +106,17 @@ pub struct PhaseDefinition {
     /// 优先级高于 inline `spec`：若 `spec_ref` 存在且文件可读，覆盖 `spec`。
     #[serde(default)]
     pub spec_ref: Option<String>,
-    #[serde(default)]
-    pub acceptance_criteria: String,
-    /// 引用外部验收标准文件，优先级高于 inline `acceptance_criteria`。
-    #[serde(default)]
-    pub acceptance_criteria_ref: Option<String>,
+    // 阶段级验收标准已随需求 036 移除：评审逐环节进行，验收标准只归环节
+    // （LinkDefinition.acceptance_criteria），阶段挂验收标准颗粒度过粗且运行时不消费。
     #[serde(default)]
     pub links: Vec<LinkDefinition>,
+}
+
+/// spec 模板文件引用（name + path），执行时注入 AI 上下文供其重点阅读。
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct StepTemplateRef {
+    pub name: String,
+    pub path: String,
 }
 
 /// 环节（Link）定义。
@@ -108,8 +124,9 @@ pub struct PhaseDefinition {
 pub struct LinkDefinition {
     pub id: String,
     pub name: String,
-    /// 引用的环节原型名称（优先于内联字段）
-    pub step_template: Option<String>,
+    /// 引用的 spec 模板文件列表（执行时注入 AI 上下文供其重点阅读）。
+    /// 设计上仅作 spec 引用；执行配置一律以内联字段（prompt/executor/expert/model/acceptance_criteria）为准。
+    pub step_template: Option<Vec<StepTemplateRef>>,
     #[serde(default)]
     pub prompt: String,
     pub executor: Option<String>,
@@ -133,6 +150,14 @@ pub struct LinkDefinition {
     pub on_rating_fail: String,
     #[serde(default = "default_max_rework")]
     pub max_rework: i32,
+    /// 环节级验收标准（内联；早期由原型表提供，现已随 step_template 解耦迁入 link）。
+    #[serde(default)]
+    pub acceptance_criteria: String,
+    /// 环节级评审模板正文（完整替代默认评审模板，需求 033）。
+    /// 非空时作为评审 prompt 模板，仍支持 {{original_output}}/{{acceptance_criteria}} 等占位符替换；
+    /// 空串 = 未设置，评审时回退到环路级 `review_template_id` → 全局默认模板。
+    #[serde(default)]
+    pub review_prompt: String,
 }
 
 fn default_review_type() -> String {
@@ -175,6 +200,11 @@ pub struct GateDefinition {
     pub criteria_ref: Option<String>,
     pub min_score: Option<i32>,
     pub script: Option<String>,
+    /// AI 评审门禁等待评分的超时秒数。
+    /// null / 0 = 一直等待，直到 auto_review 出分再判定；
+    /// 正数 = 最多等 N 秒，超时后视为门禁不通过触发流转（如返工）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_secs: Option<i32>,
 }
 
 /// 内联环节原型定义。
@@ -210,8 +240,6 @@ pub enum InstallError {
     TemplateNotFound(String),
     #[error("工作空间未找到: {0}")]
     WorkspaceNotFound(i64),
-    #[error("环节原型未找到: {0}")]
-    StepTemplateNotFound(String),
     #[error("YAML 解析失败: {0}")]
     ParseError(String),
     #[error("数据库错误: {0}")]

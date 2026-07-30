@@ -17,6 +17,7 @@ use crate::services::process::artifact_capture::{self, ArtifactSpec};
 use crate::services::process::gate_evaluator::{self, GateSummary};
 use crate::services::process::rework_tracker;
 use crate::services::process::transition_resolver;
+use crate::services::process::GateDefinition;
 
 /// 步骤执行结果，供 LoopRunner 直接消费。
 #[derive(Debug)]
@@ -85,8 +86,9 @@ pub async fn execute_step(
     // 2. 门禁评价。
     let skill_names: Vec<String> =
         serde_json::from_str(&step.skill_names).unwrap_or_default();
-    // acceptance_criteria 在 todos 表中，PhaseDriver 不做两层解析；
-    // ai_criteria_review 门禁使用 gate_config 中配置的 criteria_ref 引用阶段或 todo 的验收标准。
+    // 验收标准只归环节：评审时由 compose_review_prompt 直接读 todo.acceptance_criteria
+    // （源自环节定义），PhaseDriver 的 gate context 不再单独传入阶段级验收标准（恒 None）。
+    // ai_criteria_review 门禁只比对已有 rating 与 min_score，不依赖此字段。
     let acceptance_criteria: Option<&str> = None;
 
     // 兼容旧字段 min_rating / review_type。
@@ -99,6 +101,29 @@ pub async fn execute_step(
         .and_then(|r| r.result.as_deref());
 
     let execution_rating = execution_record.and_then(|r| r.rating);
+
+    // 如果当前无评分，仅当门禁配置里确实存在 ai_criteria_review 门禁时才等待出分。
+    // 无 AI 评审门禁的步骤（如纯 human_approval）永远不会产生评分，
+    // 若在此等待会把 loop 卡死（曾按 86400s 死等：步骤停留 running，审批按钮不出现）。
+    let execution_rating = if execution_rating.is_none() {
+        match ai_review_wait_timeout(&effective_gate_config) {
+            // 无 AI 评审门禁：评分与本步骤无关，直接保持 None 继续门禁评价。
+            None => None,
+            // 配了正数超时：最多等 N 秒，超时后按无评分判定（触发返工/失败流转）。
+            Some(Some(timeout_secs)) if timeout_secs > 0 => {
+                let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(timeout_secs as u64);
+                poll_rating(db, execution_record.as_ref().map(|r| r.id), deadline).await
+            }
+            // 未配/为 0：一直等到出分（实际由 loop_execution 生命周期兜底）。
+            Some(_) => {
+                let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(86400);
+                poll_rating(db, execution_record.as_ref().map(|r| r.id), deadline).await
+            }
+        }
+    } else {
+        execution_rating
+    };
+
     let gate_summary = gate_evaluator::evaluate_step_gates(
         db,
         step_exec.id,
@@ -172,20 +197,25 @@ pub async fn execute_step(
         "failed"
     };
 
-    let rating = gate_summary
-        .gate_records
-        .iter()
-        .find(|g| g.gate_type == "ai_criteria_review" && g.status == "passed")
-        .and_then(|_| {
-            // 从 gate result detail 中尝试解析评分。
-            parse_rating_from_detail(&gate_summary)
-        });
+    // 评分：不再只看「passed 的门禁」——低于阈值（failed）时分数同样要展示（前端红色「不通过」）。
+    // 门禁详情文本解析失败时回退 execution_record.rating（评审分数的权威落库处）。
+    let rating = resolve_step_rating(&gate_summary, execution_rating);
+
+    // 阈值：gate_config 风格步骤的 min_rating 在门禁配置里（ai_criteria_review.min_score），
+    // step.min_rating 为 NULL；持久化到 step_execution，前端才能显示「阈值 N」。
+    let review_threshold =
+        extract_review_threshold(&effective_gate_config).or(step.min_rating);
+    if let Some(min) = review_threshold {
+        db.set_step_execution_min_rating(step_exec.id, min).await?;
+    }
 
     // 6. 更新 step_execution（复用已有的 finish 方法，但 rework_count 已单独更新）。
+    // execution_record_id 必须带上本次的 record：旧代码只透传 step_exec 原值（创建时未写入），
+    // 导致工艺路径下环节卡片永远缺 record 链接（无 token、无点击详情、评分无法回退）。
     db.finish_step_execution(
         step_exec.id,
         final_status,
-        step_exec.execution_record_id,
+        execution_record.map(|r| r.id).or(step_exec.execution_record_id),
         error_message.as_deref(),
         rating,
         None, // conclusion 由 LoopRunner 提取
@@ -226,6 +256,64 @@ fn parse_rating_from_detail(summary: &GateSummary) -> Option<i32> {
             if let Some(ref detail) = gate.result {
                 // 复用 auto_review 的评分解析函数（它解析 RATING: N 格式）。
                 return crate::services::auto_review::parse_rating_from_result(Some(detail));
+            }
+        }
+    }
+    None
+}
+
+/// 汇总某环节的评审得分：有 ai 评审门禁时才给分。
+///
+/// 优先级：门禁详情文本解析（RATING: N 格式）→ execution_record.rating 回退。
+/// 回退是必要的——gate_evaluator 写的详情是「AI 评审通过（评分 85，阈值 10）」，
+/// 没有冒号分隔，auto_review 的解析器读不出，但分数已权威地落在 record 上。
+/// 无 ai 评审门禁时返回 None：避免把 todo 级无关评审分误当环节门禁分展示。
+fn resolve_step_rating(summary: &GateSummary, execution_rating: Option<i32>) -> Option<i32> {
+    // 先用门禁存在性做闸门：没有 ai 评审门禁的环节不展示评分
+    summary
+        .gate_records
+        .iter()
+        .find(|g| g.gate_type == "ai_criteria_review")?;
+    parse_rating_from_detail(summary).or(execution_rating)
+}
+
+/// 从生效门禁配置中提取 ai_criteria_review 门禁的评分等待超时。
+///
+/// 返回值是三态语义，调用方据此决定等待策略：
+/// - `None`：配置里没有 AI 评审门禁——评分与本步骤无关，必须跳过等待；
+/// - `Some(None)` / `Some(Some(0))`：有 AI 门禁但未配超时——一直等到出分；
+/// - `Some(Some(n>0))`：有 AI 门禁且配了超时——最多等 n 秒。
+fn ai_review_wait_timeout(effective_gate_config: &str) -> Option<Option<i32>> {
+    serde_json::from_str::<Vec<GateDefinition>>(effective_gate_config)
+        .ok()?
+        .into_iter()
+        .find(|g| g.gate_type == "ai_criteria_review")
+        .map(|g| g.timeout_secs)
+}
+
+/// 从生效门禁配置中提取 ai 评审门禁的阈值（min_score）。
+/// gate_config 风格的步骤阈值在门禁 JSON 里而非 step.min_rating 字段。
+fn extract_review_threshold(effective_gate_config: &str) -> Option<i32> {
+    serde_json::from_str::<Vec<GateDefinition>>(effective_gate_config)
+        .ok()?
+        .into_iter()
+        .find(|g| g.gate_type == "ai_criteria_review")
+        .and_then(|g| g.min_score)
+}
+
+/// 轮询等待执行记录的评分出现。
+/// 每 500ms 查一次 DB，直到 deadline 或出分。
+async fn poll_rating(
+    db: &Arc<Database>,
+    record_id: Option<i64>,
+    deadline: tokio::time::Instant,
+) -> Option<i32> {
+    let record_id = record_id?;
+    while tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        if let Ok(Some(rec)) = db.get_execution_record(record_id).await {
+            if let Some(rating) = rec.rating {
+                return Some(rating);
             }
         }
     }
@@ -304,3 +392,99 @@ async fn update_phase_status(
 }
 
 
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use crate::db::entity::loop_step_execution_gates;
+
+    // 构造一条门禁评价记录（只关心 gate_type / status / result 三个字段）
+    fn gate_record(gate_type: &str, status: &str, result: Option<&str>) -> loop_step_execution_gates::Model {
+        loop_step_execution_gates::Model {
+            id: 1,
+            loop_step_execution_id: 1,
+            gate_type: gate_type.to_string(),
+            gate_name: "门禁".to_string(),
+            config: "{}".to_string(),
+            status: status.to_string(),
+            result: result.map(|s| s.to_string()),
+            evaluated_at: None,
+            evaluated_by: None,
+        }
+    }
+
+    fn summary_of(records: Vec<loop_step_execution_gates::Model>) -> GateSummary {
+        GateSummary { all_passed: true, has_pending_human: false, gate_records: records }
+    }
+
+    #[test]
+    fn resolve_step_rating_detail_unparseable_falls_back_to_record_rating() {
+        // 门禁详情文本是「AI 评审通过（评分 85，阈值 10）」——无冒号分隔，
+        // auto_review 的 RATING: N 解析器读不出，必须回退 execution_record.rating
+        let s = summary_of(vec![gate_record(
+            "ai_criteria_review",
+            "passed",
+            Some("AI 评审通过（评分 85，阈值 10）"),
+        )]);
+        assert_eq!(resolve_step_rating(&s, Some(85)), Some(85));
+    }
+
+    #[test]
+    fn resolve_step_rating_failed_gate_still_returns_score() {
+        // 低于阈值（failed）也要回分数，前端靠它渲染红色「不通过」
+        let s = summary_of(vec![gate_record(
+            "ai_criteria_review",
+            "failed",
+            Some("AI 评审未通过（评分 25，阈值 60）"),
+        )]);
+        assert_eq!(resolve_step_rating(&s, Some(25)), Some(25));
+    }
+
+    #[test]
+    fn resolve_step_rating_without_review_gate_returns_none() {
+        // 无 ai 评审门禁时，即便 record 上有分数也不展示（避免把无关评审分当成环节门禁分）
+        let s = summary_of(vec![gate_record("artifact_present", "passed", None)]);
+        assert_eq!(resolve_step_rating(&s, Some(85)), None);
+    }
+
+    #[test]
+    fn ai_review_wait_timeout_without_ai_gate_returns_none() {
+        // 纯人工审批门禁：配置里没有 ai_criteria_review，
+        // 必须返回 None 让调用方跳过评分等待——否则步骤会死等一个永远不会产生的评分
+        let config = r#"[{"name":"人工审批","type":"human_approval"}]"#;
+        assert_eq!(ai_review_wait_timeout(config), None);
+    }
+
+    #[test]
+    fn ai_review_wait_timeout_with_ai_gate_no_timeout_waits_forever() {
+        // AI 评审门禁未配 timeout_secs：语义是「一直等到出分」，返回 Some(None)
+        let config = r#"[{"name":"AI 评分达标","type":"ai_criteria_review","min_score":10}]"#;
+        assert_eq!(ai_review_wait_timeout(config), Some(None));
+    }
+
+    #[test]
+    fn ai_review_wait_timeout_with_ai_gate_timeout_returns_secs() {
+        // AI 评审门禁配了正数超时：返回具体秒数
+        let config = r#"[{"name":"AI 评分达标","type":"ai_criteria_review","min_score":10,"timeout_secs":30}]"#;
+        assert_eq!(ai_review_wait_timeout(config), Some(Some(30)));
+    }
+
+    #[test]
+    fn ai_review_wait_timeout_invalid_json_returns_none() {
+        // 配置解析失败时按「无 AI 门禁」处理：跳过等待比死等安全
+        assert_eq!(ai_review_wait_timeout("not-json"), None);
+    }
+
+    #[test]
+    fn extract_review_threshold_reads_ai_gate_min_score() {
+        let config = r#"[{"name":"AI 评分达标","type":"ai_criteria_review","min_score":10}]"#;
+        assert_eq!(extract_review_threshold(config), Some(10));
+    }
+
+    #[test]
+    fn extract_review_threshold_without_ai_gate_returns_none() {
+        let config = r#"[{"name":"产物存在","type":"artifact_present","artifact":"x"}]"#;
+        assert_eq!(extract_review_threshold(config), None);
+    }
+}

@@ -34,6 +34,8 @@ import { LoopTriggersPanel, TRIGGER_META } from './loop-studio/triggers';
 import { LoopStepsPanel } from './LoopStudioStepsPanel';
 import { LoopExecutionsPanel } from './loop-studio/executions';
 import { ProcessExecutionBoard } from '@/components/process/ProcessExecutionBoard';
+// 按钮组（触发/复制/导出/编辑/删除）抽到 LoopDetailActions，与 LoopDetailPage 的 titleSuffix 共用。
+import type { LoopDetailActionsProps } from './LoopDetailActions';
 
 interface LoopDetailPanelProps {
   loopId: number;
@@ -51,6 +53,10 @@ interface LoopDetailPanelProps {
   /** 点击流程图节点上的事项标题跳转事项详情；未注入时标题不可点击。 */
   onOpenTodo?: (todoId: number) => void;
   hideTitleRow?: boolean;
+  /** 独立路由场景：把操作按钮上下文上报给外层 PageCard titleSuffix。
+   *  hideTitleRow=true 时内层标题行（含按钮）整体隐藏，外层通过此回调拿到按钮上下文
+   *  在 PageCard 标题行渲染触发/复制/导出/编辑/删除，避免按钮连带消失。 */
+  onActionsReady?: (ctx: LoopDetailActionsProps | null) => void;
 }
 
 export function LoopDetailPanel({
@@ -65,6 +71,7 @@ export function LoopDetailPanel({
   onOpenProcess,
   onOpenTodo,
   hideTitleRow = false,
+  onActionsReady,
 }: LoopDetailPanelProps) {
   const { message: antMessage } = AntApp.useApp();
   const [detail, setDetail] = useState<LoopDetail | null>(null);
@@ -74,8 +81,9 @@ export function LoopDetailPanel({
   // 工作空间目录（低基数集合，详情展示时把 path 转成 name 用）
   const { dirs: projectDirs } = useProjectDirectories();
 
-  // 导出环路
-  const handleExport = async () => {
+  // 导出环路。useCallback 包裹：onActionsReady 上报的 ctx 引用 handleExport，
+  // 稳定化避免每次渲染都重报，进而触发 setActionsCtx -> 重渲染 -> 重报的无限循环。
+  const handleExport = useCallback(async () => {
     try {
       const yaml = await dbLoops.exportLoop(workspaceId ?? 0, loopId);
       const blob = new Blob([yaml], { type: 'application/x-yaml' });
@@ -91,7 +99,7 @@ export function LoopDetailPanel({
     } catch (err: any) {
       antMessage.error(err?.message || '导出失败');
     }
-  };
+  }, [workspaceId, loopId, detail, antMessage]);
   // 执行记录总数，由 LoopExecutionsPanel 通过回调更新
   const [executionTotal, setExecutionTotal] = useState(0);
   // 从 loop.limits_config 解析出的限制值，传递给子面板做兜底校验
@@ -106,7 +114,7 @@ export function LoopDetailPanel({
     webhook_enabled: boolean;
     icon: string; review_template_id: number | null;
     tag_ids: number[]; limits_config: string | null;
-    abnormal_handler_todo_id: number | null;
+    abnormal_handler_prompt: string | null;
     abnormal_handler_trigger_on: string;
   } | null>(null);
 
@@ -145,6 +153,7 @@ export function LoopDetailPanel({
 
   useEffect(() => { reload(); }, [reload]);
 
+
   // 预加载执行记录总数（用于折叠标签展示，不等用户展开后才显示）
   useEffect(() => {
     // 捕获本次 loopId，resolve 后比较，丢弃切换后的 stale 响应
@@ -166,11 +175,31 @@ export function LoopDetailPanel({
       review_template_id: detail.review_template_id ?? null,
       tag_ids: detail.tag_ids ?? [],
       limits_config: detail.limits_config,
-      abnormal_handler_todo_id: detail.abnormal_handler_todo_id ?? null,
+      abnormal_handler_prompt: detail.abnormal_handler_prompt ?? null,
       abnormal_handler_trigger_on: detail.abnormal_handler_trigger_on ?? '["capped_step","capped_token","failed"]',
     });
     setEditing(true);
   }, [detail]);
+
+  // 独立路由场景：把操作按钮上下文上报给外层 PageCard 的 titleSuffix。
+  // detail 为空时上报 null（加载中），外层相应不渲染按钮。
+  // 依赖 handleExport/handleOpenEdit（均 useCallback 稳定）+ props 回调，避免每次渲染重报。
+  // 放在 handleOpenEdit 定义之后，避免 block-scoped 变量 used-before-declaration。
+  useEffect(() => {
+    if (!onActionsReady) return;
+    if (!detail) {
+      onActionsReady(null);
+      return;
+    }
+    onActionsReady({
+      detail,
+      onTrigger,
+      onDuplicate,
+      onExport: handleExport,
+      onEdit: handleOpenEdit,
+      onDelete,
+    });
+  }, [detail, onTrigger, onDuplicate, handleExport, handleOpenEdit, onDelete, onActionsReady]);
 
   // 编辑保存后的回调：刷新详情 + 通知父组件
   const handleEditSaved = useCallback(() => {
@@ -243,7 +272,10 @@ export function LoopDetailPanel({
               label: detail.process_template_display_name || detail.process_template_name,
               techName: detail.process_template_name,
               version: detail.process_template_version || undefined,
-              onClick: onOpenProcess ? () => onOpenProcess(detail.process_template_name!) : undefined,
+              // 040：回跳按 guid 寻址（name 可重复）；旧环路无 guid 时回退 name 让链接不失效。
+              onClick: onOpenProcess
+                ? () => onOpenProcess(detail.process_template_guid ?? detail.process_template_name!)
+                : undefined,
             }]}
           />
         </div>
@@ -369,7 +401,8 @@ export function LoopDetailPanel({
           } />
           <DetailField label="超限异常处理" value={
             (() => {
-              const hasHandler = detail.abnormal_handler_todo_id != null;
+              // 异常处理启用判定：以工艺定义的 prompt 是否存在为准（需求 035）
+              const hasHandler = detail.abnormal_handler_prompt != null && detail.abnormal_handler_prompt !== '';
               const triggerOn = detail.abnormal_handler_trigger_on ? JSON.parse(detail.abnormal_handler_trigger_on) : [];
               const hasCappedTrigger = Array.isArray(triggerOn) && (triggerOn.includes('capped_step') || triggerOn.includes('capped_token'));
               const enabled = hasHandler && hasCappedTrigger;
@@ -425,7 +458,7 @@ export function LoopDetailPanel({
       }}>
         <Collapse
           ghost
-          expandIconPosition="end"
+          expandIconPlacement="end"
           defaultActiveKey={[]}
           items={[
             {
@@ -463,7 +496,7 @@ export function LoopDetailPanel({
       }}>
         <Collapse
           ghost
-          expandIconPosition="end"
+          expandIconPlacement="end"
           defaultActiveKey={['executions']}
           items={[
             {

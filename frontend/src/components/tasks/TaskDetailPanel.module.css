@@ -65,6 +65,13 @@
   flex-direction: column;
 }
 
+/* Tab 导航条（概览 / 工艺要求 / 执行历史）：提供左侧 24px 内边距，
+   避免「左边框贴左边框」——PageCard contentStyle 为 padding:0，
+   若 nav 不从左侧留空，导航文字紧贴容器左边框，视觉难受。 */
+.tabsWrap :global(.ant-tabs-nav) {
+  padding-left: 24px;
+}
+
 /* 让 antd Tabs 撑满高度并纵向排列，内容区可滚动。 */
 .tabsWrap :global(.ant-tabs) {
   height: 100%;

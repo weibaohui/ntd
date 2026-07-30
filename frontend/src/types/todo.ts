@@ -25,8 +25,8 @@ export interface Todo {
   acceptance_criteria?: string | null;
   /** 已废弃：UI 层面不再展示该开关，事项执行后不再触发自动评审。保留字段用于 API 向下兼容。 */
   auto_review_enabled?: boolean;
-  /** 0 = normal todo, 1 = 已废弃 (评审模板已迁出至 review_templates 表), 2 = review instance child. */
-  todo_type?: 0 | 1 | 2;
+  /** 0 = normal todo, 1 = 已废弃 (评审模板已迁出至 review_templates 表), 2 = review instance child, 3 = 异常处理载体 todo（需求 035）. */
+  todo_type?: 0 | 1 | 2 | 3;
   /** For review instances: the original todo that was reviewed. */
   parent_todo_id?: number | null;
   /** For review instances: the review_template used to generate this instance. */
@@ -48,6 +48,12 @@ export type ComputedBucket = 'manual' | 'time_driven' | 'event_driven' | 'loop_d
 export interface LoopRefSummary {
   loop_id: number;
   loop_name: string;
+  /** 该环路所基于的工艺模板 ID（后端 LEFT JOIN process_templates，未绑定时缺省） */
+  process_template_id?: number;
+  /** 该环路所基于的工艺模板名称（取 process_templates.display_name） */
+  process_template_name?: string;
+  /** 工艺版本（优先 loops.process_template_version 快照，缺失时后端回退模板当前版本） */
+  process_template_version?: string;
 }
 
 /** 事项中心列表项：在 Todo 之上附加运行时推导/聚合字段（后端批量补算）。 */

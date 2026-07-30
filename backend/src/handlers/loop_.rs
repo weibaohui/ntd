@@ -123,7 +123,7 @@ pub async fn create_loop(
             &req.icon,
             req.review_template_id,
             req.limits_config.as_deref(),
-            req.abnormal_handler_todo_id,
+            None, /* 异常处理载体 Todo 只由工艺安装写入，手工/克隆/更新均不设（需求 035） */
             &req.abnormal_handler_trigger_on,
         )
         .await?;
@@ -200,7 +200,7 @@ pub async fn update_loop(
             &req.icon,
             req.review_template_id,
             req.limits_config.as_deref(),
-            req.abnormal_handler_todo_id,
+            None, /* 异常处理载体 Todo 只由工艺安装写入，手工/克隆/更新均不设（需求 035） */
             &req.abnormal_handler_trigger_on,
         )
         .await?;
@@ -232,6 +232,19 @@ pub async fn delete_loop(
     }
     state.db.delete_loop(id).await?;
     Ok(ApiResponse::ok(()))
+}
+
+/// POST /api/loops/batch-delete — 批量删除环路。
+#[derive(serde::Deserialize)]
+pub struct BatchDeleteLoopsRequest { pub ids: Vec<i64> }
+pub async fn batch_delete_loops(
+    State(state): State<AppState>,
+    axum::Json(req): axum::Json<BatchDeleteLoopsRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    let deleted = state.db.batch_delete_loops(&req.ids).await?;
+    Ok(ApiResponse::ok(serde_json::json!({
+        "deleted": deleted, "total": req.ids.len(),
+    })))
 }
 
 /// PUT /api/loops/{id}/status — 切换 enabled/paused
@@ -2193,6 +2206,7 @@ pub fn loop_routes() -> axum::Router<AppState> {
     use axum::routing::{get, post, put};
     axum::Router::new()
         .route("/api/loops", get(list_loops).post(create_loop))
+        .route("/api/loops/batch-delete", post(batch_delete_loops))
         .route("/api/loops/batch-workspace", put(batch_move_loops_workspace))
         .route("/api/loops/batch-copy-workspace", post(batch_copy_loops_workspace))
         .route("/api/loops/export-selected", post(export_selected_loops))
@@ -2243,11 +2257,36 @@ pub async fn list_loops_v1(
     let items: Vec<LoopListItem> = rows.into_iter().map(Into::into).collect();
     let loop_ids: Vec<i64> = items.iter().map(|item| item.loop_.id).collect();
     let tag_map = state.db.get_loop_tag_ids_batch(&loop_ids).await?;
+    // 列表「工艺名称」列需要来源模板的 display_name/name/guid；版本快照已在 loops 行自动带出。
+    // 与 tags 同走「批量查 + 注入」：去重后一次取回，避免逐 loop N+1。
+    let template_ids: Vec<i64> = items
+        .iter()
+        .filter_map(|item| item.loop_.process_template_id)
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    let template_map = state
+        .db
+        .get_process_templates_by_ids(&template_ids)
+        .await?
+        .into_iter()
+        .map(|t| (t.id, t))
+        .collect::<std::collections::HashMap<i64, _>>();
     let results: Vec<LoopListItem> = items
         .into_iter()
         .map(|item| {
             let tag_ids = tag_map.get(&item.loop_.id).cloned().unwrap_or_default();
-            item.with_tags(tag_ids)
+            // 无 process_template_id 或模板已被删除时传 None：字段保持缺省不序列化，
+            // 与详情页 get_loop 的注入语义一致。
+            let tpl = item
+                .loop_
+                .process_template_id
+                .and_then(|tid| template_map.get(&tid).cloned());
+            // with_process_template 定义在 LoopDto 上（注入 display_name/name/guid），
+            // LoopListItem 只是 flatten 包装，因此先 with_tags 再就地改 loop_ 字段。
+            let mut tagged = item.with_tags(tag_ids);
+            tagged.loop_ = tagged.loop_.with_process_template(tpl);
+            tagged
         })
         .collect();
     Ok(ApiResponse::ok(results))
@@ -2283,7 +2322,7 @@ pub async fn create_loop_v1(
             &req.icon,
             req.review_template_id,
             req.limits_config.as_deref(),
-            req.abnormal_handler_todo_id,
+            None, /* 异常处理载体 Todo 只由工艺安装写入，手工/克隆/更新均不设（需求 035） */
             &req.abnormal_handler_trigger_on,
         )
         .await?;
@@ -2341,7 +2380,7 @@ pub async fn update_loop_v1(
         id, req.name.trim(), &req.description,
         req.workspace_id, workspace_path.as_deref(),
         req.webhook_enabled, &req.icon, req.review_template_id,
-        req.limits_config.as_deref(), req.abnormal_handler_todo_id,
+        req.limits_config.as_deref(), None, /* 异常处理只由工艺安装写入（需求 035） */
         &req.abnormal_handler_trigger_on,
     ).await?;
     if let Some(ref tag_ids) = req.tag_ids {
@@ -2811,6 +2850,35 @@ pub async fn batch_copy_loops_workspace_v1(
     }))
 }
 
+/// POST /batch-delete (nested) - 批量删除环路（workspace 隔离）。
+///
+/// 与单删一致：先校验所有 loop 归属路径 workspace，再逐个移除调度器中的 cron 触发器，
+/// 最后级联删除。v0 的 batch_delete_loops 未清理 cron，v1 在此补齐，避免已删 loop 仍被定时触发。
+pub async fn batch_delete_loops_v1(
+    State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
+    Json(req): Json<BatchDeleteLoopsRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    if req.ids.is_empty() {
+        return Err(AppError::BadRequest("ids 不能为空".to_string()));
+    }
+    // V1 隔离：校验所有 loop 属于路径 workspace（verify 已含存在性校验）。
+    workspace_guard::verify_loops_belong_to_ws(&state.db, &req.ids, ws_id).await?;
+    // 删除前移除调度器中的 cron 触发器，避免已删除 loop 仍被定时触发。
+    for id in &req.ids {
+        let triggers = state.db.list_triggers_by_loop(*id).await?;
+        for t in triggers.iter().filter(|t| t.trigger_type == "cron") {
+            if let Some(sched) = state.loop_scheduler.as_ref() {
+                sched.remove_cron_trigger(t.id).await;
+            }
+        }
+    }
+    let deleted = state.db.batch_delete_loops(&req.ids).await?;
+    Ok(ApiResponse::ok(serde_json::json!({
+        "deleted": deleted, "total": req.ids.len(),
+    })))
+}
+
 /// GET /{id}/export — 导出单个 loop（workspace 隔离）。
 pub async fn export_loop_v1(
     State(state): State<AppState>,
@@ -2935,6 +3003,7 @@ pub fn v1_routes() -> axum::Router<AppState> {
         .route("/stats", get(get_loop_stats_v1))
         .route("/batch/workspace", post(batch_move_loops_workspace_v1))
         .route("/batch/copy-workspace", post(batch_copy_loops_workspace_v1))
+        .route("/batch-delete", post(batch_delete_loops_v1))
         .route("/export", get(export_all_loops_v1))
         .route("/export-selected", post(export_selected_loops_v1))
         // merge/import 同样必须在 /{id} 之前。

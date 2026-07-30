@@ -72,7 +72,9 @@ export interface TaskItem {
   title: string;
   description: string;
   status: string;
+  template_id?: number;
   template_name?: string;
+  template_version?: string;
   complexity?: string;
   loop_id?: number;
   workspace_id?: number;

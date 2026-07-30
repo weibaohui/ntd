@@ -133,8 +133,8 @@ pub struct LoopDto {
     pub icon: String,
     pub review_template_id: Option<i64>,
     pub limits_config: String,
-    /// 异常处理 Todo ID
-    pub abnormal_handler_todo_id: Option<i64>,
+    /// 异常处理提示词快照（工艺定义）；NULL=未配置异常处理。需求 035。
+    pub abnormal_handler_prompt: Option<String>,
     /// 异常处理触发条件 JSON 数组
     pub abnormal_handler_trigger_on: String,
     /// 来源工艺模板 ID
@@ -146,6 +146,9 @@ pub struct LoopDto {
     /// 来源工艺模板唯一名（面包屑跳转用）；由 handler 注入，From 不查库。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub process_template_name: Option<String>,
+    /// 来源工艺模板 guid（040：面包屑/回跳按 guid 寻址）；由 handler 注入，From 不查库。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_template_guid: Option<String>,
     /// 来源工艺模板显示名（面包屑展示用）；由 handler 注入，From 不查库。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub process_template_display_name: Option<String>,
@@ -166,13 +169,14 @@ impl From<loops::Model> for LoopDto {
             icon: m.icon,
             review_template_id: m.review_template_id,
             limits_config: m.limits_config,
-            abnormal_handler_todo_id: m.abnormal_handler_todo_id,
+            abnormal_handler_prompt: m.abnormal_handler_prompt,
             abnormal_handler_trigger_on: m.abnormal_handler_trigger_on,
             process_template_id: m.process_template_id,
             process_template_version: m.process_template_version,
             // 模板名称属跨表关联数据，不在 ORM 转换时隐式查询；
             // 由 handler 通过 with_process_template 在事务边界外注入（与 with_tags 同模式）。
             process_template_name: None,
+            process_template_guid: None,
             process_template_display_name: None,
             created_at: m.created_at,
             updated_at: m.updated_at,
@@ -194,6 +198,7 @@ impl LoopDto {
     pub fn with_process_template(mut self, meta: Option<process_templates::Model>) -> Self {
         if let Some(t) = meta {
             self.process_template_name = Some(t.name);
+            self.process_template_guid = Some(t.guid);
             self.process_template_display_name = Some(t.display_name);
         }
         self
@@ -456,10 +461,7 @@ pub struct CreateLoopRequest {
     pub review_template_id: Option<i64>,
     #[serde(default)]
     pub limits_config: Option<String>,
-    /// 异常处理 Todo ID
-    #[serde(default)]
-    pub abnormal_handler_todo_id: Option<i64>,
-    /// 异常处理触发条件 JSON 数组
+    /// 异常处理触发条件 JSON 数组（手工 loop 无异常处理 prompt，此值仅记录不生效）
     #[serde(default = "default_abnormal_trigger_on")]
     pub abnormal_handler_trigger_on: String,
 }
@@ -482,10 +484,7 @@ pub struct UpdateLoopRequest {
     pub review_template_id: Option<i64>,
     #[serde(default)]
     pub limits_config: Option<String>,
-    /// 异常处理 Todo ID
-    #[serde(default)]
-    pub abnormal_handler_todo_id: Option<i64>,
-    /// 异常处理触发条件 JSON 数组
+    /// 异常处理触发条件 JSON 数组（手工 loop 无异常处理 prompt，此值仅记录不生效）
     #[serde(default = "default_abnormal_trigger_on")]
     pub abnormal_handler_trigger_on: String,
     /// 可选更新的标签 ID（单选）；传空数组或无字段表示不更新标签
@@ -688,6 +687,7 @@ mod loop_dto_tests {
             limits_config: "{}".into(),
             abnormal_handler_todo_id: None,
             abnormal_handler_trigger_on: "[]".into(),
+            abnormal_handler_prompt: None,
             process_template_id: Some(7),
             process_template_version: Some("1.2.0".into()),
             created_at: None,
@@ -699,13 +699,13 @@ mod loop_dto_tests {
     fn minimal_template_model() -> process_templates::Model {
         process_templates::Model {
             id: 7,
+            guid: "guid-4p12s".into(),
             name: "4p12s-delivery".into(),
             display_name: "标准需求交付工艺".into(),
             description: String::new(),
             category: "software".into(),
             complexity: "standard".into(),
             version: "1.2.0".into(),
-            definition: String::new(),
             source_path: None,
             workspace_id: None,
             is_system: true,

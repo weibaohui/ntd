@@ -2,8 +2,9 @@
 // 形态参考 ItemsPage 列表态的双栏联动：
 //   左侧 Table 行可点击选中任务，触发宿主右栏渲染 TaskDetailPanel。
 
-import { useMemo, useState } from 'react';
-import { Table, Tag, Typography, Select, Empty } from 'antd';
+import { useEffect, useMemo, useState } from 'react';
+import { Button, Dropdown, Table, Tag, Typography, Select, Empty, App as AntApp } from 'antd';
+import { MoreOutlined, DeleteOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import type { TaskItem } from '@/components/tasks/constants';
 import {
@@ -13,6 +14,8 @@ import {
   complexityLabel,
   formatDateShort,
 } from '@/components/tasks/constants';
+import bundledApi from '@/api/bundled';
+import { formatProcessText } from '@/utils/processText';
 
 const { Text } = Typography;
 
@@ -23,6 +26,8 @@ interface TasksTableViewProps {
   workspaceId: number;
   selectedTaskId: number | null;
   onSelectTask: (taskId: number | null) => void;
+  /** 列表数据被本组件修改（如批量删除成功）后，通知父组件刷新。 */
+  onChanged: () => void;
 }
 
 /** 状态筛选项：all = 不筛。 */
@@ -38,7 +43,7 @@ const STATUS_FILTER_OPTIONS = [
  * 构造 Table 列定义。
  *
  * 列顺序与宽度：
- *   ID(60) | 标题(flex) | 状态(100) | 复杂度(80) | 模板(120) | 最近执行(110) | 创建时间(110)
+ *   ID(60) | 标题(flex) | 状态(100) | 复杂度(80) | 工艺(220) | 最近执行(110) | 创建时间(110)
  *
  * 标题列 ellipsis：防止长标题撑爆行宽。
  * 状态/最近执行列用 Tag：颜色与 STATUS_COLOR 一致。
@@ -81,13 +86,15 @@ function buildColumns(): ColumnsType<TaskItem> {
         ),
     },
     {
-      title: '模板',
-      dataIndex: 'template_name',
-      key: 'template_name',
-      width: 120,
+      title: '工艺',
+      key: 'process',
+      width: 220,
       ellipsis: true,
-      render: (name?: string) =>
-        name ? <Tag>{name}</Tag> : <Text type="secondary">—</Text>,
+      // 与事项/环路列表统一：#工艺id-工艺名称-工艺版本；无模板来源显示 —。
+      render: (_, task) => {
+        const text = formatProcessText(task.template_id, task.template_name, task.template_version);
+        return text === '-' ? <Text type="secondary">—</Text> : <Tag>{text}</Tag>;
+      },
     },
     {
       title: '最近执行',
@@ -111,6 +118,51 @@ function buildColumns(): ColumnsType<TaskItem> {
   ];
 }
 
+/** 选中 ID 裁剪 hook：tasks 变化时移除已消失的行（与 TodoListView 同模式）。 */
+function useSelectedIdsClipping(items: TaskItem[]) {
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  useEffect(() => {
+    setSelectedIds(prev => {
+      const alive = prev.filter(id => items.some(i => i.id === id));
+      return alive.length === prev.length ? prev : alive;
+    });
+  }, [items]);
+  return { selectedIds, setSelectedIds };
+}
+
+/**
+ * 批量按钮：受 selectedIds 控制，空选时禁用。
+ * 与 TodoListView BatchButton 同模式。
+ */
+function BatchButton({
+  selectedIds,
+  onBatchDelete,
+}: {
+  selectedIds: number[];
+  onBatchDelete: (ids: number[]) => void;
+}) {
+  // 与 TodoListView 对齐：批量入口一直渲染，空选时只禁用不隐藏，
+  // 让用户在未勾选前也能感知列表支持批量操作。
+  const disabled = selectedIds.length === 0;
+  const items = [
+    {
+      key: 'delete',
+      label: '删除',
+      icon: <DeleteOutlined />,
+      danger: true as const,
+      onClick: () => onBatchDelete(selectedIds),
+      disabled,
+    },
+  ];
+  return (
+    <Dropdown menu={{ items }} trigger={['click']} disabled={disabled}>
+      <Button size="small" disabled={disabled} data-testid="tasks-table-batch-trigger">
+        批量 <MoreOutlined style={{ fontSize: 10 }} />
+      </Button>
+    </Dropdown>
+  );
+}
+
 /**
  * 任务列表视图（Table）。
  *
@@ -118,18 +170,27 @@ function buildColumns(): ColumnsType<TaskItem> {
  * 1. 自带状态筛选 Select + 关键词搜索（走宿主顶栏 searchKeyword）。
  * 2. 行 onClick：选中任务，触发宿主右栏渲染详情。
  * 3. 选中行高亮：rowClassName 控制。
- * 4. 空态：根据是否有筛选条件显示不同文案。
+ * 4. 批量操作：行多选 + BatchButton（删除），与 TodoListView 操作模式一致。
+ * 5. 空态：根据是否有筛选条件显示不同文案。
  */
 export function TasksTableView({
   tasks,
   loading,
   searchKeyword,
+  workspaceId,
   selectedTaskId,
   onSelectTask,
+  onChanged,
 }: TasksTableViewProps) {
   // 自带筛选态：状态。
   // 复杂度筛选在这里不加，避免 toolbar 过于拥挤；用户可切到 card 视图做复杂度筛选。
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  // 行选中态（批量删除用）
+  const { selectedIds, setSelectedIds } = useSelectedIdsClipping(tasks);
+
+  // 通过 AntApp.useApp() 获取 modal/message 实例，而不是使用 Modal.confirm / message 静态方法；
+  // 这样批量删除确认窗才能进入当前 ConfigProvider/AntApp 上下文，亮暗主题切换时按当前主题 token 渲染。
+  const { modal, message } = AntApp.useApp();
 
   // 过滤逻辑：状态 + 关键词（标题 OR 需求）。
   const visibleTasks = useMemo(() => {
@@ -146,17 +207,44 @@ export function TasksTableView({
   // 列定义：useMemo 避免每次 render 重建造成 Table 性能抖动。
   const columns = useMemo(() => buildColumns(), []);
 
-  // 筛选 toolbar：状态 Select + 计数。
+  // 批量删除确认：使用上下文 modal.confirm，保证弹窗随当前主题渲染；
+  // 确认文案与危险按钮保持原样，避免引入额外交互变化。
+  const handleBatchDelete = (ids: number[]) => {
+    modal.confirm({
+      title: `确认删除 ${ids.length} 个任务？`,
+      content: '删除后不可恢复。',
+      okText: '删除',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          const result = await bundledApi.batchDeleteTasks(workspaceId, ids);
+          message.success(`已删除 ${result.deleted} 个任务`);
+          setSelectedIds([]);
+          // 任务数据由父组件 TasksPage 持有；删除成功后必须触发父级刷新，
+          // 否则表格仍显示已删除任务，用户可能误以为删除未生效。
+          onChanged();
+        } catch {
+          message.error('删除失败');
+        }
+      },
+    });
+  };
+
+  // 筛选 toolbar：批量按钮 + 状态 Select + 计数。
+  // 批量按钮放第一位，符合用户对批量管理入口的直觉预期；padding 与事项/环路列表 toolbar 一致（6px 12px），避免三页工具栏高度不一
   const toolbar = (
     <div
       style={{
         display: 'flex',
         alignItems: 'center',
         gap: 8,
-        padding: '8px 12px',
+        padding: '6px 12px',
         borderBottom: '1px solid var(--color-border-light, #f0f0f0)',
+        flexShrink: 0,
       }}
     >
+      <BatchButton selectedIds={selectedIds} onBatchDelete={handleBatchDelete} />
       <Select
         size="small"
         value={statusFilter}
@@ -166,7 +254,7 @@ export function TasksTableView({
         data-testid="tasks-table-status-filter"
       />
       <Text type="secondary" style={{ fontSize: 12, marginLeft: 'auto' }}>
-        共 {visibleTasks.length} 个任务
+        已选 {selectedIds.length} 项 / 共 {visibleTasks.length} 个任务
       </Text>
     </div>
   );
@@ -177,15 +265,27 @@ export function TasksTableView({
       data-testid="tasks-table-view"
     >
       {toolbar}
-      <div style={{ flex: 1, overflow: 'auto' }}>
+      {/* table 主体：与事项/环路列表同款配置——横向 scroll.x + 分页，
+          不再用 scroll.y 固定表头（三页滚动/分页行为保持一致） */}
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
         <Table<TaskItem>
           rowKey="id"
           columns={columns}
           dataSource={visibleTasks}
           loading={loading}
           size="small"
-          pagination={false}
-          scroll={{ y: 'calc(100vh - 240px)' }}
+          // 工艺列从 130 扩到 220 以容纳 #id-名称-版本 三段式文本，scroll.x 同步加宽。
+          scroll={{ x: 1290 }}
+          pagination={{
+            pageSize: 20,
+            showSizeChanger: true,
+            pageSizeOptions: ['20', '50', '100'],
+            showTotal: (total) => `共 ${total} 个任务`,
+          }}
+          rowSelection={{
+            selectedRowKeys: selectedIds,
+            onChange: (keys) => setSelectedIds(keys as number[]),
+          }}
           rowClassName={(record) =>
             record.id === selectedTaskId ? 'ntd-tasks-row-selected' : ''
           }

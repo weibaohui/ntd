@@ -541,21 +541,20 @@ fn default_category() -> String {
 /// - `step_template:` → 环节原型，写入 `process_step_templates`
 ///
 /// 同步策略（"先删后插"）：
-/// 1. 同步开始前删除所有 `is_system=true` 的 `process_templates` 与 `process_step_templates`，
-///    确保远程删除的工艺在本地也消失。
-/// 2. 扫描系统层 `~/.ntd/bundled/processes/`，upsert 为 `is_system=true`。
-/// 3. 扫描用户层 `~/.ntd/processes/`，upsert 为 `is_system=false`，同名工艺覆盖系统层。
+/// 040 起系统工艺改为按 guid reconcile：
+/// 1. 扫描系统层 `~/.ntd/bundled/processes/`，按 guid upsert 为 `is_system=true`
+///    （已有行保留 id 更新，`loops.process_template_id` 关联不断）。
+/// 2. 扫描后删除"DB 有而仓库无"的系统行（真正下架才删，此时 loops SET NULL 是正确语义）。
+/// 3. 扫描用户层 `~/.ntd/processes/`，按 guid upsert 为 `is_system=false`（与系统层同名共存）。
+///
+/// 环节原型（process_step_templates）维持"先删后插"——它按 name 被 YAML 内引用，是另一套机制。
 ///
 /// 导入失败单条记录 warning，不阻断整体同步。
 async fn import_process_templates_from_bundled(
     state: &AppState,
     local_path: &str,
 ) -> Result<(), String> {
-    // "先删后插"：清空系统工艺记录，保证远程删除的工艺在本地也消失。
-    // 用户工艺（is_system=false）不受影响，保证用户自定义不被同步误删。
-    if let Err(e) = state.db.delete_all_system_process_templates().await {
-        tracing::warn!("删除系统工艺模板失败: {}", e);
-    }
+    // 环节原型仍"先删后插"（未纳入 guid 体系）；工艺模板不再整表删除。
     if let Err(e) = state.db.delete_all_system_process_step_templates().await {
         tracing::warn!("删除系统环节原型失败: {}", e);
     }
@@ -566,13 +565,24 @@ async fn import_process_templates_from_bundled(
 
     let mut process_count = 0usize;
     let mut step_template_count = 0usize;
+    let mut seen_guids: Vec<String> = Vec::new();
 
     // 系统层扫描：bundled/processes/ 不存在时跳过（首次安装场景）。
     if bundled_processes_dir.exists() {
-        (process_count, step_template_count) =
+        (process_count, step_template_count, seen_guids) =
             scan_and_upsert_system_processes(state, &bundled_processes_dir).await?;
     } else {
         tracing::info!("bundled/processes 目录不存在，跳过系统层导入");
+    }
+
+    // reconcile 删除下架模板；守卫：一个都没导入成功（典型原因是远端仓库还没加 guid，
+    // 所有文件被跳过）时不做删除，避免把现有系统行误清空——等仓库更新后下次同步再对账。
+    if process_count > 0 {
+        match state.db.delete_system_process_templates_not_in(&seen_guids).await {
+            Ok(n) if n > 0 => tracing::info!("reconcile 删除了 {} 个已下架的系统工艺模板", n),
+            Ok(_) => {}
+            Err(e) => tracing::warn!("reconcile 删除下架工艺模板失败: {}", e),
+        }
     }
 
     tracing::info!(
@@ -593,16 +603,18 @@ async fn import_process_templates_from_bundled(
 
 /// 扫描系统层 `bundled/processes/` 目录，upsert 为 `is_system=true` 的工艺模板与环节原型。
 ///
-/// 返回 `(process_count, step_template_count)`，便于上层日志统计。
+/// 返回 `(process_count, step_template_count, seen_guids)`：
+/// 前两个供上层日志统计，seen_guids 供 reconcile 删除远端已下架的模板。
 async fn scan_and_upsert_system_processes(
     state: &AppState,
     bundled_processes_dir: &std::path::Path,
-) -> Result<(usize, usize), String> {
+) -> Result<(usize, usize, Vec<String>), String> {
     let yaml_files = collect_yaml_files(bundled_processes_dir)
         .map_err(|e| format!("读取 bundled/processes 目录失败: {}", e))?;
 
     let mut process_count = 0usize;
     let mut step_template_count = 0usize;
+    let mut seen_guids: Vec<String> = Vec::new();
 
     for path in yaml_files {
         let content = match std::fs::read_to_string(&path) {
@@ -623,12 +635,22 @@ async fn scan_and_upsert_system_processes(
 
         // 先尝试解析为工艺模板
         if let Some(wrapper) = parse_process_file(&content, &path) {
+            // 040：系统层文件必须带 guid（由远端仓库提供；本地不可回写，git reset --hard 会抹掉）。
+            // 无 guid 的文件跳过并提示，等仓库更新后再同步。
+            if wrapper.process.guid.is_empty() {
+                tracing::warn!(
+                    "系统工艺文件缺少 guid，已跳过（远端仓库需更新到含 guid 的版本）: {}",
+                    source_path
+                );
+                continue;
+            }
             if let Err(e) =
-                upsert_process_template(state, &wrapper.process, &source_path, &content).await
+                upsert_process_template(state, &wrapper.process, &source_path).await
             {
                 tracing::warn!("保存工艺模板 {} 失败: {}", source_path, e);
                 continue;
             }
+            seen_guids.push(wrapper.process.guid.clone());
             process_count += 1;
             continue;
         }
@@ -645,7 +667,7 @@ async fn scan_and_upsert_system_processes(
         }
     }
 
-    Ok((process_count, step_template_count))
+    Ok((process_count, step_template_count, seen_guids))
 }
 
 /// 递归收集目录下所有 yaml/yml 文件（按路径排序，保证导入顺序稳定）。
@@ -689,6 +711,11 @@ pub struct BundledProcessFile {
 /// bundled 工艺模板定义。
 #[derive(Debug, serde::Deserialize)]
 pub struct BundledProcessDefinition {
+    /// 040：工艺稳定身份（UUID v4），随文件走。
+    /// 系统层由远端仓库提供；用户层文件缺失时导入自动生成并回写。
+    /// `serde(default)` 让旧格式文件可解析，空值由导入逻辑分流处理。
+    #[serde(default)]
+    pub guid: String,
     pub name: String,
     #[serde(default)]
     pub display_name: String,
@@ -737,23 +764,23 @@ async fn upsert_process_template(
     state: &AppState,
     def: &BundledProcessDefinition,
     source_path: &str,
-    definition_text: &str,
 ) -> Result<(), sea_orm::DbErr> {
     let display_name = if def.display_name.is_empty() {
         &def.name
     } else {
         &def.display_name
     };
+    // 工艺正文（YAML）只存于磁盘文件，DB 仅保存 source_path 引用，不再落库 definition。
     state
         .db
         .upsert_system_process_template(
+            &def.guid,
             &def.name,
             display_name,
             &def.description,
             &def.category,
             &def.complexity,
             &def.version,
-            definition_text,
             source_path,
         )
         .await?;

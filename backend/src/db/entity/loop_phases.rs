@@ -3,7 +3,8 @@ use serde::{Deserialize, Serialize};
 
 /// Loop 内的阶段（Phase），聚合若干 loop_steps。
 ///
-/// 阶段有独立的规范、验收标准，并在执行时生成 loop_phase_executions。
+/// 阶段有独立的规范说明，并在执行时生成 loop_phase_executions。
+/// （阶段级验收标准已随需求 036 移除——验收标准只归环节 LinkDefinition。）
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
 #[sea_orm(table_name = "loop_phases")]
 pub struct Model {
@@ -22,9 +23,6 @@ pub struct Model {
     /// 阶段规范说明（Markdown）。
     #[sea_orm(column_type = "Text")]
     pub spec: String,
-    /// 阶段验收标准（Markdown）。
-    #[sea_orm(column_type = "Text")]
-    pub acceptance_criteria: String,
     /// 是否启用：1 启用，0 禁用。
     #[sea_orm(default_value = "1")]
     pub enabled: i32,

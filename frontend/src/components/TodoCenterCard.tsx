@@ -160,6 +160,15 @@ export function TodoCenterCard({ item, onChanged, onSelectTodo, onSelectLoop }: 
       <div className="todo-center-card-head">
         <span className="todo-center-card-title">
           <span className="todo-center-card-id">#{item.id}</span>
+          {item.action_type ? (
+            <Tag color="orange" style={{ marginLeft: 6, fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>快捷</Tag>
+          ) : item.todo_type === 2 ? (
+            <Tag color="purple" style={{ marginLeft: 6, fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>评审</Tag>
+          ) : item.todo_type === 3 ? (
+            <Tag color="magenta" style={{ marginLeft: 6, fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>异常处理</Tag>
+          ) : (
+            <Tag color="blue" style={{ marginLeft: 6, fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>事项</Tag>
+          )}
           {item.title}
         </span>
         <Dropdown menu={{ items: menuItems }} trigger={['click']} placement="bottomRight">

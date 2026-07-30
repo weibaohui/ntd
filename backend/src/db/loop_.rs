@@ -38,9 +38,19 @@ fn group_loop_refs_by_todo(
             Err(_) => continue,
         };
         if let Ok(loop_name) = row.try_get_by::<String, _>("loop_name") {
+            // 工艺模板字段可为 NULL（环路未绑定模板），try_get_by 失败时回落 None
+            let process_template_id: Option<i64> = row.try_get_by("process_template_id").ok();
+            let process_template_name: Option<String> =
+                row.try_get_by::<String, _>("process_template_name").ok();
+            // 版本同样允许 NULL：手工环路或历史数据没有快照时由前端显示占位符。
+            let process_template_version: Option<String> =
+                row.try_get_by::<String, _>("process_template_version").ok();
             map.entry(todo_id).or_default().push(crate::models::LoopRefSummary {
                 loop_id,
                 loop_name,
+                process_template_id,
+                process_template_name,
+                process_template_version,
             });
         }
     }
@@ -244,6 +254,16 @@ impl Database {
     pub async fn delete_loop(&self, id: i64) -> Result<(), sea_orm::DbErr> {
         loops::Entity::delete_by_id(id).exec(&self.conn).await?;
         Ok(())
+    }
+
+    /// 批量删除环路（CASCADE 删 triggers/steps/phase_executions）。
+    pub async fn batch_delete_loops(&self, ids: &[i64]) -> Result<u64, sea_orm::DbErr> {
+        if ids.is_empty() { return Ok(0); }
+        let res = loops::Entity::delete_many()
+            .filter(loops::Column::Id.is_in(ids.to_vec()))
+            .exec(&self.conn)
+            .await?;
+        Ok(res.rows_affected)
     }
 
     /// 批量更新环路工作空间（移动到其他工作空间）。
@@ -749,6 +769,54 @@ impl Database {
         loop_steps::Entity::find_by_id(id).one(&self.conn).await
     }
 
+    /// 按 todo_id 反查关联的 loop_step。
+    /// 用于 todo 级 auto_review 判定是否由环路闸门接管评审：
+    /// 若该 step 设了 min_rating，loop_runner.apply_rating_gate 会同步打分（其分支
+    /// 依赖 min_rating.is_some()），todo 级 auto_review 应跳过以避免同一 record 被评审两次。
+    /// 一个 todo 至多被一个启用中的 step 引用，取 one 即可。
+    pub async fn find_loop_step_by_todo_id(
+        &self,
+        todo_id: i64,
+    ) -> Result<Option<loop_steps::Model>, sea_orm::DbErr> {
+        loop_steps::Entity::find()
+            .filter(loop_steps::Column::TodoId.eq(todo_id))
+            .one(&self.conn)
+            .await
+    }
+
+    /// 按 todo_id 查 loop_step + 所属 loop 的 review_template_id（设计 034）。
+    /// 用于统一评审路径中实现 prompt 三级回退：查出 step 内联 review_prompt
+    /// 和其所属 loop 的 review_template_id，走「环节内联 → 环路模板 → 默认」。
+    ///
+    /// 返回 (step.review_prompt, loop.review_template_id)。
+    /// step 未找到或不启用时返回 Ok(None)。
+    pub async fn find_loop_step_with_loop_review_template(
+        &self,
+        todo_id: i64,
+    ) -> Result<Option<(Option<String>, Option<i64>)>, sea_orm::DbErr> {
+        use sea_orm::{ConnectionTrait, Statement, DbBackend, Value};
+        let sql = "SELECT s.review_prompt, l.review_template_id \
+                   FROM loop_steps s \
+                   INNER JOIN loops l ON l.id = s.loop_id \
+                   WHERE s.todo_id = ? AND s.enabled = 1 \
+                   LIMIT 1";
+        let rows = self
+            .conn
+            .query_all(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                sql,
+                [Value::BigInt(Some(todo_id))],
+            ))
+            .await?;
+        if rows.is_empty() {
+            return Ok(None);
+        }
+        let row = &rows[0];
+        let review_prompt: Option<String> = row.try_get_by("review_prompt").ok().flatten();
+        let review_template_id: Option<i64> = row.try_get_by("review_template_id").ok().flatten();
+        Ok(Some((review_prompt, review_template_id)))
+    }
+
     /// 批量统计每个 todo 被启用中的 loop_steps 引用次数（用于事项中心 Loop 驱动分桶）。
     ///
     /// 只统计 `enabled=1` 的步骤：禁用步骤不参与 Loop 执行，不计入 Loop 驱动
@@ -816,10 +884,16 @@ impl Database {
             return Ok(std::collections::HashMap::new());
         }
         let (placeholders, values) = Database::in_clause(todo_ids);
-        // JOIN loops 取 name；ORDER BY todo_id, loop_id 保证输出稳定可测
+        // JOIN loops 取 name；LEFT JOIN process_templates 取工艺模板（供「工艺」列展示）。
+        // 用 LEFT JOIN：环路可能未绑定工艺模板（process_template_id 为空），此时模板字段为 NULL。
+        // ORDER BY todo_id, loop_id 保证输出稳定可测
         let sql = format!(
-            "SELECT ls.todo_id, l.id as loop_id, l.name as loop_name FROM loop_steps ls \
+            "SELECT ls.todo_id, l.id as loop_id, l.name as loop_name, \
+                    pt.id as process_template_id, pt.display_name as process_template_name, \
+                    COALESCE(l.process_template_version, pt.version) as process_template_version \
+             FROM loop_steps ls \
              INNER JOIN loops l ON l.id = ls.loop_id \
+             LEFT JOIN process_templates pt ON pt.id = l.process_template_id \
              WHERE ls.enabled = 1 AND ls.todo_id IN ({placeholders}) \
              ORDER BY ls.todo_id ASC, l.id ASC"
         );
@@ -1125,6 +1199,12 @@ impl Database {
     }
 
     /// 批量查询指定 loop_execution 列表的待审批数，返回 execution_id → count 映射。
+    ///
+    /// 「待审批」覆盖两条暂停路径（NTD-004）：
+    /// - 旧评分路径：暂停时写 `approval_status='pending'`；
+    /// - 工艺（phase_driver）路径：暂停时只写 `status='pending_approval'`，不写 approval_status。
+    ///
+    /// 两种写法互斥（不同路径产生），OR 条件不会重复计数。
     pub async fn count_pending_approvals_by_execution_ids(
         &self,
         execution_ids: &[i64],
@@ -1142,7 +1222,8 @@ impl Database {
         let sql = format!(
             "SELECT lse.loop_execution_id, COUNT(*) AS n \
              FROM loop_step_executions lse \
-             WHERE lse.loop_execution_id IN ({}) AND lse.approval_status = 'pending' \
+             WHERE lse.loop_execution_id IN ({}) \
+               AND (lse.approval_status = 'pending' OR lse.status = 'pending_approval') \
              GROUP BY lse.loop_execution_id",
             ids_str
         );
@@ -1234,7 +1315,40 @@ impl Database {
             unrated_policy: ActiveValue::Set(Some(unrated_policy.to_string())),
             ..Default::default()
         };
-        am.insert(&self.conn).await
+        let model = am.insert(&self.conn).await?;
+
+        // 同步创建门禁记录：从步骤的 gate_config 解析，为每个 gate 创建 pending 记录。
+        // 步骤创建时就创建 gate，而非等待进入某个状态后才创建——避免因分支遗漏导致 gate 缺失。
+        if let Ok(Some(step)) = crate::db::entity::loop_steps::Entity::find_by_id(step_id)
+            .one(&self.conn)
+            .await
+        {
+            if !step.gate_config.is_empty() {
+                if let Ok(gates) = serde_json::from_str::<Vec<serde_json::Value>>(&step.gate_config) {
+                    for g in &gates {
+                        if let (Some(gt), Some(gn)) = (
+                            g.get("type").and_then(|v| v.as_str()),
+                            g.get("name").and_then(|v| v.as_str()),
+                        ) {
+                            if let Err(e) = self
+                                .create_loop_step_execution_gate(
+                                    model.id, gt, gn,
+                                    &serde_json::to_string(g).unwrap_or_default(),
+                                )
+                                .await
+                            {
+                                tracing::warn!(
+                                    "create step_execution #{}: failed to create gate '{}': {}",
+                                    model.id, gn, e,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(model)
     }
 
     /// 为异常处理步骤创建 loop_step_execution 记录。
@@ -1282,8 +1396,13 @@ impl Database {
         let now = crate::models::utc_timestamp();
         let existing = loop_step_executions::Entity::find_by_id(id).one(&self.conn).await?;
         if let Some(c) = existing {
+            // 人工审批步骤复用已 completed todo 时，创建即写入 pending_approval（LoopRunner 4e），
+            // 若无条件改回 running 会冲掉该状态，导致步骤卡 running、前端审批入口不出现。
+            let preserve_status = c.status == "pending_approval";
             let mut am: loop_step_executions::ActiveModel = c.into();
-            am.status = ActiveValue::Set("running".to_string());
+            if !preserve_status {
+                am.status = ActiveValue::Set("running".to_string());
+            }
             am.started_at = ActiveValue::Set(Some(now));
             am.update(&self.conn).await?;
         }
@@ -1365,6 +1484,25 @@ impl Database {
         Ok(())
     }
 
+    /// 回写 step execution 的评审阈值（min_rating）。
+    ///
+    /// gate_config 风格步骤的阈值在门禁 JSON（ai_criteria_review.min_score）里，
+    /// 创建 step execution 时 step.min_rating 为 NULL，需由 PhaseDriver 评价门禁后回写，
+    /// 前端环节卡片据此显示「阈值 N」并判定评分是否达标。
+    pub async fn set_step_execution_min_rating(
+        &self,
+        id: i64,
+        min_rating: i32,
+    ) -> Result<(), sea_orm::DbErr> {
+        let existing = loop_step_executions::Entity::find_by_id(id).one(&self.conn).await?;
+        if let Some(c) = existing {
+            let mut am: loop_step_executions::ActiveModel = c.into();
+            am.min_rating = ActiveValue::Set(Some(min_rating));
+            am.update(&self.conn).await?;
+        }
+        Ok(())
+    }
+
     /// 设置环节执行记录的审批状态（人工审批流程专用）。
     pub async fn set_step_execution_approval_status(
         &self,
@@ -1423,7 +1561,7 @@ impl Database {
                     s.on_success, s.success_goto_step_id, s.on_rating_fail, s.fail_goto_step_id, \
                     s.review_type, \
                     s.phase_id, s.expected_artifacts, s.gate_config, s.max_rework, \
-                    s.skill_names, s.expert_name, \
+                    s.skill_names, s.expert_name, s.review_prompt, \
                     s.enabled, s.created_at, \
                     st.title as todo_title, st.executor as todo_executor, \
                     st.archived_at as todo_archived_at \
@@ -1461,6 +1599,7 @@ impl Database {
                 max_rework: row.try_get_by::<i32, _>("max_rework")?,
                 skill_names: row.try_get_by::<String, _>("skill_names")?,
                 expert_name: row.try_get_by::<Option<String>, _>("expert_name")?,
+                review_prompt: row.try_get_by::<Option<String>, _>("review_prompt")?,
                 enabled: row.try_get_by::<i32, _>("enabled")?,
                 created_at: row.try_get_by::<Option<String>, _>("created_at")?,
             };
@@ -1549,6 +1688,8 @@ impl Database {
                     limits_config: row.try_get_by::<String, _>("limits_config")?,
                     abnormal_handler_todo_id: row.try_get_by::<Option<i64>, _>("abnormal_handler_todo_id")?,
                     abnormal_handler_trigger_on: row.try_get_by::<String, _>("abnormal_handler_trigger_on")?,
+                    // 列表查询不返回异常处理 prompt，给 None（详情接口才需展示）
+                    abnormal_handler_prompt: None,
                     process_template_id: row.try_get_by::<Option<i64>, _>("process_template_id")?,
                     process_template_version: row.try_get_by::<Option<String>, _>("process_template_version")?,
                     created_at: row.try_get_by::<Option<String>, _>("created_at")?,
@@ -1960,6 +2101,98 @@ mod loop_step_count_tests {
         );
     }
 
+    /// find_loop_step_by_todo_id：按 todo_id 反查 step；存在/不存在两条路径。
+    /// 用于 todo 级 auto_review 判定是否由环路闸门接管（step.min_rating.is_some()）。
+    #[tokio::test]
+    async fn test_find_loop_step_by_todo_id_found_and_missing() {
+        let db = fresh_db().await;
+        let todo_id = seed_todo(&db, "环节todo").await;
+        let free_todo = seed_todo(&db, "自由todo").await;
+        let loop_id = seed_loop(&db, "L").await;
+        // 插一条带 min_rating 的 ai 评审环节，模拟「环路闸门会接管」的场景
+        db.exec(&format!(
+            "INSERT INTO loop_steps (loop_id, name, todo_id, enabled, min_rating, review_type) \
+             VALUES ({loop_id}, 's', {todo_id}, 1, 80, 'ai')"
+        ))
+        .await
+        .expect("insert step");
+
+        // 命中：返回该 step，min_rating=80（环路闸门依赖此字段决定是否接管评审）
+        let found = db
+            .find_loop_step_by_todo_id(todo_id)
+            .await
+            .unwrap()
+            .expect("step should exist");
+        assert_eq!(found.todo_id, todo_id);
+        assert_eq!(found.min_rating, Some(80));
+        assert_eq!(found.review_type, "ai");
+
+        // 未命中：未被环节引用的 todo 返回 None
+        let missing = db.find_loop_step_by_todo_id(free_todo).await.unwrap();
+        assert!(missing.is_none(), "未被环节引用的 todo 应返回 None");
+    }
+
+    /// find_loop_step_with_loop_review_template：按 todo_id 反查「环节内联 review_prompt +
+    /// 所属 loop 的 review_template_id」，供评审 prompt 三级回退（completion.rs 调用）。
+    /// 覆盖命中（两个值都读到）与未命中（无环节 → None）两条路径。
+    #[tokio::test]
+    async fn test_find_loop_step_with_loop_review_template_found_and_missing() {
+        let db = fresh_db().await;
+        let todo_id = seed_todo(&db, "环节todo").await;
+        let free_todo = seed_todo(&db, "自由todo").await;
+        let loop_id = seed_loop(&db, "L").await;
+        // loop 绑定环路级评审模板 id（普通 INTEGER 列、非 FK，可直接赋任意值用于断言）
+        db.exec(&format!(
+            "UPDATE loops SET review_template_id = 7 WHERE id = {loop_id}"
+        ))
+        .await
+        .expect("set review_template_id");
+        // 启用环节，带内联 review_prompt（v75 新增列）
+        db.exec(&format!(
+            "INSERT INTO loop_steps (loop_id, name, todo_id, enabled, review_prompt) \
+             VALUES ({loop_id}, 's', {todo_id}, 1, '请严格评审')"
+        ))
+        .await
+        .expect("insert step");
+
+        // 命中：同时返回环节内联 prompt 与 loop 级 template_id
+        let found = db
+            .find_loop_step_with_loop_review_template(todo_id)
+            .await
+            .unwrap()
+            .expect("step should exist");
+        assert_eq!(found, (Some("请严格评审".to_string()), Some(7i64)));
+
+        // 未命中：未被任何环节引用的 todo 返回 None
+        let missing = db
+            .find_loop_step_with_loop_review_template(free_todo)
+            .await
+            .unwrap();
+        assert!(missing.is_none(), "未被环节引用的 todo 应返回 None");
+    }
+
+    /// enabled=0 的环节不应被选中：WHERE s.enabled = 1 是评审只取启用环节的关键过滤，
+    /// 禁用环节不参与 loop 执行，其 review_prompt/template_id 不应泄漏进评审回退。
+    #[tokio::test]
+    async fn test_find_loop_step_with_loop_review_template_excludes_disabled() {
+        let db = fresh_db().await;
+        let todo_id = seed_todo(&db, "环节todo").await;
+        let loop_id = seed_loop(&db, "L").await;
+        // 环节存在但被禁用 → 必须被过滤掉
+        db.exec(&format!(
+            "INSERT INTO loop_steps (loop_id, name, todo_id, enabled, review_prompt) \
+             VALUES ({loop_id}, 's', {todo_id}, 0, '请严格评审')"
+        ))
+        .await
+        .expect("insert disabled step");
+
+        let res = db
+            .find_loop_step_with_loop_review_template(todo_id)
+            .await
+            .unwrap();
+        assert!(res.is_none(), "禁用环节不应被选中");
+    }
+
     /// get_referencing_loops_for_todos：按 todo_id 返回引用 Loop 摘要（loop_id + name），
     /// 只含启用环节，禁用环节的 Loop 不出现。事项中心 Loop 驱动卡片「所属 Loop」用。
     #[tokio::test]
@@ -1992,13 +2225,49 @@ mod loop_step_count_tests {
         assert!(!map.contains_key(&todo_b));
     }
 
+    /// 「工艺」列依赖 LoopRefSummary 带 process_template 信息：
+    /// 环路绑定了模板时要回填 template id/name；未绑定时为 None。
+    #[tokio::test]
+    async fn test_get_referencing_loops_includes_process_template() {
+        let db = fresh_db().await;
+        let todo = seed_todo(&db, "T").await;
+        let tpl = seed_process_template(&db, "工艺A").await;
+        let loop_with_tpl = seed_loop(&db, "环路1").await;
+        let loop_no_tpl = seed_loop(&db, "环路2").await;
+        // 把环路1 关联到工艺模板
+        db.exec(&format!(
+            "UPDATE loops SET process_template_id = {tpl}, process_template_version = '9.9.9' WHERE id = {loop_with_tpl}"
+        ))
+        .await
+        .expect("bind template");
+        db.exec(&format!(
+            "INSERT INTO loop_steps (loop_id, name, todo_id, enabled) \
+             VALUES ({loop_with_tpl}, 's1', {todo}, 1), ({loop_no_tpl}, 's2', {todo}, 1)"
+        ))
+        .await
+        .expect("insert steps");
+
+        let map = db.get_referencing_loops_for_todos(&[todo]).await.unwrap();
+        let refs = map.get(&todo).expect("T 应有引用");
+        // 按 loop_id 升序：绑模板的环路1 在前
+        assert_eq!(refs.len(), 2);
+        assert_eq!(refs[0].process_template_id, Some(tpl));
+        assert_eq!(refs[0].process_template_name.as_deref(), Some("工艺A"));
+        assert_eq!(refs[0].process_template_version.as_deref(), Some("9.9.9"));
+        // 未绑模板的环路2 → None
+        assert_eq!(refs[1].process_template_id, None);
+        assert_eq!(refs[1].process_template_name, None);
+        assert_eq!(refs[1].process_template_version, None);
+    }
+
     /// 插一条工艺模板，返回 id。
     ///
     /// loops.process_template_id 有外键约束（SQLite 外键开启时），
-    /// 测试关联工艺前必须先有真实模板行；必填列仅 name/display_name/definition。
+    /// 测试关联工艺前必须先有真实模板行；必填列为 guid/name/display_name。
+    /// 工艺正文存在磁盘，DB 只存 source_path 引用，因此此处不插入 definition 列。
     async fn seed_process_template(db: &Database, name: &str) -> i64 {
         db.exec(&format!(
-            "INSERT INTO process_templates (name, display_name, definition) VALUES ('{name}', '{name}', 'yaml')"
+            "INSERT INTO process_templates (guid, name, display_name) VALUES ('guid-{name}', '{name}', '{name}')"
         ))
         .await
         .expect("insert process_template");
@@ -2171,6 +2440,40 @@ mod loop_stats_tests {
         .expect("insert step_execution");
     }
 
+    /// set_step_execution_min_rating：阈值回写后能被读出；
+    /// gate_config 风格步骤（step.min_rating 为 NULL）依赖这条路径让前端显示「阈值 N」。
+    #[tokio::test]
+    async fn test_set_step_execution_min_rating_updates_column() {
+        let db = fresh_db().await;
+        let todo = seed_todo(&db, "T").await;
+        let lp = seed_loop_status(&db, "L", "enabled").await;
+        let step = seed_loop_step(&db, lp, todo, "s1").await;
+        let le = seed_loop_execution(&db, lp, "manual", "running", "datetime('now')").await;
+        // 直接插入无阈值的 step execution（模拟 gate_config 风格步骤创建时的状态）
+        db.exec(&format!(
+            "INSERT INTO loop_step_executions (loop_execution_id, step_id, todo_id, status) \
+             VALUES ({le}, {step}, {todo}, 'running')"
+        ))
+        .await
+        .expect("insert step_execution");
+        let se = max_id(&db, "loop_step_executions").await;
+
+        db.set_step_execution_min_rating(se, 60)
+            .await
+            .expect("set min_rating");
+
+        let row = db
+            .conn
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                format!("SELECT min_rating AS m FROM loop_step_executions WHERE id={se}"),
+            ))
+            .await
+            .expect("query min_rating")
+            .expect("row exists");
+        assert_eq!(row.try_get_by::<Option<i32>, _>("m").unwrap_or(None), Some(60));
+    }
+
     /// 全时段聚合:loop 规模、执行成功/失败、触发器分布、Token 都应正确汇总。
     #[tokio::test]
     async fn test_get_loop_stats_aggregates_all_fields() {
@@ -2251,5 +2554,151 @@ mod loop_stats_tests {
         assert_eq!(stats.total_executions, 0);
         assert!(stats.trigger_type_distribution.is_empty());
         assert_eq!(stats.total_input_tokens, 0);
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod loop_approval_tests {
+    use crate::db::Database;
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+
+    async fn fresh_db() -> Database {
+        Database::new(":memory:").await.expect("memory db must open")
+    }
+
+    /// 取某表当前最大 id（等价于刚插入行的 id；用 MAX 因连接池不保证同一连接）。
+    async fn max_id(db: &Database, table: &str) -> i64 {
+        let sql = format!("SELECT MAX(id) AS m FROM {table}");
+        let row = db
+            .conn
+            .query_one(Statement::from_string(DbBackend::Sqlite, sql))
+            .await
+            .expect("query max id")
+            .expect("max id row exists");
+        row.try_get_by::<i64, _>("m").unwrap_or(0)
+    }
+
+    /// 造一条 pending_approval 的环节执行记录（含 todo/loop/step/execution 四级外键），
+    /// 返回 (loop_execution_id, step_execution_id)。
+    async fn seed_pending_step_execution(db: &Database) -> (i64, i64) {
+        db.exec("INSERT INTO todos (title, prompt, status) VALUES ('t', 'p', 'pending')")
+            .await
+            .expect("insert todo");
+        let todo_id = max_id(db, "todos").await;
+        db.exec("INSERT INTO loops (name) VALUES ('L')")
+            .await
+            .expect("insert loop");
+        let loop_id = max_id(db, "loops").await;
+        db.exec(&format!(
+            "INSERT INTO loop_steps (loop_id, name, todo_id, enabled) VALUES ({loop_id}, 's', {todo_id}, 1)"
+        ))
+        .await
+        .expect("insert step");
+        let step_id = max_id(db, "loop_steps").await;
+        db.exec(&format!(
+            "INSERT INTO loop_executions (loop_id, trigger_type, status, started_at) \
+             VALUES ({loop_id}, 'manual', 'running', datetime('now'))"
+        ))
+        .await
+        .expect("insert loop_execution");
+        let exec_id = max_id(db, "loop_executions").await;
+        db.exec(&format!(
+            "INSERT INTO loop_step_executions (loop_execution_id, step_id, todo_id, status, sequence_index) \
+             VALUES ({exec_id}, {step_id}, {todo_id}, 'pending_approval', 1)"
+        ))
+        .await
+        .expect("insert step_execution");
+        let se_id = max_id(db, "loop_step_executions").await;
+        (exec_id, se_id)
+    }
+
+    /// 审批通过落库：status/rating/approval_status/comment 全部写入。
+    /// approval_status='approved' 是 resume_loop_execution 定位待恢复环节的查找条件（NTD-004）。
+    #[tokio::test]
+    async fn test_approve_step_execution_approved_writes_terminal_state() {
+        let db = fresh_db().await;
+        let (exec_id, se_id) = seed_pending_step_execution(&db).await;
+
+        db.approve_step_execution(se_id, 100, "success", Some("同意上线"))
+            .await
+            .expect("approve");
+
+        let list = db.list_loop_step_executions(exec_id).await.expect("list");
+        let se = list.iter().find(|s| s.id == se_id).expect("target row");
+        assert_eq!(se.status, "success");
+        assert_eq!(se.rating, Some(100));
+        assert_eq!(se.approval_status.as_deref(), Some("approved"));
+        assert_eq!(se.approval_comment.as_deref(), Some("同意上线"));
+    }
+
+    /// 审批拒绝落库：status=failed、rating=0，resume 据此走 on_rating_fail 分支。
+    #[tokio::test]
+    async fn test_approve_step_execution_rejected_writes_failed() {
+        let db = fresh_db().await;
+        let (exec_id, se_id) = seed_pending_step_execution(&db).await;
+
+        db.approve_step_execution(se_id, 0, "failed", None)
+            .await
+            .expect("approve");
+
+        let list = db.list_loop_step_executions(exec_id).await.expect("list");
+        let se = list.iter().find(|s| s.id == se_id).expect("target row");
+        assert_eq!(se.status, "failed");
+        assert_eq!(se.rating, Some(0));
+        assert_eq!(se.approval_status.as_deref(), Some("approved"));
+        assert!(se.approval_comment.is_none());
+    }
+
+    /// 待审批计数覆盖工艺路径：phase_driver 暂停时只写 status='pending_approval'，
+    /// 不写 approval_status；计数必须能统计到，否则前端「N 待审批」角标恒为 0（NTD-004）。
+    #[tokio::test]
+    async fn test_count_pending_approvals_covers_process_path() {
+        let db = fresh_db().await;
+        let (exec_id, _se_id) = seed_pending_step_execution(&db).await;
+
+        let counts = db
+            .count_pending_approvals_by_execution_ids(&[exec_id])
+            .await
+            .expect("count");
+        assert_eq!(counts.get(&exec_id).copied().unwrap_or(0), 1);
+    }
+
+    /// 待审批计数兼容旧评分路径：暂停时写 approval_status='pending'（status 也是 pending_approval）。
+    /// 两个条件同时命中时 OR 不重复计数。
+    #[tokio::test]
+    async fn test_count_pending_approvals_legacy_path_not_double_counted() {
+        let db = fresh_db().await;
+        let (exec_id, se_id) = seed_pending_step_execution(&db).await;
+        // 旧路径会额外写 approval_status='pending'（loop_runner.rs 暂停分支）。
+        db.set_step_execution_approval_status(se_id, "pending")
+            .await
+            .expect("set approval_status");
+
+        let counts = db
+            .count_pending_approvals_by_execution_ids(&[exec_id])
+            .await
+            .expect("count");
+        assert_eq!(
+            counts.get(&exec_id).copied().unwrap_or(0),
+            1,
+            "status 与 approval_status 同时命中应按一行计一次"
+        );
+    }
+
+    /// 审批完成后不再计入待审批。
+    #[tokio::test]
+    async fn test_count_pending_approvals_excludes_approved() {
+        let db = fresh_db().await;
+        let (exec_id, se_id) = seed_pending_step_execution(&db).await;
+        db.approve_step_execution(se_id, 100, "success", None)
+            .await
+            .expect("approve");
+
+        let counts = db
+            .count_pending_approvals_by_execution_ids(&[exec_id])
+            .await
+            .expect("count");
+        assert_eq!(counts.get(&exec_id).copied().unwrap_or(0), 0);
     }
 }

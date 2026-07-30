@@ -59,16 +59,18 @@ describe('useBatchActions', () => {
     expect(result.current.modals).toBeDefined();
   });
 
-  it('item 模式下返回 5 个批量操作', () => {
+  it('item 模式下返回 6 个批量操作（含删除）', () => {
     const { result } = renderHook(() => useBatchActions(defaultOpts));
-    expect(result.current.batchActions).toHaveLength(5);
+    expect(result.current.batchActions).toHaveLength(6);
     expect(result.current.batchActions[0].key).toBe('change-executor');
+    expect(result.current.batchActions[5].key).toBe('delete');
   });
 
-  it('loop 模式下返回 3 个批量操作', () => {
+  it('loop 模式下返回 4 个批量操作（含删除）', () => {
     const { result } = renderHook(() => useBatchActions({ ...defaultOpts, mode: 'loop' }));
-    expect(result.current.batchActions).toHaveLength(3);
+    expect(result.current.batchActions).toHaveLength(4);
     expect(result.current.batchActions[2].key).toBe('force-stop');
+    expect(result.current.batchActions[3].key).toBe('delete');
   });
 
   it('item 模式下 modals 非空', () => {
@@ -79,17 +81,17 @@ describe('useBatchActions', () => {
   it('item 模式的 action keys 完整', () => {
     const { result } = renderHook(() => useBatchActions(defaultOpts));
     const keys = result.current.batchActions.map(a => a.key);
-    expect(keys).toEqual(['change-executor', 'copy-workspace', 'move-workspace', 'pause-scheduler', 'resume-scheduler']);
+    expect(keys).toEqual(['change-executor', 'copy-workspace', 'move-workspace', 'pause-scheduler', 'resume-scheduler', 'delete']);
   });
 
   it('loop 模式的 action keys 完整', () => {
     const { result } = renderHook(() => useBatchActions({ ...defaultOpts, mode: 'loop' }));
     const keys = result.current.batchActions.map(a => a.key);
-    expect(keys).toEqual(['copy-workspace', 'move-workspace', 'force-stop']);
+    expect(keys).toEqual(['copy-workspace', 'move-workspace', 'force-stop', 'delete']);
   });
 
   it('workspace 为 null 时仍能正常构造', () => {
     const { result } = renderHook(() => useBatchActions({ ...defaultOpts, selectedWorkspace: null }));
-    expect(result.current.batchActions).toHaveLength(5);
+    expect(result.current.batchActions).toHaveLength(6);
   });
 });

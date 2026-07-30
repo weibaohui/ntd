@@ -4,7 +4,7 @@
 //! - 门禁全通过 → 执行 `on_success` 策略；
 //! - 有门禁失败 → 执行 `on_rating_fail` 策略（安装时已做 on_gate_fail fallback）；
 //! - 策略 `next` → 推进到下一索引；
-//! - 策略 `goto` → 使用 `success_goto_step_id` 或 `fail_goto_step_id`；
+//! - 策略为环节 id（跳转目标）→ 使用 `success_goto_step_id` 或 `fail_goto_step_id`（需求 037：裸 id 即跳转，已清除 `goto:` 前缀）；
 //! - 策略 `end` / `break` → 终止（返回 None）；
 //! - 策略 `skip` → 推进到下一索引（同 next）。
 
@@ -47,11 +47,16 @@ fn resolve_by_policy(
     step_id_to_idx: &HashMap<i64, usize>,
     current_idx: usize,
 ) -> Option<usize> {
+    // 流转策略规则（需求 037：已清除 goto: 前缀）：
+    // - 保留字 next/skip → 下一索引；end/break → 终止；
+    // - 其他值（裸环节 id）= 跳转目标，用安装时解析好的 success_goto_step_id/fail_goto_step_id 流转。
     match policy {
         "next" => Some(current_idx + 1),
         "skip" => Some(current_idx + 1),
         "end" | "break" => None,
-        "goto" => {
+        _ => {
+            // 非保留字即跳转目标。数字目标 id 由 installer.resolve_goto 在安装时写入。
+            // 找不到（旧数据/异常）时 fallback 到 next，保证流转不卡死。
             let target = if gates_passed {
                 step.success_goto_step_id
             } else {
@@ -70,23 +75,6 @@ fn resolve_by_policy(
                     Some(current_idx + 1)
                 }
             }
-        }
-        // 兼容 goto:<link_id> 原始文本（安装时已解析，但不排除旧数据）。
-        policy if policy.starts_with("goto:") => {
-            // 旧数据可能存原始文本而非 "goto"，此时应以 goto 字段为准。
-            let target = if gates_passed {
-                step.success_goto_step_id
-            } else {
-                step.fail_goto_step_id
-            };
-            match target.and_then(|id| step_id_to_idx.get(&id).copied()) {
-                Some(idx) => Some(idx),
-                None => Some(current_idx + 1),
-            }
-        }
-        _ => {
-            tracing::warn!("transition: unknown policy '{}', falling back to next", policy);
-            Some(current_idx + 1)
         }
     }
 }
@@ -130,6 +118,7 @@ mod tests {
             max_rework: 3,
             skill_names: "[]".to_string(),
             expert_name: None,
+            review_prompt: None,
             enabled: 1,
             created_at: None,
         }
@@ -182,7 +171,7 @@ mod tests {
     #[test]
     fn success_goto_found_returns_target() {
         let steps = vec![
-            make_step(1, "goto", "break", Some(3), None),
+            make_step(1, "step-3", "break", Some(3), None),
             make_step(2, "next", "break", None, None),
             make_step(3, "next", "break", None, None),
         ];
@@ -193,19 +182,19 @@ mod tests {
     #[test]
     fn fail_goto_found_returns_target() {
         let steps = vec![
-            make_step(1, "next", "goto", None, Some(3)),
+            make_step(1, "next", "step-3", None, Some(3)),
             make_step(2, "next", "break", None, None),
             make_step(3, "next", "break", None, None),
         ];
         let map = idx_map(&steps);
-        // gates failed → 走 on_rating_fail=goto → fail_goto_step_id=3 → idx=2
+        // gates failed → 走 on_rating_fail=step-3（裸环节 id 跳转）→ fail_goto_step_id=3 → idx=2
         assert_eq!(resolve_next(&steps[0], false, &map, 0), Some(2));
     }
 
     #[test]
     fn success_goto_missing_falls_back_to_next() {
         let steps = vec![
-            make_step(1, "goto", "break", Some(999), None),
+            make_step(1, "step-3", "break", Some(999), None),
             make_step(2, "next", "break", None, None),
         ];
         let map = idx_map(&steps);

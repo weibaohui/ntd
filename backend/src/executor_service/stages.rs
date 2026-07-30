@@ -22,7 +22,8 @@ use crate::models::Todo;
 
 use super::pre_spawn::{
     create_run_execution_record, enforce_concurrency_limit,
-    inject_expert_context, inject_workspace_prompt, reject_start_todo_failure,
+    inject_expert_context, inject_workspace_background, inject_workspace_prompt,
+    reject_start_todo_failure,
     select_executor_and_build_command, substitute_message_placeholders,
 };
 use super::spawn_lifecycle::run_spawned_executor_task;
@@ -69,9 +70,18 @@ pub(crate) async fn prepare_execution_state(
     //    拼到 message 前面。失败时静默回退到原 message，不阻断执行。
     let expert_message =
         inject_expert_context(&request, &todo, &workspace_message).await;
+    // 5.5) 注入工作空间运行背景（名称/地址）到最外层（需求 042）。
+    //      放在专家上下文之后，使工作空间信息成为整段 prompt 的最外层前言，
+    //      覆盖所有执行入口（它们都收敛到 prepare_execution_state）。
+    //      loop 路径 request.workspace_id=None 时用 todo.workspace_id 回退，避免漏注入。
+    let ws_id = request
+        .workspace_id
+        .or_else(|| todo.as_ref().and_then(|t| t.workspace_id));
+    let background_message =
+        inject_workspace_background(&request.db, ws_id, &expert_message).await;
     // 6) 选定 executor 并构造 command_args（传入注入后的 message）。
     let selected =
-        select_executor_and_build_command(&request, &todo, &expert_message).await?;
+        select_executor_and_build_command(&request, &todo, &background_message).await?;
     // 7) 创建 execution record 并把 stage 1 产物聚合成 PreparedExecution。
     create_run_execution_record(request, task_state, todo, timeout_secs, selected).await
 }

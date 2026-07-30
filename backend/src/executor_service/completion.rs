@@ -840,6 +840,10 @@ pub async fn blackboard_flush_listener(
 }
 
 /// 仅在 trigger_type != "auto_review" 时启动自动评审，避免评审实例反向触发评审。
+///
+/// 设计 034 统一路径：所有 loop_stage 步骤（无论 min_rating 是否有值）都走统一评审，
+/// 查出 step 内联 `review_prompt` 和所属 loop 的 `review_template_id` 传给
+/// `run_auto_review`，由 `resolve_review_template` 实现三级回退。
 #[allow(clippy::too_many_arguments)]
 async fn maybe_run_auto_review(
     db: &Arc<Database>,
@@ -854,6 +858,20 @@ async fn maybe_run_auto_review(
     if trigger_type == "auto_review" || todo_id == 0 {
         return;
     }
+
+    // 环路步骤：查出 step 内联 review_prompt + 所属 loop 的 review_template_id
+    // 用于 prompt 三级回退。非环路步骤传 None，回退到默认模板。
+    let (step_review_prompt, loop_review_template_id) = if trigger_type.starts_with("loop_stage") {
+        match db.find_loop_step_with_loop_review_template(todo_id).await {
+            Ok(Some((review_prompt, review_template_id))) => {
+                (review_prompt, review_template_id)
+            }
+            _ => (None, None),
+        }
+    } else {
+        (None, None)
+    };
+
     run_auto_review(
         db.clone(),
         executor_registry.clone(),
@@ -862,6 +880,8 @@ async fn maybe_run_auto_review(
         config.clone(),
         todo_id,
         record_id,
+        step_review_prompt,
+        loop_review_template_id,
     )
     .await;
 }

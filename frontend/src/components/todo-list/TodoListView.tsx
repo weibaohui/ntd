@@ -12,6 +12,9 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Button, Dropdown, Table, Tag, Tooltip } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import type { MenuProps } from 'antd';
+// antd Menu 项 onClick 的事件参数类型（含 domEvent），从公开 API 推导避免深层依赖 rc-menu
+type MenuInfo = Parameters<NonNullable<MenuProps['onClick']>>[0];
 import {
   ClockCircleOutlined,
   DeleteOutlined,
@@ -25,7 +28,8 @@ import { useBatchActions } from './useBatchActions'; // .tsx 含 JSX（批量 Mo
 import { ExecutorBadge } from '@/components/ExecutorBadge';
 import { ExpertBadge } from '@/components/ExpertBadge';
 import { formatRelativeTime } from '@/utils/datetime';
-import type { Tag as TagType, TodoCenterItem } from '@/types';
+import { formatProcessText } from '@/utils/processText';
+import type { LoopRefSummary, Tag as TagType, TodoCenterItem } from '@/types';
 
 /** 状态 → 中文 + 颜色映射；与事项中心卡片 StatusTag 保持一致口径。 */
 const STATUS_META: Record<string, { label: string; color: string }> = {
@@ -62,6 +66,44 @@ function renderTagList(tagIds: number[] | undefined, tags: TagType[], max = 3): 
   );
 }
 
+/** 工艺列：展示引用该事项的环路所基于的工艺模板，格式 #模板ID-模板名-版本，按模板去重。 */
+export function renderProcessColumn(refs: LoopRefSummary[] | undefined): ReactNode {
+  if (!refs || refs.length === 0) return '-';
+  // 多个环路可能基于同一模板，按 template_id 去重避免重复展示
+  const seen = new Set<number>();
+  const templates: { id: number; name?: string; version?: string }[] = [];
+  for (const r of refs) {
+    if (r.process_template_id == null) continue;
+    if (seen.has(r.process_template_id)) continue;
+    seen.add(r.process_template_id);
+    templates.push({
+      id: r.process_template_id,
+      name: r.process_template_name,
+      version: r.process_template_version,
+    });
+  }
+  if (templates.length === 0) return '-';
+  return (
+    <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
+      {templates.map(t => (
+        <Tag key={t.id}>{formatProcessText(t.id, t.name, t.version)}</Tag>
+      ))}
+    </span>
+  );
+}
+
+/** 环路列：展示引用该事项的环路实例，格式 #环路ID 环路名。 */
+export function renderLoopColumn(refs: LoopRefSummary[] | undefined): ReactNode {
+  if (!refs || refs.length === 0) return '-';
+  return (
+    <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
+      {refs.map(r => (
+        <Tag key={r.loop_id}>{`#${r.loop_id} ${r.loop_name}`}</Tag>
+      ))}
+    </span>
+  );
+}
+
 /** 调度器列：仅显示图标，鼠标 hover 展示 cron 表达式。 */
 function renderSchedulerColumn(record: TodoCenterItem): ReactNode {
   if (!record.scheduler_config) return '-';
@@ -73,8 +115,14 @@ function renderSchedulerColumn(record: TodoCenterItem): ReactNode {
   );
 }
 
-/** 单行操作菜单项：每个动作 stopPropagation 防止触发行点击。 */
-function buildRowActionItems(
+/** 单行操作菜单项：每个动作 stopPropagation 防止触发行点击。
+ *
+ * 注意（冒泡陷阱）：Dropdown 菜单经 React Portal 渲染，合成事件会沿
+ * React 组件树冒泡回表格行（即便菜单 DOM 挂在 body），只在触发按钮上
+ * stopPropagation 挡不住「点菜单项 → 行 onClick → 误跳详情」。
+ * 因此每个菜单项的 onClick 必须先 domEvent.stopPropagation()。
+ * 导出供单元测试直接验证该防护不回归。 */
+export function buildRowActionItems(
   todo: TodoCenterItem,
   callbacks: {
     onExecuteTodo: (t: TodoCenterItem) => void;
@@ -83,31 +131,36 @@ function buildRowActionItems(
     onDeleteTodo: (t: TodoCenterItem) => void;
   },
 ) {
+  // 包装回调：统一先挡冒泡再执行业务动作，避免每个菜单项重复书写
+  const guard = (action: (t: TodoCenterItem) => void) => (info: MenuInfo) => {
+    info.domEvent.stopPropagation();
+    action(todo);
+  };
   return [
     {
       key: 'execute',
       label: '执行一次',
       icon: <PlayCircleOutlined />,
-      onClick: () => callbacks.onExecuteTodo(todo),
+      onClick: guard(callbacks.onExecuteTodo),
     },
     {
       key: 'execute-with-args',
       label: '带参执行',
       icon: <ThunderboltOutlined />,
-      onClick: () => callbacks.onExecuteWithArgs(todo),
+      onClick: guard(callbacks.onExecuteWithArgs),
     },
     {
       key: 'edit',
       label: '编辑',
       icon: <EditOutlined />,
-      onClick: () => callbacks.onEditTodo(todo),
+      onClick: guard(callbacks.onEditTodo),
     },
     {
       key: 'delete',
       label: '删除',
       icon: <DeleteOutlined />,
       danger: true,
-      onClick: () => callbacks.onDeleteTodo(todo),
+      onClick: guard(callbacks.onDeleteTodo),
     },
   ];
 }
@@ -150,8 +203,24 @@ function buildTodoColumns(
       ),
     },
     {
+      title: '类型',
+      key: 'type',
+      width: 100,
+      render: (_: unknown, record: TodoCenterItem) => {
+        const td = record.todo_type ?? 0;
+        const at = record.action_type;
+        if (td === 2) return <Tag color="purple">评审</Tag>;
+        if (td === 3) return <Tag color="magenta">异常处理</Tag>;
+        if (at) return <Tag color="orange">快捷</Tag>;
+        return <Tag color="blue">事项</Tag>;
+      },
+    },
+    {
       title: '标题',
       dataIndex: 'title',
+      // 必须给显式宽度：本表固定宽列合计已超 scroll.x，弹性列在窗口窄于
+      // scroll.x 时会被压成 0 宽（整列「消失」，用户曾因此报标题列丢失）
+      width: 220,
       ellipsis: true,
       render: (title: string, record) => (
         <a
@@ -193,6 +262,20 @@ function buildTodoColumns(
       width: 70,
       align: 'center',
       render: (_, record) => renderSchedulerColumn(record),
+    },
+    {
+      title: '环路',
+      key: 'loop',
+      width: 160,
+      ellipsis: true,
+      render: (_, record) => renderLoopColumn(record.referencing_loops),
+    },
+    {
+      title: '工艺',
+      key: 'process',
+      width: 160,
+      ellipsis: true,
+      render: (_, record) => renderProcessColumn(record.referencing_loops),
     },
     {
       title: '最近执行',
@@ -323,7 +406,9 @@ export function TodoListView({
           dataSource={items}
           loading={loading}
           size="small"
-          scroll={{ x: 1300 }}
+          // scroll.x 必须 ≥ 所有固定宽列之和（新增环路列 160）：合计 1690，
+          // 取 1720 留余量；否则窗口变窄时弹性列会被压成 0 宽
+          scroll={{ x: 1720 }}
           pagination={{
             pageSize: 20,
             showSizeChanger: true,

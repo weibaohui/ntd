@@ -78,7 +78,8 @@ export function ProcessDashboard() {
         <Col span={8}>
           <Card>
             <Title level={3} style={{ margin: 0 }}>
-              <TrophyOutlined style={{ color: '#faad14' }} /> {statData.length > 0 ? statData[0].display_name : '-'}
+              {/* 奖杯金色：写死的 #faad14 在暗色下偏刺眼，用主题警告色统一 */}
+              <TrophyOutlined style={{ color: 'var(--color-warning)' }} /> {statData.length > 0 ? statData[0].display_name : '-'}
             </Title>
             <div>最受欢迎</div>
           </Card>
@@ -95,10 +96,11 @@ export function ProcessDashboard() {
           expandable={{
             expandedRowRender: (r: TemplateStat) => (
               <div style={{ margin: 0 }}>
-                {/* 简单进度条 */}
-                <div style={{ background: '#f0f0f0', borderRadius: 4, height: 20, width: '100%' }}>
+                {/* 简单进度条：轨道用主题三级填充色（暗色下不再是写死浅灰），
+                    条体用主题主色；条内文字恒白（主色底两种主题下都够深） */}
+                <div style={{ background: 'var(--color-fill-tertiary)', borderRadius: 4, height: 20, width: '100%' }}>
                   <div style={{
-                    background: '#1890ff', borderRadius: 4, height: 20,
+                    background: 'var(--color-primary)', borderRadius: 4, height: 20,
                     width: `${(r.loop_count / maxCount) * 100}%`, minWidth: 8,
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     color: '#fff', fontSize: 12,

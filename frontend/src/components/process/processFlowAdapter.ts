@@ -3,7 +3,7 @@
 // 供 ProcessFlowGraph 直接调用。
 //
 // 设计约束：
-// - 链接的 on_success 字段（next / goto:<id> / end）是唯一边判据。
+// - 链接的 on_success 字段（next / <环节id> / end）是唯一边判据（需求 037：跳转用裸 id）。
 // - on_gate_fail 导致的 goto 也作为边（虚线），与成功边区分但共用 dagre 布局。
 // - 阶段边界通过 PhaseGroup + ProcessFlowGraph 内的 PhaseHeader 标签呈现（不改 dagre 布局）。
 
@@ -128,7 +128,7 @@ export function adaptProcessDefinition(yamlText: string): AdaptedFlow | null {
       }
       templateEdges.push({
         fromNumericId: link.numericId, toNumericId: successTarget,
-        label: onSuccess === 'next' ? '' : onSuccess.startsWith('goto:') ? onSuccess.slice(5) : '',
+        label: onSuccess !== 'next' && onSuccess !== 'end' ? onSuccess : '',
         kind: 'success',
       });
     }
@@ -143,7 +143,7 @@ export function adaptProcessDefinition(yamlText: string): AdaptedFlow | null {
         }
         templateEdges.push({
           fromNumericId: link.numericId, toNumericId: failTarget,
-          label: `门禁失败 ${onGateFail.startsWith('goto:') ? onGateFail.slice(5) : ''}`,
+          label: `门禁失败 ${onGateFail}`,
           kind: 'fail-goto',
         });
       }
@@ -180,9 +180,8 @@ export function adaptProcessDefinition(yamlText: string): AdaptedFlow | null {
  * 解析 on_success / on_gate_fail 策略，返回目标链接的 numericId。
  * - "next"  → 当前 phase 内下一个链接（若已是最后一个则 → END）
  * - "end"   → END_NODE_ID
- * - "goto:<id>" → 对应 stringId 的 numericId，若未找到 → null（容错）
- * - "break"  → null（不连线）
- * - 其他     → null
+ * - "break"/"skip" → null（不连线）
+ * - 其他（裸环节 id，需求 037）→ 对应 stringId 的 numericId，若未找到 → null（容错）
  */
 function resolveTransitionTarget(
   strategy: string,
@@ -202,12 +201,11 @@ function resolveTransitionTarget(
   if (s === 'end') {
     return END_NODE_ID;
   }
-  if (s.startsWith('goto:')) {
-    const targetStr = s.slice(5).trim();
-    // goto 目标可能是 "calc" 也可能是 "goto:calc" 两次嵌套？截取第一层。
-    const id = idMap.get(targetStr);
-    return id != null ? id : null;
+  if (s === 'break' || s === 'skip') {
+    // 门禁失败 break / skip：不画边
+    return null;
   }
-  // break / skip / 未知 → 不画边
-  return null;
+  // 其他非空值 = 跳转目标环节 id（裸，需求 037 已清除 goto: 前缀）；找不到容错返回 null
+  const id = idMap.get(s);
+  return id != null ? id : null;
 }

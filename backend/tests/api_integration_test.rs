@@ -800,6 +800,54 @@ async fn test_loop_merge_same_name_overwrites() {
     assert_eq!(count_loops_named(app, ws_id, "dup-loop").await, 1);
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_batch_delete_loops_v1() {
+    // v1 批量删除路由：创建 loop -> batch-delete -> 确认已删且返回计数。
+    // 回归 v0 路由未挂载导致 /api/loops/batch-delete 404 的问题。
+    let (app, ws_id) = create_test_app().await;
+    let create_req = json_request(
+        "POST",
+        &format!("/api/v1/workspaces/{}/loops", ws_id),
+        json!({"name": "batch-del-test"}),
+    );
+    let create_resp = app.clone().oneshot(create_req).await.unwrap();
+    assert!(create_resp.status().is_success(), "创建 loop 失败: {}", create_resp.status());
+    let body: serde_json::Value = read_json_body(create_resp).await;
+    let loop_id = body["data"]["id"].as_i64().expect("应返回 loop id");
+
+    let del_req = json_request(
+        "POST",
+        &format!("/api/v1/workspaces/{}/loops/batch-delete", ws_id),
+        json!({"ids": [loop_id]}),
+    );
+    let del_resp = app.clone().oneshot(del_req).await.unwrap();
+    assert_eq!(del_resp.status(), StatusCode::OK, "batch-delete 应成功而非 404");
+    let del_body: serde_json::Value = read_json_body(del_resp).await;
+    assert_eq!(del_body["code"], 0);
+    assert_eq!(del_body["data"]["deleted"].as_i64(), Some(1));
+
+    // 删除后 GET 应 404
+    let get_req = Request::builder()
+        .uri(format!("/api/v1/workspaces/{}/loops/{}", ws_id, loop_id))
+        .body(Body::empty())
+        .unwrap();
+    let get_resp = app.oneshot(get_req).await.unwrap();
+    assert_eq!(get_resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_batch_delete_loops_empty_ids_rejected() {
+    // 空 ids 应被拒绝（400），证明路由已匹配（不再是 404 路由缺失）。
+    let (app, ws_id) = create_test_app().await;
+    let req = json_request(
+        "POST",
+        &format!("/api/v1/workspaces/{}/loops/batch-delete", ws_id),
+        json!({"ids": []}),
+    );
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
 // ====== Workspace 隔离：跨 ws 越权访问应被拒绝 ======
 
 /// 建一个额外 workspace 返回其 id，用于跨 ws 越权测试。

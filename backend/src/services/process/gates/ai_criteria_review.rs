@@ -1,16 +1,15 @@
-//! `ai_criteria_review` 门禁：AI 按验收标准 + skill 自检清单评审产物。
+//! `ai_criteria_review` 门禁：检查执行记录评分（rating）是否 ≥ min_score 阈值。
 //!
-//! 此门禁有两种执行模式：
-//! 1. **快速检查**：执行记录已有评分（rating）时，直接比对 min_score 阈值；
-//! 2. **完整评审**：无评分时返回 `needs_review` 标记，由 PhaseDriver 触发 auto-review。
-//!
-//! 完整评审复用现有的 `auto_review` runtime（DEFAULT_REVIEWER_PROMPT + parse_rating_from_result），
-//! 在 PhaseDriver 中通过 LoopRunnerCtx 调用 `run_todo_execution` 执行。
+//! 设计 034 后，评审已由统一路径在 `finalize_normal_completion` 中完成，评分在
+//! PhaseDriver 进入门禁评估前已在 DB。此门禁只做**快速检查**——比对已有评分与阈值。
+//! 无评分时视为门禁未通过（`needs_review` 标记保留供日志排查，不再触发新评审）。
 //!
 //! 配置格式：
 //! ```json
-//! {"criteria_ref": "phase.acceptance_criteria", "min_score": 80}
+//! {"min_score": 80}
 //! ```
+//! > 验收标准由评审统一路径经 todo 注入（源自环节 `acceptance_criteria`），
+//! > 本门禁只比对已有评分与阈值；`GateDefinition.criteria_ref` 字段当前未被 evaluate 使用。
 
 use super::{GateContext, GateResult};
 
@@ -76,43 +75,8 @@ pub fn evaluate(
     }
 }
 
-/// 从 auto-review 执行结果和 skill 自检清单构建评审 prompt。
-///
-/// 在 PhaseDriver 中触发 auto-review 时使用此函数拼接 prompt。
-pub fn build_review_prompt(
-    step_prompt: &str,
-    output: &str,
-    acceptance_criteria: &str,
-    skill_self_check_list: Option<&str>,
-) -> String {
-    use crate::services::auto_review::MAX_OUTPUT_CHARS;
-
-    let truncated: String = if output.chars().count() > MAX_OUTPUT_CHARS {
-        let mut s: String = output.chars().take(MAX_OUTPUT_CHARS).collect();
-        s.push_str("\n\n[...以下被截断...]");
-        s
-    } else {
-        output.to_string()
-    };
-
-    let mut prompt = crate::services::auto_review::DEFAULT_REVIEWER_PROMPT
-        .to_string()
-        .replace("{original_prompt}", step_prompt)
-        .replace("{original_output}", &truncated)
-        .replace("{acceptance_criteria}", acceptance_criteria);
-    // 注入 skill 自检清单。
-    if let Some(checklist) = skill_self_check_list.filter(|s| !s.trim().is_empty()) {
-        prompt = prompt.replace(
-            "{acceptance_criteria}",
-            &format!(
-                "{}\n\n# Skill 自检清单\n{}",
-                acceptance_criteria, checklist
-            ),
-        );
-    }
-
-    prompt
-}
+// 设计 034：build_review_prompt 已移除（全仓库零调用），评审 prompt 统一由
+// auto_review.rs::resolve_review_template + compose_review_prompt 处理。
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::panic)]
@@ -132,6 +96,7 @@ mod tests {
                 criteria_ref: None,
                 min_score: Some(80),
                 script: None,
+                timeout_secs: None,
             },
             skill_names: &[],
             artifacts: &[],
@@ -154,6 +119,7 @@ mod tests {
                 criteria_ref: None,
                 min_score: Some(80),
                 script: None,
+                timeout_secs: None,
             },
             skill_names: &[],
             artifacts: &[],
@@ -176,6 +142,7 @@ mod tests {
                 criteria_ref: None,
                 min_score: Some(80),
                 script: None,
+                timeout_secs: None,
             },
             skill_names: &["write-prd".to_string()],
             artifacts: &[],

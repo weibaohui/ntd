@@ -35,6 +35,10 @@ pub struct Model {
     /// 异常处理触发条件 JSON 数组，如 ["capped_step", "capped_token", "failed"]
     #[sea_orm(default_value = "[\"capped_step\",\"capped_token\",\"failed\"]")]
     pub abnormal_handler_trigger_on: String,
+    /// 异常处理提示词快照（工艺 abnormal_handler.prompt）。
+    /// 只读展示/导出用；运行时实际执行的是 abnormal_handler_todo_id 指向的载体 Todo。
+    /// NULL = 该 Loop 未配置异常处理。需求 035。
+    pub abnormal_handler_prompt: Option<String>,
     /// 来源工艺模板 ID，NULL 表示非工艺实例化 Loop。
     pub process_template_id: Option<i64>,
     /// 实例化时的工艺模板版本快照，保证审计链完整。

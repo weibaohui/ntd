@@ -62,6 +62,39 @@ pub struct LoopRunner {
     tx: broadcast::Sender<crate::executor_service::ExecEvent>,
 }
 
+/// 人工审批恢复时按环节终态判定是否通过。
+/// 审批 handler（评分制 / 布尔制）已各自算出终态，统一信任 status，
+/// 避免用评分二次推导在 rating=0、min_rating=0 时把"拒绝"误判为通过（NTD-004）。
+fn approved_step_passed(status: &str) -> bool {
+    status == "success"
+}
+
+/// loop 执行终态 → 关联任务（tasks.status）状态映射（纯函数）。
+/// success/partial 都算任务成功；failed 与两类上限终止都算失败；
+/// 其余（running 等非终态）归为 running，与任务列表的展示语义一致。
+fn task_status_for_loop_status(status: &str) -> &'static str {
+    match status {
+        "success" | "partial" => "success",
+        "failed" | "capped_step" | "capped_token" => "failed",
+        _ => "running",
+    }
+}
+
+/// 计算执行时长（秒，纯函数）：起止时间均可解析且 finish >= start 时返回差值，否则 0。
+/// 时间格式为 RFC3339；解析失败不报错是因为历史数据格式不保证严格一致。
+fn execution_duration_secs(started_at: &str, finished_at: Option<&str>) -> i64 {
+    let Some(finish) = finished_at else { return 0 };
+    let start_dt = chrono::DateTime::parse_from_rfc3339(started_at);
+    let finish_dt = chrono::DateTime::parse_from_rfc3339(finish);
+    match (start_dt, finish_dt) {
+        (Ok(s), Ok(f)) => {
+            let secs = f.timestamp() - s.timestamp();
+            if secs >= 0 { secs } else { 0 }
+        }
+        _ => 0,
+    }
+}
+
 /// Loop 执行结果：区分「真正完成」和「暂停等待」，
 /// 用于避免人工审批等暂停状态误发 LoopFinished 事件。
 #[derive(Debug, PartialEq)]
@@ -213,17 +246,9 @@ impl LoopRunner {
 
             // 获取 loop_execution 统计数据
             let loop_exec = this2_for_event.ctx.db.get_loop_execution(loop_execution_id).await.ok().flatten();
-            // 更新关联 task 的状态。
-            if let Some(ref le) = loop_exec {
-                if let Some(task_id) = le.task_id {
-                    let tstatus = match le.status.as_str() {
-                        "success" | "partial" => "success",
-                        "failed" | "capped_step" | "capped_token" => "failed",
-                        _ => "running",
-                    };
-                    let _ = this2_for_event.ctx.db.update_task_status(task_id, tstatus).await;
-                }
-            }
+            // 更新关联 task 的状态（与 resume 路径共用同一实现，NTD-005）。
+            // 注意：Err 分支在终态化 loop_execution 后会再同步一次，此处读到 running 无妨。
+            this2_for_event.sync_task_status(loop_execution_id).await;
             let (final_status, total_steps, completed_steps, failed_steps, duration_secs) = match loop_exec {
                 Some(le) => {
                     // 计算执行时长：仅当起止时间都能解析且 finish >= start 时才计算，否则返回 0
@@ -312,9 +337,13 @@ impl LoopRunner {
                             Some(&e),
                         )
                         .await;
-                    // 触发异常处理 Todo（传入 0 作为步数/Token 统计）
+                    // 终态化后再次同步任务状态：上面的同步发生在终态化之前（读到 running），
+                    // 这里确保 run 失败时任务落到 failed（NTD-005 连带缺陷 C）。
+                    this2_for_err.sync_task_status(loop_execution_id).await;
+                    // 触发异常处理 Todo（传入 0 作为步数/Token 统计；error_detail 带上 run 失败的原始错误）
+                    let err_msg = e.to_string();
                     let _ = this2_for_err
-                        .trigger_abnormal_handler(loop_id, loop_execution_id, "failed", 0, 0)
+                        .trigger_abnormal_handler(loop_id, loop_execution_id, "failed", 0, 0, &err_msg)
                         .await;
                     // 发送 WebSocket 事件，触发前端刷新执行历史列表。
                     // 没有这步的话，前端 LoopExecutionsPanel 收不到事件通知，
@@ -378,6 +407,90 @@ impl LoopRunner {
             }
         }
         total
+    }
+
+    /// 按 loop 执行终态同步关联任务（tasks.status）状态；无关联 task 时无操作。
+    /// 启动路径与 resume 路径共用（NTD-005：此前只有启动路径做这一步）。
+    async fn sync_task_status(&self, loop_execution_id: i64) {
+        // 读不到执行记录时静默返回：同步是尽力而为的收尾，不应中断主流程。
+        let Ok(Some(le)) = self.ctx.db.get_loop_execution(loop_execution_id).await else { return };
+        let Some(task_id) = le.task_id else { return };
+        let _ = self
+            .ctx
+            .db
+            .update_task_status(task_id, task_status_for_loop_status(&le.status))
+            .await;
+    }
+
+    /// 收集执行统计并广播 LoopFinished 事件（FeishuPushService 按 workspace 配置推送）。
+    /// 启动路径的飞书"回复原对话"分支不走这里；resume 路径统一走广播（NTD-005 已知限制）。
+    async fn broadcast_loop_finished(&self, loop_id: i64, loop_execution_id: i64) {
+        let loop_info = self.ctx.db.get_loop(loop_id).await.ok().flatten();
+        let loop_title = loop_info
+            .as_ref()
+            .map(|l| l.name.clone())
+            .unwrap_or_else(|| format!("Loop #{}", loop_id));
+        let loop_workspace_id = loop_info.as_ref().and_then(|l| l.workspace_id);
+        // 执行记录在读不到时不广播：没有统计数据的事件对订阅方无意义。
+        let Ok(Some(le)) = self.ctx.db.get_loop_execution(loop_execution_id).await else { return };
+        let duration_secs = execution_duration_secs(&le.started_at, le.finished_at.as_deref());
+        let total_tokens = self.get_loop_total_tokens(loop_execution_id).await;
+        let _ = self.tx.send(crate::executor_service::ExecEvent::LoopFinished {
+            loop_execution_id,
+            loop_id,
+            loop_title,
+            status: le.status,
+            total_steps: le.total_steps,
+            completed_steps: le.completed_steps,
+            failed_steps: le.failed_steps,
+            duration_secs,
+            total_tokens,
+            workspace_id: loop_workspace_id,
+        });
+    }
+
+    /// run 结束后的统一收尾（resume 路径使用，NTD-005）。
+    /// Finished → 同步任务状态 + 广播 LoopFinished；
+    /// Paused → 仅同步任务状态（多审批环节的 loop 可能再次暂停，与启动路径一致）；
+    /// Err → 终态化 + 异常处理 + WS 刷新 + 同步任务状态 + 广播（此前只打日志）。
+    async fn complete_run(
+        &self,
+        loop_id: i64,
+        loop_execution_id: i64,
+        result: Result<LoopRunOutcome, String>,
+    ) {
+        match result {
+            Ok(LoopRunOutcome::Finished) => {
+                self.sync_task_status(loop_execution_id).await;
+                self.broadcast_loop_finished(loop_id, loop_execution_id).await;
+            }
+            Ok(LoopRunOutcome::Paused) => {
+                self.sync_task_status(loop_execution_id).await;
+                info!(
+                    "[loop-runner] loop {} execution {} paused again (waiting for human approval)",
+                    loop_id, loop_execution_id
+                );
+            }
+            Err(e) => {
+                error!("loop_runner: resumed run failed: {}", e);
+                let _ = self
+                    .ctx
+                    .db
+                    .finish_loop_execution(loop_execution_id, "failed", 0, 0, Some(&e))
+                    .await;
+                let _ = self
+                    .trigger_abnormal_handler(loop_id, loop_execution_id, "failed", 0, 0, &e)
+                    .await;
+                // 终态化之后再同步：此时读到的是 failed，任务状态才能落对。
+                self.sync_task_status(loop_execution_id).await;
+                let _ = self.tx.send(crate::executor_service::ExecEvent::ReviewStatusChanged {
+                    record_id: 0,
+                    todo_id: 0,
+                    review_status: "failed".to_string(),
+                });
+                self.broadcast_loop_finished(loop_id, loop_execution_id).await;
+            }
+        }
     }
 
     /// 恢复被人工审批暂停的 loop 执行。
@@ -447,11 +560,12 @@ impl LoopRunner {
             }
         };
 
-        // 5. 根据审批评分和阈值决定下一步
+        // 5. 根据审批后的环节终态决定下一步。
+        // 审批 handler（评分制旧接口 / 布尔制 gate 接口）已各自算出终态，此处直接采用；
+        // 不再用 rating>=min_rating 二次推导——布尔审批拒绝时 rating=0，
+        // 若 min_rating=0 会被误判为通过而走错 on_success 分支（NTD-004）。
         let step = &all_steps[step_idx];
-        let rating = approved.rating.unwrap_or(0);
-        let min_rating = approved.min_rating.unwrap_or(0);
-        let gate_passed = rating >= min_rating;
+        let gate_passed = approved_step_passed(&approved.status);
 
         // 6. 更新计数器（从已有 step_executions 推算）
         let completed = step_execs.iter().filter(|se| se.status == "success").count() as i32;
@@ -471,22 +585,22 @@ impl LoopRunner {
         let next_idx = self.resolve_next(step, next_policy, &step_id_to_idx, step_idx);
 
         info!(
-            "resume: loop_execution #{} step #{} rating={} min={} gate_passed={} next_idx={:?}",
-            loop_execution_id, approved.step_id, rating, min_rating, gate_passed, next_idx
+            "resume: loop_execution #{} step #{} status={} gate_passed={} next_idx={:?}",
+            loop_execution_id, approved.step_id, approved.status, gate_passed, next_idx
         );
 
         // 8. 从下一步继续执行
         if let Some(idx) = next_idx {
             let self_clone = self.clone();
+            let loop_id = loop_exec.loop_id;
+            let trigger_type = loop_exec.trigger_type.clone();
             tokio::spawn(async move {
-                if let Err(e) = self_clone.run_inner_from(
-                    loop_exec.loop_id,
-                    loop_execution_id,
-                    loop_exec.trigger_type.clone(),
-                    Some(idx),
-                ).await {
-                    error!("resume: loop #{} continue failed: {}", loop_exec.loop_id, e);
-                }
+                // 续跑结束后走与启动路径一致的收尾：同步任务状态、广播 LoopFinished、
+                // 错误时终态化 + 异常处理（NTD-005，此前这里只打日志，任务永远"进行中"）。
+                let result = self_clone
+                    .run_inner_from(loop_id, loop_execution_id, trigger_type, Some(idx))
+                    .await;
+                self_clone.complete_run(loop_id, loop_execution_id, result).await;
             });
         } else {
             // 没有下一步（end/break），结束 loop execution
@@ -495,6 +609,9 @@ impl LoopRunner {
                 loop_execution_id, final_status, completed, failed, None,
             ).await;
             info!("resume: loop_execution #{} ended with status {}", loop_execution_id, final_status);
+            // 就地终态化同样要完成收尾：同步任务状态 + 广播 LoopFinished（NTD-005）。
+            self.sync_task_status(loop_execution_id).await;
+            self.broadcast_loop_finished(loop_exec.loop_id, loop_execution_id).await;
         }
     }
 
@@ -644,7 +761,7 @@ impl LoopRunner {
                     .map_err(|e| e.to_string())?;
                 // 触发异常处理 Todo
                 let _ = self
-                    .trigger_abnormal_handler(loop_id, loop_execution_id, "capped_step", total_executed, total_tokens_used)
+                    .trigger_abnormal_handler(loop_id, loop_execution_id, "capped_step", total_executed, total_tokens_used, "已达最大执行步数上限")
                     .await;
                 return Ok(LoopRunOutcome::Finished);
             }
@@ -660,7 +777,7 @@ impl LoopRunner {
                     .map_err(|e| e.to_string())?;
                 // 触发异常处理 Todo
                 let _ = self
-                    .trigger_abnormal_handler(loop_id, loop_execution_id, "capped_token", total_executed, total_tokens_used)
+                    .trigger_abnormal_handler(loop_id, loop_execution_id, "capped_token", total_executed, total_tokens_used, "已达最大 Token 上限")
                     .await;
                 return Ok(LoopRunOutcome::Finished);
             }
@@ -723,7 +840,22 @@ impl LoopRunner {
             )
             .await;
 
-            // 4e. 创建 step execution 记录
+            // 4e. 检查 todo 状态：人工审批步骤的 todo 在所有 execution 间共享，
+            //     如果 todo 已 completed，步骤应直接进入 pending_approval 而非 running
+            //     （否则步骤永远卡在 running，审批界面不会出现）。
+            let initial_status = if step.review_type == "human" {
+                match self.ctx.db.get_todo(step.todo_id).await {
+                    Ok(Some(t)) if t.status == crate::models::TodoStatus::Completed => "pending_approval",
+                    _ => "running",
+                }
+            } else {
+                "running"
+            };
+            tracing::info!(
+                "loop_exec {}: step #{} review_type={:?} todo_id={} initial_status={}",
+                loop_execution_id, step.id, step.review_type, step.todo_id, initial_status,
+            );
+            // 4f. 创建 step execution 记录
             let step_exec = self
                 .ctx
                 .db
@@ -731,7 +863,7 @@ impl LoopRunner {
                     loop_execution_id,
                     step.id,
                     step.todo_id,
-                    "running",
+                    initial_status,
                     sequence_counter,
                     step.min_rating,
                     &step.unrated_policy,
@@ -790,33 +922,9 @@ impl LoopRunner {
                 || (!step.expected_artifacts.is_empty() && step.expected_artifacts != "[]");
 
             if has_process_config {
-                let mut exec_record = self.ctx.db.get_execution_record(record_id).await
+                let exec_record = self.ctx.db.get_execution_record(record_id).await
                     .map_err(|e| e.to_string())?
                     .ok_or_else(|| format!("execution record #{} not found", record_id))?;
-
-                // 工艺步骤在执行产物捕获/门禁评价前，若环节配置了评分阈值且尚无评分，
-                // 先触发 auto-review 获取评分（复用 LoopRunner 已有的评审基础设施）。
-                if exec_record.rating.is_none()
-                    && step.min_rating.is_some()
-                    && step_status == "success"
-                {
-                    let min_rating_val = step.min_rating.ok_or("min_rating check failed")?;
-                    let (passed, rating, _msg) = self
-                        .apply_rating_gate(
-                            record_id,
-                            min_rating_val,
-                            &todo.prompt,
-                            todo.acceptance_criteria.as_deref(),
-                            loop_.review_template_id,
-                        )
-                        .await
-                        .unwrap_or((false, None, Some("auto-review failed".to_string())));
-                    // 刷新 execution_record 以获取评审后的评分。
-                    if let Ok(Some(refreshed)) = self.ctx.db.get_execution_record(record_id).await {
-                        exec_record = refreshed;
-                    }
-                    let _ = (passed, rating);
-                }
 
                 let ws_path = loop_.workspace_path.as_deref().unwrap_or("");
 
@@ -940,6 +1048,7 @@ impl LoopRunner {
                         min_rating_val,
                         &todo.prompt,
                         todo.acceptance_criteria.as_deref(),
+                        step.review_prompt.as_deref(),
                         loop_.review_template_id,
                     )
                     .await?
@@ -1030,10 +1139,10 @@ impl LoopRunner {
             .await
             .map_err(|e| e.to_string())?;
 
-        // 对异常状态触发异常处理 Todo
+        // 对异常状态触发异常处理 Todo（主循环结束态无具体错误信息，error_detail 传空串）
         if final_status == "failed" || final_status == "partial" {
             let _ = self
-                .trigger_abnormal_handler(loop_id, loop_execution_id, final_status, total_executed, total_tokens_used)
+                .trigger_abnormal_handler(loop_id, loop_execution_id, final_status, total_executed, total_tokens_used, "")
                 .await;
         }
 
@@ -1329,6 +1438,7 @@ impl LoopRunner {
         template_name: &str,
         review_prompt: &str,
         review_executor: Option<&str>,
+        workspace_id: i64,
     ) -> Result<i64, sea_orm::DbErr> {
         match self
             .ctx
@@ -1339,7 +1449,7 @@ impl LoopRunner {
             Some(existing) => {
                 self.ctx
                     .db
-                    .reset_review_instance_for_reuse(existing.id, review_prompt, review_executor)
+                    .reset_review_instance_for_reuse(existing.id, review_prompt, review_executor, workspace_id)
                     .await?;
                 Ok(existing.id)
             }
@@ -1352,6 +1462,7 @@ impl LoopRunner {
                         template_name,
                         review_prompt.to_string(),
                         review_executor.map(|s| s.to_string()),
+                        workspace_id,
                     )
                     .await
             }
@@ -1368,11 +1479,17 @@ impl LoopRunner {
         min_rating: i32,
         step_prompt: &str,
         step_acceptance_criteria: Option<&str>,
+        // 环节内联评审模板（需求 033）：非空时整体替代环路级/默认评审模板
+        step_review_prompt: Option<&str>,
         review_template_id: Option<i64>,
     ) -> Result<(bool, Option<i32>, Option<String>), String> {
         info!(
-            "apply_rating_gate: record #{} min_rating={} step_acceptance_criteria={:?} review_template_id={:?}",
-            record_id, min_rating, step_acceptance_criteria, review_template_id
+            "apply_rating_gate: record #{} min_rating={} step_acceptance_criteria={:?} has_step_review_prompt={} review_template_id={:?}",
+            record_id,
+            min_rating,
+            step_acceptance_criteria,
+            step_review_prompt.map(|s| !s.is_empty()).unwrap_or(false),
+            review_template_id
         );
         // 先检查是否已有评分
         let rec = self
@@ -1390,23 +1507,34 @@ impl LoopRunner {
             return Ok((passed, Some(rating), None));
         }
 
-        // 无评分但有验收标准：发起自动评审
-        if let Some(criteria) = step_acceptance_criteria.filter(|s| !s.trim().is_empty()) {
+        // 触发条件：环节有验收标准 或 有环节内联评审模板（review_prompt），二选一即发起自动评审。
+        // 两者皆空则跳过评审（末尾视为 0 分不通过）。min_rating 仍由外层作为评分阈值前置。
+        let criteria = step_acceptance_criteria.filter(|s| !s.trim().is_empty());
+        let inline_prompt = step_review_prompt.filter(|s| !s.trim().is_empty());
+        if criteria.is_some() || inline_prompt.is_some() {
             info!(
-                "apply_rating_gate: record #{} HAS acceptance_criteria (len={}), entering auto-review",
+                "apply_rating_gate: record #{} entering auto-review (has_criteria={} has_review_prompt={})",
                 record_id,
-                criteria.len()
+                criteria.is_some(),
+                inline_prompt.is_some()
             );
             info!("rating gate: record #{} triggering auto-review", record_id);
 
-            // 1) 获取评审模板
-            let template = match self.ensure_review_template(review_template_id).await {
-                Ok(t) => t,
-                Err(e) => {
-                    warn!("rating gate: failed to get review template: {}", e);
-                    return Ok((false, None, Some(format!("获取评审模板失败: {}", e))));
-                }
-            };
+            // 1) 选取评审模板正文与归属：环节内联优先（跳过查表），否则环路级 → 全局默认。
+            //    设计 034：评审已由统一路径在 finalize_normal_completion 中完成，
+            //    此分支仅作为兜底（避免统一路径因异常未能写出评分时阻塞门禁判定）。
+            let (template_prompt, owning_id, owning_name) =
+                match crate::executor_service::auto_review::resolve_review_template(
+                    &self.ctx.db, inline_prompt, review_template_id,
+                ).await {
+                    Ok(t) => t,
+                    Err(e) => {
+                        warn!("rating gate: failed to get review template: {}", e);
+                        return Ok((false, None, Some(format!("获取评审模板失败: {}", e))));
+                    }
+                };
+            // 兜底路径无 workspace 上下文，用 0 默认值（评审实例复用不受影响）。
+            let owning_ws = 0i64;
 
             // 2) 获取执行记录的 result + executor
             // executor 从已跑过的 record 继承 (review_template 不带 executor)。
@@ -1422,12 +1550,18 @@ impl LoopRunner {
             } else {
                 original_output.to_string()
             };
-            let review_prompt = template
-                .prompt
+            // 占位符替换：约定 {{双括号}}；同时兼容历史/手写的 {单括号}
+            // （旧默认模板、部分环节内联 prompt 曾用单括号）——双括号先替换消除后，
+            // 单括号兜底再替换一次，确保占位符始终注入而非原样残留。
+            let review_prompt = template_prompt
+                .replace("{{original_prompt}}", step_prompt)
+                .replace("{{max_output_chars}}", &MAX_OUTPUT_CHARS.to_string())
+                .replace("{{original_output}}", &truncated)
+                .replace("{{acceptance_criteria}}", criteria.unwrap_or(""))
                 .replace("{original_prompt}", step_prompt)
                 .replace("{max_output_chars}", &MAX_OUTPUT_CHARS.to_string())
                 .replace("{original_output}", &truncated)
-                .replace("{acceptance_criteria}", criteria);
+                .replace("{acceptance_criteria}", criteria.unwrap_or(""));
 
             // 4) 标记评审状态为 pending
             let _ = self.ctx.db.set_record_last_review_status(record_id, "pending").await;
@@ -1445,10 +1579,11 @@ impl LoopRunner {
             //    - 已有 → reset prompt/executor/status,保留 id 和 execution_records 关联
             //    - 没有 → 新建
             let review_todo_id = match self.reuse_or_create_review_instance(
-                template.id,
-                &template.name,
+                owning_id,
+                &owning_name,
                 &review_prompt,
                 review_executor.as_deref(),
+                owning_ws,
             ).await {
                 Ok(id) => id,
                 Err(e) => {
@@ -1557,38 +1692,12 @@ impl LoopRunner {
             return Ok((false, None, Some("自动评审已完成但未能提取有效评分，请检查评审模板输出格式".to_string())));
         }
 
-        // 无评分且无验收标准 = 视为 0 分，不通过
+        // 无评分且（无验收标准 且 无 review_prompt）= 视为 0 分，不通过
         info!(
-            "apply_rating_gate: record #{} no rating and no acceptance_criteria, treating as FAIL",
+            "apply_rating_gate: record #{} no rating and no acceptance_criteria/review_prompt, treating as FAIL",
             record_id
         );
-        Ok((false, None, Some("环节未设置验收标准，无法触发自动评审".to_string())))
-    }
-
-    /// 获取评审模板：优先使用 loop 配置的 id，否则用默认模板。
-    /// V15 之后模板是独立表 (review_templates) 里的行, 不带 executor 字段。
-    async fn ensure_review_template(&self, template_id: Option<i64>) -> Result<crate::models::ReviewTemplate, String> {
-        // 如果 loop 指定了模板 id，先尝试加载 (loops.review_template_id 指向 review_templates.id)。
-        if let Some(tid) = template_id {
-            if let Some(t) = self.ctx.db.get_review_template(tid).await.map_err(|e| format!("load template: {}", e))? {
-                return Ok(t);
-            }
-            // 指定 id 不存在 (例如被删了) -> 静默回退默认, 避免阻塞 loop 评分
-            tracing::warn!("review template #{} not found, falling back to default", tid);
-        }
-        // 回退到默认模板
-        let default_id = self
-            .ctx
-            .db
-            .ensure_default_review_template()
-            .await
-            .map_err(|e| format!("ensure review template: {}", e))?;
-        self.ctx
-            .db
-            .get_review_template(default_id)
-            .await
-            .map_err(|e| format!("load default template: {}", e))?
-            .ok_or_else(|| "default reviewer template vanished".to_string())
+        Ok((false, None, Some("环节未设置验收标准或评审模板，无法触发自动评审".to_string())))
     }
 
     /// 触发异常处理 Todo 并写入 loop_step_execution 记录。
@@ -1610,6 +1719,7 @@ impl LoopRunner {
         abnormal_status: &str,
         total_executed_steps: i32,
         total_tokens_used: i64,
+        error_detail: &str,
     ) -> Result<(), String> {
         // 1. 加载 loop 配置
         let loop_ = self
@@ -1652,7 +1762,7 @@ impl LoopRunner {
             .map_err(|e| e.to_string())?
             .ok_or_else(|| format!("abnormal handler todo #{} not found, may have been deleted", handler_todo_id))?;
 
-        // 4. 构造上下文信息，注入到 prompt
+        // 4. 构造上下文信息，注入到 prompt（同时作为执行器 params）
         let mut context_params = HashMap::new();
         context_params.insert("loop_id".to_string(), loop_id.to_string());
         context_params.insert("loop_execution_id".to_string(), loop_execution_id.to_string());
@@ -1660,22 +1770,24 @@ impl LoopRunner {
         context_params.insert("abnormal_status".to_string(), abnormal_status.to_string());
         context_params.insert("total_executed_steps".to_string(), total_executed_steps.to_string());
         context_params.insert("total_tokens_used".to_string(), total_tokens_used.to_string());
+        context_params.insert("error_detail".to_string(), error_detail.to_string());
 
-        // 5. 构建增强 prompt，注入异常上下文
-        //    workspace 共识 prompt 前置注入（需求 022），与正常 step 路径保持一致。
-        //    format! 拼 enhanced_prompt_raw 的实际顺序是「原 prompt → 异常上下文」，
-        //    inject_workspace_prompt 在最前面追加 workspace 共识，最终顺序：
-        //    workspace 共识 → handler todo 原 prompt → 异常上下文。
+        // 5. 合成增强 prompt：占位符替换 + 末尾兜底异常上下文段落。
+        //    占位符统一 {{双花括号}}（与评审 prompt 一致），用户在 prompt 中写的
+        //    {{loop_name}} {{abnormal_status}} {{error_detail}} 等会被替换为运行时值；
+        //    即使用户不写占位符，兜底段落也保证 AI 看到完整异常上下文。
+        //    workspace 共识 prompt 前置注入（需求 022），最终顺序：
+        //    workspace 共识 → 替换后的 prompt → 异常上下文兜底段落。
         //    loop_.workspace_id = 0/None 时 inject_workspace_prompt 静默回退原 prompt。
-        let enhanced_prompt_raw = format!(
-            "{}\n\n## 异常上下文\n- Loop 名称: {}\n- Loop 执行 ID: {}\n- 异常状态: {}\n- 已执行步数: {}\n- 已消耗 Token: {}",
-            handler_todo.prompt,
-            loop_.name,
+        let ctx = AbnormalHandlerContext {
+            loop_name: &loop_.name,
             loop_execution_id,
             abnormal_status,
             total_executed_steps,
             total_tokens_used,
-        );
+            error_detail,
+        };
+        let enhanced_prompt_raw = compose_abnormal_handler_prompt(&handler_todo.prompt, &ctx);
         let enhanced_prompt = crate::executor_service::pre_spawn::inject_workspace_prompt(
             &self.ctx.db,
             loop_.workspace_id.filter(|&id| id != 0),
@@ -1775,6 +1887,47 @@ impl LoopRunner {
     }
 }
 
+/// 异常处理 prompt 合成的上下文变量（需求 035）。
+struct AbnormalHandlerContext<'a> {
+    loop_name: &'a str,
+    loop_execution_id: i64,
+    abnormal_status: &'a str,
+    total_executed_steps: i32,
+    total_tokens_used: i64,
+    /// 失败原因；空串表示无具体错误信息（如主循环 failed/partial 无明确错误）。
+    error_detail: &'a str,
+}
+
+/// 合成异常处理执行 prompt：占位符替换 + 末尾兜底异常上下文段落。
+///
+/// 占位符统一 {{双花括号}}（与评审 prompt 的 compose_review_prompt 一致）：
+/// 用户在工艺 abnormal_handler.prompt 中写 {{loop_name}} {{abnormal_status}}
+/// {{error_detail}} 等会被替换为运行时实际值。兜底段落保证即使用户不写占位符，
+/// AI 也能看到完整异常上下文。模式与正常 step 的 inject_requirement（替换+兜底）一致。
+fn compose_abnormal_handler_prompt(template: &str, ctx: &AbnormalHandlerContext) -> String {
+    let replaced = template
+        .replace("{{loop_name}}", ctx.loop_name)
+        .replace("{{loop_execution_id}}", &ctx.loop_execution_id.to_string())
+        .replace("{{abnormal_status}}", ctx.abnormal_status)
+        .replace("{{total_executed_steps}}", &ctx.total_executed_steps.to_string())
+        .replace("{{total_tokens_used}}", &ctx.total_tokens_used.to_string())
+        .replace("{{error_detail}}", ctx.error_detail);
+    // 兜底段落：失败原因为空时省略该行，避免出现空「失败原因」
+    let error_line = if ctx.error_detail.is_empty() {
+        String::new()
+    } else {
+        format!("\n- 失败原因: {}", ctx.error_detail)
+    };
+    format!(
+        "{replaced}\n\n## 异常上下文\n- Loop 名称: {}\n- Loop 执行 ID: {}\n- 异常状态: {}\n- 已执行步数: {}\n- 已消耗 Token: {}{error_line}",
+        ctx.loop_name,
+        ctx.loop_execution_id,
+        ctx.abnormal_status,
+        ctx.total_executed_steps,
+        ctx.total_tokens_used,
+    )
+}
+
 /// 在内存中把任务需求注入到 step todo 的 prompt 模板。
 ///
 /// 设计原则（修复历史 bug）：
@@ -1864,6 +2017,127 @@ fn build_enhanced_prompt_with_requirement(
 mod tests {
     use super::*;
 
+    // ── task_status_for_loop_status：loop 终态 → 任务状态映射（NTD-005）──
+
+    #[test]
+    fn test_task_status_for_loop_status_success_family() {
+        // success 与 partial（部分完成）都算任务成功。
+        assert_eq!(task_status_for_loop_status("success"), "success");
+        assert_eq!(task_status_for_loop_status("partial"), "success");
+    }
+
+    #[test]
+    fn test_task_status_for_loop_status_failure_family() {
+        // failed 与两类上限终止（步数/Token）都算任务失败。
+        for s in ["failed", "capped_step", "capped_token"] {
+            assert_eq!(task_status_for_loop_status(s), "failed", "status={s}");
+        }
+    }
+
+    #[test]
+    fn test_task_status_for_loop_status_non_terminal_is_running() {
+        // 非终态（含未知的未来状态）归 running，任务列表展示"进行中"。
+        for s in ["running", "pending", "paused", ""] {
+            assert_eq!(task_status_for_loop_status(s), "running", "status={s}");
+        }
+    }
+
+    // ── execution_duration_secs：执行时长计算（NTD-005 抽取）──
+
+    #[test]
+    fn test_execution_duration_secs_normal() {
+        // 起止时间均可解析且 finish >= start → 返回差值。
+        let secs = execution_duration_secs(
+            "2026-07-29T10:00:00+00:00",
+            Some("2026-07-29T10:01:30+00:00"),
+        );
+        assert_eq!(secs, 90);
+    }
+
+    #[test]
+    fn test_execution_duration_secs_missing_or_inverted() {
+        // 无结束时间（进行中）→ 0；结束早于开始（异常数据）→ 0。
+        assert_eq!(execution_duration_secs("2026-07-29T10:00:00+00:00", None), 0);
+        assert_eq!(
+            execution_duration_secs(
+                "2026-07-29T10:01:00+00:00",
+                Some("2026-07-29T10:00:00+00:00"),
+            ),
+            0
+        );
+    }
+
+    #[test]
+    fn test_execution_duration_secs_unparseable() {
+        // 历史数据格式不保证 RFC3339，解析失败回退 0 而不是 panic。
+        assert_eq!(execution_duration_secs("not-a-time", Some("2026-07-29 10:00:00")), 0);
+    }
+
+    // ── approved_step_passed：审批恢复按环节终态判定（NTD-004）──
+
+    #[test]
+    fn test_approved_step_passed_success_is_passed() {
+        // 审批通过 → 环节终态 success → 走 on_success 分支。
+        assert!(approved_step_passed("success"));
+    }
+
+    #[test]
+    fn test_approved_step_passed_failed_is_not_passed() {
+        // 审批拒绝 → 环节终态 failed → 走 on_rating_fail 分支；
+        // 关键回归点：布尔审批拒绝时 rating=0，若按 rating>=min_rating 推导
+        // 在 min_rating=0 下会误判为通过，按 status 判定则不会。
+        assert!(!approved_step_passed("failed"));
+    }
+
+    #[test]
+    fn test_approved_step_passed_other_statuses_are_not_passed() {
+        // 非终态/异常状态一律视为不通过，防止意外走进 on_success。
+        for status in ["pending_approval", "running", "pending", "skipped", ""] {
+            assert!(!approved_step_passed(status), "status={status} 不应视为通过");
+        }
+    }
+
+    // ── compose_abnormal_handler_prompt 占位符替换（需求 035）──
+
+    fn abnormal_ctx(error_detail: &str) -> AbnormalHandlerContext<'_> {
+        AbnormalHandlerContext {
+            loop_name: "测试环路",
+            loop_execution_id: 42,
+            abnormal_status: "capped_token",
+            total_executed_steps: 7,
+            total_tokens_used: 9999,
+            error_detail,
+        }
+    }
+
+    #[test]
+    fn test_compose_abnormal_handler_prompt_replaces_placeholders() {
+        // 用户在 prompt 中主动引用占位符 → 替换为运行时实际值（双花括号，与评审 prompt 一致）
+        let tpl = "状态: {{abnormal_status}}，Token: {{total_tokens_used}}，原因: {{error_detail}}";
+        let out = compose_abnormal_handler_prompt(tpl, &abnormal_ctx("已达上限"));
+        assert!(out.contains("状态: capped_token"), "abnormal_status 应被替换: {out}");
+        assert!(out.contains("Token: 9999"), "total_tokens_used 应被替换: {out}");
+        assert!(out.contains("原因: 已达上限"), "error_detail 应被替换: {out}");
+        assert!(!out.contains("{{abnormal_status}}"), "替换后不应残留占位符");
+    }
+
+    #[test]
+    fn test_compose_abnormal_handler_prompt_appends_fallback_section() {
+        // 即使用户不写占位符，兜底「## 异常上下文」段落也保证 AI 看到完整上下文
+        let out = compose_abnormal_handler_prompt("请处理异常", &abnormal_ctx("执行失败"));
+        assert!(out.contains("请处理异常"), "原 prompt 正文应保留");
+        assert!(out.contains("## 异常上下文"), "应追加兜底异常上下文段落");
+        assert!(out.contains("失败原因: 执行失败"), "error_detail 非空时应出现在兜底段落");
+    }
+
+    #[test]
+    fn test_compose_abnormal_handler_prompt_omits_empty_error_line() {
+        // error_detail 为空时兜底段落省略「失败原因」行，避免出现空值
+        let out = compose_abnormal_handler_prompt("请处理", &abnormal_ctx(""));
+        assert!(!out.contains("失败原因"), "error_detail 为空时不应出现失败原因行");
+        assert!(out.contains("## 异常上下文"), "上下文段落仍应存在");
+    }
+
     // ── resolve_next 逻辑测试 ──
     // 使用独立函数测试算法，避免依赖 ServiceContext 构造
 
@@ -1896,6 +2170,7 @@ mod tests {
             max_rework: 3,
             skill_names: "[]".to_string(),
             expert_name: None,
+            review_prompt: None,
             enabled: 1,
             created_at: None,
         }
@@ -2093,6 +2368,36 @@ mod tests {
         .unwrap()
     }
 
+    /// resolve_review_template（设计 034 移入 auto_review.rs）：环节内联优先于默认。
+    #[tokio::test]
+    async fn test_resolve_review_template_inline_wins() {
+        let (runner, _db) = make_test_runner().await;
+        // 内联模板非空 → 直接作为正文，跳过查表，用哨兵 id 0 归属评审实例 todo
+        let inline = "我的评审模板 {{original_output}} {{acceptance_criteria}}";
+        let (prompt, owning_id, name) = crate::executor_service::auto_review::resolve_review_template(
+            &runner.ctx.db, Some(inline), None,
+        )
+        .await
+        .expect("内联分支不应查表");
+        assert_eq!(prompt, inline, "内联模板应原样作为正文");
+        assert_eq!(owning_id, 0, "内联模板用哨兵 id 0 归属");
+        assert_eq!(name, "环节内联评审");
+    }
+
+    /// resolve_review_template（设计 034 移入 auto_review.rs）：无内联时回退到默认。
+    #[tokio::test]
+    async fn test_resolve_review_template_fallback_default() {
+        let (runner, _db) = make_test_runner().await;
+        // 无内联、无环路级模板 → ensure_default_review_template 创建并返回默认模板
+        let (prompt, owning_id, _name) = crate::executor_service::auto_review::resolve_review_template(
+            &runner.ctx.db, None, None,
+        )
+        .await
+        .expect("应回退到默认模板");
+        assert!(!prompt.is_empty(), "默认模板应有正文");
+        assert!(owning_id > 0, "默认模板 id 应为正数");
+    }
+
     /// 校验：所有 step 的 todo 与 loop 在同一工作空间 → 通过。
     #[tokio::test]
     async fn test_check_workspace_consistency_all_match() {
@@ -2121,6 +2426,7 @@ mod tests {
                 max_rework: 3,
                 skill_names: "[]".to_string(),
                 expert_name: None,
+                review_prompt: None,
                 enabled: 1,
                 created_at: None,
             },
@@ -2138,6 +2444,7 @@ mod tests {
                 max_rework: 3,
                 skill_names: "[]".to_string(),
                 expert_name: None,
+                review_prompt: None,
                 enabled: 1,
                 created_at: None,
             },
@@ -2172,6 +2479,7 @@ mod tests {
                 max_rework: 3,
                 skill_names: "[]".to_string(),
                 expert_name: None,
+                review_prompt: None,
                 enabled: 1,
                 created_at: None,
             },
@@ -2189,6 +2497,7 @@ mod tests {
                 max_rework: 3,
                 skill_names: "[]".to_string(),
                 expert_name: None,
+                review_prompt: None,
                 enabled: 1,
                 created_at: None,
             },
@@ -2226,6 +2535,7 @@ mod tests {
                 max_rework: 3,
                 skill_names: "[]".to_string(),
                 expert_name: None,
+                review_prompt: None,
                 enabled: 1,
                 created_at: None,
             },
@@ -2243,6 +2553,7 @@ mod tests {
                 max_rework: 3,
                 skill_names: "[]".to_string(),
                 expert_name: None,
+                review_prompt: None,
                 enabled: 1,
                 created_at: None,
             },
@@ -2276,6 +2587,7 @@ mod tests {
                 max_rework: 3,
                 skill_names: "[]".to_string(),
                 expert_name: None,
+                review_prompt: None,
                 enabled: 1,
                 created_at: None,
             },
@@ -2293,6 +2605,7 @@ mod tests {
                 max_rework: 3,
                 skill_names: "[]".to_string(),
                 expert_name: None,
+                review_prompt: None,
                 enabled: 1,
                 created_at: None,
             },

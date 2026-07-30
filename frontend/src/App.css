@@ -45,6 +45,14 @@
   --color-bg-card: #f8fafc;
   --color-bg-tertiary: #f1f5f9;
 
+  /* Ant Design fill 色阶（亮色）：取值对齐 antd 默认算法的 colorFill*，
+     供行内样式引用（如属性表单的参数 chip、YAML <pre> 底）。
+     历史上只在 [data-theme="dark"] 里定义，亮色下 var() 解析失败导致底色丢失。*/
+  --color-fill-quaternary: rgba(0, 0, 0, 0.02);
+  --color-fill-tertiary: rgba(0, 0, 0, 0.04);
+  --color-fill-secondary: rgba(0, 0, 0, 0.06);
+  --color-fill-primary: rgba(0, 0, 0, 0.15);
+
   --color-text: #0f172a;
   --color-text-secondary: #475569;
   --color-text-tertiary: #94a3b8;
@@ -2056,8 +2064,19 @@ code {
 }
 
 /* ---------- Modal Dark Mode ---------- */
-[data-theme="dark"] .ant-modal-content {
+/* AntD v6 的 Modal.confirm 最外层容器是 .ant-modal-container（普通 Modal 仍多见 .ant-modal-content）。
+   两个选择器都覆盖，避免批量删除确认窗外层保留 antd 默认暗色 elevated（#1f1f1f），
+   与项目 --color-bg-elevated（#1e1e2e）不一致。 */
+[data-theme="dark"] .ant-modal-content,
+[data-theme="dark"] .ant-modal-container {
   background: var(--color-bg-elevated);
+}
+
+/* Modal.confirm 的容器背景由 antd CSS-in-JS 直接写到 .ant-modal-container，
+   普通优先级覆盖不掉；这里用 !important 固定到项目暗色 elevated，
+   仅作用于确认窗，避免扩大到所有 elevated 浮层。 */
+[data-theme="dark"] .ant-modal-confirm .ant-modal-container {
+  background: var(--color-bg-elevated) !important;
 }
 
 [data-theme="dark"] .ant-modal-header {

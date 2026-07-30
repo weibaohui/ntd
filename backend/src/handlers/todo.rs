@@ -437,6 +437,38 @@ pub async fn delete_todo(
     Ok(ApiResponse::ok(()))
 }
 
+/// POST /api/workspaces/{ws}/todos/batch/delete — 批量删除事项（软删）。
+#[derive(Deserialize)]
+pub struct BatchDeleteTodosRequest {
+    pub ids: Vec<i64>,
+}
+pub async fn batch_delete_todos(
+    State(state): State<AppState>,
+    Path(_ws_id): Path<i64>, // ws_id 留用将来做 workspace 归属校验
+    ApiJson(req): ApiJson<BatchDeleteTodosRequest>,
+) -> Result<ApiResponse<serde_json::Value>, AppError> {
+    if req.ids.is_empty() {
+        return Ok(ApiResponse::ok(serde_json::json!({"deleted": 0})));
+    }
+    let mut deleted = 0u64;
+    let mut errors: Vec<(i64, String)> = Vec::new();
+    for id in &req.ids {
+        // 引用校验：被 loop_steps 引用的 todo 不允许直接删除
+        let loop_ref_count = state.db.count_loop_steps_by_todo(*id).await?;
+        if loop_ref_count > 0 {
+            errors.push((*id, format!("被 {loop_ref_count} 个 Loop 环节引用")));
+            continue;
+        }
+        state.db.delete_todo(*id).await.map_err(AppError::from)?;
+        deleted += 1;
+    }
+    Ok(ApiResponse::ok(serde_json::json!({
+        "deleted": deleted,
+        "errors": errors,
+        "total": req.ids.len(),
+    })))
+}
+
 pub async fn force_update_todo_status(
     State(state): State<AppState>,
     Path((ws_id, id)): Path<(i64, i64)>,
@@ -801,4 +833,5 @@ pub fn v1_routes() -> Router<AppState> {
         .route("/batch/workspace", post(batch_move_todos_workspace))
         .route("/batch/copy-workspace", post(batch_copy_todos_workspace))
         .route("/batch/scheduler", post(batch_update_todos_scheduler))
+        .route("/batch/delete", post(batch_delete_todos))
 }

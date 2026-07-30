@@ -36,13 +36,13 @@ pub const DEFAULT_REVIEWER_PROMPT: &str = r#"你是一个严格的代码评审�
 - 客观评分，不要讨好。
 
 # 原始任务（用户给原 todo 的 prompt）
-{original_prompt}
+{{original_prompt}}
 
-# 原 todo 的执行输出（已被截断到 {max_output_chars} 字符）
-{original_output}
+# 原 todo 的执行输出（已被截断到 {{max_output_chars}} 字符）
+{{original_output}}
 
 # 验收标准
-{acceptance_criteria}
+{{acceptance_criteria}}
 
 # 输出要求
 请先给出一段简短的评审理由（不超过 200 字），然后**在最后一行**严格按以下格式输出分数：
@@ -173,11 +173,16 @@ mod tests {
     // ── DEFAULT_REVIEWER_PROMPT 快照测试 ──
     // 重构后仍保留这个常量供 DAO 与启动路径使用，
     // 防止有人手抖把内容删成空字符串或换行符。
+    //
+    // 占位符约定 {{双花括号}}；compose_review_prompt / apply_rating_gate 的 .replace
+    // 优先匹配双花括号，并兜底兼容单花括号。历史上默认模板曾误用单花括号，导致占位符
+    // 原样发给 AI。此断言钉死「常量本身用双花括号」的约定，防回归。
     #[test]
     fn default_reviewer_prompt_contains_required_placeholders() {
-        assert!(DEFAULT_REVIEWER_PROMPT.contains("{original_prompt}"));
-        assert!(DEFAULT_REVIEWER_PROMPT.contains("{original_output}"));
-        assert!(DEFAULT_REVIEWER_PROMPT.contains("{acceptance_criteria}"));
+        assert!(DEFAULT_REVIEWER_PROMPT.contains("{{original_prompt}}"));
+        assert!(DEFAULT_REVIEWER_PROMPT.contains("{{original_output}}"));
+        assert!(DEFAULT_REVIEWER_PROMPT.contains("{{acceptance_criteria}}"));
+        assert!(DEFAULT_REVIEWER_PROMPT.contains("{{max_output_chars}}"));
         assert!(DEFAULT_REVIEWER_PROMPT.contains("RATING"));
         assert!(DEFAULT_REVIEWER_PROMPT.contains("评审"));
     }

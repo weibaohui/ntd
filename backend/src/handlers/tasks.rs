@@ -33,6 +33,8 @@ pub struct TaskItem {
     pub template_id: Option<i64>,
     pub loop_id: Option<i64>,
     pub template_name: Option<String>,
+    /// 工艺版本：任务列表「工艺」列需要与事项/环路保持同一格式。
+    pub template_version: Option<String>,
     pub complexity: Option<String>,
     pub latest_execution_status: Option<String>,
     pub latest_execution_requirement: Option<String>,
@@ -99,6 +101,7 @@ pub async fn list_tasks(
             template_name: pt.as_ref().map(|p| {
                 if p.display_name.is_empty() { p.name.clone() } else { p.display_name.clone() }
             }),
+                template_version: pt.as_ref().map(|p| p.version.clone()),
                 complexity: pt.as_ref().map(|p| p.complexity.clone()),
                 latest_execution_status: exec_status,
                 latest_execution_requirement: exec_req,
@@ -133,12 +136,16 @@ pub async fn get_task_detail(
         format!("SELECT id, status, started_at, finished_at, total_steps, completed_steps, failed_steps, trigger_meta \
                  FROM loop_executions WHERE task_id={} ORDER BY started_at DESC LIMIT 20", id)
     )).await?;
+    // 统计每次执行的待审批环节数，前端据此在执行历史行上显示「待审批」引导标记（NTD-004）。
+    let exec_ids: Vec<i64> = exec_rows.iter().map(|r| r.try_get_by::<i64,_>("id").unwrap_or(0)).collect();
+    let pending_counts = state.db.count_pending_approvals_by_execution_ids(&exec_ids).await?;
     let executions: Vec<_> = exec_rows.iter().map(|r| {
         let meta = r.try_get_by::<Option<String>,_>("trigger_meta").ok().flatten()
             .and_then(|m| serde_json::from_str::<serde_json::Value>(&m).ok());
         let requirement = meta.as_ref().and_then(|v| v.get("requirement").and_then(|r| r.as_str().map(|s| s.to_string())));
+        let exec_id = r.try_get_by::<i64,_>("id").unwrap_or(0);
         serde_json::json!({
-            "id": r.try_get_by::<i64,_>("id").unwrap_or(0),
+            "id": exec_id,
             "status": r.try_get_by::<String,_>("status").unwrap_or_default(),
             "started_at": r.try_get_by::<Option<String>,_>("started_at").ok().flatten(),
             "finished_at": r.try_get_by::<Option<String>,_>("finished_at").ok().flatten(),
@@ -146,11 +153,17 @@ pub async fn get_task_detail(
             "completed_steps": r.try_get_by::<i32,_>("completed_steps").unwrap_or(0),
             "failed_steps": r.try_get_by::<i32,_>("failed_steps").unwrap_or(0),
             "requirement": requirement,
+            "pending_approval_count": pending_counts.get(&exec_id).copied().unwrap_or(0),
         })
     }).collect();
     Ok(ApiResponse::ok(serde_json::json!({
         "task": { "id": task.id, "title": task.title, "status": task.status, "workspace_id": task.workspace_id, "loop_id": task.loop_id },
-        "template": template.map(|t| serde_json::json!({"name":t.name,"display_name":t.display_name,"complexity":t.complexity,"version":t.version})),
+        "template": template.map(|t| {
+            // 版本优先取环路的 process_template_version（执行时的快照），
+            // 而非工艺模板表的最新版本——用户关注的是「执行当时的工艺版本」。
+            let version = loop_.as_ref().and_then(|l| l.process_template_version.clone()).unwrap_or(t.version.clone());
+            serde_json::json!({"name":t.name,"display_name":t.display_name,"complexity":t.complexity,"version":version})
+        }),
         "loop": loop_.map(|l| serde_json::json!({"id":l.id,"name":l.name,"status":l.status,"workspace_id":l.workspace_id,"workspace_path":l.workspace_path})),
         "steps": steps,
         "executions": executions,
@@ -223,10 +236,34 @@ pub async fn create_task_execution(
 #[derive(Deserialize)]
 pub struct NewExecutionRequest { pub requirement: String }
 
+/// DELETE /api/v1/workspaces/{ws}/tasks/{id} — 删除单个任务。
+pub async fn delete_task(
+    State(state): State<AppState>,
+    Path((_ws, id)): Path<(i64, i64)>,
+) -> Result<ApiResponse<()>, AppError> {
+    state.db.delete_task(id).await.map_err(AppError::from)?;
+    Ok(ApiResponse::ok(()))
+}
+
+/// POST /api/v1/workspaces/{ws}/tasks/batch-delete — 批量删除任务。
+#[derive(Deserialize)]
+pub struct BatchDeleteTasksRequest { pub ids: Vec<i64> }
+pub async fn batch_delete_tasks(
+    State(state): State<AppState>,
+    Path(_ws): Path<i64>,
+    Json(req): Json<BatchDeleteTasksRequest>,
+) -> Result<ApiResponse<serde_json::Value>, AppError> {
+    let deleted = state.db.batch_delete_tasks(&req.ids).await?;
+    Ok(ApiResponse::ok(serde_json::json!({
+        "deleted": deleted, "total": req.ids.len(),
+    })))
+}
+
 pub fn task_routes() -> Router<AppState> {
     Router::new()
         .route("/api/v1/workspaces/{ws}/tasks", axum::routing::get(list_tasks).post(create_task))
-        .route("/api/v1/workspaces/{ws}/tasks/{id}", axum::routing::get(get_task_detail))
+        .route("/api/v1/workspaces/{ws}/tasks/{id}", axum::routing::get(get_task_detail).delete(delete_task))
+        .route("/api/v1/workspaces/{ws}/tasks/batch-delete", axum::routing::post(batch_delete_tasks))
         .route("/api/v1/workspaces/{ws}/tasks/{id}/executions", axum::routing::post(create_task_execution))
         .route("/api/v1/artifacts/{aid}/content", axum::routing::get(get_artifact_content))
 }
