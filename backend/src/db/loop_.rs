@@ -1396,8 +1396,13 @@ impl Database {
         let now = crate::models::utc_timestamp();
         let existing = loop_step_executions::Entity::find_by_id(id).one(&self.conn).await?;
         if let Some(c) = existing {
+            // 人工审批步骤复用已 completed todo 时，创建即写入 pending_approval（LoopRunner 4e），
+            // 若无条件改回 running 会冲掉该状态，导致步骤卡 running、前端审批入口不出现。
+            let preserve_status = c.status == "pending_approval";
             let mut am: loop_step_executions::ActiveModel = c.into();
-            am.status = ActiveValue::Set("running".to_string());
+            if !preserve_status {
+                am.status = ActiveValue::Set("running".to_string());
+            }
             am.started_at = ActiveValue::Set(Some(now));
             am.update(&self.conn).await?;
         }

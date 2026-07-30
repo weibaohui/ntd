@@ -67,22 +67,35 @@ pub async fn evaluate_step_gates(
             workspace_path,
         };
 
-        // 先创建 pending 记录，再评估，最后更新。
-        let gate_model = db
-            .create_loop_step_execution_gate(
-                step_execution_id,
-                &gate_def.gate_type,
-                &gate_def.name,
-                &serde_json::to_string(gate_def).unwrap_or_default(),
-            )
-            .await
-            .map_err(|e| crate::services::process::ProcessError::Db(Box::new(e)))?;
+        // 复用前置创建的 pending 记录：create_loop_step_execution 已为每个门禁
+        // 建好 pending 记录（供审批界面展示），此处若再新建会产生重复记录——
+        // 审批只更新其中一条，残留的另一条会在 UI 上显示为「failed(等待人工审批)」。
+        let gate_model = match find_pending_gate(db, step_execution_id, gate_def).await? {
+            Some(m) => m,
+            None => db
+                .create_loop_step_execution_gate(
+                    step_execution_id,
+                    &gate_def.gate_type,
+                    &gate_def.name,
+                    &serde_json::to_string(gate_def).unwrap_or_default(),
+                )
+                .await
+                .map_err(|e| crate::services::process::ProcessError::Db(Box::new(e)))?,
+        };
 
         let result = evaluate_single_gate(&ctx, execution_rating).await;
 
         match result {
             Ok(gate_result) => {
-                let status = if gate_result.passed { "passed" } else { "failed" };
+                // human_approval 未通过是「等待人工」而非失败：持久化为 pending，
+                // 避免 UI 把待审批门禁渲染成 failed（审批动作才会把它推进 passed/failed）。
+                let status = if gate_result.passed {
+                    "passed"
+                } else if gate_def.gate_type == "human_approval" {
+                    "pending"
+                } else {
+                    "failed"
+                };
                 db.update_loop_step_execution_gate(
                     gate_model.id,
                     status,
@@ -131,6 +144,24 @@ pub async fn evaluate_step_gates(
         has_pending_human,
         gate_records,
     })
+}
+
+/// 在已有门禁记录中查找与定义匹配的 pending 记录（按 类型+名称）。
+///
+/// 只匹配 pending：已被评估/审批过的记录不复用，
+/// 返工重跑时新 step_execution 有自己的记录集，互不干扰。
+async fn find_pending_gate(
+    db: &Arc<Database>,
+    step_execution_id: i64,
+    gate_def: &GateDefinition,
+) -> Result<Option<loop_step_execution_gates::Model>, crate::services::process::ProcessError> {
+    let existing = db
+        .list_loop_step_execution_gates(step_execution_id)
+        .await
+        .map_err(|e| crate::services::process::ProcessError::Db(Box::new(e)))?;
+    Ok(existing.into_iter().find(|g| {
+        g.status == "pending" && g.gate_type == gate_def.gate_type && g.gate_name == gate_def.name
+    }))
 }
 
 /// 执行单条门禁，根据 type 分派到具体实现。
@@ -277,5 +308,38 @@ mod tests {
         // 验证 DB 中确实有记录。
         let stored = db.list_loop_step_execution_gates(1).await.unwrap();
         assert_eq!(stored.len(), 1);
+    }
+
+    /// 回归：create_loop_step_execution 创建步骤执行时已为每个门禁建好 pending 记录，
+    /// evaluate_step_gates 必须复用它而不是再建一条——否则审批只更新其中一条，
+    /// 残留的另一条会在 UI 上显示为「failed(等待人工审批)」。
+    #[tokio::test]
+    async fn test_evaluate_step_gates_reuses_existing_pending_human_gate() {
+        use std::sync::Arc;
+        let db = Arc::new(crate::db::Database::new(":memory:").await.unwrap());
+        // 插入 FK 依赖。
+        db.exec("INSERT INTO todos (id,title,prompt,status) VALUES (1,'t','p','pending')").await.unwrap();
+        db.exec("INSERT INTO loops (id,name) VALUES (1,'l')").await.unwrap();
+        db.exec("INSERT INTO loop_steps (id,loop_id,name,todo_id) VALUES (1,1,'s',1)").await.unwrap();
+        db.exec("INSERT INTO loop_executions (id,loop_id,trigger_type,started_at,status) VALUES (1,1,'manual','2024-01-01','running')").await.unwrap();
+        db.exec("INSERT INTO loop_step_executions (id,loop_execution_id,step_id,todo_id,status) VALUES (1,1,1,1,'running')").await.unwrap();
+
+        // 模拟 create_loop_step_execution 的前置创建：人工审批门禁已是 pending。
+        let gate_config = r#"[{"name":"人工审批","type":"human_approval"}]"#;
+        db.create_loop_step_execution_gate(1, "human_approval", "人工审批", gate_config).await.unwrap();
+
+        let summary = evaluate_step_gates(
+            &db, 1, gate_config, &[], &[], None, None, "/tmp", None,
+        ).await.unwrap();
+
+        // 等待人工是 paused 而非失败。
+        assert!(!summary.all_passed);
+        assert!(summary.has_pending_human);
+
+        // 关键断言：复用前置记录，DB 中仍只有一条；
+        // 且状态保持 pending（等待人工），不是 failed。
+        let stored = db.list_loop_step_execution_gates(1).await.unwrap();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].status, "pending");
     }
 }
