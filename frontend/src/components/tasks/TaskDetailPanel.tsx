@@ -195,7 +195,7 @@ export function TaskDetailPanel({
   if (loading) return <Spin style={{ display: 'block', margin: '40px auto' }} />;
   if (!detail) return <Empty description="暂无任务详情" style={{ marginTop: 48 }} />;
 
-  const { task, template, executions } = detail;
+  const { task, template } = detail;
   const lpId = task.loop_id ?? detail.loop?.id ?? 0;
   const lpWsId = task.workspace_id ?? detail.loop?.workspace_id ?? null;
 
@@ -205,7 +205,7 @@ export function TaskDetailPanel({
       label: '概览',
       children: (
         <OverviewTab
-          task={task} template={template} executions={executions ?? []}
+          task={task} template={template}
           loopDetail={loopDetail} projectDirs={projectDirs}
         />
       ),

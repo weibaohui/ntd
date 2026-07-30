@@ -7,7 +7,7 @@
 
 import { type ReactNode } from 'react';
 import {
-  Tag, Typography, Descriptions, Empty,
+  Tag, Descriptions, Empty,
 } from 'antd';
 import {
   ExclamationCircleOutlined, CheckCircleOutlined, CloseCircleOutlined,
@@ -20,7 +20,6 @@ import type { GateDefinition } from '@/types/process';
 import { complexityColor, complexityLabel, statusColor } from './constants';
 import styles from './TaskDetailPanel.module.css';
 
-const { Text, Paragraph } = Typography;
 
 // ====== 共享工具组件 ======
 
@@ -53,28 +52,6 @@ export function DetailField({ label, value }: { label: string; value: ReactNode 
 /** 空值占位符。 */
 function EmptyValue() {
   return <span style={{ color: 'var(--color-text-tertiary, #94a3b8)' }}>—</span>;
-}
-
-/** 执行状态 → Progress 语义色。 */
-function progressStatus(status: string): 'success' | 'exception' | 'active' | 'normal' {
-  if (status === 'success') return 'success';
-  if (status === 'failed') return 'exception';
-  if (status === 'running') return 'active';
-  return 'normal';
-}
-
-// ====== ExecInfo（内部类型） ======
-
-interface ExecInfo {
-  id: number;
-  status: string;
-  started_at?: string;
-  finished_at?: string;
-  total_steps: number;
-  completed_steps: number;
-  failed_steps: number;
-  requirement?: string;
-  pending_approval_count?: number;
 }
 
 // ====== StepInfo（步骤验收标准） ======
@@ -113,30 +90,17 @@ function gateDetailText(gate: GateDefinition): string {
 
 // ====== Tab 子组件 ======
 
-/** Tab 1：概览 — 需求描述 + 环路基本信息 + 全局限制 + 最新执行进度。 */
+/** Tab 1：概览 — 环路基本信息 + 全局限制。 */
 export function OverviewTab({
-  task, template, executions, loopDetail, projectDirs,
+  task, template, loopDetail, projectDirs,
 }: {
-  task: { id: number; title: string; status: string; description?: string };
+  task: { id: number; title: string; status: string };
   template?: { display_name?: string; version?: string; complexity?: string };
-  executions: ExecInfo[];
   loopDetail: LoopDetail | null;
   projectDirs: ReturnType<typeof useProjectDirectories>['dirs'];
 }) {
-  const latest = executions[0];
-  const percent = latest && latest.total_steps > 0
-    ? Math.round((latest.completed_steps / latest.total_steps) * 100) : 0;
-
   return (
     <div className={styles.paneBody}>
-      {/* 需求描述 */}
-      <div style={{ marginBottom: 16 }}>
-        <Text strong>需求描述</Text>
-        <Paragraph style={{ marginTop: 4 }} type={task.description ? undefined : 'secondary'}>
-          {task.description || '暂无描述'}
-        </Paragraph>
-      </div>
-
       {/* 环路基本信息（来自 LoopDetail） */}
       {loopDetail && (
         <DetailSection title="基本信息">
@@ -236,18 +200,6 @@ export function OverviewTab({
           </Descriptions.Item>
         </Descriptions>
       )}
-
-      {/* 最新执行进度 */}
-      {latest && (
-        <div style={{ marginTop: 16 }}>
-          <Text strong>最近一次执行 #{latest.id}</Text>
-          <Progress percent={percent} status={progressStatus(latest.status)} style={{ marginTop: 8 }} />
-          <Text type="secondary">
-            完成 {latest.completed_steps}/{latest.total_steps}
-            {latest.failed_steps > 0 && ` · 失败 ${latest.failed_steps}`}
-          </Text>
-        </div>
-      )}
     </div>
   );
 }
@@ -265,6 +217,12 @@ export function DAGTab({
   }
   return (
     <div className={styles.paneBody}>
+      {/* 环路描述文字，来自工艺定义 */}
+      {loopDetail.description && (
+        <div style={{ color: 'var(--color-text-secondary, #475569)', fontSize: 13, marginBottom: 16 }}>
+          {loopDetail.description}
+        </div>
+      )}
       <LoopStepsPanel steps={loopDetail.steps} onOpenTodo={onOpenTodo} />
       {/* 步骤验收标准：按 order_index 排序，展示每个环节的技能/产物/门禁 */}
       {steps.length > 0 && (
