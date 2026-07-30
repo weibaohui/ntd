@@ -283,6 +283,7 @@ function ProcessListView({ workspaceId, onOpenLoop, processGuid, pushUrl }: Omit
   const renderProcessCard = (p: ProcessTemplate) => (
     <Card
       hoverable
+      style={{ flex: 1 }}
       title={p.display_name || p.name}
       extra={
         <Space>
@@ -342,7 +343,7 @@ function ProcessListView({ workspaceId, onOpenLoop, processGuid, pushUrl }: Omit
   return (
     <PageCard
       icon={<BuildOutlined />}
-      title="工艺模板库"
+      title="工艺"
       extra={
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
           <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>
@@ -425,7 +426,7 @@ function ProcessListView({ workspaceId, onOpenLoop, processGuid, pushUrl }: Omit
           {processes
             .filter((p) => !searchText.trim() || p.name.includes(searchText) || p.display_name.includes(searchText) || p.description.includes(searchText))
             .map((p) => (
-            <Col xs={24} sm={12} lg={8} key={p.id}>
+            <Col xs={24} sm={12} lg={8} key={p.id} style={{ display: 'flex' }}>
               {renderProcessCard(p)}
             </Col>
           ))}
