@@ -20,6 +20,7 @@ import {
 import { ThunderboltOutlined, CaretRightOutlined } from '@ant-design/icons';
 import bundledApi from '@/api/bundled';
 import { ProcessExecutionBoard } from '@/components/process/ProcessExecutionBoard';
+import type { GateDefinition } from '@/types/process';
 import { complexityColor, complexityLabel, statusColor } from './constants';
 import styles from './TaskDetailPanel.module.css';
 
@@ -40,7 +41,9 @@ interface StepInfo {
   order_index: number;
   skill_names: string[];
   expected_artifacts: Array<{ name: string; path?: string; locator?: string; type: string }>;
-  gate_config: Array<{ name: string; type: string }>;
+  // 后端 get_task_detail 返回的是完整 gate_config JSON；这里复用工艺类型，
+  // 让 AI 评审门禁的 min_score 等判定条件能在工艺要求 tab 展示出来。
+  gate_config: GateDefinition[];
 }
 
 interface ExecInfo {
@@ -73,6 +76,23 @@ function gateLabel(type: string): string {
     script_check: '脚本校验',
   };
   return map[type] ?? type;
+}
+
+/** 把单条门禁的关键判定条件拼成短文本；无额外参数时返回空串，保持 Tag 简洁。 */
+function gateDetailText(gate: GateDefinition): string {
+  const parts: string[] = [];
+  // AI 评审门禁必须暴露通过阈值，否则用户无法理解「评分达标」到底要求多少分。
+  if (gate.type === 'ai_criteria_review' && typeof gate.min_score === 'number') {
+    parts.push(`阈值 ≥ ${gate.min_score} 分`);
+  }
+  // timeout_secs 仅正数有意义：表示最多等待 AI 出分的秒数，0/null 不展示。
+  if (gate.type === 'ai_criteria_review' && typeof gate.timeout_secs === 'number' && gate.timeout_secs > 0) {
+    parts.push(`等待 ≤ ${gate.timeout_secs}s`);
+  }
+  // 产物存在门禁的补充信息是产物名；script_check 的补充信息是脚本路径。
+  if (gate.type === 'artifact_present' && gate.artifact) parts.push(`产物 ${gate.artifact}`);
+  if (gate.type === 'script_check' && gate.script) parts.push(`脚本 ${gate.script}`);
+  return parts.join('；');
 }
 
 /** 执行状态 → Progress 状态语义（success/exception/active/normal）。 */
@@ -154,9 +174,12 @@ function StepItem({ step }: { step: StepInfo }) {
         )}
         {step.gate_config.length > 0 && (
           <StepMetaRow label="门禁">
-            {step.gate_config.map((g, i) => (
-              <Tag key={i} style={{ fontSize: 12 }}>{g.name} ({gateLabel(g.type)})</Tag>
-            ))}
+            {step.gate_config.map((g, i) => {
+              // 有判定参数时追加到类型标签后面，例如 AI 评审会显示「阈值 ≥ 80 分」。
+              const detail = gateDetailText(g);
+              const suffix = detail ? `${gateLabel(g.type)} · ${detail}` : gateLabel(g.type);
+              return <Tag key={i} style={{ fontSize: 12 }}>{g.name} ({suffix})</Tag>;
+            })}
           </StepMetaRow>
         )}
       </div>

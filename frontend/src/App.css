@@ -2064,8 +2064,19 @@ code {
 }
 
 /* ---------- Modal Dark Mode ---------- */
-[data-theme="dark"] .ant-modal-content {
+/* AntD v6 的 Modal.confirm 最外层容器是 .ant-modal-container（普通 Modal 仍多见 .ant-modal-content）。
+   两个选择器都覆盖，避免批量删除确认窗外层保留 antd 默认暗色 elevated（#1f1f1f），
+   与项目 --color-bg-elevated（#1e1e2e）不一致。 */
+[data-theme="dark"] .ant-modal-content,
+[data-theme="dark"] .ant-modal-container {
   background: var(--color-bg-elevated);
+}
+
+/* Modal.confirm 的容器背景由 antd CSS-in-JS 直接写到 .ant-modal-container，
+   普通优先级覆盖不掉；这里用 !important 固定到项目暗色 elevated，
+   仅作用于确认窗，避免扩大到所有 elevated 浮层。 */
+[data-theme="dark"] .ant-modal-confirm .ant-modal-container {
+  background: var(--color-bg-elevated) !important;
 }
 
 [data-theme="dark"] .ant-modal-header {

@@ -3,7 +3,7 @@
 //   左侧 Table 行可点击选中任务，触发宿主右栏渲染 TaskDetailPanel。
 
 import { useEffect, useMemo, useState } from 'react';
-import { Button, Dropdown, Modal, Table, Tag, Typography, Select, Empty, message } from 'antd';
+import { Button, Dropdown, Table, Tag, Typography, Select, Empty, App as AntApp } from 'antd';
 import { MoreOutlined, DeleteOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import type { TaskItem } from '@/components/tasks/constants';
@@ -179,6 +179,10 @@ export function TasksTableView({
   // 行选中态（批量删除用）
   const { selectedIds, setSelectedIds } = useSelectedIdsClipping(tasks);
 
+  // 通过 AntApp.useApp() 获取 modal/message 实例，而不是使用 Modal.confirm / message 静态方法；
+  // 这样批量删除确认窗才能进入当前 ConfigProvider/AntApp 上下文，亮暗主题切换时按当前主题 token 渲染。
+  const { modal, message } = AntApp.useApp();
+
   // 过滤逻辑：状态 + 关键词（标题 OR 需求）。
   const visibleTasks = useMemo(() => {
     const kw = searchKeyword.trim().toLowerCase();
@@ -194,9 +198,10 @@ export function TasksTableView({
   // 列定义：useMemo 避免每次 render 重建造成 Table 性能抖动。
   const columns = useMemo(() => buildColumns(), []);
 
-  // 批量删除确认
+  // 批量删除确认：使用上下文 modal.confirm，保证弹窗随当前主题渲染；
+  // 确认文案与危险按钮保持原样，避免引入额外交互变化。
   const handleBatchDelete = (ids: number[]) => {
-    Modal.confirm({
+    modal.confirm({
       title: `确认删除 ${ids.length} 个任务？`,
       content: '删除后不可恢复。',
       okText: '删除',
@@ -214,8 +219,8 @@ export function TasksTableView({
     });
   };
 
-  // 筛选 toolbar：状态 Select + 批量按钮 + 计数。
-  // padding 与事项/环路列表 toolbar 一致（6px 12px），避免三页工具栏高度不一
+  // 筛选 toolbar：批量按钮 + 状态 Select + 计数。
+  // 批量按钮放第一位，符合用户对批量管理入口的直觉预期；padding 与事项/环路列表 toolbar 一致（6px 12px），避免三页工具栏高度不一
   const toolbar = (
     <div
       style={{
@@ -227,6 +232,7 @@ export function TasksTableView({
         flexShrink: 0,
       }}
     >
+      <BatchButton selectedIds={selectedIds} onBatchDelete={handleBatchDelete} />
       <Select
         size="small"
         value={statusFilter}
@@ -235,7 +241,6 @@ export function TasksTableView({
         style={{ width: 120 }}
         data-testid="tasks-table-status-filter"
       />
-      <BatchButton selectedIds={selectedIds} onBatchDelete={handleBatchDelete} />
       <Text type="secondary" style={{ fontSize: 12, marginLeft: 'auto' }}>
         已选 {selectedIds.length} 项 / 共 {visibleTasks.length} 个任务
       </Text>
