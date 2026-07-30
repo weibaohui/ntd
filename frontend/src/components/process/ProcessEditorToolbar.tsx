@@ -76,7 +76,7 @@ export function ProcessEditorToolbar({
       <Space size="middle">
         {/* 未保存修改红点提示，仅 isDirty 时显示 */}
         {isDirty && (
-          <Text type="warning" style={dirtyStyle}>
+          <Text type="danger" style={dirtyStyle}>
             <ExclamationCircleOutlined /> 未保存修改
           </Text>
         )}
