@@ -25,11 +25,20 @@ impl Database {
             .await
     }
 
-    /// 列出全部工艺模板，按名称升序。
+    /// 列出工艺模板，按名称升序。
+    ///
+    /// `is_system` 为 `Some` 时按系统/用户过滤（039：工艺列表「我的/模板」双视图的服务端过滤）；
+    /// 为 `None` 时返回全量——统计、推荐等旧调用方需要跨两类模板聚合，不能默认过滤。
     pub async fn list_process_templates(
         &self,
+        is_system: Option<bool>,
     ) -> Result<Vec<process_templates::Model>, sea_orm::DbErr> {
-        process_templates::Entity::find()
+        let mut query = process_templates::Entity::find();
+        // 只有显式传值才加过滤条件，保证 None 时 SQL 与旧行为完全一致。
+        if let Some(v) = is_system {
+            query = query.filter(process_templates::Column::IsSystem.eq(v));
+        }
+        query
             .order_by_asc(process_templates::Column::Name)
             .all(&self.conn)
             .await
@@ -261,5 +270,60 @@ impl Database {
             .exec(&self.conn)
             .await?;
         Ok(result.rows_affected)
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    /// 造一系统一用户两条模板，供过滤用例复用；
+    /// name 按字典序排列（system < user），便于断言全量列表的顺序稳定性。
+    async fn seed_two_templates(db: &Database) {
+        db.upsert_system_process_template(
+            "sys-tpl", "系统模板", "系统", "测试", "standard", "1.0.0",
+            "bundled://processes/test/sys-tpl.yaml",
+        )
+        .await
+        .unwrap();
+        db.upsert_user_process_template(
+            "user-tpl", "用户模板", "用户", "测试", "light", "0.1.0",
+            "user://test/user-tpl.yaml",
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_list_process_templates_filter_system_only() {
+        let db = Database::new(":memory:").await.unwrap();
+        seed_two_templates(&db).await;
+
+        let list = db.list_process_templates(Some(true)).await.unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].name, "sys-tpl");
+        assert!(list[0].is_system);
+    }
+
+    #[tokio::test]
+    async fn test_list_process_templates_filter_user_only() {
+        let db = Database::new(":memory:").await.unwrap();
+        seed_two_templates(&db).await;
+
+        let list = db.list_process_templates(Some(false)).await.unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].name, "user-tpl");
+        assert!(!list[0].is_system);
+    }
+
+    #[tokio::test]
+    async fn test_list_process_templates_none_returns_all() {
+        let db = Database::new(":memory:").await.unwrap();
+        seed_two_templates(&db).await;
+
+        // None 必须保持旧的全量行为，统计/推荐等旧调用方依赖跨两类聚合。
+        let list = db.list_process_templates(None).await.unwrap();
+        assert_eq!(list.len(), 2);
     }
 }

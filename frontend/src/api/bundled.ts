@@ -447,10 +447,14 @@ export const bundledApi = {
   // ---------------------------------------------------------------------------
 
   /**
-   * 获取工艺模板列表
+   * 获取工艺模板列表。
+   *
+   * 039：`isSystem` 有值时走服务端过滤（工艺列表页「我的/模板」双视图）；
+   * 不传则返回全量——设置页模板管理等旧调用方依赖全量语义，不能默认过滤。
    */
-  async getProcesses(): Promise<ProcessTemplate[]> {
-    return unwrap(await api.get('/api/bundled/processes'));
+  async getProcesses(isSystem?: boolean): Promise<ProcessTemplate[]> {
+    const suffix = isSystem === undefined ? '' : `?is_system=${isSystem}`;
+    return unwrap(await api.get(`/api/bundled/processes${suffix}`));
   },
 
   /**

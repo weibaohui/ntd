@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import {
   Card, Col, Row, Typography, Tag, Button, Empty, Spin,
   Modal, Select, message, Descriptions, Input, Alert,
-  Space, Tabs, Table,
+  Space, Tabs, Table, Segmented,
 } from 'antd';
 import { BuildOutlined, ReloadOutlined, EyeOutlined, DownloadOutlined, SearchOutlined, ApartmentOutlined, CodeOutlined, PlusOutlined, EditOutlined } from '@ant-design/icons';
 import { PageCard } from '@/components/common/PageCard';
@@ -19,6 +19,28 @@ import { CreateProcessMetaModal } from '@/components/process/CreateProcessMetaMo
 import { useViewState } from '@/hooks/useViewState';
 
 const { Title, Text, Paragraph } = Typography;
+
+/**
+ * 039：工艺列表「我的/模板」视图范围。
+ * - `mine`：用户自己创建的工艺（is_system=false）
+ * - `template`：系统内置及 bundled 同步下载的工艺（is_system=true）
+ */
+type ProcessScope = 'mine' | 'template';
+
+// localStorage key 带 ntd_ 前缀与项目其他键（如 app_theme）区分业务域，避免冲突。
+const SCOPE_STORAGE_KEY = 'ntd_process_list_scope';
+
+/**
+ * 读取上次的视图选择；非法值或存储不可用（隐私模式）时回退 'mine'——
+ * 用户日常高频操作是管理自己创建的工艺，默认落在「我的」认知成本最低。
+ */
+function readInitialScope(): ProcessScope {
+  try {
+    return localStorage.getItem(SCOPE_STORAGE_KEY) === 'template' ? 'template' : 'mine';
+  } catch {
+    return 'mine';
+  }
+}
 
 interface ProcessPageProps {
   workspaceId: number | null;
@@ -97,11 +119,15 @@ function ProcessListView({ workspaceId, onOpenLoop, processName, pushUrl }: Omit
   const [upgradingLoopId, setUpgradingLoopId] = useState<number | null>(null);
   // M6：新建工艺元信息 Modal 开关
   const [createModalOpen, setCreateModalOpen] = useState(false);
+  // 039：「我的/模板」视图范围，初始值从 localStorage 恢复（持久化用户上次选择）。
+  const [scope, setScope] = useState<ProcessScope>(readInitialScope);
 
   const load = async () => {
     setLoading(true);
     try {
-      const list = await bundledApi.getProcesses();
+      // 服务端按视图过滤（039 需求明确服务端过滤，不做全量拉取+客户端 filter）：
+      // 模板视图只取系统工艺，我的视图只取用户工艺。
+      const list = await bundledApi.getProcesses(scope === 'template');
       setProcesses(list);
     } catch (e) {
       message.error('加载工艺模板失败');
@@ -110,9 +136,22 @@ function ProcessListView({ workspaceId, onOpenLoop, processName, pushUrl }: Omit
     }
   };
 
+  // 依赖 scope：切换视图即重新拉取对应子集，保证列表与 Segmented 选中态一致。
   useEffect(() => {
     load();
-  }, []);
+  }, [scope]);
+
+  // 切换视图时持久化到 localStorage，刷新/重进页面后保持上次选择；
+  // 存储失败（隐私模式）静默忽略——视图切换本身不受影响，只是不记忆。
+  const handleScopeChange = (value: string | number) => {
+    const next = value === 'template' ? 'template' : 'mine';
+    try {
+      localStorage.setItem(SCOPE_STORAGE_KEY, next);
+    } catch {
+      // 忽略持久化失败
+    }
+    setScope(next);
+  };
 
   const handleSearch = async (value: string) => {
     setSearchText(value);
@@ -220,6 +259,58 @@ function ProcessListView({ workspaceId, onOpenLoop, processName, pushUrl }: Omit
     }
   };
 
+  // 单张工艺卡片渲染（039 从网格 JSX 中抽出，控制列表渲染块的嵌套层级与函数长度）。
+  // 闭包复用 recommended/installing 等状态；系统工艺不渲染「编辑」按钮——
+  // 拆视图后「我的」视图自然全部可编辑，「模板」视图自然全部只读，无需新增判断。
+  const renderProcessCard = (p: ProcessTemplate) => (
+    <Card
+      hoverable
+      title={p.display_name || p.name}
+      extra={
+        <Space>
+          {recommended.includes(p.name) && <Tag color="gold">推荐</Tag>}
+          <Tag color={complexityColor(p.complexity)}>{complexityLabel(p.complexity)}</Tag>
+        </Space>
+      }
+      actions={[
+        <Button key="view" type="text" icon={<EyeOutlined />} onClick={() => handleShowDetail(p.name)}>
+          详情
+        </Button>,
+        <Button
+          key="install"
+          type="text"
+          icon={<DownloadOutlined />}
+          loading={installing === p.name}
+          onClick={() => handleInstall(p.name, p.display_name || p.name)}
+        >
+          安装
+        </Button>,
+        /* 029：用户工艺直接编辑，跳路由进编辑器；系统工艺只读（编辑会被同步覆盖）。
+           系统工艺编辑入口保留在详情 Modal 里（含复制到用户层提示）。 */
+        !p.is_system && (
+          <Button
+            key="edit"
+            type="text"
+            icon={<EditOutlined />}
+            onClick={() => pushUrl('processes', { processMode: 'edit', name: p.name })}
+          >
+            编辑
+          </Button>
+        ),
+      ]}
+    >
+      <Paragraph ellipsis={{ rows: 2 }} type="secondary">
+        {p.description || '无描述'}
+      </Paragraph>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          版本 {p.version}
+        </Text>
+        <Tag>{p.category || '未分类'}</Tag>
+      </div>
+    </Card>
+  );
+
   return (
     <PageCard
       icon={<BuildOutlined />}
@@ -236,6 +327,19 @@ function ProcessListView({ workspaceId, onOpenLoop, processName, pushUrl }: Omit
       }
       style={{ flex: 1, height: '100%' }}
     >
+
+      {/* 039：「我的/模板」视图切换，独占一行置于搜索栏上方；
+          用 Segmented 而非 Tabs 是因项目内同列表视图切换均用 Segmented（SkillsPanel 等），视觉更轻量。 */}
+      <div style={{ marginBottom: 12 }}>
+        <Segmented<ProcessScope>
+          value={scope}
+          onChange={handleScopeChange}
+          options={[
+            { label: '我的', value: 'mine' },
+            { label: '模板', value: 'template' },
+          ]}
+        />
+      </div>
 
       <div style={{ display: 'flex', gap: 12, marginBottom: 16 }}>
         <Input.Search
@@ -277,59 +381,24 @@ function ProcessListView({ workspaceId, onOpenLoop, processName, pushUrl }: Omit
           <Spin size="large" />
         </div>
       ) : processes.length === 0 ? (
-        <Empty description="暂无工艺模板，请先执行 bundled 同步" />
+        // 空态按视图给出不同引导：「我的」空引导创建，「模板」空引导同步——
+        // 两者的修复动作不同，统一文案会把用户误导到错误的入口。
+        <Empty
+          description={
+            scope === 'mine'
+              ? '暂无自定义工艺，可点击右上角「创建工艺」'
+              : '暂无系统模板，请先在「更多设置 → 模板管理」执行同步'
+          }
+        />
       ) : (
         <Row gutter={[16, 16]}>
+          {/* 搜索过滤保持客户端：列表已是当前视图的服务端过滤子集，
+              搜索词在此子集上再过滤即可；切换视图不清空搜索词，避免用户输入丢失。 */}
           {processes
             .filter((p) => !searchText.trim() || p.name.includes(searchText) || p.display_name.includes(searchText) || p.description.includes(searchText))
             .map((p) => (
             <Col xs={24} sm={12} lg={8} key={p.id}>
-              <Card
-                hoverable
-                title={p.display_name || p.name}
-                extra={
-                  <Space>
-                    {recommended.includes(p.name) && <Tag color="gold">推荐</Tag>}
-                    <Tag color={complexityColor(p.complexity)}>{complexityLabel(p.complexity)}</Tag>
-                  </Space>
-                }
-                actions={[
-                  <Button key="view" type="text" icon={<EyeOutlined />} onClick={() => handleShowDetail(p.name)}>
-                    详情
-                  </Button>,
-                  <Button
-                    key="install"
-                    type="text"
-                    icon={<DownloadOutlined />}
-                    loading={installing === p.name}
-                    onClick={() => handleInstall(p.name, p.display_name || p.name)}
-                  >
-                    安装
-                  </Button>,
-                  /* 029：用户工艺直接编辑，跳路由进编辑器；系统工艺只读（编辑会被同步覆盖）。
-                     系统工艺编辑入口保留在详情 Modal 里（含复制到用户层提示）。 */
-                  !p.is_system && (
-                    <Button
-                      key="edit"
-                      type="text"
-                      icon={<EditOutlined />}
-                      onClick={() => pushUrl('processes', { processMode: 'edit', name: p.name })}
-                    >
-                      编辑
-                    </Button>
-                  ),
-                ]}
-              >
-                <Paragraph ellipsis={{ rows: 2 }} type="secondary">
-                  {p.description || '无描述'}
-                </Paragraph>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    版本 {p.version}
-                  </Text>
-                  <Tag>{p.category || '未分类'}</Tag>
-                </div>
-              </Card>
+              {renderProcessCard(p)}
             </Col>
           ))}
         </Row>

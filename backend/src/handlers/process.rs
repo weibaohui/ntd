@@ -105,11 +105,21 @@ pub async fn list_process_loops(
     Ok(ApiResponse::ok(build_process_loop_items(loops, &counts)))
 }
 
-/// GET /api/bundled/processes — 列出所有工艺模板。
+/// GET /api/bundled/processes 的查询参数（039：工艺列表「我的/模板」双视图）。
+#[derive(Debug, Deserialize)]
+pub struct ListProcessTemplatesQuery {
+    /// `serde(default)` 保证不传参时反序列化为 None 返回全量，
+    /// 设置页模板管理等旧调用方不需要改请求。
+    #[serde(default)]
+    is_system: Option<bool>,
+}
+
+/// GET /api/bundled/processes — 列出工艺模板，支持 `?is_system=true|false` 按系统/用户过滤。
 pub async fn list_process_templates(
     State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<ListProcessTemplatesQuery>,
 ) -> Result<impl axum::response::IntoResponse, AppError> {
-    let templates = state.db.list_process_templates().await?;
+    let templates = state.db.list_process_templates(query.is_system).await?;
     let items: Vec<ProcessTemplateListItem> = templates
         .into_iter()
         .map(|t| ProcessTemplateListItem {
@@ -702,7 +712,7 @@ pub async fn get_process_versions(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> Result<impl axum::response::IntoResponse, AppError> {
-    let templates = state.db.list_process_templates().await?;
+    let templates = state.db.list_process_templates(None).await?;
     let versions: Vec<_> = templates
         .iter()
         .filter(|t| t.name == name)
@@ -723,7 +733,7 @@ pub async fn diff_process_versions(
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<impl axum::response::IntoResponse, AppError> {
     let base_version = params.get("base").cloned().unwrap_or_default();
-    let templates = state.db.list_process_templates().await?;
+    let templates = state.db.list_process_templates(None).await?;
     let base = templates.iter().find(|t| t.name == name && t.version == base_version);
     let target = templates.iter().find(|t| t.name == name && t.version == _version);
 
@@ -821,7 +831,7 @@ pub async fn recommend_process(
     State(state): State<AppState>,
     Json(req): Json<crate::services::process::recommender::RecommendRequest>,
 ) -> Result<impl axum::response::IntoResponse, AppError> {
-    let templates = state.db.list_process_templates().await?;
+    let templates = state.db.list_process_templates(None).await?;
     let result = crate::services::process::recommender::recommend(&templates, &req);
     Ok(ApiResponse::ok(result))
 }
@@ -1076,6 +1086,34 @@ mod tests {
     use super::*;
     use crate::db::entity::process_templates;
     use tempfile::tempdir;
+
+    // ──────────────────────────────────────────────────────────────────
+    // ListProcessTemplatesQuery：039 列表过滤查询参数反序列化
+    // ──────────────────────────────────────────────────────────────────
+
+    // 用 axum 自带的 Query::try_from_uri 走真实提取路径，避免仅为测试引入 serde_urlencoded 依赖。
+    // 测试辅助函数里 unwrap 是惯例（构造失败即测试失败），局部放行避免整个模块放宽 lint。
+    #[allow(clippy::unwrap_used)]
+    fn parse_list_query(uri: &str) -> ListProcessTemplatesQuery {
+        let uri: axum::http::Uri = uri.parse().unwrap();
+        axum::extract::Query::<ListProcessTemplatesQuery>::try_from_uri(&uri)
+            .unwrap()
+            .0
+    }
+
+    #[test]
+    fn test_list_query_default_is_none() {
+        // 不传参必须是 None（全量），否则设置页模板管理等旧调用方会被静默过滤。
+        assert!(parse_list_query("/api/bundled/processes").is_system.is_none());
+    }
+
+    #[test]
+    fn test_list_query_parse_true_false() {
+        let q = parse_list_query("/api/bundled/processes?is_system=true");
+        assert_eq!(q.is_system, Some(true));
+        let q = parse_list_query("/api/bundled/processes?is_system=false");
+        assert_eq!(q.is_system, Some(false));
+    }
 
     // ──────────────────────────────────────────────────────────────────
     // validate_name_regex：name 正则校验 ^[a-zA-Z0-9_-]+$
