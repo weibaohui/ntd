@@ -122,7 +122,7 @@ export function LoopListView({
           dataSource={items}
           loading={loading}
           size="small"
-          scroll={{ x: 1200 }}
+          scroll={{ x: 1440 }}
           pagination={{
             pageSize: 20,
             showSizeChanger: true,

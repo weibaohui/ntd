@@ -131,7 +131,11 @@ export function CreateTaskModal({
         >
           <Select
             placeholder="选择一个工艺环路"
-            options={loops.map((l) => ({ label: l.name, value: l.id }))}
+            options={loops.map((l) => ({
+              // 带 #<ID> 前缀：同一工艺可被安装成多个同名环路，靠 ID 才能区分。
+              label: `#${l.id} ${l.name}`,
+              value: l.id,
+            }))}
             notFoundContent="暂无可用工艺环路"
             data-testid="create-task-loop-select"
           />

@@ -14,6 +14,24 @@ impl Database {
         process_templates::Entity::find_by_id(id).one(&self.conn).await
     }
 
+    /// 按 ID 批量查找工艺模板。
+    ///
+    /// 列表接口注入「来源工艺名称」用——一条 SQL 取回本次列表涉及的全部模板，
+    /// 避免「逐 loop 调 get_process_template_by_id」的 N+1。
+    /// 空入参直接返回空 Vec：filter is_in(空) 在某些后端会生成非法 SQL，提前短路更稳妥。
+    pub async fn get_process_templates_by_ids(
+        &self,
+        ids: &[i64],
+    ) -> Result<Vec<process_templates::Model>, sea_orm::DbErr> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        process_templates::Entity::find()
+            .filter(process_templates::Column::Id.is_in(ids.to_vec()))
+            .all(&self.conn)
+            .await
+    }
+
     /// 按名称查找工艺模板。
     ///
     /// 040 起 name 不再唯一，本函数只用于"是否存在同名"的预检（如新建工艺查重），
@@ -398,5 +416,38 @@ mod tests {
         // None 必须保持旧的全量行为，统计/推荐等旧调用方依赖跨两类聚合。
         let list = db.list_process_templates(None).await.unwrap();
         assert_eq!(list.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_get_process_templates_by_ids_batch() {
+        // 列表接口注入工艺名称依赖批量查：一次命中多条、部分命中、空入参三态都要稳。
+        let db = Database::new(":memory:").await.unwrap();
+        let sys_id = db
+            .upsert_system_process_template(
+                "guid-sys-001", "sys-tpl", "系统模板", "系统", "测试", "standard", "1.0.0",
+                "bundled://processes/test/sys-tpl.yaml",
+            )
+            .await
+            .unwrap();
+        let user_id = db
+            .upsert_user_process_template(
+                "guid-user-001", "user-tpl", "用户模板", "用户", "测试", "light", "0.1.0",
+                "user://test/user-tpl.yaml",
+            )
+            .await
+            .unwrap();
+
+        // 命中多条：两条都返回（顺序不保证，按 id 集合断言）。
+        let got = db.get_process_templates_by_ids(&[sys_id, user_id]).await.unwrap();
+        assert_eq!(got.len(), 2);
+
+        // 部分命中：不存在的 id 静默丢弃，不报错、不补 Null。
+        let got = db.get_process_templates_by_ids(&[sys_id, 999_999]).await.unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].id, sys_id);
+
+        // 空入参短路：不落 SQL，直接空 Vec（is_in(空) 在某些后端会生成非法 SQL）。
+        let got = db.get_process_templates_by_ids(&[]).await.unwrap();
+        assert!(got.is_empty());
     }
 }

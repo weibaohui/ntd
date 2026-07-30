@@ -2257,11 +2257,36 @@ pub async fn list_loops_v1(
     let items: Vec<LoopListItem> = rows.into_iter().map(Into::into).collect();
     let loop_ids: Vec<i64> = items.iter().map(|item| item.loop_.id).collect();
     let tag_map = state.db.get_loop_tag_ids_batch(&loop_ids).await?;
+    // 列表「工艺名称」列需要来源模板的 display_name/name/guid；版本快照已在 loops 行自动带出。
+    // 与 tags 同走「批量查 + 注入」：去重后一次取回，避免逐 loop N+1。
+    let template_ids: Vec<i64> = items
+        .iter()
+        .filter_map(|item| item.loop_.process_template_id)
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    let template_map = state
+        .db
+        .get_process_templates_by_ids(&template_ids)
+        .await?
+        .into_iter()
+        .map(|t| (t.id, t))
+        .collect::<std::collections::HashMap<i64, _>>();
     let results: Vec<LoopListItem> = items
         .into_iter()
         .map(|item| {
             let tag_ids = tag_map.get(&item.loop_.id).cloned().unwrap_or_default();
-            item.with_tags(tag_ids)
+            // 无 process_template_id 或模板已被删除时传 None：字段保持缺省不序列化，
+            // 与详情页 get_loop 的注入语义一致。
+            let tpl = item
+                .loop_
+                .process_template_id
+                .and_then(|tid| template_map.get(&tid).cloned());
+            // with_process_template 定义在 LoopDto 上（注入 display_name/name/guid），
+            // LoopListItem 只是 flatten 包装，因此先 with_tags 再就地改 loop_ 字段。
+            let mut tagged = item.with_tags(tag_ids);
+            tagged.loop_ = tagged.loop_.with_process_template(tpl);
+            tagged
         })
         .collect();
     Ok(ApiResponse::ok(results))

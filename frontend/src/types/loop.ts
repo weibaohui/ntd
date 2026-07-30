@@ -283,6 +283,12 @@ export interface LoopListItem {
   pending_approval_count: number;
   /** 来源工艺模板 ID */
   process_template_id?: number | null;
+  /** 来源工艺模板显示名（列表「工艺名称」列展示用；由后端列表接口注入） */
+  process_template_display_name?: string | null;
+  /** 来源工艺模板标识名（display_name 缺失时回退） */
+  process_template_name?: string | null;
+  /** 实例化时的工艺版本快照（列表「版本」列展示用） */
+  process_template_version?: string | null;
 }
 
 export interface LoopExecutionTokenSummary {

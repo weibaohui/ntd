@@ -115,6 +115,23 @@ export function buildRowActions(
   ];
 }
 
+/**
+ * 计算环路「工艺名称」列展示文本。
+ * 优先展示 display_name（中文名），缺失回退标识名 name；均无（手工环路）返回 '-'。
+ * 抽成纯函数便于单测，并与「版本」列一起区分同名环路。
+ */
+export function loopProcessName(record: LoopListItem): string {
+  return record.process_template_display_name ?? record.process_template_name ?? '-';
+}
+
+/**
+ * 计算环路「版本」列展示文本。
+ * 版本快照在环路实例化时定格（loops.process_template_version），无值（手工环路）返回 '-'。
+ */
+export function loopProcessVersion(record: LoopListItem): string {
+  return record.process_template_version ?? '-';
+}
+
 interface BuildColumnsArgs {
   tags: TagType[];
   onSelectLoop: (id: number) => void;
@@ -160,6 +177,30 @@ export function buildColumns({
           {name}
         </a>
       ),
+    },
+    {
+      title: '工艺名称',
+      dataIndex: 'process_template_display_name',
+      width: 160,
+      ellipsis: true,
+      // 仅工艺安装的环路有值；render 用纯函数便于单测，无值（手工环路）显示 '-'。
+      render: (_v, record) => loopProcessName(record),
+    },
+    {
+      title: '版本',
+      dataIndex: 'process_template_version',
+      width: 90,
+      // 版本快照定格在实例化时刻；等宽小字与 ID 列风格一致，无值显示 '-'。
+      render: (_v, record) => {
+        const v = loopProcessVersion(record);
+        return v === '-' ? (
+          '-'
+        ) : (
+          <span style={{ fontFamily: 'monospace', color: 'var(--color-text-tertiary)' }}>
+            {v}
+          </span>
+        );
+      },
     },
     {
       title: '状态',
