@@ -1014,25 +1014,6 @@ impl LoopRunner {
                     if let Err(e) = self.ctx.db.set_step_execution_approval_status(step_exec.id, "pending").await {
                         warn!("loop #{} step #{}: failed to set approval_status to pending: {}", loop_id, step.id, e);
                     }
-                    // 根据步骤 gate_config 创建门禁记录（pending），使审计 API 能返回 gate 列表。
-                    // 幂等：仅当无此类型 gate 时才创建（二次重入不重复）。
-                    if let Ok(gates) = serde_json::from_str::<Vec<serde_json::Value>>(&step.gate_config) {
-                        let existing = self.ctx.db.list_loop_step_execution_gates(step_exec.id).await.unwrap_or_default();
-                        for g in &gates {
-                            if let (Some(gt), Some(gn)) = (
-                                g.get("type").and_then(|v| v.as_str()),
-                                g.get("name").and_then(|v| v.as_str()),
-                            ) {
-                                if existing.iter().any(|r| r.gate_type == gt) { continue; }
-                                if let Err(e) = self.ctx.db.create_loop_step_execution_gate(
-                                    step_exec.id, gt, gn,
-                                    &serde_json::to_string(g).unwrap_or_default(),
-                                ).await {
-                                    warn!("loop #{} step #{}: failed to create gate '{}': {}", loop_id, step.id, gn, e);
-                                }
-                            }
-                        }
-                    }
                     info!("loop #{} step #{} waiting for human approval", loop_id, step.id);
                     // 发送 WebSocket 事件触发前端刷新（让执行历史列表显示"待审批"标记）
                     let _ = self.tx.send(crate::executor_service::ExecEvent::ReviewStatusChanged {

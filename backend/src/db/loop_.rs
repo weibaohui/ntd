@@ -1310,7 +1310,40 @@ impl Database {
             unrated_policy: ActiveValue::Set(Some(unrated_policy.to_string())),
             ..Default::default()
         };
-        am.insert(&self.conn).await
+        let model = am.insert(&self.conn).await?;
+
+        // 同步创建门禁记录：从步骤的 gate_config 解析，为每个 gate 创建 pending 记录。
+        // 步骤创建时就创建 gate，而非等待进入某个状态后才创建——避免因分支遗漏导致 gate 缺失。
+        if let Ok(Some(step)) = crate::db::entity::loop_steps::Entity::find_by_id(step_id)
+            .one(&self.conn)
+            .await
+        {
+            if !step.gate_config.is_empty() {
+                if let Ok(gates) = serde_json::from_str::<Vec<serde_json::Value>>(&step.gate_config) {
+                    for g in &gates {
+                        if let (Some(gt), Some(gn)) = (
+                            g.get("type").and_then(|v| v.as_str()),
+                            g.get("name").and_then(|v| v.as_str()),
+                        ) {
+                            if let Err(e) = self
+                                .create_loop_step_execution_gate(
+                                    model.id, gt, gn,
+                                    &serde_json::to_string(g).unwrap_or_default(),
+                                )
+                                .await
+                            {
+                                tracing::warn!(
+                                    "create step_execution #{}: failed to create gate '{}': {}",
+                                    model.id, gn, e,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(model)
     }
 
     /// 为异常处理步骤创建 loop_step_execution 记录。
