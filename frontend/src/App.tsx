@@ -426,7 +426,6 @@ function AppContent() {
                   <TaskDetailPage
                     taskId={taskDetailId}
                     onBack={() => backToList()}
-                    onOpenProcess={handleOpenProcess}
                     onSelectTodo={(todoId) => handleSelectTodo(todoId)}
                     onLoopChanged={() => setLoopUpdateCount(c => c + 1)}
                   />

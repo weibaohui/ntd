@@ -1,7 +1,7 @@
 // 嵌入式任务详情面板（合并环路详情版）。
 // 任务与环路是 1:1 关系（task.loop_id → loop.id），本面板合并两个详情页：
 // - Tab 1 概览：任务描述 + 环路基本信息（工作空间/待审批）+ 全局限制 + 最新执行进度
-// - Tab 2 执行环节：来源工艺面包屑 + SVG DAG 流程图（复用 LoopFlowGraph）
+// - Tab 2 执行环路：来源工艺面包屑 + SVG DAG 流程图（复用 LoopFlowGraph）
 // - Tab 3 执行历史：分页执行列表 + TokenSummaryBar + StepExecList + BlackboardDrawer
 // - Tab 4 执行看板：ProcessExecutionBoard（条件渲染）
 //
@@ -21,8 +21,9 @@ import { useProjectDirectories } from '@/utils/workspaceDisplay';
 import type { LoopDetail } from '@/types/loop';
 import { complexityColor, complexityLabel, statusColor } from './constants';
 import {
-  OverviewTab, DAGTab, ExecHistoryTab, ExecBoardTab,
+  OverviewTab, DAGTab, ExecHistoryTab,
 } from './TaskDetailTabs';
+import type { StepInfo } from './TaskDetailTabs';
 import styles from './TaskDetailPanel.module.css';
 
 const { Text } = Typography;
@@ -36,8 +37,6 @@ interface TaskDetailPanelProps {
   onTriggered?: () => void;
   /** 任务标题加载完成后回调，供外层 PageCard 动态更新标题。 */
   onTitleReady?: (title: string) => void;
-  /** 点击「来源工艺」面包屑跳转工艺详情。 */
-  onOpenProcess?: (templateName: string) => void;
   /** 点击 DAG 节点上的事项标题跳转事项详情。 */
   onOpenTodo?: (todoId: number) => void;
   /** 环路状态变更（启停/删除）后通知宿主刷新列表。 */
@@ -59,6 +58,7 @@ interface ExecInfo {
 interface TaskDetailData {
   task: { id: number; title: string; status: string; description?: string; workspace_id?: number; loop_id?: number };
   template?: { display_name?: string; version?: string; complexity?: string };
+  steps: StepInfo[];
   executions: ExecInfo[];
   loop?: { id: number; workspace_id?: number };
 }
@@ -109,11 +109,11 @@ function DetailHeader({
 /**
  * 任务详情面板（合并环路详情版）。
  * 数据获取：先拉任务详情 → 有 loop_id 则并行拉完整 LoopDetail。
- * Tab 结构：概览 / 执行环节(DAG) / 执行历史 / 执行看板。
+ * Tab 结构：概览 / 执行环路(DAG) / 执行历史。
  */
 export function TaskDetailPanel({
   taskId, workspaceId, onTriggered, onTitleReady,
-  onOpenProcess, onOpenTodo, onLoopChanged,
+  onOpenTodo, onLoopChanged,
 }: TaskDetailPanelProps) {
   const [loading, setLoading] = useState(false);
   const [detail, setDetail] = useState<TaskDetailData | null>(null);
@@ -198,7 +198,6 @@ export function TaskDetailPanel({
   const { task, template, executions } = detail;
   const lpId = task.loop_id ?? detail.loop?.id ?? 0;
   const lpWsId = task.workspace_id ?? detail.loop?.workspace_id ?? null;
-  const hasBoard = loopDetail?.process_template_id != null && (executions?.length ?? 0) > 0;
 
   const tabItems = [
     {
@@ -213,8 +212,8 @@ export function TaskDetailPanel({
     },
     {
       key: 'dag',
-      label: `执行环节 (${loopDetail?.steps?.length ?? 0})`,
-      children: <DAGTab loopDetail={loopDetail} onOpenProcess={onOpenProcess} onOpenTodo={onOpenTodo} />,
+      label: `执行环路 (${loopDetail?.steps?.length ?? 0})`,
+      children: <DAGTab loopDetail={loopDetail} steps={detail.steps ?? []} onOpenTodo={onOpenTodo} />,
     },
     {
       key: 'exec',
@@ -223,12 +222,6 @@ export function TaskDetailPanel({
         <ExecHistoryTab loopId={lpId} workspaceId={lpWsId} loopName={loopDetail?.name ?? task.title} />
       ),
     },
-    // 执行看板：仅当环路是工艺实例且有执行记录时展示。
-    ...(hasBoard ? [{
-      key: 'board',
-      label: '执行看板',
-      children: <ExecBoardTab workspaceId={lpWsId} loopId={lpId} />,
-    }] : []),
   ];
 
   return (

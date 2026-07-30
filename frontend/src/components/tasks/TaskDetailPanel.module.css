@@ -88,3 +88,69 @@
 .paneBody {
   padding: 16px 24px 24px;
 }
+
+/* ====== 步骤验收标准列表 ====== */
+
+/* 步骤列表容器。 */
+.steps {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 单个步骤：序号徽标 + 内容，行底细分隔线。 */
+.stepItem {
+  display: flex;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+/* 最后一步不画分隔线。 */
+.stepItem:last-child {
+  border-bottom: none;
+}
+
+/* 圆形序号徽标。 */
+.stepIndex {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+  font-size: 12px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 2px;
+}
+
+/* 步骤内容区。 */
+.stepBody {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 步骤名。 */
+.stepName {
+  font-weight: 600;
+  color: var(--color-text);
+  margin-bottom: 6px;
+}
+
+/* 技能/产物/门禁一行。 */
+.stepMetaRow {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+/* 行内分组标签前的说明文字。 */
+.stepLabel {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  margin-right: 2px;
+}

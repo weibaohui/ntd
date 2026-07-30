@@ -2,24 +2,21 @@
 // 从 TaskDetailPanel.tsx 拆分以控制文件大小。
 //
 // 概览 Tab：任务需求描述 + 环路基本信息 + 全局限制 + 最新执行进度。
-// 执行环节 Tab：来源工艺面包屑 + DAG 流程图（复用 LoopFlowGraph）。
+// 执行环路 Tab：来源工艺面包屑 + DAG 流程图（复用 LoopFlowGraph）。
 // 执行历史 Tab：复用 LoopExecutionsPanel 完整组件。
-// 执行看板 Tab：取最新执行记录渲染 ProcessExecutionBoard。
 
-import { useState, useEffect, type ReactNode } from 'react';
+import { type ReactNode } from 'react';
 import {
-  Tag, Typography, Spin, Progress, Descriptions, Empty,
+  Tag, Typography, Descriptions, Empty,
 } from 'antd';
 import {
   ExclamationCircleOutlined, CheckCircleOutlined, CloseCircleOutlined,
 } from '@ant-design/icons';
-import { ProcessExecutionBoard } from '@/components/process/ProcessExecutionBoard';
 import { LoopStepsPanel } from '@/components/LoopStudioStepsPanel';
 import { LoopExecutionsPanel } from '@/components/loop-studio/executions';
-import { TraceBreadcrumb } from '@/components/common/TraceBreadcrumb';
-import * as dbLoops from '@/utils/database/loops';
 import { getWorkspaceDisplayName, useProjectDirectories } from '@/utils/workspaceDisplay';
 import type { LoopDetail } from '@/types/loop';
+import type { GateDefinition } from '@/types/process';
 import { complexityColor, complexityLabel, statusColor } from './constants';
 import styles from './TaskDetailPanel.module.css';
 
@@ -78,6 +75,40 @@ interface ExecInfo {
   failed_steps: number;
   requirement?: string;
   pending_approval_count?: number;
+}
+
+// ====== StepInfo（步骤验收标准） ======
+
+export interface StepInfo {
+  id: number;
+  name: string;
+  order_index: number;
+  skill_names: string[];
+  expected_artifacts: Array<{ name: string; path?: string; locator?: string; type: string }>;
+  gate_config: GateDefinition[];
+}
+
+/** 门禁类型 → 中文标签。 */
+function gateLabel(type: string): string {
+  const map: Record<string, string> = {
+    artifact_present: '产物存在', ai_criteria_review: 'AI 评审',
+    human_approval: '人工审批', script_check: '脚本校验',
+  };
+  return map[type] ?? type;
+}
+
+/** 把单条门禁的关键判定条件拼成短文本。 */
+function gateDetailText(gate: GateDefinition): string {
+  const parts: string[] = [];
+  if (gate.type === 'ai_criteria_review' && typeof gate.min_score === 'number') {
+    parts.push(`阈值 ≥ ${gate.min_score} 分`);
+  }
+  if (gate.type === 'ai_criteria_review' && typeof gate.timeout_secs === 'number' && gate.timeout_secs > 0) {
+    parts.push(`等待 ≤ ${gate.timeout_secs}s`);
+  }
+  if (gate.type === 'artifact_present' && gate.artifact) parts.push(`产物 ${gate.artifact}`);
+  if (gate.type === 'script_check' && gate.script) parts.push(`脚本 ${gate.script}`);
+  return parts.join('；');
 }
 
 // ====== Tab 子组件 ======
@@ -221,35 +252,71 @@ export function OverviewTab({
   );
 }
 
-/** Tab 2：执行环节 — 来源工艺面包屑 + DAG 流程图。 */
+/** Tab 2：执行环路 — DAG 流程图 + 步骤验收标准列表。 */
 export function DAGTab({
-  loopDetail, onOpenProcess, onOpenTodo,
+  loopDetail, steps, onOpenTodo,
 }: {
   loopDetail: LoopDetail | null;
-  onOpenProcess?: (templateName: string) => void;
+  steps: StepInfo[];
   onOpenTodo?: (todoId: number) => void;
 }) {
   if (!loopDetail || !loopDetail.steps || loopDetail.steps.length === 0) {
-    return <Empty description="暂无执行环节" style={{ marginTop: 48 }} />;
+    return <Empty description="暂无执行环路" style={{ marginTop: 48 }} />;
   }
   return (
     <div className={styles.paneBody}>
-      {loopDetail.process_template_id != null && loopDetail.process_template_name && (
-        <div data-testid="task-loop-source-process">
-          <TraceBreadcrumb
-            title="来源工艺"
-            segments={[{
-              label: loopDetail.process_template_display_name || loopDetail.process_template_name,
-              techName: loopDetail.process_template_name,
-              version: loopDetail.process_template_version || undefined,
-              onClick: onOpenProcess
-                ? () => onOpenProcess(loopDetail.process_template_guid ?? loopDetail.process_template_name!)
-                : undefined,
-            }]}
-          />
+      <LoopStepsPanel steps={loopDetail.steps} onOpenTodo={onOpenTodo} />
+      {/* 步骤验收标准：按 order_index 排序，展示每个环节的技能/产物/门禁 */}
+      {steps.length > 0 && (
+        <div style={{ marginTop: 24 }}>
+          <div style={{
+            fontSize: 14, fontWeight: 600,
+            color: 'var(--color-text, #0f172a)', marginBottom: 12,
+          }}>
+            验收标准
+          </div>
+          <div className={styles.steps}>
+            {[...steps].sort((a, b) => a.order_index - b.order_index).map((s) => (
+              <div key={s.id} className={styles.stepItem}>
+                <div className={styles.stepIndex}>{s.order_index + 1}</div>
+                <div className={styles.stepBody}>
+                  <div className={styles.stepName}>{s.name}</div>
+                  {s.skill_names.length > 0 && (
+                    <div className={styles.stepMetaRow}>
+                      <span className={styles.stepLabel}>技能</span>
+                      {s.skill_names.map((sk) => (
+                        <Tag key={sk} color="purple" style={{ fontSize: 12 }}>{sk}</Tag>
+                      ))}
+                    </div>
+                  )}
+                  {s.expected_artifacts.length > 0 && (
+                    <div className={styles.stepMetaRow}>
+                      <span className={styles.stepLabel}>产物</span>
+                      {s.expected_artifacts.map((a, i) => (
+                        <Tag key={i} color="blue" style={{ fontSize: 12 }}>
+                          {a.name} → {a.path ?? a.locator} ({a.type})
+                        </Tag>
+                      ))}
+                    </div>
+                  )}
+                  {s.gate_config.length > 0 && (
+                    <div className={styles.stepMetaRow}>
+                      <span className={styles.stepLabel}>门禁</span>
+                      {s.gate_config.map((g, i) => {
+                        const detail = gateDetailText(g);
+                        const suffix = detail ? `${gateLabel(g.type)} · ${detail}` : gateLabel(g.type);
+                        return (
+                          <Tag key={i} style={{ fontSize: 12 }}>{g.name} ({suffix})</Tag>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
-      <LoopStepsPanel steps={loopDetail.steps} onOpenTodo={onOpenTodo} />
     </div>
   );
 }
@@ -272,29 +339,3 @@ export function ExecHistoryTab({
   );
 }
 
-/** Tab 4：执行看板 — 取最新执行记录渲染 ProcessExecutionBoard。 */
-export function ExecBoardTab({ workspaceId, loopId }: { workspaceId: number | null; loopId: number }) {
-  const [execId, setExecId] = useState<number | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    if (!workspaceId || !loopId) return;
-    let cancelled = false;
-    dbLoops.listExecutions(workspaceId, loopId, { limit: 1 })
-      .then(res => {
-        if (!cancelled && res.items.length > 0) setExecId(res.items[0].id);
-      })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [workspaceId, loopId]);
-
-  if (loading) return <Spin style={{ display: 'block', margin: '40px auto' }} />;
-  if (execId == null || !workspaceId) {
-    return <Empty description="暂无执行记录" style={{ marginTop: 48 }} />;
-  }
-  return (
-    <div className={styles.paneBody}>
-      <ProcessExecutionBoard workspaceId={workspaceId} loopId={loopId} executionId={execId} />
-    </div>
-  );
-}
