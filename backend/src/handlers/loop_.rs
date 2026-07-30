@@ -204,8 +204,12 @@ async fn populate_pending_gate_id(
     db: &crate::db::Database,
     dto: &mut LoopStepExecutionDto,
 ) {
-    // 非 pending 状态没有「待审批」门禁，直接跳过，避免无谓的门禁查询
-    if dto.approval_status.as_deref() != Some("pending") {
+    // 非待审批状态没有「待审批」门禁，直接跳过，避免无谓的门禁查询。
+    // 必须同时认两条暂停路径（与 db::count_pending_approvals_by_execution_ids 的 OR 条件一致，NTD-004）：
+    //   - 旧评分路径：暂停时写 approval_status='pending'；
+    //   - 工艺 phase_driver 路径：暂停时只写 status='pending_approval'，不写 approval_status。
+    // 只看 approval_status 会漏掉 phase_driver 路径，导致前端审批框出现却拿不到 gate id（报「未找到待审批门禁」）。
+    if dto.status != "pending_approval" && dto.approval_status.as_deref() != Some("pending") {
         return;
     }
     if let Ok(gates) = db.list_loop_step_execution_gates(dto.id).await {
