@@ -33,14 +33,18 @@ async function openTasksPage(page: Page, theme: ThemeName, title: string) {
   await page.waitForFunction((nextTheme) => document.documentElement.getAttribute('data-theme') === nextTheme, theme);
   await expect(page.getByTestId('tasks-table-view')).toBeVisible();
   await expect(page.getByText(title)).toBeVisible();
+  // NTD-008：批量按钮空选时也保持显示，但处于禁用态；有选中后才恢复可点击。
+  await expect(page.getByTestId('tasks-table-batch-trigger')).toBeVisible();
+  await expect(page.getByTestId('tasks-table-batch-trigger')).toBeDisabled();
 }
 
-// 勾选目标任务行：批量按钮只在有选中行时渲染，因此每个用例都先走同一前置动作。
+// 勾选目标任务行：批量按钮空选时 disabled，勾选后应变 enabled，因此每个用例都先走同一前置动作。
 async function selectTaskRow(page: Page, title: string) {
   // 用行文本先锁定数据行，再在行内找 checkbox；表格里还存在表头全选/测量用 checkbox，
   // 直接用 tbody 全局第一个 checkbox 会误点到「Select all」。
   await page.getByRole('row', { name: new RegExp(title) }).getByRole('checkbox').check();
   await expect(page.getByTestId('tasks-table-batch-trigger')).toBeVisible();
+  await expect(page.getByTestId('tasks-table-batch-trigger')).toBeEnabled();
 }
 
 // 打开批量删除确认窗，但不断言删除结果；本用例只验证确认窗本身是否进入当前主题上下文。

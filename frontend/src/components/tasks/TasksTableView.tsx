@@ -136,7 +136,9 @@ function BatchButton({
   selectedIds: number[];
   onBatchDelete: (ids: number[]) => void;
 }) {
-  if (selectedIds.length === 0) return null;
+  // 与 TodoListView 对齐：批量入口一直渲染，空选时只禁用不隐藏，
+  // 让用户在未勾选前也能感知列表支持批量操作。
+  const disabled = selectedIds.length === 0;
   const items = [
     {
       key: 'delete',
@@ -144,11 +146,12 @@ function BatchButton({
       icon: <DeleteOutlined />,
       danger: true as const,
       onClick: () => onBatchDelete(selectedIds),
+      disabled,
     },
   ];
   return (
-    <Dropdown menu={{ items }} trigger={['click']}>
-      <Button size="small" data-testid="tasks-table-batch-trigger">
+    <Dropdown menu={{ items }} trigger={['click']} disabled={disabled}>
+      <Button size="small" disabled={disabled} data-testid="tasks-table-batch-trigger">
         批量 <MoreOutlined style={{ fontSize: 10 }} />
       </Button>
     </Dropdown>
