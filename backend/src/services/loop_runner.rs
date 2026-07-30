@@ -843,14 +843,21 @@ impl LoopRunner {
             // 4e. 检查 todo 状态：人工审批步骤的 todo 在所有 execution 间共享，
             //     如果 todo 已 completed，步骤应直接进入 pending_approval 而非 running
             //     （否则步骤永远卡在 running，审批界面不会出现）。
-            let initial_status = if step.review_type == "human" {
-                match self.ctx.db.get_todo(step.todo_id).await {
-                    Ok(Some(t)) if t.status == crate::models::TodoStatus::Completed => "pending_approval",
-                    _ => "running",
-                }
-            } else {
-                "running"
+            let initial_status = loop {
+                let todo_result = self.ctx.db.get_todo(step.todo_id).await;
+                break if step.review_type == "human" {
+                    match todo_result {
+                        Ok(Some(t)) if t.status == crate::models::TodoStatus::Completed => "pending_approval",
+                        _ => "running",
+                    }
+                } else {
+                    "running"
+                };
             };
+            tracing::info!(
+                "loop_exec {}: step #{} review_type={:?} todo_id={} initial_status={}",
+                loop_execution_id, step.id, step.review_type, step.todo_id, initial_status,
+            );
             // 4f. 创建 step execution 记录
             let step_exec = self
                 .ctx
