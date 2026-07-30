@@ -493,11 +493,11 @@ impl Database {
         Ok(Some(new_id))
     }
 
-    /// 复制 loop 及其所有 trigger.step；execution 不复制。
+    /// 复制 loop 及其所有 step；execution 不复制（044：触发器已下线，不再复制触发器）。
     ///
     /// 用于 UI 的「另存为」/「复制为新版本」按钮。
-    /// 复制时 name 追加「(副本)」前缀，status 重置为 paused，
-    /// 创建时间/更新时间由 trigger 重新设置。
+    /// 复制时 name 追加「(副本)」后缀，status 由 create_loop 内部固定为 paused，
+    /// 创建/更新时间在 create_loop 内写入当前时间。
     pub async fn duplicate_loop(
         &self,
         source_id: i64,
@@ -645,6 +645,7 @@ impl Database {
         use sea_orm::{ConnectionTrait, Statement, DbBackend, Value};
         let sql = "SELECT review_prompt FROM loop_steps \
                    WHERE todo_id = ? AND enabled = 1 \
+                   ORDER BY id ASC \
                    LIMIT 1";
         let rows = self
             .conn
@@ -1440,8 +1441,8 @@ impl Database {
 
     // ====== 辅助：批量取 loop + 计数 ======
 
-    /// 一次 SQL 把所有 loop + 它的 trigger.step 数 + 最近一次 execution 状态拉出来。
-    /// 供左侧 LoopList 用,避免 N+1。按 workspace_id 过滤（唯一键，符合"筛选必须用 id"约定）。
+    /// 一次 SQL 把所有 loop + step 计数 + 最近一次 execution 状态 + 待审批数拉出来。
+    /// 供左侧 LoopList 用，避免 N+1。按 workspace_id 过滤（唯一键，符合"筛选必须用 id"约定）。
         pub async fn list_loops_with_counts(
             &self,
             workspace_id: Option<i64>,

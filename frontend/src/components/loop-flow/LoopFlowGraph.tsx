@@ -85,9 +85,12 @@ export function LoopFlowGraph({
         });
       }
 
-      // 失败边（仅当策略不同于成功时绘制）
+      // 失败边（仅当「策略 + 跳转目标」与成功边完全一致时才省略绘制，避免同为 goto
+      // 但目标不同的分支被误吞）。
       // 044：min_rating 列已删，失败边按 on_rating_fail 策略直接绘制，标签不再带分数阈值
-      if (step.on_rating_fail !== step.on_success) {
+      const sameAsSuccess = step.on_rating_fail === step.on_success
+        && step.fail_goto_step_id === step.success_goto_step_id;
+      if (!sameAsSuccess) {
         const ft = classifyEdge(step, steps, step.on_rating_fail, step.fail_goto_step_id, false);
         const ftg = resolveTargetStep(step, steps, step.on_rating_fail, step.fail_goto_step_id);
         if (ftg != null) {

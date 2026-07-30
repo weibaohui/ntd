@@ -28,7 +28,6 @@ import { LoopExecutionsPanel } from './loop-studio/executions';
 import { ProcessExecutionBoard } from '@/components/process/ProcessExecutionBoard';
 // 删除按钮抽到 LoopDetailActions，与 LoopDetailPage 的 titleSuffix 共用。
 import { LoopDetailActions } from './LoopDetailActions';
-import type { LoopDetailActionsProps } from './LoopDetailActions';
 
 interface LoopDetailPanelProps {
   loopId: number;
@@ -47,7 +46,7 @@ interface LoopDetailPanelProps {
   /** 独立路由场景：把删除按钮上下文上报给外层 PageCard titleSuffix。
    *  hideTitleRow=true 时内层标题行（含按钮）整体隐藏，外层通过此回调拿到按钮上下文
    *  在 PageCard 标题行渲染删除按钮，避免按钮连带消失。 */
-  onActionsReady?: (ctx: LoopDetailActionsProps | null) => void;
+  onActionsReady?: (ready: boolean) => void;
 }
 
 export function LoopDetailPanel({
@@ -108,16 +107,14 @@ export function LoopDetailPanel({
       .catch(() => { /* 静默 */ });
   }, [loopId]);
 
-  // 独立路由场景：把删除按钮上下文上报给外层 PageCard 的 titleSuffix。
-  // detail 为空时上报 null（加载中），外层相应不渲染按钮。
+  // 独立路由场景：通知外层 PageCard 内层 detail 已就绪，可渲染操作按钮。
+  // detail 为空时上报 false（加载中），外层相应不渲染 extra 按钮。
+  // 用 boolean 而非对象作为就绪标志：避免每次 onDelete 引用变化（虽然已 useCallback 稳定但仍
+  // 有理论风险）触发外层 setState 再重新渲染子组件后的 effect 循环（NTD-007：引用链稳定性设计）。
   useEffect(() => {
     if (!onActionsReady) return;
-    if (!detail) {
-      onActionsReady(null);
-      return;
-    }
-    onActionsReady({ onDelete });
-  }, [detail, onDelete, onActionsReady]);
+    onActionsReady(detail != null);
+  }, [detail, onActionsReady]);
 
   if (loading && !detail) {
     return <Skeleton active style={{ padding: 24 }} />;

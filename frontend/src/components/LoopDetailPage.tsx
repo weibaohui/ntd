@@ -11,7 +11,7 @@
 //    上报按钮所需上下文，本组件存 state 后渲染到 extra。
 // 6. 单函数 ≤ 30 行：操作回调已拆到 useLoopDetailActions。
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import type { ReactNode } from 'react';
 import { Button, Space } from 'antd';
 import { ArrowLeftOutlined, RetweetOutlined } from '@ant-design/icons';
@@ -19,7 +19,6 @@ import { PageCard } from '@/components/common/PageCard';
 import { LoopDetailPanel } from './LoopStudioDetailPanel';
 import { useLoopDetailActions } from './LoopDetailPageParts';
 import { LoopDetailActions } from './LoopDetailActions';
-import type { LoopDetailActionsProps } from './LoopDetailActions';
 
 interface LoopDetailPageProps {
   /** 当前环路 id（来自 URL path 段 /#/loops/:id）。 */
@@ -65,17 +64,21 @@ export function LoopDetailPage({
     onLoopChanged,
   });
 
-  // 删除后返回列表（覆盖 useLoopDetailActions 的 handleDelete，增加 onBack）
-  const handleDeleteWithBack = async () => {
+  // 删除后返回列表（覆盖 useLoopDetailActions 的 handleDelete，增加 onBack）。
+  // useCallback 保证引用稳定，避免每次重渲染都创建新函数传给 LoopStudioDetailPanel 导致
+  // onActionsReady 的 effect 循环触发（NTD-007：回调对象传递链中的引用稳定性）。
+  const handleDeleteWithBack = useCallback(async () => {
     await handleDelete();
     onBack();
-  };
+  }, [handleDelete, onBack]);
 
-  // LoopDetailPanel 上报的按钮上下文；detail 加载完成前为 null，extra 不渲染操作按钮。
-  const [actionsCtx, setActionsCtx] = useState<LoopDetailActionsProps | null>(null);
+  // LoopDetailPanel 上报的就绪标志位：detail 加载完成前为 false，extra 不渲染操作按钮。
+  // 用 boolean 而非对象状态，避免回传新对象引用触发父组件重渲染产生新 handleDeleteWithBack 再触发子
+  // effect 的死循环（NTD-007）。
+  const [actionsReady, setActionsReady] = useState(false);
 
   // 右上角：删除按钮（044：触发/复制/导出/编辑已下线），仅 detail 加载后可见
-  const extra: ReactNode = actionsCtx ? (
+  const extra: ReactNode = actionsReady ? (
     <Space size={4}>
       <LoopDetailActions onDelete={handleDeleteWithBack} />
     </Space>
@@ -113,7 +116,7 @@ export function LoopDetailPage({
         onChanged={onLoopChanged}
         onOpenProcess={onOpenProcess}
         onOpenTodo={onSelectTodo}
-        onActionsReady={setActionsCtx}
+        onActionsReady={setActionsReady}
       />
     </PageCard>
   );

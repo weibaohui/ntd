@@ -182,7 +182,14 @@ async fn enrich_step_execution_with_usage(
     };
     let record = match db.get_execution_record(record_id).await {
         Ok(Some(r)) => r,
-        _ => return,
+        // 记录不存在属正常情况（旧数据或已被清理），保持缺省返回。
+        Ok(None) => return,
+        // 查询出错则记一条 warn：token 用量字段会缺省，前端不显示用量数据，
+        // 但服务端应留下可排查的线索（NTD-009：静默丢弃 DB 错误会导致问题难以追踪）。
+        Err(e) => {
+            tracing::warn!("获取 execution_record #{record_id} 失败，step_execution #{} token 用量将从 DTO 缺省: {e}", dto.id);
+            return;
+        }
     };
     // 从 execution_record.usage 字段解析 token 用量
     let usage = match record.usage {
@@ -212,12 +219,17 @@ async fn populate_pending_gate_id(
     if dto.status != "pending_approval" && dto.approval_status.as_deref() != Some("pending") {
         return;
     }
-    if let Ok(gates) = db.list_loop_step_execution_gates(dto.id).await {
+    match db.list_loop_step_execution_gates(dto.id).await {
         // 取首个 pending 的 human_approval 门禁：工艺定义里人工审批环节只有一个此类门禁
-        dto.pending_gate_id = gates
-            .into_iter()
-            .find(|g| g.gate_type == "human_approval" && g.status == "pending")
-            .map(|g| g.id);
+        Ok(gates) => {
+            dto.pending_gate_id = gates
+                .into_iter()
+                .find(|g| g.gate_type == "human_approval" && g.status == "pending")
+                .map(|g| g.id);
+        }
+        // 门禁查询失败会让前端失去审批入口（pending_gate_id 保留 None），但不阻塞执行记录展示；
+        // 需记录 warn 让运维人员排查，避免用户报「审批按钮不显示」时无服务端日志可查（NTD-009）。
+        Err(e) => tracing::warn!("查询 step_execution #{} 门禁列表失败，pending_gate_id 将保持 None: {e}", dto.id),
     }
 }
 
@@ -405,11 +417,12 @@ pub async fn batch_delete_loops_v1(
     }
     // V1 隔离：校验所有 loop 属于路径 workspace（verify 已含存在性校验）。
     workspace_guard::verify_loops_belong_to_ws(&state.db, &req.ids, ws_id).await?;
-    for id in &req.ids {
-        state.db.delete_loop(*id).await?;
-    }
+    // 使用 DB 层 batch_delete_loops（单 SQL 事务化批量 DELETE，级联清环节/执行记录），
+    // 避免逐条 delete_loop 产生 N 次独立 SQL 调用、部分失败时无法回滚（NTD-008）。
+    let deleted = state.db.batch_delete_loops(&req.ids).await?;
+    // deleted 是实际删除行数，total 是请求的 ID 数（两者可能不等，如某些 ID 不存在）。
     Ok(ApiResponse::ok(serde_json::json!({
-        "deleted": req.ids.len(),
+        "deleted": deleted,
         "total": req.ids.len(),
     })))
 }
@@ -423,7 +436,8 @@ pub fn v1_routes() -> axum::Router<AppState> {
     use axum::routing::{get, post, put};
     axum::Router::new()
         .route("/", get(list_loops_v1))
-        // 字面量路由必须注册在 /{id} 之前，避免被当作 loop id 捕获。
+        // 静态段（如 /stats, /batch/*）与动态段（/{id}）同层注册。
+        // Axum 0.8 底层 matchit 会按静态优先匹配，无需依赖注册先后顺序。
         .route("/stats", get(get_loop_stats_v1))
         .route("/batch/workspace", post(batch_move_loops_workspace_v1))
         .route("/batch/copy-workspace", post(batch_copy_loops_workspace_v1))

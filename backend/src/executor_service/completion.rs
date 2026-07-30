@@ -862,12 +862,19 @@ async fn maybe_run_auto_review(
     // 环路步骤：查出 step 内联 review_prompt，用于评审 prompt 回退。
     // 044：loops.review_template_id 已下线（评审模板归环节），环路级模板回退取消，
     // 非环路步骤传 None，回退到默认模板。
+    // step_review_prompt 非空时会被 auto_review 直接优先使用（作为评审 prompt 的 system 指令），
+    // 仅当其为空时才回退到默认模板。只对 loop_stage 类型的触发查环节表，其他触发直接取默认。
     let step_review_prompt = if trigger_type.starts_with("loop_stage") {
+        // loop_stage 触发：按当前 todo 反查启用中的 loop_step，取其中联的 review_prompt。
+        // 一个 todo 至多被一个启用中的 step 引用，用 LIMIT 1 取首个。
+        // 查询返回 None（无关联 step/step 未启用）→ auto_review 走默认模板，不阻塞评审。
         db.find_loop_step_review_prompt_by_todo(todo_id)
             .await
-            .ok()
-            .flatten()
+            .ok()       // 查询出错（如 DB 连接断开）转为 None，不阻断 auto_review 流程
+            .flatten()  // 解开 Option<Option<String>> 的嵌套：外层 Option 是 Result 转换结果，
+                        // 内层是 SQL 查询的 nullable 列值，flatten 把两层合并为 Option<String>
     } else {
+        // 非 loop_stage 触发（如手动 auto_review、todo 变更触发等）：无环节级模板，传 None
         None
     };
 

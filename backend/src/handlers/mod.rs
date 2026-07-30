@@ -338,10 +338,10 @@ async fn build_app_state(
     let config = ctx.config.clone();
 
     // ====== Loop Studio 两件套初始化 ======
-    // 用 block_in_place + Handle::block_on 走 sync 路径做 async DB 调用；
-    // 这两件套是「可选能力」,初始化失败不阻塞 daemon 启动,只把 Option 置 None。
-    // 按引用传入避免多余的 clone；函数内部按需 clone 进 Arc 包装
     // 044：cron 调度器（loop_scheduler）随 loop_triggers 表下线，不再初始化。
+    // LoopRunner + LoopTriggerDispatcher 均为纯内存构造（无 IO），从 ServiceContext
+    // 中共享 Arc 引用；失败概率低，初始化失败不阻塞 daemon 启动（仅把 Option 置 None）。
+    // 按引用传入 ctx/tx 避免调用方额外 clone；函数内部按需 clone 进 Arc 包装。
     let (loop_runner, loop_trigger_dispatcher) =
         init_loop_studio_services(&ctx, &tx);
 
@@ -417,8 +417,8 @@ async fn build_app_state(
 /// 初始化 Loop Studio 两件套：runner / dispatcher。
 ///
 /// 全部失败容忍：返回 `None` 让 AppState 标记为「loop 功能不可用」,handler
-/// 在被调用时返回 503 风格错误。daemon 启动不因 loop 故障而被拖垮。
-// 044：cron 调度器随 loop_triggers 表下线，不再初始化。
+/// Loop Studio 运行时核心：纯内存构造 LoopRunner + LoopTriggerDispatcher，无 IO。
+/// 044：cron 调度器随 loop_triggers 表下线，不再初始化；仅保留工艺运行时承载能力。
 fn init_loop_studio_services(
     // 按引用传入避免调用方 clone；函数内部按需 clone 进 Arc 包装
     ctx: &ServiceContext,

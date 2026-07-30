@@ -50,14 +50,17 @@ export function useConceptCounts(workspaceId: number | null): UseConceptCountsRe
   const reload = useCallback(async () => {
     setLoading(true);
     try {
-      // 并行拉取 6 个 API，任一失败对应字段 null。
-      // 不用 Promise.allSettled：失败字段在 catch 里置 null，不影响其他。
-      const processes = await bundledApi.getProcesses().catch(() => null);
-      const loops = await dbLoops.listLoops(wsId).catch(() => null);
-      const todos = await db.getAllTodos(wsId).catch(() => null);
-      const tasks = await bundledApi.listTasks(wsId).catch(() => null);
-      const executors = await db.getExecutors().catch(() => null);
-      const experts = await db.getAllExperts().catch(() => null);
+      // 并行拉取 6 个 API（Promise.all + 每个 promise 独立 catch），任一失败对应字段 null。
+      // 不用串联 await：串行等待会放大首屏延迟（最慢 API × 6 → 最慢 API × 1）。
+      // 每个 promise 自己 catch 为 null，Promise.all 因此永不 reject，无需 allSettled。
+      const [processes, loops, todos, tasks, executors, experts] = await Promise.all([
+        bundledApi.getProcesses().catch(() => null),
+        dbLoops.listLoops(wsId).catch(() => null),
+        db.getAllTodos(wsId).catch(() => null),
+        bundledApi.listTasks(wsId).catch(() => null),
+        db.getExecutors().catch(() => null),
+        db.getAllExperts().catch(() => null),
+      ]);
 
       // 数量映射：null 表示拉取失败，徽标不显示。
       const nextCounts: ConceptCounts = {
