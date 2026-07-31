@@ -173,7 +173,7 @@ export function ChatEmptyPlaceholder({ mobile = false, isDark }: { mobile?: bool
     <div style={{ textAlign: 'center', color: colors.hintColor, fontSize: mobile ? 14 : 13, padding: '32px 0' }}>
       <MessageOutlined style={{ fontSize: 36, marginBottom: 12, opacity: 0.3 }} />
       <div>还没有对话记录</div>
-      <div style={{ marginTop: 6, fontSize: mobile ? 13 : 12 }}>输入问题开始与 Wiki 交互</div>
+      <div style={{ marginTop: 6, fontSize: mobile ? 13 : 12 }}>输入问题，AI 会结合当前工作空间回答你</div>
     </div>
   );
 }

@@ -81,7 +81,7 @@ export function ChatInputPanel({
       <TextArea
         value={inputValue}
         onChange={(e) => onInputChange(e.target.value)}
-        placeholder="向 Wiki 提问..."
+        placeholder="问点什么？AI 会结合本工作空间回答…"
         autoSize={{ minRows: 1, maxRows: mobile ? 4 : 6 }}
         disabled={loading || workspaceId == null}
         onKeyDown={handleKeyDown}
