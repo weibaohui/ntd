@@ -26,7 +26,7 @@ use crate::models::{
     self,
     ApiResponse, BatchCopyLoopWorkspaceRequest, BatchUpdateLoopWorkspaceRequest,
     BatchWorkspaceResult, LoopDetail, LoopDto, LoopExecutionDetail, LoopExecutionDto,
-    LoopExecutionTokenSummary, LoopListItem, LoopStepExecutionDto,
+    LoopExecutionTokenSummary, GateResultDto, LoopListItem, LoopStepExecutionDto,
     UpdateLoopStatusRequest, UpdateTagsRequest,
 };
 
@@ -204,32 +204,64 @@ async fn enrich_step_execution_with_usage(
     dto.total_cost_usd = usage.total_cost_usd;
 }
 
-/// 为 pending_approval 的环节执行注入待审批门禁 id。
-/// 044 审批改门禁制：前端凭 pending_gate_id 直接调门禁审批接口，无需再查审计接口。
-/// 仅当环节处于 pending_approval 且存在 pending 的 human_approval 门禁时写入，否则保持 None。
-async fn populate_pending_gate_id(
+/// 填充门禁评价摘要 + 待审批门禁 id（需求 047）。
+///
+/// 一次 `list_loop_step_execution_gates` 查询同时填两件事，避免重复往返：
+/// - `gate_results`：全部门禁的 status/result，前端展示门禁级状态与失败原因；
+/// - `pending_gate_id`：首个 pending 的 human_approval 门禁（原 populate_pending_gate_id 逻辑，
+///   仅在 pending_approval / approval_status=pending 时填，供前端调审批接口）。
+async fn populate_gate_results(
     db: &crate::db::Database,
     dto: &mut LoopStepExecutionDto,
 ) {
-    // 非待审批状态没有「待审批」门禁，直接跳过，避免无谓的门禁查询。
-    // 必须同时认两条暂停路径（与 db::count_pending_approvals_by_execution_ids 的 OR 条件一致，NTD-004）：
-    //   - 旧评分路径：暂停时写 approval_status='pending'；
-    //   - 工艺 phase_driver 路径：暂停时只写 status='pending_approval'，不写 approval_status。
-    // 只看 approval_status 会漏掉 phase_driver 路径，导致前端审批框出现却拿不到 gate id（报「未找到待审批门禁」）。
-    if dto.status != "pending_approval" && dto.approval_status.as_deref() != Some("pending") {
-        return;
-    }
-    match db.list_loop_step_execution_gates(dto.id).await {
-        // 取首个 pending 的 human_approval 门禁：工艺定义里人工审批环节只有一个此类门禁
-        Ok(gates) => {
-            dto.pending_gate_id = gates
-                .into_iter()
-                .find(|g| g.gate_type == "human_approval" && g.status == "pending")
-                .map(|g| g.id);
+    let gates = match db.list_loop_step_execution_gates(dto.id).await {
+        Ok(gs) => gs,
+        // 门禁查询失败不阻塞执行记录展示，但需留 warn 供运维排查（NTD-009）。
+        Err(e) => {
+            tracing::warn!("查询 step_execution #{} 门禁列表失败: {e}", dto.id);
+            return;
         }
-        // 门禁查询失败会让前端失去审批入口（pending_gate_id 保留 None），但不阻塞执行记录展示；
-        // 需记录 warn 让运维人员排查，避免用户报「审批按钮不显示」时无服务端日志可查（NTD-009）。
-        Err(e) => tracing::warn!("查询 step_execution #{} 门禁列表失败，pending_gate_id 将保持 None: {e}", dto.id),
+    };
+    // pending_gate_id：必须同时认两条暂停路径（与 count_pending_approvals 一致，NTD-004）：
+    //   旧评分路径 approval_status='pending'；phase_driver 路径只写 status='pending_approval'。
+    // 只看 approval_status 会漏掉 phase_driver 路径，导致前端审批框拿不到 gate id。
+    if dto.status == "pending_approval" || dto.approval_status.as_deref() == Some("pending") {
+        dto.pending_gate_id = gates
+            .iter()
+            .find(|g| g.gate_type == "human_approval" && g.status == "pending")
+            .map(|g| g.id);
+    }
+    // gate_results：全部门禁摘要，供前端展示通过/失败/失败原因（需求 047）。
+    dto.gate_results = gates
+        .into_iter()
+        .map(|g| GateResultDto {
+            id: g.id,
+            gate_type: g.gate_type,
+            gate_name: g.gate_name,
+            status: g.status,
+            result: g.result,
+        })
+        .collect();
+}
+
+/// 填充评分来源评审 record id（需求 047）。
+///
+/// 反查 `execution_records.source_execution_record_id`，找到评审原 step record 的评审实例，
+/// 前端做可点击徽章跳转看评审理由。仅当有 execution_record_id 时执行；
+/// 查询失败降级 warn，不阻塞展示。
+async fn populate_review_record_id(
+    db: &crate::db::Database,
+    dto: &mut LoopStepExecutionDto,
+) {
+    // 没有 execution_record_id 的环节（异常处理步骤等）不会有评审来源，直接跳过。
+    let Some(source_id) = dto.execution_record_id else { return; };
+    match db.find_review_record_id_by_source(source_id).await {
+        Ok(rid) => dto.review_record_id = rid,
+        Err(e) => tracing::warn!(
+            "查询 step_execution #{} 评分来源失败（source_record={}）: {e}",
+            dto.id,
+            source_id
+        ),
     }
 }
 
@@ -294,7 +326,8 @@ pub async fn list_executions_v1(
         let mut enriched: Vec<LoopStepExecutionDto> = step_execs.into_iter().map(|se| se.into()).collect();
         for dto in &mut enriched {
             enrich_step_execution_with_usage(&state.db, dto).await;
-            populate_pending_gate_id(&state.db, dto).await;
+            populate_gate_results(&state.db, dto).await;
+            populate_review_record_id(&state.db, dto).await;
         }
         item.token_summary = Some(aggregate_tokens_from_step_dtos(&enriched));
     }
@@ -332,7 +365,8 @@ pub async fn get_execution_v1(
             dto.step_name = Some(ls.name);
         }
         enrich_step_execution_with_usage(&state.db, &mut dto).await;
-        populate_pending_gate_id(&state.db, &mut dto).await;
+        populate_gate_results(&state.db, &mut dto).await;
+        populate_review_record_id(&state.db, &mut dto).await;
         enriched.push(dto);
     }
     // 聚合 token 汇总：直接从已 enrich 的 DTO 字段聚合，避免重复查询数据库

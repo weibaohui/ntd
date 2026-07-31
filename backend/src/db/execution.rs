@@ -1548,6 +1548,23 @@ impl Database {
         };
         self.exec_update(am).await
     }
+
+    /// 反查评审 record：`source_execution_record_id` 指向原 step record（需求 047）。
+    ///
+    /// 执行历史展示「评分来源」：给定原 step 的 execution_record_id，找到评审它的评审实例
+    /// record（其 `result` 含评审理由 + `RATING`、`rating` 是评分）。走已有索引
+    /// `idx_execution_records_source_record_id`。返工重跑可能产生多条，取 id 最大（最新一次评审）。
+    pub async fn find_review_record_id_by_source(
+        &self,
+        source_record_id: i64,
+    ) -> Result<Option<i64>, sea_orm::DbErr> {
+        let row = execution_records::Entity::find()
+            .filter(execution_records::Column::SourceExecutionRecordId.eq(source_record_id))
+            .order_by_desc(execution_records::Column::Id)
+            .one(&self.conn)
+            .await?;
+        Ok(row.map(|m| m.id))
+    }
 }
 
 #[cfg(test)]
@@ -1743,6 +1760,37 @@ mod center_aggregate_tests {
         assert_eq!(s1.status.as_deref(), Some("failed"), "应取最近一条");
         // t2 无记录 → 不在 map 中
         assert!(!map.contains_key(&t2));
+    }
+
+    /// find_review_record_id_by_source：反查评审 record，多条取最新；不存在返 None（需求 047）。
+    #[tokio::test]
+    async fn test_find_review_record_id_by_source_returns_latest_and_none() {
+        let db = fresh_db().await;
+        let todo_id = seed_todo(&db, "T").await;
+        // 原记录（被评审的 step record），execution_records 首条 → id=1。
+        seed_exec(&db, todo_id, "success", "manual").await;
+        let source_id: i64 = 1;
+
+        // 不存在的 source → None。
+        assert_eq!(db.find_review_record_id_by_source(9999).await.unwrap(), None);
+
+        // 两条评审 record 指向同一原记录（模拟返工重跑），id 自增为 2、3。
+        for _ in 0..2 {
+            db.exec(
+                "INSERT INTO execution_records (todo_id, status, trigger_type, started_at, \
+                 source_execution_record_id) \
+                 VALUES (1, 'success', 'auto_review', '2026-07-08T09:00:00Z', 1)",
+            )
+            .await
+            .expect("insert review record");
+        }
+        // 多条 → order_by_desc(Id) 取最新一次评审（id=3）。
+        assert_eq!(
+            db.find_review_record_id_by_source(source_id)
+                .await
+                .unwrap(),
+            Some(3)
+        );
     }
 
     /// update_execution_record_agent_runs：写入 agent_runs JSON 后能按 id 原样读回（CodeRabbit）。
