@@ -9,6 +9,8 @@ import { Modal, Input, Select, Form, message } from 'antd';
 import { ThunderboltOutlined } from '@ant-design/icons';
 import bundledApi from '@/api/bundled';
 import type { LoopLite } from '@/components/tasks/constants';
+// loopOptionLabel：049 统一的选项文案拼装入口，弹窗不内联模板字符串，
+// 防止多处拼装口径漂移（回退规则只维护一份）。
 import { loopOptionLabel } from '@/components/tasks/constants';
 
 interface CreateTaskModalProps {

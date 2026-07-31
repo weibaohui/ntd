@@ -50,6 +50,20 @@ describe('loopOptionLabel', () => {
     expect(loopOptionLabel(loop)).toBe('#9 评审环路（#5 轻量评审 —）');
   });
 
+  // 回退路径：display_name 为纯空白串时不能占位，应继续回退到有效的标识名
+  // （修复前 rawName ?? 链会在 trim 失败后直接兜底 #id，跳过有效 name）。
+  it('test_loopOptionLabel_displayName空白_继续回退标识名', () => {
+    const loop: LoopLite = {
+      id: 15,
+      name: '交付环路',
+      process_template_id: 3,
+      process_template_display_name: '   ',
+      process_template_name: '4p12s-delivery',
+      process_template_version: '1.0.0',
+    };
+    expect(loopOptionLabel(loop)).toBe('#15 交付环路（#3 4p12s-delivery 1.0.0）');
+  });
+
   // 防御分支：无工艺来源（类型上字段可选）时退化为 041 格式，不拼空括号。
   it('test_loopOptionLabel_无工艺来源_退化041格式', () => {
     const loop: LoopLite = { id: 21, name: '手工环路' };

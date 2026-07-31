@@ -122,11 +122,15 @@ export function loopOptionLabel(l: LoopLite): string {
   const base = `#${l.id} ${l.name}`;
   // 防御分支：调用方已过滤只传工艺环路，但类型上字段可选，无来源时保持原样。
   if (l.process_template_id == null) return base;
-  // 名称逐级回退；trim 防空白字符串占位（与 formatProcessText 的 name?.trim() 判定一致）。
-  const rawName = l.process_template_display_name ?? l.process_template_name;
-  const pname = rawName?.trim() ? rawName : `#${l.process_template_id}`;
-  // 版本缺失用占位符，避免出现「#3 名称 」尾部空段。
-  const version = l.process_template_version?.trim() ? l.process_template_version : '—';
+  // 名称逐级回退：两个字段分别 trim 判定，display_name 为纯空白串时继续尝试标识名，
+  // 避免「display_name='  ' 且 name 有效」被错误兜底成 #id（PR #959 CodeRabbit 评审发现）；
+  // 返回 trim 后的值，防止首尾空白污染 label 版式。
+  const pname =
+    l.process_template_display_name?.trim() ||
+    l.process_template_name?.trim() ||
+    `#${l.process_template_id}`;
+  // 版本缺失或纯空白时用占位符，避免出现「#3 名称 」尾部空段；同样取 trim 后值保持口径一致。
+  const version = l.process_template_version?.trim() || '—';
   return `${base}（#${l.process_template_id} ${pname} ${version}）`;
 }
 
