@@ -47,6 +47,34 @@ describe('compareValues', () => {
   });
 });
 
+describe('makeSorter', () => {
+  it('按数字字段比较（委托 compareValues 数值分支）', () => {
+    const sorter = makeSorter<TestItem>('id');
+    expect(sorter({ id: 1, name: 'a' }, { id: 2, name: 'b' })).toBeLessThan(0);
+    expect(sorter({ id: 2, name: 'a' }, { id: 1, name: 'b' })).toBeGreaterThan(0);
+  });
+
+  it('按字符串字段比较（委托 compareValues localeCompare 分支）', () => {
+    const sorter = makeSorter<TestItem>('name');
+    expect(sorter({ id: 1, name: 'a' }, { id: 2, name: 'b' })).toBeLessThan(0);
+    expect(sorter({ id: 2, name: 'b' }, { id: 1, name: 'a' })).toBeGreaterThan(0);
+  });
+
+  it('两元素同字段相等时返回 0', () => {
+    const sorter = makeSorter<TestItem>('id');
+    expect(sorter({ id: 5, name: 'a' }, { id: 5, name: 'b' })).toBe(0);
+  });
+
+  it('字段缺失（undefined）走空字符串兜底，不抛错', () => {
+    interface WithOpt { id: number; tag?: string }
+    const sorter = makeSorter<WithOpt>('tag');
+    // 两边 tag 均缺失：都转 '' → 比较结果为 0
+    expect(sorter({ id: 1 }, { id: 2 })).toBe(0);
+    // 一方有值一方缺失：'a' 排在 '' 之后 → 正数
+    expect(sorter({ id: 1, tag: 'a' }, { id: 2 })).toBeGreaterThan(0);
+  });
+});
+
 describe('useResizableColumns', () => {
   it('无 localStorage 时默认按 ID 倒序', () => {
     const { result } = renderHook(() => useResizableColumns('todos', RAW_COLUMNS));
