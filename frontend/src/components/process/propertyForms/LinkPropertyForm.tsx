@@ -469,6 +469,21 @@ export function LinkPropertyForm({
         />
       </Form.Item>
 
+      {/* 最大返工次数：门禁失败跳转返工的上限，超过即终止工艺（防止死循环重试）。
+          对应 loop_steps.max_rework，后端默认 3。空 = 用默认值。 */}
+      <Form.Item label="最大返工次数" tooltip="门禁失败跳转返工的上限次数，超过即终止工艺。留空用默认 3。">
+        <InputNumber
+          value={link.max_rework}
+          onChange={(value) =>
+            handleFieldChange('max_rework', value === null ? undefined : value)
+          }
+          min={0}
+          max={20}
+          style={{ width: '100%' }}
+          placeholder="默认：3"
+        />
+      </Form.Item>
+
       {/* gates 嵌套表格 */}
       <Space style={sectionHeaderStyle}>
         <Text strong>门禁</Text>
