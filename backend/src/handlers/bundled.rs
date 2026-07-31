@@ -534,11 +534,11 @@ fn default_category() -> String {
     "general".to_string()
 }
 
-/// 从 bundled/processes/ 导入工艺模板与环节原型。
+/// 从 bundled/processes/ 导入工艺模板。
 ///
-/// 递归扫描 `bundled/processes/**/*.yaml`，根据顶层 key 分发：
-/// - `process:`  → 工艺模板，写入 `process_templates`
-/// - `step_template:` → 环节原型，写入 `process_step_templates`
+/// 递归扫描 `bundled/processes/**/*.yaml`，解析顶层 key 为 `process:` 的工艺模板，
+/// 写入 `process_templates`（环节原型 `process_step_templates` 已随需求 052 废弃删除，
+/// 仓库残留的 `step_template:` yaml 会被 parse_process_file 解析失败而静默跳过）。
 ///
 /// 同步策略（"先删后插"）：
 /// 040 起系统工艺改为按 guid reconcile：
@@ -547,29 +547,21 @@ fn default_category() -> String {
 /// 2. 扫描后删除"DB 有而仓库无"的系统行（真正下架才删，此时 loops SET NULL 是正确语义）。
 /// 3. 扫描用户层 `~/.ntd/processes/`，按 guid upsert 为 `is_system=false`（与系统层同名共存）。
 ///
-/// 环节原型（process_step_templates）维持"先删后插"——它按 name 被 YAML 内引用，是另一套机制。
-///
 /// 导入失败单条记录 warning，不阻断整体同步。
 async fn import_process_templates_from_bundled(
     state: &AppState,
     local_path: &str,
 ) -> Result<(), String> {
-    // 环节原型仍"先删后插"（未纳入 guid 体系）；工艺模板不再整表删除。
-    if let Err(e) = state.db.delete_all_system_process_step_templates().await {
-        tracing::warn!("删除系统环节原型失败: {}", e);
-    }
-
     let bundled_processes_dir = crate::git_sync::bundled_dir(local_path)
         .ok_or_else(|| "无法获取 home 目录".to_string())?
         .join("processes");
 
     let mut process_count = 0usize;
-    let mut step_template_count = 0usize;
     let mut seen_guids: Vec<String> = Vec::new();
 
     // 系统层扫描：bundled/processes/ 不存在时跳过（首次安装场景）。
     if bundled_processes_dir.exists() {
-        (process_count, step_template_count, seen_guids) =
+        (process_count, seen_guids) =
             scan_and_upsert_system_processes(state, &bundled_processes_dir).await?;
     } else {
         tracing::info!("bundled/processes 目录不存在，跳过系统层导入");
@@ -586,9 +578,8 @@ async fn import_process_templates_from_bundled(
     }
 
     tracing::info!(
-        "从 bundled/processes 导入了 {} 个工艺模板、{} 个环节原型",
-        process_count,
-        step_template_count
+        "从 bundled/processes 导入了 {} 个工艺模板",
+        process_count
     );
 
     // 用户层扫描：复用 services::process::user_dir。
@@ -601,19 +592,18 @@ async fn import_process_templates_from_bundled(
     Ok(())
 }
 
-/// 扫描系统层 `bundled/processes/` 目录，upsert 为 `is_system=true` 的工艺模板与环节原型。
+/// 扫描系统层 `bundled/processes/` 目录，upsert 为 `is_system=true` 的工艺模板。
 ///
-/// 返回 `(process_count, step_template_count, seen_guids)`：
-/// 前两个供上层日志统计，seen_guids 供 reconcile 删除远端已下架的模板。
+/// 返回 `(process_count, seen_guids)`：
+/// process_count 供上层日志统计，seen_guids 供 reconcile 删除远端已下架的模板。
 async fn scan_and_upsert_system_processes(
     state: &AppState,
     bundled_processes_dir: &std::path::Path,
-) -> Result<(usize, usize, Vec<String>), String> {
+) -> Result<(usize, Vec<String>), String> {
     let yaml_files = collect_yaml_files(bundled_processes_dir)
         .map_err(|e| format!("读取 bundled/processes 目录失败: {}", e))?;
 
     let mut process_count = 0usize;
-    let mut step_template_count = 0usize;
     let mut seen_guids: Vec<String> = Vec::new();
 
     for path in yaml_files {
@@ -652,22 +642,10 @@ async fn scan_and_upsert_system_processes(
             }
             seen_guids.push(wrapper.process.guid.clone());
             process_count += 1;
-            continue;
-        }
-
-        // 再尝试解析为环节原型
-        if let Some(wrapper) = parse_step_template_file(&content, &path) {
-            if let Err(e) =
-                upsert_process_step_template(state, &wrapper.step_template, &source_path).await
-            {
-                tracing::warn!("保存环节原型 {} 失败: {}", source_path, e);
-                continue;
-            }
-            step_template_count += 1;
         }
     }
 
-    Ok((process_count, step_template_count, seen_guids))
+    Ok((process_count, seen_guids))
 }
 
 /// 递归收集目录下所有 yaml/yml 文件（按路径排序，保证导入顺序稳定）。
@@ -782,71 +760,6 @@ async fn upsert_process_template(
             &def.complexity,
             &def.version,
             source_path,
-        )
-        .await?;
-    Ok(())
-}
-
-/// bundled 环节原型文件顶层包装。
-#[derive(Debug, serde::Deserialize)]
-struct BundledStepTemplateFile {
-    step_template: BundledStepTemplateDefinition,
-}
-
-/// bundled 环节原型定义。
-#[derive(Debug, serde::Deserialize)]
-struct BundledStepTemplateDefinition {
-    name: String,
-    #[serde(default)]
-    title: String,
-    #[serde(default)]
-    prompt: String,
-    executor: Option<String>,
-    expert_name: Option<String>,
-    #[serde(default)]
-    skills: Vec<String>,
-    model: Option<String>,
-    #[serde(default)]
-    acceptance_criteria: String,
-}
-
-/// 尝试把文件内容解析为环节原型。
-fn parse_step_template_file(
-    content: &str,
-    path: &std::path::Path,
-) -> Option<BundledStepTemplateFile> {
-    serde_yaml::from_str::<BundledStepTemplateFile>(content)
-        .inspect_err(|e| {
-            tracing::debug!("{} 不是环节原型文件: {}", path.display(), e);
-        })
-        .ok()
-}
-
-/// 把解析后的环节原型写入数据库。
-async fn upsert_process_step_template(
-    state: &AppState,
-    def: &BundledStepTemplateDefinition,
-    source_path: &str,
-) -> Result<(), sea_orm::DbErr> {
-    let title = if def.title.is_empty() {
-        &def.name
-    } else {
-        &def.title
-    };
-    let skill_names = serde_json::to_string(&def.skills).unwrap_or_else(|_| "[]".to_string());
-    state
-        .db
-        .upsert_system_process_step_template(
-            &def.name,
-            title,
-            &def.prompt,
-            def.executor.as_deref(),
-            def.expert_name.as_deref(),
-            &skill_names,
-            def.model.as_deref(),
-            &def.acceptance_criteria,
-            source_path,
-            "general",
         )
         .await?;
     Ok(())
@@ -3051,28 +2964,6 @@ process:
         assert_eq!(def.category, "general");
         assert_eq!(def.complexity, "standard");
         assert_eq!(def.version, "1.0.0");
-    }
-
-    #[test]
-    fn test_parse_step_template_file_valid() {
-        let yaml = r#"
-step_template:
-  name: write-prd
-  title: 生成 PRD
-  prompt: 请根据输入编写 PRD
-  executor: claudecode
-  expert_name: product-manager
-  skills: [4p12s-prd]
-  model: claude-sonnet-5
-  acceptance_criteria: PRD.md 存在
-"#;
-        let result = parse_step_template_file(yaml, std::path::Path::new("test.yaml"));
-        assert!(result.is_some());
-        let def = result.unwrap().step_template;
-        assert_eq!(def.name, "write-prd");
-        assert_eq!(def.title, "生成 PRD");
-        assert_eq!(def.executor.as_deref(), Some("claudecode"));
-        assert_eq!(def.skills, vec!["4p12s-prd"]);
     }
 
     #[test]

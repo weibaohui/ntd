@@ -3,7 +3,7 @@ use sea_orm::{
 };
 
 use crate::db::Database;
-use crate::db::entity::{process_step_templates, process_templates};
+use crate::db::entity::process_templates;
 
 impl Database {
     /// 按 ID 查找工艺模板。
@@ -135,76 +135,6 @@ impl Database {
         }
     }
 
-    /// 按名称查找工艺环节原型。
-    pub async fn get_process_step_template_by_name(
-        &self,
-        name: &str,
-    ) -> Result<Option<process_step_templates::Model>, sea_orm::DbErr> {
-        process_step_templates::Entity::find()
-            .filter(process_step_templates::Column::Name.eq(name.to_string()))
-            .one(&self.conn)
-            .await
-    }
-
-    /// Upsert 系统工艺环节原型（从 bundled 同步）。
-    #[allow(clippy::too_many_arguments)]
-    pub async fn upsert_system_process_step_template(
-        &self,
-        name: &str,
-        title: &str,
-        prompt: &str,
-        executor: Option<&str>,
-        expert_name: Option<&str>,
-        skill_names: &str,
-        model: Option<&str>,
-        acceptance_criteria: &str,
-        source_path: &str,
-        category: &str,
-    ) -> Result<i64, sea_orm::DbErr> {
-        let now = crate::models::utc_timestamp();
-        let existing = process_step_templates::Entity::find()
-            .filter(process_step_templates::Column::Name.eq(name.to_string()))
-            .one(&self.conn)
-            .await?;
-
-        if let Some(m) = existing {
-            let mut am: process_step_templates::ActiveModel = m.into();
-            am.title = ActiveValue::Set(title.to_string());
-            am.prompt = ActiveValue::Set(prompt.to_string());
-            am.executor = ActiveValue::Set(executor.map(String::from));
-            am.expert_name = ActiveValue::Set(expert_name.map(String::from));
-            am.skill_names = ActiveValue::Set(skill_names.to_string());
-            am.model = ActiveValue::Set(model.map(String::from));
-            am.acceptance_criteria = ActiveValue::Set(acceptance_criteria.to_string());
-            am.category = ActiveValue::Set(category.to_string());
-            am.source_path = ActiveValue::Set(Some(source_path.to_string()));
-            am.is_system = ActiveValue::Set(true);
-            am.updated_at = ActiveValue::Set(Some(now));
-            let updated = am.update(&self.conn).await?;
-            Ok(updated.id)
-        } else {
-            let am = process_step_templates::ActiveModel {
-                name: ActiveValue::Set(name.to_string()),
-                title: ActiveValue::Set(title.to_string()),
-                prompt: ActiveValue::Set(prompt.to_string()),
-                executor: ActiveValue::Set(executor.map(String::from)),
-                expert_name: ActiveValue::Set(expert_name.map(String::from)),
-                skill_names: ActiveValue::Set(skill_names.to_string()),
-                model: ActiveValue::Set(model.map(String::from)),
-                acceptance_criteria: ActiveValue::Set(acceptance_criteria.to_string()),
-                category: ActiveValue::Set(category.to_string()),
-                workspace_id: ActiveValue::Set(None),
-                is_system: ActiveValue::Set(true),
-                source_path: ActiveValue::Set(Some(source_path.to_string())),
-                created_at: ActiveValue::Set(Some(now.clone())),
-                updated_at: ActiveValue::Set(Some(now)),
-                ..Default::default()
-            };
-            let inserted = am.insert(&self.conn).await?;
-            Ok(inserted.id)
-        }
-    }
-
     /// Upsert 用户工艺模板（从 `~/.ntd/processes/` 扫描）。
     ///
     /// 与 `upsert_system_process_template` 的区别：
@@ -280,19 +210,6 @@ impl Database {
         let result = process_templates::Entity::delete_many()
             .filter(process_templates::Column::IsSystem.eq(true))
             .filter(process_templates::Column::Guid.is_not_in(guids.iter().cloned()))
-            .exec(&self.conn)
-            .await?;
-        Ok(result.rows_affected)
-    }
-
-    /// 删除所有系统环节原型（`is_system=true`），保留用户环节原型。
-    ///
-    /// 与 `delete_all_system_process_templates` 同步调用，保持系统层与用户层语义一致。
-    pub async fn delete_all_system_process_step_templates(
-        &self,
-    ) -> Result<u64, sea_orm::DbErr> {
-        let result = process_step_templates::Entity::delete_many()
-            .filter(process_step_templates::Column::IsSystem.eq(true))
             .exec(&self.conn)
             .await?;
         Ok(result.rows_affected)

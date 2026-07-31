@@ -20,7 +20,6 @@ pub mod loop_steps;
 pub mod loop_tags;
 pub mod tasks;
 pub mod loops;
-pub mod process_step_templates;
 pub mod process_templates;
 pub mod project_directories;
 // 两个关联表的 SeaORM 实体定义（联合主键、外键）完全对称，修改一处请同步修改另一处。
@@ -59,7 +58,6 @@ pub mod prelude {
     pub use super::loop_steps::Entity as LoopSteps;
     pub use super::loop_tags::Entity as LoopTags;
     pub use super::loops::Entity as Loops;
-    pub use super::process_step_templates::Entity as ProcessStepTemplates;
     pub use super::process_templates::Entity as ProcessTemplates;
     pub use super::project_directories::Entity as ProjectDirectories;
     pub use super::sync_records::Entity as SyncRecords;
