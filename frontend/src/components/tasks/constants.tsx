@@ -89,10 +89,45 @@ export type TasksViewMode = 'list' | 'kanban' | 'card';
 /** localStorage 键：记住用户上次选的视图模式。 */
 export const TASKS_VIEW_STORAGE_KEY = 'ntd_tasks_view';
 
-/** 工艺环路精简类型（仅 id + name）。 */
+/**
+ * 工艺环路精简类型。
+ * 049 起扩展工艺来源字段（与 LoopListItem 同名对齐），
+ * 供新建任务下拉拼装「#环路ID 名称（#工艺ID 工艺名 版本）」；
+ * 全部可选以保持向后兼容，无工艺来源时 label 退化为 041 格式。
+ */
 export interface LoopLite {
   id: number;
   name: string;
+  /** 来源工艺模板 ID（新建任务下拉只列非空环路，此字段理论上必有值） */
+  process_template_id?: number | null;
+  /** 来源工艺显示名（优先展示） */
+  process_template_display_name?: string | null;
+  /** 来源工艺标识名（display_name 缺失时回退） */
+  process_template_name?: string | null;
+  /** 实例化时的工艺版本快照 */
+  process_template_version?: string | null;
+}
+
+/**
+ * 拼装新建任务下拉的选项文案：`#<环路ID> 环路名称（#工艺ID 工艺名称 工艺版本）`。
+ * 抽成纯函数便于单测（与 041 loop-list 的 loopProcessText 同模式）。
+ *
+ * 回退口径与 utils/processText 的 formatProcessText 保持一致：
+ * - 无工艺来源（process_template_id 为空）→ 退化 041 格式 `#<环路ID> <名称>`；
+ * - 工艺名 display_name → name → `#<工艺ID>` 逐级回退，避免空名称段；
+ * - 版本缺失用 '—' 占位，保持括号内三段式结构可读。
+ */
+export function loopOptionLabel(l: LoopLite): string {
+  // 基础段：041 格式，同名环路靠 ID 区分。
+  const base = `#${l.id} ${l.name}`;
+  // 防御分支：调用方已过滤只传工艺环路，但类型上字段可选，无来源时保持原样。
+  if (l.process_template_id == null) return base;
+  // 名称逐级回退；trim 防空白字符串占位（与 formatProcessText 的 name?.trim() 判定一致）。
+  const rawName = l.process_template_display_name ?? l.process_template_name;
+  const pname = rawName?.trim() ? rawName : `#${l.process_template_id}`;
+  // 版本缺失用占位符，避免出现「#3 名称 」尾部空段。
+  const version = l.process_template_version?.trim() ? l.process_template_version : '—';
+  return `${base}（#${l.process_template_id} ${pname} ${version}）`;
 }
 
 /**
