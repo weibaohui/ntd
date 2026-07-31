@@ -90,6 +90,24 @@ impl Database {
         loops::Entity::find_by_id(id).one(&self.conn).await
     }
 
+    /// 按 ID 批量查找环路。
+    ///
+    /// 任务列表注入「环路工艺版本快照」用——一条 SQL 取回本次列表涉及的全部环路，
+    /// 避免逐任务调 get_loop 的 N+1（列表行数越多放大越明显）。
+    /// 空入参直接返回空 Vec：filter is_in(空) 在某些后端会生成非法 SQL，提前短路更稳妥。
+    pub async fn get_loops_by_ids(
+        &self,
+        ids: &[i64],
+    ) -> Result<Vec<loops::Model>, sea_orm::DbErr> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        loops::Entity::find()
+            .filter(loops::Column::Id.is_in(ids.to_vec()))
+            .all(&self.conn)
+            .await
+    }
+
     /// 按来源工艺模板列出实例环路（按创建时间倒序，id 倒序兜底保证稳定）。
     ///
     /// 工艺详情「实例环路」Tab 用：让用户从模板下钻到由它实例化的所有 Loop。
@@ -1904,6 +1922,28 @@ mod loop_step_count_tests {
         assert_eq!(refs[1].process_template_id, None);
         assert_eq!(refs[1].process_template_name, None);
         assert_eq!(refs[1].process_template_version, None);
+    }
+
+    /// 批量取环路：命中全部 / 部分命中（不存在 id 被忽略）/ 空入参直接返回空。
+    ///
+    /// 对应任务列表批量注入环路快照的 N+1 优化，空入参短路是避免生成非法 `IN ()` SQL。
+    #[tokio::test]
+    async fn test_get_loops_by_ids_batch() {
+        let db = fresh_db().await;
+        let l1 = seed_loop(&db, "环路1").await;
+        let l2 = seed_loop(&db, "环路2").await;
+
+        let got = db.get_loops_by_ids(&[l1, l2]).await.expect("batch query");
+        assert_eq!(got.len(), 2, "两个存在的环路都应命中");
+        assert!(got.iter().any(|l| l.id == l1));
+        assert!(got.iter().any(|l| l.id == l2));
+
+        let partial = db.get_loops_by_ids(&[l1, 999_999]).await.expect("partial query");
+        assert_eq!(partial.len(), 1, "不存在的 id 应被忽略");
+        assert_eq!(partial[0].id, l1);
+
+        let empty = db.get_loops_by_ids(&[]).await.expect("empty query");
+        assert!(empty.is_empty(), "空入参应短路返回空 Vec");
     }
 
     /// 插一条工艺模板，返回 id。
