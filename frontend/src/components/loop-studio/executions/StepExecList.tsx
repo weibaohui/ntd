@@ -131,10 +131,16 @@ export function StepExecList({ stepExecs, loopId, workspaceId, executionId, onAp
                 userSelect: 'none',
               }}
             >
-              {/* 黑板序号 + 执行序号 */}
-              <div style={{ position: 'absolute', top: 6, left: 10, fontSize: 11, fontWeight: 600, color: 'var(--color-text-tertiary, #94a3b8)', display: 'flex', gap: 6 }}>
-                {s.sequence_index != null && <span style={{ fontFamily: 'monospace' }}>#{s.sequence_index}</span>}
-                <span style={{ fontFamily: 'monospace', color: 'var(--color-text-tertiary)' }}>/#{idx + 1}</span>
+              {/* 左上角编号：黑板全局序号 / 环节序号 / 执行记录ID。
+                  三者用 tooltip 区分含义；rec#id 即该环节 todo 的执行记录 ID（点击卡片看详情）。 */}
+              <div style={{ position: 'absolute', top: 6, left: 10, fontSize: 11, fontWeight: 600, color: 'var(--color-text-tertiary, #94a3b8)', display: 'flex', gap: 6, alignItems: 'center' }}>
+                {s.sequence_index != null && (
+                  <span style={{ fontFamily: 'monospace' }} title="黑板全局序号（跨环节递增）">#{s.sequence_index}</span>
+                )}
+                <span style={{ fontFamily: 'monospace', color: 'var(--color-text-tertiary)' }} title="本环路内环节序号">/#{idx + 1}</span>
+                {s.execution_record_id != null && (
+                  <span style={{ fontFamily: 'monospace', color: 'var(--color-primary, #6366f1)' }} title="执行记录 ID（点击卡片查看该 record 详情）">·rec#{s.execution_record_id}</span>
+                )}
               </div>
 
               {/* 状态指示圆点 */}
