@@ -25,9 +25,6 @@ pub struct Model {
     pub on_rating_fail: String,
     /// on_rating_fail="goto" 时的目标 step_id
     pub fail_goto_step_id: Option<i64>,
-    /// 评审类型: "ai" = AI 自动评审, "human" = 人工审批（默认 "ai"）
-    #[sea_orm(default_value = "ai")]
-    pub review_type: String,
     /// 环节级评审模板正文（完整模板，含占位符）；NULL = 未设置，评审时回退到环路级/默认。
     pub review_prompt: Option<String>,
     /// 所属阶段 ID，NULL 表示未分组（兼容旧 Loop）。

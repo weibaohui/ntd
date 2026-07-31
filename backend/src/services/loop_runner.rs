@@ -843,7 +843,10 @@ impl LoopRunner {
             // 4e. 检查 todo 状态：人工审批步骤的 todo 在所有 execution 间共享，
             //     如果 todo 已 completed，步骤应直接进入 pending_approval 而非 running
             //     （否则步骤永远卡在 running，审批界面不会出现）。
-            let initial_status = if step.review_type == "human" {
+            // 048：人工审批步骤改由 gate_config 含 human_approval 判定（review_type 已废弃）。
+            let is_human_approval_step =
+                crate::services::process::gate_evaluator::has_human_approval_gate(&step.gate_config);
+            let initial_status = if is_human_approval_step {
                 match self.ctx.db.get_todo(step.todo_id).await {
                     Ok(Some(t)) if t.status == crate::models::TodoStatus::Completed => "pending_approval",
                     _ => "running",
@@ -852,8 +855,8 @@ impl LoopRunner {
                 "running"
             };
             tracing::info!(
-                "loop_exec {}: step #{} review_type={:?} todo_id={} initial_status={}",
-                loop_execution_id, step.id, step.review_type, step.todo_id, initial_status,
+                "loop_exec {}: step #{} human_approval={} todo_id={} initial_status={}",
+                loop_execution_id, step.id, is_human_approval_step, step.todo_id, initial_status,
             );
             // 4f. 创建 step execution 记录
             // 044：min_rating/unrated_policy 已从 loop_steps 移除，创建快照时不再透传；
@@ -1855,7 +1858,6 @@ mod tests {
             success_goto_step_id: success_goto,
             on_rating_fail: on_rating_fail.to_string(),
             fail_goto_step_id: fail_goto,
-            review_type: "ai".to_string(),
             phase_id: None,
             expected_artifacts: "[]".to_string(),
             gate_config: "[]".to_string(),
@@ -2110,7 +2112,6 @@ mod tests {
                 // 044：run_mode/skip_on_source_failed/min_rating/unrated_policy 列已下线
                 on_success: "next".to_string(), success_goto_step_id: None,
                 on_rating_fail: "break".to_string(), fail_goto_step_id: None,
-                review_type: "ai".to_string(),
                 phase_id: None,
                 expected_artifacts: "[]".to_string(),
                 gate_config: "[]".to_string(),
@@ -2126,7 +2127,6 @@ mod tests {
                 description: String::new(), order_index: 1, todo_id: todo_b,
                 on_success: "next".to_string(), success_goto_step_id: None,
                 on_rating_fail: "break".to_string(), fail_goto_step_id: None,
-                review_type: "ai".to_string(),
                 phase_id: None,
                 expected_artifacts: "[]".to_string(),
                 gate_config: "[]".to_string(),
@@ -2159,7 +2159,6 @@ mod tests {
                 description: String::new(), order_index: 0, todo_id: todo_a,
                 on_success: "next".to_string(), success_goto_step_id: None,
                 on_rating_fail: "break".to_string(), fail_goto_step_id: None,
-                review_type: "ai".to_string(),
                 phase_id: None,
                 expected_artifacts: "[]".to_string(),
                 gate_config: "[]".to_string(),
@@ -2175,7 +2174,6 @@ mod tests {
                 description: String::new(), order_index: 1, todo_id: todo_b,
                 on_success: "next".to_string(), success_goto_step_id: None,
                 on_rating_fail: "break".to_string(), fail_goto_step_id: None,
-                review_type: "ai".to_string(),
                 phase_id: None,
                 expected_artifacts: "[]".to_string(),
                 gate_config: "[]".to_string(),
@@ -2211,7 +2209,6 @@ mod tests {
                 description: String::new(), order_index: 0, todo_id: todo_a,
                 on_success: "next".to_string(), success_goto_step_id: None,
                 on_rating_fail: "break".to_string(), fail_goto_step_id: None,
-                review_type: "ai".to_string(),
                 phase_id: None,
                 expected_artifacts: "[]".to_string(),
                 gate_config: "[]".to_string(),
@@ -2227,7 +2224,6 @@ mod tests {
                 description: String::new(), order_index: 1, todo_id: todo_b,
                 on_success: "next".to_string(), success_goto_step_id: None,
                 on_rating_fail: "break".to_string(), fail_goto_step_id: None,
-                review_type: "ai".to_string(),
                 phase_id: None,
                 expected_artifacts: "[]".to_string(),
                 gate_config: "[]".to_string(),
@@ -2259,7 +2255,6 @@ mod tests {
                 description: String::new(), order_index: 0, todo_id: todo_a,
                 on_success: "next".to_string(), success_goto_step_id: None,
                 on_rating_fail: "break".to_string(), fail_goto_step_id: None,
-                review_type: "ai".to_string(),
                 phase_id: None,
                 expected_artifacts: "[]".to_string(),
                 gate_config: "[]".to_string(),
@@ -2275,7 +2270,6 @@ mod tests {
                 description: String::new(), order_index: 1, todo_id: todo_a,
                 on_success: "next".to_string(), success_goto_step_id: None,
                 on_rating_fail: "break".to_string(), fail_goto_step_id: None,
-                review_type: "ai".to_string(),
                 phase_id: None,
                 expected_artifacts: "[]".to_string(),
                 gate_config: "[]".to_string(),

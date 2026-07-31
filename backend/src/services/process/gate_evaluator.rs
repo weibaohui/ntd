@@ -24,6 +24,18 @@ pub struct GateSummary {
     pub gate_records: Vec<loop_step_execution_gates::Model>,
 }
 
+/// gate_config 是否含 human_approval 门禁。
+///
+/// 048：替代废弃的 `review_type` 字段——人工审批步骤改由 gate_config 含 human_approval 判定，
+/// 消除 review_type 与 gate 的语义冗余。解析失败视为无（evaluate_step_gates 后续会以 ParseError 显式报）。
+pub fn has_human_approval_gate(gate_config_json: &str) -> bool {
+    let gates: Vec<GateDefinition> = match serde_json::from_str(gate_config_json) {
+        Ok(gs) => gs,
+        Err(_) => return false,
+    };
+    gates.iter().any(|g| g.gate_type == "human_approval")
+}
+
 /// 编排某环节的全部门禁。
 ///
 /// 1. 解析 `expected_gates` 为 `GateDefinition` 列表；

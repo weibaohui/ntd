@@ -354,12 +354,10 @@ export const EXECUTOR_VS_EXPERT_VS_MODEL: Array<{
   { concept: '模型', essence: '具体跑哪个 LLM', example: 'glm-5.2 / claude-sonnet-5 / gpt-4o' },
 ] as const;
 
-/** 门禁 4 种类型 + 中文标签，用于环路/事项详细说明区。 */
+/** 门禁类型 + 中文标签，用于环路/事项详细说明区。046 起仅 2 类（artifact_present/script_check 已废弃）。 */
 export const GATE_TYPES: ReadonlyArray<{ type: string; label: string }> = [
-  { type: 'artifact_present', label: '产物存在' },
   { type: 'ai_criteria_review', label: 'AI 评审' },
   { type: 'human_approval', label: '人工审批' },
-  { type: 'script_check', label: '脚本校验' },
 ] as const;
 
 /** ThunderboltOutlined 给任务卡用（避免在 ConceptNode 里重复 import）。 */

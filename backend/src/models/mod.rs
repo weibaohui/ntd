@@ -1375,7 +1375,6 @@ pub struct LoopStepExportItem {
     pub on_rating_fail: String,
     pub fail_goto_step_id: Option<String>,      // 伪ID引用
     pub fail_goto_step_name: Option<String>,    // 展示用
-    pub review_type: String,
     pub enabled: bool,
 }
 

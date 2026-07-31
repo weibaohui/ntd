@@ -221,12 +221,11 @@ async fn create_todo_for_link(
             .await;
     }
 
-    // 工艺环节 review_type="ai" 等价于「执行完成后自动派生评审 todo 打分」，
-    // 翻译到 todo.auto_review_enabled；human 则保持 false，由环路闸门暂停等待人工审批。
-    // 不穿透这层，todo 会永远停在 create_todo_with_extras 硬编码的 false，
-    // 导致工艺里选了 AI 评审却从不触发打分（id=8 即此问题）。
+    // 048：评审是否启用由 gate_config 决定——环节含 ai_criteria_review 门禁才需要 auto_review 打分。
+    // 不穿透这层，todo 会停在 create_todo_with_extras 硬编码的 false，AI 评审门禁拿不到评分。
+    let has_ai_review_gate = link.gates.iter().any(|g| g.gate_type == "ai_criteria_review");
     let _ = db
-        .update_todo_auto_review_enabled(todo_id, link.review_type == "ai")
+        .update_todo_auto_review_enabled(todo_id, has_ai_review_gate)
         .await;
 
     Ok(todo_id)
@@ -296,7 +295,6 @@ async fn create_loop_step_for_link(
             link.on_rating_fail.clone()
         }),
         fail_goto_step_id: ActiveValue::Set(None),
-        review_type: ActiveValue::Set(link.review_type.clone()),
         // 环节级评审模板正文（需求 033）：空串视为未设置（NULL），评审时回退环路级/默认
         review_prompt: ActiveValue::Set(if link.review_prompt.trim().is_empty() {
             None
@@ -748,10 +746,15 @@ phases:
         on_success: next
         on_gate_fail: write-prd
         max_rework: 2
+        gates:
+          - name: AI评审
+            type: ai_criteria_review
       - id: confirm-prd
         name: 确认 PRD
         prompt: 请确认 PRD
-        review_type: human
+        gates:
+          - name: 人工审批
+            type: human_approval
         on_success: next
         on_gate_fail: write-prd
 "#
@@ -946,9 +949,9 @@ phases:
         assert_eq!(result.step_count, 1);
     }
 
-    /// installer 应把 link.review_type 翻译到 todo.auto_review_enabled：
-    /// 默认 ai -> true，human -> false。
-    /// 修复「工艺选了 AI 评审却从不触发打分」--此前 create_todo_with_extras 硬编码 false。
+    /// installer 应按 gate_config 推导 todo.auto_review_enabled：
+    /// 含 ai_criteria_review 门禁 -> true；仅 human_approval -> false。
+    /// 048 起 review_type 字段废弃，评审启用改由 gate_config 决定。
     #[tokio::test]
     async fn test_install_link_review_type_enables_auto_review() {
         let db = fresh_db().await;
@@ -976,27 +979,25 @@ phases:
             .expect("install should succeed");
 
         let steps = db.list_loop_steps_by_loop(result.loop_id).await.unwrap();
-        // write-prd: review_type 默认 ai -> todo.auto_review_enabled=true
+        // write-prd: 含 ai_criteria_review 门禁 -> todo.auto_review_enabled=true
         let write_step = steps
             .iter()
             .find(|s| s.name == "编写 PRD")
             .expect("write-prd exists");
         let write_todo = db.get_todo(write_step.todo_id).await.unwrap().unwrap();
-        assert_eq!(write_step.review_type, "ai");
         assert!(
             write_todo.auto_review_enabled,
-            "review_type=ai 的环节 todo 必须自动开启 auto_review_enabled"
+            "含 ai_criteria_review 门禁的环节 todo 必须自动开启 auto_review_enabled"
         );
-        // confirm-prd: review_type=human -> auto_review_enabled=false
+        // confirm-prd: 仅 human_approval 门禁 -> auto_review_enabled=false
         let confirm_step = steps
             .iter()
             .find(|s| s.name == "确认 PRD")
             .expect("confirm-prd exists");
         let confirm_todo = db.get_todo(confirm_step.todo_id).await.unwrap().unwrap();
-        assert_eq!(confirm_step.review_type, "human");
         assert!(
             !confirm_todo.auto_review_enabled,
-            "review_type=human 的环节 todo 不应开启 auto_review_enabled"
+            "仅 human_approval 门禁的环节 todo 不应开启 auto_review_enabled"
         );
     }
 
@@ -1045,7 +1046,6 @@ phases:
         prompt: 请交付产物
         on_success: end
         on_gate_fail: break
-        review_type: ai
         acceptance_criteria: 产物完整
         review_prompt: |
           你是评审师。PENETRATION_MARKER_033

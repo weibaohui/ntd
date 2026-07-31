@@ -39,6 +39,7 @@ mod v77;
 mod v78;
 mod v79;
 mod v80;
+mod v81;
 
 pub use v2_v5::read_applied_versions;
 pub use v2_v5::drop_column_if_exists;
@@ -134,7 +135,10 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         Box::new(v79::V79ProcessTemplateGuid),
         // V80 在 V79 之后：环路瘦身（需求 044）——手工环路级联删除，
         // 触发器表下线，loops/loop_steps 冗余定义列删除；YAML 成为唯一定义来源
+        // V81 在 V80 之后：删除 loop_steps.review_type 死列（需求 048）——
+        // 评审/门禁统一由 gate_config 表达，review_type 与 gate 语义重复已废弃
         Box::new(v80::V80LoopSlim),
+        Box::new(v81::V81DropLoopStepReviewType),
     ]
 }
 

@@ -108,7 +108,6 @@ mod tests {
             success_goto_step_id: success_goto,
             on_rating_fail: on_rating_fail.to_string(),
             fail_goto_step_id: fail_goto,
-            review_type: "ai".to_string(),
             phase_id: None,
             expected_artifacts: "[]".to_string(),
             gate_config: "[]".to_string(),
