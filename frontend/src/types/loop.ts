@@ -65,6 +65,17 @@ export interface LoopExecutionDto {
   error_message?: string | null;
 }
 
+/** 门禁评价摘要（需求 047）：门禁级 status/result，随 LoopStepExecutionDto 下发。 */
+export interface GateResultDto {
+  id: number;
+  gate_type: string;
+  gate_name: string;
+  /** pending | passed | failed */
+  status: string;
+  /** 评价结果文本（如「AI 评审未通过（评分 45，阈值 60）」） */
+  result?: string | null;
+}
+
 export interface LoopStepExecutionDto {
   id: number;
   loop_execution_id: number;
@@ -77,11 +88,11 @@ export interface LoopStepExecutionDto {
   error_message: string | null;
   started_at: string | null;
   finished_at: string | null;
-  /** 历史快照：旧评分制评审得分（0-100）。044 起新执行不再写入，仅为历史记录展示保留 */
+  /** AI 评审得分（0-100）。由 phase_driver 门禁评估时回写。 */
   rating: number | null;
   /** 历史快照：旧评分制未达标策略，仅为历史记录展示保留 */
   unrated_policy: string | null;
-  /** 历史快照：旧评分制阈值，仅为历史记录展示保留 */
+  /** 门禁阈值（ai_criteria_review.min_score）。由 phase_driver 回写。 */
   min_rating: number | null;
   step_name: string | null;
   sequence_index: number;
@@ -102,6 +113,13 @@ export interface LoopStepExecutionDto {
   cache_read_input_tokens: number | null;
   cache_creation_input_tokens: number | null;
   total_cost_usd: number | null;
+  /**
+   * 评分来源评审 record id（需求 047）：反查 execution_records.source_execution_record_id 得到。
+   * 前端做可点击徽章，跳转看评审理由（result 含 RATING + 评审文本）。
+   */
+  review_record_id?: number | null;
+  /** 门禁级评价摘要（需求 047）：前端展示每个门禁的 status/result（失败原因）。 */
+  gate_results?: GateResultDto[];
 }
 
 export interface LoopStepDto {

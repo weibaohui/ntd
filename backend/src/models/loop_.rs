@@ -310,6 +310,21 @@ impl From<loop_executions::Model> for LoopExecutionDto {
     }
 }
 
+/// 门禁评价摘要（需求 047）：随 LoopStepExecutionDto 下发，前端展示门禁级 status/result。
+///
+/// 字段与 `loop_step_execution_gates` 表对齐，前端复用 `GateDto` 渲染。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GateResultDto {
+    pub id: i64,
+    pub gate_type: String,
+    pub gate_name: String,
+    /// pending | passed | failed
+    pub status: String,
+    /// 评价结果文本（如「AI 评审未通过（评分 45，阈值 60）」）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[derive(Default)]
 pub struct LoopStepExecutionDto {
@@ -322,11 +337,11 @@ pub struct LoopStepExecutionDto {
     pub started_at: Option<String>,
     pub finished_at: Option<String>,
     pub error_message: Option<String>,
-    /// 历史快照：旧评分制评审得分（0-100）。044 起新执行不再写入，仅为历史记录展示保留
+    /// AI 评审得分（0-100）。由 phase_driver 门禁评估时回写（resolve_step_rating）。
     pub rating: Option<i32>,
     /// 历史快照：旧评分制未达标策略，仅为历史记录展示保留
     pub unrated_policy: Option<String>,
-    /// 历史快照：旧评分制阈值，仅为历史记录展示保留
+    /// 门禁阈值（ai_criteria_review.min_score）。由 phase_driver 回写（set_step_execution_min_rating）。
     pub min_rating: Option<i32>,
     /// 环节名称，来自 loop_steps 表
     pub step_name: Option<String>,
@@ -349,6 +364,13 @@ pub struct LoopStepExecutionDto {
     pub cache_read_input_tokens: Option<i64>,
     pub cache_creation_input_tokens: Option<i64>,
     pub total_cost_usd: Option<f64>,
+    /// 评分来源评审 record id（需求 047）：反查 source_execution_record_id 得到，
+    /// 前端做可点击徽章跳转看评审理由。仅当有 execution_record_id 且被评审过时由 handler 注入。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_record_id: Option<i64>,
+    /// 门禁级评价摘要（需求 047）：前端展示每个门禁的 status/result（失败原因）。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gate_results: Vec<GateResultDto>,
 }
 
 impl From<loop_step_executions::Model> for LoopStepExecutionDto {
@@ -377,6 +399,8 @@ impl From<loop_step_executions::Model> for LoopStepExecutionDto {
             cache_read_input_tokens: None,
             cache_creation_input_tokens: None,
             total_cost_usd: None,
+            review_record_id: None,
+            gate_results: Vec::new(),
         }
     }
 }

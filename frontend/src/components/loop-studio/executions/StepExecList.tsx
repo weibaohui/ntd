@@ -6,6 +6,7 @@ import { ArrowRightOutlined, ReadOutlined } from '@ant-design/icons';
 import bundledApi from '@/api/bundled';
 import * as dbExecutions from '@/utils/database/executions';
 import type { LogEntry } from '@/types';
+import type { GateResultDto } from '@/types/loop';
 import { LogDrawer } from '@/components/todo-post/LogDrawer';
 import { execStatusView, durationLabel, formatToken } from './helpers';
 
@@ -55,6 +56,21 @@ export function StepExecList({ stepExecs, loopId, workspaceId, executionId, onAp
       setDrawerLoading(false);
     }
   }, []);
+
+  // 打开评分来源评审 record（需求 047）：复用执行记录 Drawer，展示评审理由 + RATING。
+  // 徽章 onClick 内 stopPropagation，避免同时触发卡片整体点击。
+  const handleOpenReview = useCallback(async (reviewRecordId: number) => {
+    setDrawerLoading(true);
+    try {
+      const { getExecutionRecord } = dbExecutions;
+      const rec = await getExecutionRecord(workspaceId, reviewRecordId);
+      setDrawerRecord(rec);
+    } catch {
+      // ignore
+    } finally {
+      setDrawerLoading(false);
+    }
+  }, [workspaceId]);
 
   // 门禁制人工审批：通过/拒绝二选一，调门禁审批接口。
   // gateId 由后端在 step execution 的 pending_gate_id 字段注入（仅 pending_approval 时有值）。
@@ -136,30 +152,49 @@ export function StepExecList({ stepExecs, loopId, workspaceId, executionId, onAp
                 <span style={{ fontSize: 11, color: 'var(--color-text-tertiary, #94a3b8)', fontFamily: 'monospace' }}>{duration}</span>
               </div>
 
-              {/* 评分 / 阈值：仅旧评分制历史记录展示（min_rating 非空）。
-                  门禁制（044）执行 min_rating 恒空，状态以 status 标签为准；
-                  approve_gate 会给通过/拒绝写入合成的 rating 100/0（仅供 resume 判定，非真实评分），
-                  若仍按 rating>=min_rating 显示「通过/不通过」会误判——通过写入 100 却因 min_rating 空而显示「不通过」。 */}
-              {s.min_rating != null && (
+              {/* 评分 / 阈值 / 评审来源（需求 047）：去掉 min_rating 守卫，
+                  rating / min_rating / review_record_id 任一非空即显示。
+                  - 阈值缺失（min_score 未配）时显示「-」；
+                  - 通过判定仅当有阈值（rating>=min_rating），无阈值只展示评分；
+                  - review_record_id 提供评分来源跳转。 */}
+              {(s.rating != null || s.min_rating != null || s.review_record_id != null) && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 4 }}>
                   <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
-                    阈值 {s.min_rating}
+                    阈值 {s.min_rating != null ? s.min_rating : '-'}
                   </span>
                   {s.rating != null ? (
                     <>
                       <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
                         评分 {s.rating}
                       </span>
-                      <span style={{
-                        padding: '1px 6px', borderRadius: 4, fontSize: 11, fontWeight: 600,
-                        background: ratingPassed ? 'var(--color-success-bg, #f0fdf4)' : 'var(--color-error-bg, #fef2f2)',
-                        color: ratingPassed ? 'var(--color-success, #22c55e)' : 'var(--color-error, #ef4444)',
-                      }}>
-                        {ratingPassed ? '通过' : '不通过'}
-                      </span>
+                      {s.min_rating != null && (
+                        <span style={{
+                          padding: '1px 6px', borderRadius: 4, fontSize: 11, fontWeight: 600,
+                          background: ratingPassed ? 'var(--color-success-bg, #f0fdf4)' : 'var(--color-error-bg, #fef2f2)',
+                          color: ratingPassed ? 'var(--color-success, #22c55e)' : 'var(--color-error, #ef4444)',
+                        }}>
+                          {ratingPassed ? '通过' : '不通过'}
+                        </span>
+                      )}
                     </>
                   ) : (
                     <span style={{ fontSize: 11, color: 'var(--color-text-tertiary, #94a3b8)' }}>未评审</span>
+                  )}
+                  {/* 评分来源徽章（需求 047）：点击打开评审 record，看评审理由 + RATING。 */}
+                  {s.review_record_id != null && (
+                    <span
+                      onClick={(e) => { e.stopPropagation(); handleOpenReview(s.review_record_id); }}
+                      title={`查看评审记录 #${s.review_record_id} 详情`}
+                      style={{
+                        marginLeft: 'auto', cursor: 'pointer',
+                        fontFamily: 'monospace', fontSize: 10,
+                        color: 'var(--color-primary, #6366f1)',
+                        border: '1px solid var(--color-primary, #6366f1)',
+                        borderRadius: 4, padding: '0 4px',
+                      }}
+                    >
+                      评审#{s.review_record_id}
+                    </span>
                   )}
                 </div>
               )}
@@ -207,6 +242,23 @@ export function StepExecList({ stepExecs, loopId, workspaceId, executionId, onAp
               {s.error_message && (
                 <div style={{ marginTop: 4, fontSize: 11, color: 'var(--color-error, #ef4444)', lineHeight: 1.4 }}>
                   {s.error_message}
+                </div>
+              )}
+
+              {/* 门禁级评价（需求 047）：展示每个门禁的 status/result。
+                  failed 时能看到具体哪个门禁不通过 + AI 评审文本（如「AI 评审未通过（评分 45，阈值 60）」）。 */}
+              {s.gate_results && s.gate_results.length > 0 && (
+                <div style={{ marginTop: 4, fontSize: 11, lineHeight: 1.4 }}>
+                  {s.gate_results.map((g: GateResultDto) => (
+                    <div key={g.id} style={{ display: 'flex', gap: 4, marginBottom: 2, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <Tag color={g.status === 'passed' ? 'green' : g.status === 'pending' ? 'orange' : 'red'} style={{ margin: 0, fontSize: 10 }}>
+                        {g.gate_name}
+                      </Tag>
+                      {g.result && (
+                        <span style={{ color: 'var(--color-text-secondary, #64748b)', fontSize: 10 }}>{g.result}</span>
+                      )}
+                    </div>
+                  ))}
                 </div>
               )}
 

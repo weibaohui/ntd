@@ -16,6 +16,7 @@ use crate::models::ExecutionRecord;
 use crate::services::process::artifact_capture::{self, ArtifactSpec};
 use crate::services::process::gate_evaluator::{self, GateSummary};
 use crate::services::process::rework_tracker;
+use crate::services::process::rating_wait;
 use crate::services::process::transition_resolver;
 use crate::services::process::GateDefinition;
 
@@ -98,10 +99,20 @@ pub async fn execute_step(
     let execution_result = execution_record
         .and_then(|r| r.result.as_deref());
 
-    // 046：评分统一由 auto_review 在环节执行完成时写入 execution_record.rating。
-    // artifact_present/script_check 已废弃，产物存在性与脚本执行结果改由 AI 评审时自行判定。
-    // 此处直接读取已有评分，不再 poll 等待——评分缺失即门禁 fail（ai_criteria_review 无 rating）。
-    let execution_rating = execution_record.and_then(|r| r.rating);
+    // 047：恢复评分等待。record 终态先于 auto_review 写 rating（persist_completion_record
+    // 先于 finalize_normal_completion），LoopRunner 读 record 时 rating 可能仍为 None。
+    // 若本环节含 ai_criteria_review 门禁，按 timeout_secs 等评分写回，避免无评分误判 fail。
+    // timeout_secs 语义：null=默认300s，0=一直等，N=等N秒（见 rating_wait）。
+    let mut execution_rating = execution_record.and_then(|r| r.rating);
+    if execution_rating.is_none()
+        && rating_wait::has_ai_criteria_review_gate(&effective_gate_config)
+    {
+        // 有 record id 才能等（异常处理步骤等无 record 的环节跳过）。
+        if let Some(rid) = execution_record.map(|r| r.id) {
+            let timeout = rating_wait::resolve_rating_timeout(&effective_gate_config);
+            execution_rating = rating_wait::wait_for_rating(db, rid, timeout).await;
+        }
+    }
 
     let gate_summary = gate_evaluator::evaluate_step_gates(
         db,

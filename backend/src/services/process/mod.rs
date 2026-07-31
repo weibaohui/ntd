@@ -14,6 +14,7 @@ pub mod gates;
 pub mod guid;
 pub mod installer;
 pub mod phase_driver;
+pub mod rating_wait;
 pub mod recommender;
 pub mod repair_log;
 pub mod rework_tracker;
