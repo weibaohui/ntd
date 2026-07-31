@@ -9,7 +9,7 @@ use crate::db::entity::loop_step_artifacts;
 use crate::db::entity::loop_step_execution_gates;
 use crate::db::Database;
 use crate::services::process::gates::{
-    ai_criteria_review, artifact_present, human_approval, script_check, GateContext, GateResult,
+    ai_criteria_review, human_approval, GateContext, GateResult,
 };
 use crate::services::process::GateDefinition;
 
@@ -51,6 +51,18 @@ pub async fn evaluate_step_gates(
             "解析 gate_config 失败: {}",
             e
         )))?;
+
+    // 046：废弃门禁类型 artifact_present/script_check 在此提前拦截，
+    // 统一并入 ai_criteria_review。此校验放在解析后、写 DB 前，
+    // 保证废弃类型不会静默降级为 failed 记录，而是显式报错。
+    for gate_def in &gates {
+        if matches!(gate_def.gate_type.as_str(), "artifact_present" | "script_check") {
+            return Err(crate::services::process::ProcessError::ParseError(format!(
+                "已废弃的门禁类型「{}」：artifact_present/script_check 统一并入 ai_criteria_review",
+                gate_def.gate_type
+            )));
+        }
+    }
 
     let mut all_passed = true;
     let mut has_pending_human = false;
@@ -172,28 +184,18 @@ async fn evaluate_single_gate(
     execution_rating: Option<i32>,
 ) -> Result<GateResult, crate::services::process::ProcessError> {
     match ctx.config.gate_type.as_str() {
-        "artifact_present" => {
-            let result = artifact_present::evaluate(ctx)?;
-            Ok(result)
-        }
         "human_approval" => {
             let result = human_approval::evaluate(ctx)?;
-            Ok(result)
-        }
-        "script_check" => {
-            let result = script_check::evaluate(ctx).await?;
             Ok(result)
         }
         "ai_criteria_review" => {
             let result = ai_criteria_review::evaluate(ctx, execution_rating)?;
             Ok(result)
         }
-        _ => Ok(GateResult {
-            gate_name: ctx.config.name.clone(),
-            gate_type: ctx.config.gate_type.clone(),
-            passed: true,
-            detail: Some(format!("未知门禁类型「{}」，默认通过", ctx.config.gate_type)),
-        }),
+        _ => Err(crate::services::process::ProcessError::ParseError(format!(
+            "不支持的门禁类型「{}」（已废弃：artifact_present、script_check，统一并入 ai_criteria_review）",
+            ctx.config.gate_type
+        ))),
     }
 }
 
@@ -221,16 +223,17 @@ mod tests {
         db.exec("INSERT INTO loop_executions (id,loop_id,trigger_type,started_at,status) VALUES (1,1,'manual','2024-01-01','running')").await.unwrap();
         db.exec("INSERT INTO loop_step_executions (id,loop_execution_id,step_id,todo_id,status) VALUES (1,1,1,1,'running')").await.unwrap();
 
-        let gate_config = r#"[{"name":"PRD存在","type":"artifact_present"}]"#;
+        // 046：artifact_present 已废弃，统一并入 ai_criteria_review。
+        let gate_config = r#"[{"name":"AI评审","type":"ai_criteria_review","min_score":80}]"#;
         let artifacts: Vec<loop_step_artifacts::Model> = vec![];
         let skill_names: Vec<String> = vec![];
 
+        // 无评分 → ai_criteria_review 门禁失败。
         let summary = evaluate_step_gates(
             &db, 1, gate_config, &artifacts, &skill_names,
             None, None, "/tmp", None,
         ).await.unwrap();
 
-        // artifact_present 无产物 → 门禁失败。
         assert!(!summary.all_passed);
         assert_eq!(summary.gate_records.len(), 1);
         assert_eq!(summary.gate_records[0].status, "failed");
@@ -238,6 +241,70 @@ mod tests {
         // 验证 DB 中确实有记录。
         let stored = db.list_loop_step_execution_gates(1).await.unwrap();
         assert_eq!(stored.len(), 1);
+    }
+
+    /// 046：废弃门禁类型 artifact_present/script_check 应返回错误。
+    #[tokio::test]
+    async fn test_evaluate_step_gates_rejects_deprecated_artifact_present() {
+        use std::sync::Arc;
+        let db = Arc::new(crate::db::Database::new(":memory:").await.unwrap());
+        db.exec("INSERT INTO todos (id,title,prompt,status) VALUES (1,'t','p','pending')").await.unwrap();
+        db.exec("INSERT INTO loops (id,name) VALUES (1,'l')").await.unwrap();
+        db.exec("INSERT INTO loop_steps (id,loop_id,name,todo_id) VALUES (1,1,'s',1)").await.unwrap();
+        db.exec("INSERT INTO loop_executions (id,loop_id,trigger_type,started_at,status) VALUES (1,1,'manual','2024-01-01','running')").await.unwrap();
+        db.exec("INSERT INTO loop_step_executions (id,loop_execution_id,step_id,todo_id,status) VALUES (1,1,1,1,'running')").await.unwrap();
+
+        let gate_config = r#"[{"name":"PRD存在","type":"artifact_present"}]"#;
+        let result = evaluate_step_gates(
+            &db, 1, gate_config, &[], &[], None, None, "/tmp", None,
+        ).await;
+
+        // 废弃类型应返回 ParseError，而非 silently pass。
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("artifact_present"), "错误信息应提及废弃类型: {err_msg}");
+    }
+
+    /// 046：废弃门禁类型 script_check 同样应返回错误。
+    #[tokio::test]
+    async fn test_evaluate_step_gates_rejects_deprecated_script_check() {
+        use std::sync::Arc;
+        let db = Arc::new(crate::db::Database::new(":memory:").await.unwrap());
+        db.exec("INSERT INTO todos (id,title,prompt,status) VALUES (1,'t','p','pending')").await.unwrap();
+        db.exec("INSERT INTO loops (id,name) VALUES (1,'l')").await.unwrap();
+        db.exec("INSERT INTO loop_steps (id,loop_id,name,todo_id) VALUES (1,1,'s',1)").await.unwrap();
+        db.exec("INSERT INTO loop_executions (id,loop_id,trigger_type,started_at,status) VALUES (1,1,'manual','2024-01-01','running')").await.unwrap();
+        db.exec("INSERT INTO loop_step_executions (id,loop_execution_id,step_id,todo_id,status) VALUES (1,1,1,1,'running')").await.unwrap();
+
+        let gate_config = r#"[{"name":"测试通过","type":"script_check","script":"run_tests.sh"}]"#;
+        let result = evaluate_step_gates(
+            &db, 1, gate_config, &[], &[], None, None, "/tmp", None,
+        ).await;
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("script_check"), "错误信息应提及废弃类型: {err_msg}");
+    }
+
+    /// 046：ai_criteria_review 有评分且 ≥ min_score → 门禁通过。
+    #[tokio::test]
+    async fn test_evaluate_step_gates_ai_review_passes_with_rating() {
+        use std::sync::Arc;
+        let db = Arc::new(crate::db::Database::new(":memory:").await.unwrap());
+        db.exec("INSERT INTO todos (id,title,prompt,status) VALUES (1,'t','p','pending')").await.unwrap();
+        db.exec("INSERT INTO loops (id,name) VALUES (1,'l')").await.unwrap();
+        db.exec("INSERT INTO loop_steps (id,loop_id,name,todo_id) VALUES (1,1,'s',1)").await.unwrap();
+        db.exec("INSERT INTO loop_executions (id,loop_id,trigger_type,started_at,status) VALUES (1,1,'manual','2024-01-01','running')").await.unwrap();
+        db.exec("INSERT INTO loop_step_executions (id,loop_execution_id,step_id,todo_id,status) VALUES (1,1,1,1,'running')").await.unwrap();
+
+        let gate_config = r#"[{"name":"AI评审","type":"ai_criteria_review","min_score":80}]"#;
+        let summary = evaluate_step_gates(
+            &db, 1, gate_config, &[], &[], None, None, "/tmp", Some(85),
+        ).await.unwrap();
+
+        assert!(summary.all_passed);
+        assert_eq!(summary.gate_records.len(), 1);
+        assert_eq!(summary.gate_records[0].status, "passed");
     }
 
     /// 回归：create_loop_step_execution 创建步骤执行时已为每个门禁建好 pending 记录，
