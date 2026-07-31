@@ -79,9 +79,11 @@ export function LinkPropertyForm({
     return <Text type="secondary">环节不存在</Text>;
   }
 
-  // 构建 on_success / on_gate_fail 的分组下拉选项
-  // 每个 phase 是一个 OptGroup，组内是该 phase 下的所有 link
-  const gotoOptions = buildGotoOptions(definition, linkId);
+  // on_success / on_gate_fail 的分组下拉选项。
+  // - gotoOptionsNoSelf：排除当前环节（on_success 成功后重跑自己无意义）。
+  // - gotoOptionsWithSelf：含当前环节（on_gate_fail 可 goto 自己 = 失败重试，由 max_rework 限制次数）。
+  const gotoOptionsNoSelf = buildGotoOptions(definition, linkId, false);
+  const gotoOptionsWithSelf = buildGotoOptions(definition, linkId, true);
 
   // 字段变更通用处理：updateLinkField → onDefinitionChange
   const handleFieldChange = <K extends keyof LinkDefinition>(
@@ -451,7 +453,7 @@ export function LinkPropertyForm({
           options={[
             { value: 'next', label: '下一环节' },
             { value: 'end', label: '结束' },
-            ...gotoOptions,
+            ...gotoOptionsNoSelf,
           ]}
         />
       </Form.Item>
@@ -464,7 +466,7 @@ export function LinkPropertyForm({
           placeholder="默认：中断"
           options={[
             { value: 'break', label: '中断' },
-            ...gotoOptions,
+            ...gotoOptionsWithSelf,
           ]}
         />
       </Form.Item>
@@ -568,10 +570,12 @@ export function LinkPropertyForm({
 
 // 构建 on_success / on_gate_fail 的分组下拉选项。
 // 每个 phase 是一个 OptGroup，组内是该 phase 下的所有 link。
-// 排除当前 link 自身（不能 goto 自己）。
+// includeSelf=false 排除当前环节（on_success：成功后重跑自己无意义）；
+// includeSelf=true 含当前环节（on_gate_fail：goto 自己 = 失败重试，由 max_rework 限制次数防死循环）。
 function buildGotoOptions(
   definition: ProcessDefinition,
   currentLinkId: string,
+  includeSelf: boolean,
 ): Array<{ label: string; options: Array<{ value: string; label: string }> }> {
   const result: Array<{
     label: string;
@@ -581,8 +585,8 @@ function buildGotoOptions(
   for (const phase of definition.phases ?? []) {
     const options: Array<{ value: string; label: string }> = [];
     for (const link of phase.links ?? []) {
-      // 排除当前 link 自身
-      if (link.id === currentLinkId) continue;
+      // includeSelf=false 时排除当前环节自身
+      if (!includeSelf && link.id === currentLinkId) continue;
       options.push({
         value: link.id,
         label: `${link.name} (${link.id})`,
