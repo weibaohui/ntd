@@ -179,6 +179,47 @@ ntd 不再接受用路径指定工作空间——同一个目录路径在 `proje
 
 ---
 
+## 🧪 工艺（Process）怎么用
+
+**工艺（Process）** 是可复用的多环节任务流水线模板（一组有序环节 + 门禁 + 期望产物）。`ntd process` 子命令让 AI 在终端就能完成「挑工艺 → 装到工作空间 → 跑 → 升级 → 版本回溯」全链路，不必切前端。
+
+工艺用 **name 或 guid 都能标识**：name 人类可读（如 `4p12s-delivery`），guid 是 UUID。**同名命中多条时** CLI 会列出候选 guid，复制其一改用 guid 重试即可。
+
+| 想做的事 | 怎么做 |
+|----------|--------|
+| 按任务目标找工艺 | `ntd process recommend "Rust 项目持续交付流水线"`（返回推荐工艺 + 匹配理由 + score） |
+| 列出所有工艺 | `ntd process list`（`--system` 只看系统模板，`--user` 只看自建） |
+| 看工艺详情（环节定义） | `ntd process show <name-or-guid>` |
+| 装到工作空间并触发 | `ntd process run <name-or-guid> --workspace /path/to/proj` |
+| 看某工艺装出了哪些 loop | `ntd process loops <name-or-guid>` |
+| 把 loop 升级到工艺最新版 | `ntd process upgrade <name-or-guid> --loop-id <N>` |
+| 新建自建工艺 | `ntd process create --name <slug> --file <工艺.yaml>`（可选 `--display-name`/`--category`/`--complexity`/`--version`，或 `--stdin` 传完整 body） |
+| 删除自建工艺 | `ntd process delete <name-or-guid>`（系统工艺后端会拒绝） |
+| 看版本历史 | `ntd process versions <name-or-guid>` |
+| 对比两个版本 | `ntd process diff <name-or-guid> <目标版本> --base <基准版本>` |
+| 看某次执行的审计链 | `ntd process execution-status <loop-execution-id>` |
+
+**典型工作流（AI 引导用户从零跑一个工艺）：**
+
+```bash
+# 1. 不知道用哪个？先用自然语言描述目标，让系统推荐
+ntd process recommend "给 Rust 项目搭持续交付流水线"
+
+# 2. 看一眼推荐的工艺长啥样（用 name 即可，不必记 guid）
+ntd process show 4p12s-delivery
+
+# 3. 装到目标工作空间（按项目路径指定，会自动反查 workspace_id）
+ntd process run 4p12s-delivery --workspace /Users/me/projects/myapp
+
+# 4. 工艺模板更新了，把跑着的 loop 也升到最新
+ntd process loops 4p12s-delivery        # 先拿到 loop_id
+ntd process upgrade 4p12s-delivery --loop-id 7
+```
+
+**小提示**：所有 process 命令都支持 `--output raw --fields "..."` 精简输出、减少 token，例如 `ntd process list --output raw --fields "name,guid,version,is_system"`。
+
+---
+
 ## 🧩 变量替换实战
 
 ntd 支持在 todo 消息中使用 `{{变量名}}` 占位符，通过 `--param` 注入值：
