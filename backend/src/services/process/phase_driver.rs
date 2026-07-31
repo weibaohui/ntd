@@ -98,29 +98,10 @@ pub async fn execute_step(
     let execution_result = execution_record
         .and_then(|r| r.result.as_deref());
 
+    // 046：评分统一由 auto_review 在环节执行完成时写入 execution_record.rating。
+    // artifact_present/script_check 已废弃，产物存在性与脚本执行结果改由 AI 评审时自行判定。
+    // 此处直接读取已有评分，不再 poll 等待——评分缺失即门禁 fail（ai_criteria_review 无 rating）。
     let execution_rating = execution_record.and_then(|r| r.rating);
-
-    // 如果当前无评分，仅当门禁配置里确实存在 ai_criteria_review 门禁时才等待出分。
-    // 无 AI 评审门禁的步骤（如纯 human_approval）永远不会产生评分，
-    // 若在此等待会把 loop 卡死（曾按 86400s 死等：步骤停留 running，审批按钮不出现）。
-    let execution_rating = if execution_rating.is_none() {
-        match ai_review_wait_timeout(&effective_gate_config) {
-            // 无 AI 评审门禁：评分与本步骤无关，直接保持 None 继续门禁评价。
-            None => None,
-            // 配了正数超时：最多等 N 秒，超时后按无评分判定（触发返工/失败流转）。
-            Some(Some(timeout_secs)) if timeout_secs > 0 => {
-                let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(timeout_secs as u64);
-                poll_rating(db, execution_record.as_ref().map(|r| r.id), deadline).await
-            }
-            // 未配/为 0：一直等到出分（实际由 loop_execution 生命周期兜底）。
-            Some(_) => {
-                let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(86400);
-                poll_rating(db, execution_record.as_ref().map(|r| r.id), deadline).await
-            }
-        }
-    } else {
-        execution_rating
-    };
 
     let gate_summary = gate_evaluator::evaluate_step_gates(
         db,
@@ -275,20 +256,6 @@ fn resolve_step_rating(summary: &GateSummary, execution_rating: Option<i32>) -> 
     parse_rating_from_detail(summary).or(execution_rating)
 }
 
-/// 从生效门禁配置中提取 ai_criteria_review 门禁的评分等待超时。
-///
-/// 返回值是三态语义，调用方据此决定等待策略：
-/// - `None`：配置里没有 AI 评审门禁——评分与本步骤无关，必须跳过等待；
-/// - `Some(None)` / `Some(Some(0))`：有 AI 门禁但未配超时——一直等到出分；
-/// - `Some(Some(n>0))`：有 AI 门禁且配了超时——最多等 n 秒。
-fn ai_review_wait_timeout(effective_gate_config: &str) -> Option<Option<i32>> {
-    serde_json::from_str::<Vec<GateDefinition>>(effective_gate_config)
-        .ok()?
-        .into_iter()
-        .find(|g| g.gate_type == "ai_criteria_review")
-        .map(|g| g.timeout_secs)
-}
-
 /// 从生效门禁配置中提取 ai 评审门禁的阈值（min_score）。
 /// gate_config 风格的步骤阈值在门禁 JSON 里而非 step.min_rating 字段。
 fn extract_review_threshold(effective_gate_config: &str) -> Option<i32> {
@@ -297,25 +264,6 @@ fn extract_review_threshold(effective_gate_config: &str) -> Option<i32> {
         .into_iter()
         .find(|g| g.gate_type == "ai_criteria_review")
         .and_then(|g| g.min_score)
-}
-
-/// 轮询等待执行记录的评分出现。
-/// 每 500ms 查一次 DB，直到 deadline 或出分。
-async fn poll_rating(
-    db: &Arc<Database>,
-    record_id: Option<i64>,
-    deadline: tokio::time::Instant,
-) -> Option<i32> {
-    let record_id = record_id?;
-    while tokio::time::Instant::now() < deadline {
-        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-        if let Ok(Some(rec)) = db.get_execution_record(record_id).await {
-            if let Some(rating) = rec.rating {
-                return Some(rating);
-            }
-        }
-    }
-    None
 }
 
 /// 更新阶段生命周期：当步骤进入新 phase 或完成后，更新 `loop_phase_executions`。
@@ -447,34 +395,6 @@ mod tests {
     }
 
     #[test]
-    fn ai_review_wait_timeout_without_ai_gate_returns_none() {
-        // 纯人工审批门禁：配置里没有 ai_criteria_review，
-        // 必须返回 None 让调用方跳过评分等待——否则步骤会死等一个永远不会产生的评分
-        let config = r#"[{"name":"人工审批","type":"human_approval"}]"#;
-        assert_eq!(ai_review_wait_timeout(config), None);
-    }
-
-    #[test]
-    fn ai_review_wait_timeout_with_ai_gate_no_timeout_waits_forever() {
-        // AI 评审门禁未配 timeout_secs：语义是「一直等到出分」，返回 Some(None)
-        let config = r#"[{"name":"AI 评分达标","type":"ai_criteria_review","min_score":10}]"#;
-        assert_eq!(ai_review_wait_timeout(config), Some(None));
-    }
-
-    #[test]
-    fn ai_review_wait_timeout_with_ai_gate_timeout_returns_secs() {
-        // AI 评审门禁配了正数超时：返回具体秒数
-        let config = r#"[{"name":"AI 评分达标","type":"ai_criteria_review","min_score":10,"timeout_secs":30}]"#;
-        assert_eq!(ai_review_wait_timeout(config), Some(Some(30)));
-    }
-
-    #[test]
-    fn ai_review_wait_timeout_invalid_json_returns_none() {
-        // 配置解析失败时按「无 AI 门禁」处理：跳过等待比死等安全
-        assert_eq!(ai_review_wait_timeout("not-json"), None);
-    }
-
-    #[test]
     fn extract_review_threshold_reads_ai_gate_min_score() {
         let config = r#"[{"name":"AI 评分达标","type":"ai_criteria_review","min_score":10}]"#;
         assert_eq!(extract_review_threshold(config), Some(10));
@@ -482,6 +402,8 @@ mod tests {
 
     #[test]
     fn extract_review_threshold_without_ai_gate_returns_none() {
+        // 046：artifact_present 已废弃，但 extract_review_threshold 仅识别 ai_criteria_review，
+        // 其他类型（含历史 artifact_present）应返回 None。
         let config = r#"[{"name":"产物存在","type":"artifact_present","artifact":"x"}]"#;
         assert_eq!(extract_review_threshold(config), None);
     }
