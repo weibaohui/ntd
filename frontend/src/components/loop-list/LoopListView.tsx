@@ -12,6 +12,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Table } from 'antd';
 import { useApp } from '@/hooks/useApp';
 import { useBatchActions } from '@/components/todo-list/useBatchActions';
+import { useResizableColumns } from '@/hooks/useResizableColumns';
 import type { Tag as TagType } from '@/types';
 import type { LoopListItem } from '@/types/loop';
 import {
@@ -75,12 +76,14 @@ export function LoopListView({
   });
 
   // 列定义：抽为独立 useMemo，避免每次渲染重建（已拆到 buildColumns）
-  const columns = useMemo(() => buildColumns({
+  const rawColumns = useMemo(() => buildColumns({
     tags,
     onSelectLoop,
     onDelete,
     onToggleStatus,
   }), [tags, onSelectLoop, onDelete, onToggleStatus]);
+  // 054：注入可拖拽列宽 + 受控排序 + localStorage 持久化。
+  const { columns, tableProps } = useResizableColumns('loops', rawColumns);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
@@ -115,8 +118,8 @@ export function LoopListView({
           dataSource={items}
           loading={loading}
           size="small"
-          // 工艺名称/版本两列合并为单列「工艺」后，scroll.x 从 1440 收回 1360。
-          scroll={{ x: 1360 }}
+          // 054：scroll.x 由 hook 动态计算（列宽求和），替代原硬编码 1360
+          {...tableProps}
           pagination={{
             pageSize: 20,
             showSizeChanger: true,

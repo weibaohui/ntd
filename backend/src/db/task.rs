@@ -31,7 +31,8 @@ impl Database {
     ) -> Result<Vec<tasks::Model>, sea_orm::DbErr> {
         let mut q = tasks::Entity::find().filter(tasks::Column::WorkspaceId.eq(workspace_id));
         if let Some(s) = status { q = q.filter(tasks::Column::Status.eq(s)); }
-        q.order_by_desc(tasks::Column::CreatedAt).all(&self.conn).await
+        // 054 起统一按 id DESC（列表默认排序），替代原 created_at DESC 口径。
+        q.order_by_desc(tasks::Column::Id).all(&self.conn).await
     }
 
     pub async fn update_task_status(&self, id: i64, status: &str) -> Result<(), sea_orm::DbErr> {

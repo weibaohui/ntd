@@ -24,6 +24,7 @@ import {
   ThunderboltOutlined,
 } from '@ant-design/icons';
 import { useApp } from '@/hooks/useApp';
+import { useResizableColumns, makeSorter } from '@/hooks/useResizableColumns';
 import { useBatchActions } from './useBatchActions'; // .tsx 含 JSX（批量 Modal）
 import { ExecutorBadge } from '@/components/ExecutorBadge';
 import { ExpertBadge } from '@/components/ExpertBadge';
@@ -196,6 +197,8 @@ function buildTodoColumns(
       dataIndex: 'id',
       width: 70,
       fixed: 'left',
+      // 054：可排序列（ID 数值排序）
+      sorter: makeSorter<TodoCenterItem>('id'),
       render: (id: number) => (
         <span style={{ fontFamily: 'monospace', color: 'var(--color-text-tertiary)' }}>
           #{id}
@@ -222,6 +225,8 @@ function buildTodoColumns(
       // scroll.x 时会被压成 0 宽（整列「消失」，用户曾因此报标题列丢失）
       width: 220,
       ellipsis: true,
+      // 054：可排序列（标题字符串排序）
+      sorter: makeSorter<TodoCenterItem>('title'),
       render: (title: string, record) => (
         <a
           onClick={(e) => { e.stopPropagation(); callbacks.onSelectTodo(record.id); }}
@@ -235,6 +240,8 @@ function buildTodoColumns(
       title: '状态',
       dataIndex: 'status',
       width: 100,
+      // 054：可排序列（状态枚举字符串排序）
+      sorter: makeSorter<TodoCenterItem>('status'),
       render: renderStatusTag,
     },
     {
@@ -287,12 +294,16 @@ function buildTodoColumns(
       title: '执行时间',
       dataIndex: 'last_execution_at',
       width: 130,
+      // 054：可排序列（ISO 时间字符串排序）
+      sorter: makeSorter<TodoCenterItem>('last_execution_at'),
       render: (t?: string | null) => (t ? formatRelativeTime(t) : '-'),
     },
     {
       title: '更新时间',
       dataIndex: 'updated_at',
       width: 130,
+      // 054：可排序列（ISO 时间字符串排序）
+      sorter: makeSorter<TodoCenterItem>('updated_at'),
       render: (t: string) => formatRelativeTime(t),
     },
     {
@@ -382,7 +393,10 @@ export function TodoListView({
 
   // 列定义：useMemo 避免每次渲染重建
   const callbacks = { onSelectTodo, onExecuteTodo, onExecuteWithArgs, onEditTodo, onDeleteTodo };
-  const columns = useMemo(() => buildTodoColumns(tags, callbacks), [tags, callbacks]);
+  const rawColumns = useMemo(() => buildTodoColumns(tags, callbacks), [tags, callbacks]);
+  // 054：注入可拖拽列宽 + 受控排序 + localStorage 持久化。
+  // 返回的 tableProps 包含 components / scroll / onChange，直接展开到 Table。
+  const { columns, tableProps } = useResizableColumns('todos', rawColumns);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
@@ -406,9 +420,8 @@ export function TodoListView({
           dataSource={items}
           loading={loading}
           size="small"
-          // scroll.x 必须 ≥ 所有固定宽列之和（新增环路列 160）：合计 1690，
-          // 取 1720 留余量；否则窗口变窄时弹性列会被压成 0 宽
-          scroll={{ x: 1720 }}
+          // 054：scroll.x 由 hook 动态计算（列宽求和），替代原硬编码 1720
+          {...tableProps}
           pagination={{
             pageSize: 20,
             showSizeChanger: true,

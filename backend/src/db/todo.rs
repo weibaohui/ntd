@@ -203,10 +203,11 @@ impl Database {
         bucket: Option<ComputedBucket>,
         search: Option<&str>,
     ) -> Result<Vec<TodoCenterItem>, sea_orm::DbErr> {
-        // 不过滤 archived_at：已归档事项也要在「已归档」分类出现
+        // 不过滤 archived_at：已归档事项也要在「已归档」分类出现；
+        // 054 起统一按 id DESC（列表默认排序），与用户点击排序的默认列保持一致。
         let mut query = todos::Entity::find()
             .filter(todos::Column::DeletedAt.is_null())
-            .order_by_desc(todos::Column::UpdatedAt);
+            .order_by_desc(todos::Column::Id);
         if let Some(id) = workspace_id {
             query = query.filter(todos::Column::WorkspaceId.eq(id));
         }

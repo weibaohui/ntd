@@ -16,6 +16,7 @@ import {
 } from '@/components/tasks/constants';
 import bundledApi from '@/api/bundled';
 import { formatProcessText } from '@/utils/processText';
+import { useResizableColumns, makeSorter } from '@/hooks/useResizableColumns';
 
 const { Text } = Typography;
 
@@ -55,6 +56,8 @@ function buildColumns(): ColumnsType<TaskItem> {
       dataIndex: 'id',
       key: 'id',
       width: 60,
+      // 054：可排序列（ID 数值排序）
+      sorter: makeSorter<TaskItem>('id'),
       render: (id: number) => <Text type="secondary">#{id}</Text>,
     },
     {
@@ -62,6 +65,8 @@ function buildColumns(): ColumnsType<TaskItem> {
       dataIndex: 'title',
       key: 'title',
       ellipsis: true,
+      // 054：可排序列（标题字符串排序）
+      sorter: makeSorter<TaskItem>('title'),
       render: (title: string) => <Text strong>{title}</Text>,
     },
     {
@@ -69,6 +74,8 @@ function buildColumns(): ColumnsType<TaskItem> {
       dataIndex: 'status',
       key: 'status',
       width: 100,
+      // 054：可排序列（状态枚举字符串排序）
+      sorter: makeSorter<TaskItem>('status'),
       render: (status: string) => (
         <Tag color={statusColor(status)}>{STATUS_LABEL[status] ?? status}</Tag>
       ),
@@ -78,6 +85,8 @@ function buildColumns(): ColumnsType<TaskItem> {
       dataIndex: 'complexity',
       key: 'complexity',
       width: 80,
+      // 054：可排序列（复杂度枚举字符串排序）
+      sorter: makeSorter<TaskItem>('complexity'),
       render: (complexity?: string) =>
         complexity ? (
           <Tag color={complexityColor(complexity)}>{complexityLabel(complexity)}</Tag>
@@ -113,6 +122,8 @@ function buildColumns(): ColumnsType<TaskItem> {
       dataIndex: 'created_at',
       key: 'created_at',
       width: 110,
+      // 054：可排序列（ISO 时间字符串排序）
+      sorter: makeSorter<TaskItem>('created_at'),
       render: (iso?: string) => <Text type="secondary">{formatDateShort(iso)}</Text>,
     },
   ];
@@ -205,7 +216,9 @@ export function TasksTableView({
   }, [tasks, statusFilter, searchKeyword]);
 
   // 列定义：useMemo 避免每次 render 重建造成 Table 性能抖动。
-  const columns = useMemo(() => buildColumns(), []);
+  const rawColumns = useMemo(() => buildColumns(), []);
+  // 054：注入可拖拽列宽 + 受控排序 + localStorage 持久化。
+  const { columns, tableProps } = useResizableColumns('tasks', rawColumns);
 
   // 批量删除确认：使用上下文 modal.confirm，保证弹窗随当前主题渲染；
   // 确认文案与危险按钮保持原样，避免引入额外交互变化。
@@ -274,8 +287,8 @@ export function TasksTableView({
           dataSource={visibleTasks}
           loading={loading}
           size="small"
-          // 工艺列从 130 扩到 220 以容纳 #id-名称-版本 三段式文本，scroll.x 同步加宽。
-          scroll={{ x: 1290 }}
+          // 054：scroll.x 由 hook 动态计算（列宽求和），替代原硬编码 1290
+          {...tableProps}
           pagination={{
             pageSize: 20,
             showSizeChanger: true,
