@@ -24,7 +24,7 @@ import {
   Space,
   Typography,
 } from 'antd';
-import { DeleteOutlined, PlusOutlined, CloseOutlined } from '@ant-design/icons';
+import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
 import { DefaultReviewPromptButton } from '@/components/common/DefaultReviewPromptButton';
 // 需求 046：prompt 类字段统一改用 MD 编辑控件（含参数条的光标插入）
 import { PromptMdField } from './PromptMdField';
@@ -39,6 +39,8 @@ import { updateLinkField } from '../processDefinitionUpdater';
 // 专家/技能复用 todo 侧组件：ExpertPicker 受控选择；LinkSkillPicker 封装技能加载 + toggle
 import { ExpertPicker } from '@/components/todo-drawer/ExpertPicker';
 import { LinkSkillPicker } from './LinkSkillPicker';
+// 执行器选择器：复用「闪念捕捉」同款（需求 053），可清空（执行器非必选）
+import { ExecutorPickerPopover } from '@/components/common/ExecutorPickerPopover';
 // 评审 prompt 运行时替换的模板参数，用于 AI 评审时的 prompt 合成。
 // {{original_prompt}} → 当前环节的提示词
 // {{original_output}} → 执行记录的输出结果
@@ -92,15 +94,6 @@ export function LinkPropertyForm({
   ): void => {
     const newDef = updateLinkField(definition, phaseId, linkId, field, value);
     onDefinitionChange(newDef);
-  };
-
-  // 技能 toggle：点击技能卡片加入/移出 link.skills[]（环节级技能，运行时用）
-  const handleToggleSkill = (skillName: string): void => {
-    const current = link.skills ?? [];
-    const next = current.includes(skillName)
-      ? current.filter((s) => s !== skillName)
-      : [...current, skillName];
-    handleFieldChange('skills', next);
   };
 
   // ── gates 嵌套表格 ─────────────────────────────
@@ -396,7 +389,32 @@ export function LinkPropertyForm({
         />
       </Form.Item>
 
-      {/* 验收标准：环节产物验收标准，评审打分依据（需求 037 移到提示词后） */}
+      {/* 执行器：环节运行时所用执行器（环节固有属性）。复用「闪念捕捉」同款 ExecutorPickerPopover，
+          只能选不能手填，可清空（执行器非必选，清空=用系统默认）。空值显示"未选择执行器"占位。
+          与技能选择器内的执行器筛选相互独立（技能已与执行器解耦，需求 053）。 */}
+      <Form.Item label="执行器">
+        <ExecutorPickerPopover
+          value={link.executor}
+          onChange={(v) => handleFieldChange('executor', v)}
+          onClear={() => handleFieldChange('executor', undefined)}
+        />
+      </Form.Item>
+
+      {/* 技能：内联 table 多选 + 手填，内置执行器筛选；skills 与执行器解耦，onChange 写回 link.skills[]（需求 053） */}
+      <LinkSkillPicker
+        selectedSkills={link.skills}
+        onChange={(skills) => handleFieldChange('skills', skills)}
+      />
+
+      {/* 专家：复用 todo 的 ExpertPicker，存 link.expert（组件自带清除按钮） */}
+      <Form.Item label="专家">
+        <ExpertPicker
+          value={link.expert}
+          onChange={(v) => handleFieldChange('expert', v ?? undefined)}
+        />
+      </Form.Item>
+
+      {/* 验收标准：环节产物验收标准，评审打分依据 */}
       <Form.Item label="验收标准">
         <Input.TextArea
           value={link.acceptance_criteria ?? ''}
@@ -408,19 +426,24 @@ export function LinkPropertyForm({
         />
       </Form.Item>
 
-      {/* 专家：复用 todo 的 ExpertPicker，存 link.expert（组件自带清除按钮） */}
-      <Form.Item label="专家">
-        <ExpertPicker
-          value={link.expert}
-          onChange={(v) => handleFieldChange('expert', v ?? undefined)}
-        />
-      </Form.Item>
-
-      {/* 技能：按环节 executor 加载，复用 SkillSelector 卡片，点击 toggle 存 link.skills[] */}
-      <LinkSkillPicker
-        executor={link.executor}
-        selectedSkills={link.skills}
-        onToggleSkill={handleToggleSkill}
+      {/* expected_artifacts 嵌套表格 */}
+      <Space style={sectionHeaderStyle}>
+        <Text strong>期望产物</Text>
+        <Button
+          size="small"
+          icon={<PlusOutlined />}
+          onClick={handleAddArtifact}
+        >
+          新增产物
+        </Button>
+      </Space>
+      <Table
+        dataSource={link.expected_artifacts ?? []}
+        columns={artifactsColumns}
+        rowKey={(_, index) => String(index)}
+        pagination={false}
+        size="small"
+        style={tableStyle}
       />
 
       {/* 048：审核类型(review_type)已废弃——评审/门禁统一由下方 gates 配置
@@ -443,6 +466,26 @@ export function LinkPropertyForm({
           }
         />
       </Form.Item>
+
+      {/* gates 嵌套表格 */}
+      <Space style={sectionHeaderStyle}>
+        <Text strong>门禁</Text>
+        <Button
+          size="small"
+          icon={<PlusOutlined />}
+          onClick={handleAddGate}
+        >
+          新增门禁
+        </Button>
+      </Space>
+      <Table
+        dataSource={link.gates ?? []}
+        columns={gatesColumns}
+        rowKey={(_, index) => String(index)}
+        pagination={false}
+        size="small"
+        style={tableStyle}
+      />
 
       <Form.Item label="成功后跳转">
         <Select
@@ -486,46 +529,6 @@ export function LinkPropertyForm({
         />
       </Form.Item>
 
-      {/* gates 嵌套表格 */}
-      <Space style={sectionHeaderStyle}>
-        <Text strong>门禁</Text>
-        <Button
-          size="small"
-          icon={<PlusOutlined />}
-          onClick={handleAddGate}
-        >
-          新增门禁
-        </Button>
-      </Space>
-      <Table
-        dataSource={link.gates ?? []}
-        columns={gatesColumns}
-        rowKey={(_, index) => String(index)}
-        pagination={false}
-        size="small"
-        style={tableStyle}
-      />
-
-      {/* expected_artifacts 嵌套表格 */}
-      <Space style={sectionHeaderStyle}>
-        <Text strong>期望产物</Text>
-        <Button
-          size="small"
-          icon={<PlusOutlined />}
-          onClick={handleAddArtifact}
-        >
-          新增产物
-        </Button>
-      </Space>
-      <Table
-        dataSource={link.expected_artifacts ?? []}
-        columns={artifactsColumns}
-        rowKey={(_, index) => String(index)}
-        pagination={false}
-        size="small"
-        style={tableStyle}
-      />
-
       {/* step_template 嵌套表格（spec 模板引用） */}
       <Space style={sectionHeaderStyle}>
         <Text strong>环节 spec 模板</Text>
@@ -546,22 +549,6 @@ export function LinkPropertyForm({
         style={tableStyle}
       />
 
-      {/* 执行器：需求 037 移到面板最后；suffix 清除按钮满足"可清空" */}
-      <Form.Item label="执行器">
-        <Input
-          value={link.executor ?? ''}
-          onChange={(e) => handleFieldChange('executor', e.target.value)}
-          placeholder="执行器，可空"
-          suffix={
-            link.executor ? (
-              <CloseOutlined
-                onClick={() => handleFieldChange('executor', undefined)}
-                style={{ color: 'var(--color-text-tertiary)', cursor: 'pointer' }}
-              />
-            ) : null
-          }
-        />
-      </Form.Item>
     </Form>
   );
 }
