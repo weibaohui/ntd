@@ -1309,6 +1309,8 @@ impl Database {
             // 044：loops 已移除 color/icon/review_template_id/webhook_enabled；
             // loop_triggers 表已下线，不再 JOIN 聚合 trigger_count。
             // 列表查询补回 l.workspace_id（筛选键），供 LoopListRow.loop_ 完整填充。
+            // 054 起统一按 id DESC（列表默认排序），替代原 updated_at DESC 口径；
+            // 与 task.rs / todo.rs 保持一致，下方两个分支（带/不带 workspace_id 过滤）排序口径相同。
             let sql = match workspace_id {
                 Some(_) => "SELECT l.id, l.name, l.description, l.workspace_path, \
                               l.workspace_id, l.status, l.limits_config, \
@@ -1325,7 +1327,7 @@ impl Database {
                                WHERE le2.loop_id = l.id AND lse.approval_status = 'pending') as pending_approval_count \
                        FROM loops l \
                        WHERE l.workspace_id = ?1 \
-                       ORDER BY l.updated_at DESC",
+                       ORDER BY l.id DESC",
                 None => "SELECT l.id, l.name, l.description, l.workspace_path, \
                           l.workspace_id, l.status, l.limits_config, \
                           l.abnormal_handler_todo_id, l.abnormal_handler_trigger_on, \
@@ -1340,7 +1342,7 @@ impl Database {
                            INNER JOIN loop_executions le2 ON le2.id = lse.loop_execution_id \
                            WHERE le2.loop_id = l.id AND lse.approval_status = 'pending') as pending_approval_count \
                        FROM loops l \
-                       ORDER BY l.updated_at DESC",
+                       ORDER BY l.id DESC",
             };
             let rows = if let Some(wid) = workspace_id {
                 self.conn

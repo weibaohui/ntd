@@ -23,6 +23,7 @@ import {
 } from '@ant-design/icons';
 import { formatRelativeTime } from '@/utils/datetime';
 import { formatProcessText } from '@/utils/processText';
+import { makeSorter } from '@/hooks/useResizableColumns';
 import type { Tag as TagType } from '@/types';
 import type { LoopListItem } from '@/types/loop';
 
@@ -134,6 +135,8 @@ export function buildColumns({
       dataIndex: 'id',
       width: 70,
       fixed: 'left',
+      // 054：可排序列（ID 数值排序）
+      sorter: makeSorter<LoopListItem>('id'),
       render: (id: number) => (
         <span style={{ fontFamily: 'monospace', color: 'var(--color-text-tertiary)' }}>
           #{id}
@@ -144,6 +147,8 @@ export function buildColumns({
       title: '名称',
       dataIndex: 'name',
       ellipsis: true,
+      // 054：可排序列（名称字符串排序）
+      sorter: makeSorter<LoopListItem>('name'),
       render: (name: string, record) => (
         <a
           onClick={(e) => { e.stopPropagation(); onSelectLoop(record.id); }}
@@ -165,6 +170,8 @@ export function buildColumns({
       title: '状态',
       dataIndex: 'status',
       width: 100,
+      // 054：可排序列（状态枚举字符串排序）
+      sorter: makeSorter<LoopListItem>('status'),
       render: renderLoopStatusTag,
     },
     {
@@ -178,12 +185,16 @@ export function buildColumns({
       dataIndex: 'step_count',
       width: 70,
       align: 'center' as const,
+      // 054：可排序列（环节数数值排序）
+      sorter: makeSorter<LoopListItem>('step_count'),
     },
     {
       title: '待审批',
       dataIndex: 'pending_approval_count',
       width: 80,
       align: 'center' as const,
+      // 054：可排序列（待审批数数值排序）
+      sorter: makeSorter<LoopListItem>('pending_approval_count'),
       render: (n: number) => (n > 0 ? <Tag color="warning">{n}</Tag> : '-'),
     },
     {
@@ -196,12 +207,16 @@ export function buildColumns({
       title: '执行时间',
       dataIndex: 'last_execution_at',
       width: 130,
+      // 054：可排序列（ISO 时间字符串排序）
+      sorter: makeSorter<LoopListItem>('last_execution_at'),
       render: (t?: string | null) => t ? formatRelativeTime(t) : '-',
     },
     {
       title: '更新时间',
       dataIndex: 'updated_at',
       width: 130,
+      // 054：可排序列（ISO 时间字符串排序）
+      sorter: makeSorter<LoopListItem>('updated_at'),
       render: (t: string | null) => t ? formatRelativeTime(t) : '-',
     },
     {
