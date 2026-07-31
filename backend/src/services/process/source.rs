@@ -61,6 +61,25 @@ pub fn read_definition(source_path: &str, local_path: &str) -> Result<String, Pr
     Ok(std::fs::read_to_string(&path)?)
 }
 
+/// 读取 `bundled://` 协议引用的 markdown 正文（需求 054 提取，供运行时注入复用）。
+///
+/// 把 `bundled://processes/conventions/xxx.md` 解析为 `~/.ntd/bundled/processes/conventions/xxx.md`
+/// 并读取。协议不支持 / 取不到 home / 文件读取失败 均返回 `Err`，交由调用方降级处理。
+///
+/// 刻意与安装期 `resolve_phase_spec_refs` 采用**同一**解析口径（固定 `~/.ntd/bundled`），
+/// 保证「安装时读到什么 spec，运行时就注入什么」，不因配置差异产生分歧。
+pub fn read_bundled_markdown(uri: &str) -> Result<String, String> {
+    // 仅认 bundled:// 前缀；其它前缀视为不可解析。
+    let path_str = uri
+        .strip_prefix("bundled://")
+        .ok_or_else(|| format!("不支持的协议: {}", uri))?;
+    // home 目录取不到时无法定位文件，直接报错。
+    let home = dirs::home_dir().ok_or_else(|| "无法获取 home 目录".to_string())?;
+    let file_path = home.join(".ntd").join("bundled").join(path_str);
+    std::fs::read_to_string(&file_path)
+        .map_err(|e| format!("读取 {} 失败: {}", file_path.display(), e))
+}
+
 /// `ProcessSourceError` → `AppError`：handler 层用 `?` 直接传播。
 impl From<ProcessSourceError> for AppError {
     fn from(e: ProcessSourceError) -> Self {

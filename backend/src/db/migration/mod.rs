@@ -41,6 +41,7 @@ mod v79;
 mod v80;
 mod v81;
 mod v82;
+mod v83;
 
 pub use v2_v5::read_applied_versions;
 pub use v2_v5::drop_column_if_exists;
@@ -143,6 +144,9 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         // V82 在 V81 之后：删除废弃的 process_step_templates 表（需求 052）——
         // step_template 原型机制已内联进 YAML link，表仅剩 bundled 缓存与查错表的 warn
         Box::new(v82::V82DropProcessStepTemplates),
+        // V83 在 V82 之后：loop_steps 新增 step_template_refs 列（需求 054）——
+        // 持久化环节 spec 模板引用，供执行器执行时注入 prompt「重点阅读」
+        Box::new(v83::V83AddLoopStepTemplateRefs),
     ]
 }
 

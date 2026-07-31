@@ -268,6 +268,10 @@ async fn create_loop_step_for_link(
     let now = utc_timestamp();
     let expected_artifacts = serde_json::to_string(&link.expected_artifacts)
         .unwrap_or_else(|_| "[]".to_string());
+    // 环节 spec 模板引用（需求 054）：序列化为 JSON 数组串，供执行器执行时注入 prompt。
+    // as_deref 借用避免 move（link 是共享引用）；None 时 unwrap_or_default 给空切片。
+    let step_template_refs = serde_json::to_string(link.step_template.as_deref().unwrap_or_default())
+        .unwrap_or_else(|_| "[]".to_string());
     let gate_config = serde_json::to_string(&link.gates).unwrap_or_else(|_| "[]".to_string());
     let skill_names = serde_json::to_string(&link.skills).unwrap_or_else(|_| "[]".to_string());
 
@@ -299,6 +303,7 @@ async fn create_loop_step_for_link(
         }),
         phase_id: ActiveValue::Set(Some(phase_id)),
         expected_artifacts: ActiveValue::Set(expected_artifacts),
+        step_template_refs: ActiveValue::Set(step_template_refs),
         gate_config: ActiveValue::Set(gate_config),
         max_rework: ActiveValue::Set(link.max_rework),
         skill_names: ActiveValue::Set(skill_names),
@@ -530,7 +535,7 @@ fn resolve_phase_spec_refs(phases: &mut [PhaseDefinition]) {
     for phase in phases.iter_mut() {
         // 解析 spec_ref
         if let Some(ref spec_ref) = phase.spec_ref {
-            match load_bundled_markdown(spec_ref) {
+            match super::source::read_bundled_markdown(spec_ref) {
                 Ok(content) => phase.spec = content,
                 Err(e) => {
                     tracing::warn!(
@@ -541,20 +546,6 @@ fn resolve_phase_spec_refs(phases: &mut [PhaseDefinition]) {
             }
         }
     }
-}
-
-/// 加载 `bundled://` 协议的 markdown 文件。
-///
-/// 将 `bundled://processes/conventions/xxx.md` 转换为 `~/.ntd/bundled/processes/conventions/xxx.md`。
-fn load_bundled_markdown(uri: &str) -> Result<String, String> {
-    let path_str = uri
-        .strip_prefix("bundled://")
-        .ok_or_else(|| format!("不支持的协议: {}", uri))?;
-    let home = dirs::home_dir()
-        .ok_or_else(|| "无法获取 home 目录".to_string())?;
-    let file_path = home.join(".ntd").join("bundled").join(path_str);
-    std::fs::read_to_string(&file_path)
-        .map_err(|e| format!("读取 {} 失败: {}", file_path.display(), e))
 }
 
 /// 升级工艺实例环路到模板最新版本。
@@ -868,6 +859,124 @@ phases:
         // 验证 on_gate_fail 策略已正确写入 on_rating_fail（而非默认 "break"）。
         // spec §F4.5：门禁失败时按 on_gate_fail 策略流转。
         assert_eq!(confirm_step.on_rating_fail, "write-prd");
+    }
+
+    /// 含非空 step_template 的最小工艺 YAML（需求 054 夹具）；spec 名可参数化以便升级用例换值。
+    fn sample_yaml_with_step_template(spec_name: &str) -> String {
+        format!(
+            r#"
+process:
+  name: tpl-refs-test
+  display_name: spec 引用落库测试
+  version: 0.1.0
+phases:
+  - id: p1
+    name: 阶段一
+    links:
+      - id: l1
+        name: 环节一
+        step_template:
+          - name: {spec_name}
+            path: bundled://processes/conventions/x.md
+        prompt: 执行任务
+        on_success: end
+        on_gate_fail: break
+"#
+        )
+    }
+
+    /// 校验 G1：非空 step_template 随安装落库到 loop_steps.step_template_refs。
+    /// 既有安装测试全用空数组，该写入路径此前无任何断言覆盖。
+    #[tokio::test]
+    async fn test_install_persists_step_template_refs() {
+        let db = fresh_db().await;
+        let ws_id = seed_workspace(&db).await;
+        let template = process_templates::ActiveModel {
+            guid: ActiveValue::Set("guid-tpl-refs".to_string()),
+            name: ActiveValue::Set("tpl-refs-test".to_string()),
+            display_name: ActiveValue::Set("spec 引用落库测试".to_string()),
+            description: ActiveValue::Set(String::new()),
+            category: ActiveValue::Set("test".to_string()),
+            complexity: ActiveValue::Set("light".to_string()),
+            version: ActiveValue::Set("0.1.0".to_string()),
+            source_path: ActiveValue::Set(Some("bundled://tpl-refs.yaml".to_string())),
+            is_system: ActiveValue::Set(true),
+            ..Default::default()
+        }
+        .insert(&db.conn)
+        .await
+        .unwrap();
+
+        let result = install_process_template(
+            &db,
+            &template,
+            &sample_yaml_with_step_template("需求规范"),
+            ws_id,
+            "/tmp/test-ws",
+        )
+        .await
+        .expect("install should succeed");
+
+        let steps = db.list_loop_steps_by_loop(result.loop_id).await.unwrap();
+        assert_eq!(steps.len(), 1, "应只有一个环节");
+        // 解析回 JSON 逐字段比对，避免依赖序列化的键序/空格。
+        let refs: serde_json::Value = serde_json::from_str(&steps[0].step_template_refs)
+            .expect("step_template_refs 应为合法 JSON 数组");
+        assert_eq!(refs[0]["name"], "需求规范", "落库 spec 名应与 YAML 一致");
+        assert_eq!(
+            refs[0]["path"], "bundled://processes/conventions/x.md",
+            "落库 spec 路径应与 YAML 一致"
+        );
+    }
+
+    /// 校验验收标准「升级工艺后新列同步重建」：升级换了 spec 引用的 YAML，
+    /// 重建的环节必须带新值而不是残留旧值。
+    #[tokio::test]
+    async fn test_upgrade_rebuilds_step_template_refs() {
+        let db = fresh_db().await;
+        let ws_id = seed_workspace(&db).await;
+        let template = process_templates::ActiveModel {
+            guid: ActiveValue::Set("guid-tpl-refs-upg".to_string()),
+            name: ActiveValue::Set("tpl-refs-test".to_string()),
+            display_name: ActiveValue::Set("spec 引用落库测试".to_string()),
+            description: ActiveValue::Set(String::new()),
+            category: ActiveValue::Set("test".to_string()),
+            complexity: ActiveValue::Set("light".to_string()),
+            version: ActiveValue::Set("0.2.0".to_string()),
+            source_path: ActiveValue::Set(Some("bundled://tpl-refs.yaml".to_string())),
+            is_system: ActiveValue::Set(true),
+            ..Default::default()
+        }
+        .insert(&db.conn)
+        .await
+        .unwrap();
+
+        let installed = install_process_template(
+            &db,
+            &template,
+            &sample_yaml_with_step_template("旧规范"),
+            ws_id,
+            "/tmp/test-ws",
+        )
+        .await
+        .expect("install should succeed");
+
+        let upgraded = upgrade_process_template_loop(
+            &db,
+            &template,
+            &sample_yaml_with_step_template("新规范"),
+            installed.loop_id,
+            ws_id,
+            "/tmp/test-ws",
+        )
+        .await
+        .expect("upgrade should succeed");
+
+        let steps = db.list_loop_steps_by_loop(upgraded.loop_id).await.unwrap();
+        assert_eq!(steps.len(), 1, "升级后应重建为 1 个环节");
+        let refs: serde_json::Value = serde_json::from_str(&steps[0].step_template_refs)
+            .expect("升级后 step_template_refs 应为合法 JSON");
+        assert_eq!(refs[0]["name"], "新规范", "升级后 spec 引用应同步为新 YAML 的值");
     }
 
     #[tokio::test]

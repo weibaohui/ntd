@@ -17,6 +17,8 @@ use crate::adapters::{parse_executor_type, CodeExecutor};
 use crate::db::{Database, NewExecutionRecord};
 use crate::executor_service::ExecEvent;
 use crate::models::{ExecutorType, ParsedLogEntry};
+use crate::services::process::source;
+use crate::services::process::{ExpectedArtifact, StepTemplateRef};
 use crate::task_manager::TaskManager;
 
 use super::ExecutionResult;
@@ -700,6 +702,140 @@ fn build_expert_prompt(agent_md: &str, skills_text: &str, original_message: &str
     }
 }
 
+// ─── 环节级「期望产物 + spec 模板」注入（需求 054）───
+//
+// 与 inject_workspace_prompt / inject_expert_context 同模式：读数据 → 拼段落前置 →
+// 失败静默回退原 message。放在所有注入的最内层（紧贴核心任务），让执行器动手前
+// 就明确「要交付什么、遵循哪份 spec」。todo.prompt 只读，绝不写回 DB。
+
+/// spec 正文内联到 prompt 的字节上限；超过则改为路径引用，避免 prompt 膨胀。
+const SPEC_INLINE_LIMIT: usize = 4_096;
+
+/// 注入环节级「期望产物 + spec 模板」到 message 最内层（需求 054）。
+///
+/// 按 todo_id 反查 loop_step，解析 expected_artifacts 与 step_template_refs，拼成
+/// `# 环节交付要求` 段落前置到 message。无 step（独立 todo）/ 配置全空 / 任一步失败
+/// → 静默回退原 message，不阻断执行。
+pub(crate) async fn inject_step_context(db: &Database, todo_id: i64, message: &str) -> String {
+    // 反查 step：独立 todo 不属于任何环节 → 无环节上下文可注入，原样返回。
+    let step = match db.find_loop_step_by_todo_id(todo_id).await {
+        Ok(Some(s)) => s,
+        Ok(None) => return message.to_string(),
+        Err(e) => {
+            // 查询失败不阻断 todo 执行，环节注入是增强项。
+            tracing::warn!("反查 todo {} 的 loop_step 失败，跳过环节上下文注入: {}", todo_id, e);
+            return message.to_string();
+        }
+    };
+    // 解析两类 JSON 配置；解析失败按「该部分为空」处理，不影响另一部分注入。
+    let artifacts = parse_step_json_field::<ExpectedArtifact>(&step.expected_artifacts);
+    let specs = parse_step_json_field::<StepTemplateRef>(&step.step_template_refs);
+    // 两者全空 → 不注入（避免空标题）；否则前置段落 + 水平分割线。
+    build_step_context_section(&artifacts, &specs)
+        .map(|section| format!("{}\n---\n{}", section.trim_end(), message))
+        .unwrap_or_else(|| message.to_string())
+}
+
+/// 解析环节 JSON 数组字段为 `Vec<T>`；空串或解析失败返回空 Vec（不阻断注入）。
+fn parse_step_json_field<T: serde::de::DeserializeOwned>(raw: &str) -> Vec<T> {
+    // 空串视作无配置，避免对空数据做无谓解析。
+    if raw.trim().is_empty() {
+        return Vec::new();
+    }
+    serde_json::from_str::<Vec<T>>(raw).unwrap_or_else(|e| {
+        // 解析失败只 warn，按空处理——不让脏数据拖垮整段注入。
+        tracing::warn!("解析环节 JSON 字段失败，该部分按空处理: {}", e);
+        Vec::new()
+    })
+}
+
+/// 构建环节交付要求段落；产物与 spec 都空时返回 None（不注入，避免空标题）。
+fn build_step_context_section(
+    artifacts: &[ExpectedArtifact],
+    specs: &[StepTemplateRef],
+) -> Option<String> {
+    // 两者都空时整段无意义，调用方据此原样返回 message。
+    if artifacts.is_empty() && specs.is_empty() {
+        return None;
+    }
+    let mut out = String::from("# 环节交付要求");
+    out.push_str(&build_expected_artifacts_section(artifacts));
+    out.push_str(&build_step_spec_section(specs));
+    Some(out)
+}
+
+/// 渲染期望产物清单；为空返回空串（不产出标题）。
+fn build_expected_artifacts_section(artifacts: &[ExpectedArtifact]) -> String {
+    if artifacts.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from("\n## 期望产物\n必须产出下列产物，缺一项视为未完成：\n");
+    for artifact in artifacts {
+        // 每条产物一行，name/类型必有，path/locator 缺省则省略。
+        out.push_str(&format_single_artifact(artifact));
+        out.push('\n');
+    }
+    out
+}
+
+/// 渲染单条期望产物：`- name（类型: type） 路径: path 定位: locator`，缺省字段省略。
+fn format_single_artifact(artifact: &ExpectedArtifact) -> String {
+    let mut line = format!("- {}（类型: {}）", artifact.name, artifact.artifact_type);
+    if let Some(path) = non_empty_str(&artifact.path) {
+        // 前导空格把每个可选子句与上文隔开，避免「）路径」「path定位」粘连。
+        line.push_str(&format!(" 路径: {}", path));
+    }
+    if let Some(locator) = non_empty_str(&artifact.locator) {
+        line.push_str(&format!(" 定位: {}", locator));
+    }
+    line
+}
+
+/// 渲染参考 spec 约定段落；为空返回空串（不产出标题）。
+fn build_step_spec_section(specs: &[StepTemplateRef]) -> String {
+    if specs.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from("\n## 参考 Spec 约定\n请重点遵循以下 spec：\n");
+    for spec in specs {
+        out.push_str(&format_single_spec(spec));
+        out.push('\n');
+    }
+    out
+}
+
+/// 渲染单条 spec：正文不超过上限则内联，否则/读取失败时降级为路径引用。
+fn format_single_spec(spec: &StepTemplateRef) -> String {
+    let head = format!("### {}\n", spec.name);
+    match source::read_bundled_markdown(&spec.path) {
+        // 正文可内联：直接贴入，让执行器当上下文阅读。
+        Ok(content) if content.len() <= SPEC_INLINE_LIMIT => {
+            format!("{}{}\n", head, content.trim_end())
+        }
+        // 正文过长：内联会膨胀 prompt，改为路径引用让执行器按需读取。
+        Ok(content) => {
+            tracing::debug!(
+                "spec「{}」正文 {} 字节超过内联上限 {}，改为路径引用",
+                spec.name,
+                content.len(),
+                SPEC_INLINE_LIMIT
+            );
+            format!("{}详见 {}（正文过长，请按需阅读）\n", head, spec.path)
+        }
+        // 文件缺失/不可读：降级为路径引用，不影响其它条目与产物段落。
+        Err(e) => {
+            tracing::warn!("spec「{}」({}) 加载失败，改为路径引用: {}", spec.name, spec.path, e);
+            format!("{}详见 {}\n", head, spec.path)
+        }
+    }
+}
+
+/// 取 `Option<String>` 中非空字符串引用；None 或空串返回 None。
+fn non_empty_str(s: &Option<String>) -> Option<&str> {
+    // as_deref 把 Option<String> → Option<&str>，再过滤空串。
+    s.as_deref().filter(|value| !value.is_empty())
+}
+
 /// Stage 1 步骤 4a：如果 todo 已存在，校验并发限制。todo 为 None 时跳过。
 pub(crate) async fn enforce_concurrency_limit(
     request: &super::RunTodoExecutionRequest,
@@ -1295,5 +1431,317 @@ mod tests {
             .unwrap();
         let result = inject_workspace_background(&db, Some(ws.id), "msg").await;
         assert!(result.contains("工作空间：/tmp/ws2"), "name 缺省应回退 path");
+    }
+
+    // ─── inject_step_context 系列（需求 054）───
+
+    #[test]
+    fn test_non_empty_str_filters_none_and_empty() {
+        // None → None
+        let none: Option<String> = None;
+        assert_eq!(non_empty_str(&none), None);
+        // 空串 → None（视为缺省）
+        assert_eq!(non_empty_str(&Some(String::new())), None);
+        // 非空 → 返回引用
+        assert_eq!(non_empty_str(&Some("x".to_string())), Some("x"));
+    }
+
+    #[test]
+    fn test_parse_step_json_field_handles_empty_invalid_valid() {
+        // 空串 / "[]" → 空 Vec
+        assert!(parse_step_json_field::<ExpectedArtifact>("").is_empty());
+        assert!(parse_step_json_field::<ExpectedArtifact>("[]").is_empty());
+        // 非法 JSON → 空 Vec（不 panic，按空处理）
+        assert!(parse_step_json_field::<ExpectedArtifact>("not json").is_empty());
+        // 合法 JSON → 正确解析
+        let specs = parse_step_json_field::<StepTemplateRef>(
+            r#"[{"name":"a","path":"bundled://x.md"}]"#,
+        );
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].name, "a");
+        assert_eq!(specs[0].path, "bundled://x.md");
+    }
+
+    #[test]
+    fn test_format_single_artifact_full_and_partial() {
+        // 全字段：name/type/path/locator 都渲染，子句用空格分隔。
+        let full = ExpectedArtifact {
+            name: "PRD".to_string(),
+            artifact_type: "file".to_string(),
+            path: Some("docs/x.md".to_string()),
+            locator: Some("$.a".to_string()),
+        };
+        assert_eq!(
+            format_single_artifact(&full),
+            "- PRD（类型: file） 路径: docs/x.md 定位: $.a"
+        );
+        // 仅 name/type：path/locator 缺省省略，尾部不带多余空格。
+        let minimal = ExpectedArtifact {
+            name: "note".to_string(),
+            artifact_type: "text".to_string(),
+            path: None,
+            locator: None,
+        };
+        assert_eq!(format_single_artifact(&minimal), "- note（类型: text）");
+    }
+
+    #[test]
+    fn test_build_expected_artifacts_section_empty_and_nonempty() {
+        // 空 → 空串（不产出标题）
+        assert!(build_expected_artifacts_section(&[]).is_empty());
+        let a = ExpectedArtifact {
+            name: "PRD".to_string(),
+            artifact_type: "file".to_string(),
+            path: None,
+            locator: None,
+        };
+        let s = build_expected_artifacts_section(&[a]);
+        assert!(s.contains("## 期望产物"), "应含标题");
+        assert!(s.contains("PRD"), "应含产物名");
+    }
+
+    #[test]
+    fn test_format_single_spec_falls_back_to_path_when_unreadable() {
+        // bundled:// 指向不存在文件 → 读取失败，降级为路径引用（不 panic）。
+        let spec = StepTemplateRef {
+            name: "缺失规范".to_string(),
+            path: "bundled://nonexistent/does-not-exist.md".to_string(),
+        };
+        let rendered = format_single_spec(&spec);
+        assert!(rendered.contains("缺失规范"), "应保留 spec 名");
+        assert!(
+            rendered.contains("bundled://nonexistent/does-not-exist.md"),
+            "读取失败应回退为路径引用"
+        );
+    }
+
+    #[test]
+    fn test_build_step_spec_section_empty_returns_empty() {
+        assert!(build_step_spec_section(&[]).is_empty());
+    }
+
+    #[test]
+    fn test_build_step_context_section_none_when_both_empty() {
+        // 产物与 spec 全空 → None，调用方据此原样返回 message（不注入空标题）。
+        assert_eq!(build_step_context_section(&[], &[]), None);
+    }
+
+    #[test]
+    fn test_build_step_context_section_only_artifacts_or_only_specs() {
+        let a = ExpectedArtifact {
+            name: "PRD".to_string(),
+            artifact_type: "file".to_string(),
+            path: None,
+            locator: None,
+        };
+        // 仅产物 → 含期望产物标题
+        assert!(
+            build_step_context_section(&[a], &[])
+                .unwrap()
+                .contains("## 期望产物")
+        );
+        let spec = StepTemplateRef {
+            name: "s".to_string(),
+            path: "bundled://x.md".to_string(),
+        };
+        // 仅 spec → 含参考 spec 标题（产物段不出现）
+        let only_spec = build_step_context_section(&[], &[spec]).unwrap();
+        assert!(only_spec.contains("## 参考 Spec 约定"));
+        assert!(!only_spec.contains("## 期望产物"), "无产物不应出现产物标题");
+    }
+
+    /// 无 step（todo 不属于任何环节）→ message 原样返回，不阻断执行。
+    #[tokio::test]
+    async fn test_inject_step_context_no_step_returns_message_unchanged() {
+        let db = Database::new(":memory:").await.unwrap();
+        // 不存在的 todo_id：find_loop_step_by_todo_id 返回 None → 原样返回。
+        let result = inject_step_context(&db, 9_999_998, "原任务").await;
+        assert_eq!(result, "原任务");
+    }
+
+    /// 有 step 且配了期望产物 → 前置「# 环节交付要求」段落，原 message 保留在尾部。
+    #[tokio::test]
+    async fn test_inject_step_context_injects_expected_artifacts() {
+        let db = Database::new(":memory:").await.unwrap();
+        let ws = db
+            .get_or_create_project_directory("/tmp/ws_054", None)
+            .await
+            .unwrap();
+        let loop_model = db
+            .create_loop("t", "", Some(ws.id), Some("/tmp/ws_054"), None, None, "[]")
+            .await
+            .unwrap();
+        let todo_id = db
+            .create_todo_with_extras("task", "do", None, None, false, ws.id, "/tmp/ws_054")
+            .await
+            .unwrap();
+        db.create_loop_step(
+            loop_model.id, "需求环节", "", todo_id, true, "next", None, "break", None,
+        )
+        .await
+        .unwrap();
+        // create_loop_step 默认 expected_artifacts 为空，这里用原生 SQL 写入产物配置。
+        let artifacts_json = serde_json::to_string(&[ExpectedArtifact {
+            name: "PRD".to_string(),
+            artifact_type: "file".to_string(),
+            path: Some("docs/x.md".to_string()),
+            locator: None,
+        }])
+        .unwrap();
+        let sql = format!(
+            "UPDATE loop_steps SET expected_artifacts = '{}' WHERE todo_id = {}",
+            artifacts_json, todo_id
+        );
+        db.exec(&sql).await.unwrap();
+
+        let result = inject_step_context(&db, todo_id, "原任务").await;
+        assert!(result.starts_with("# 环节交付要求"), "应前置环节交付要求段落");
+        assert!(result.contains("## 期望产物"), "应含期望产物标题");
+        assert!(result.contains("PRD"), "应含产物名");
+        assert!(result.contains("docs/x.md"), "应含产物路径");
+        assert!(result.ends_with("原任务"), "原 message 应在尾部");
+    }
+
+    // ─── spec 正文内联/超限降级 + 按字段降级（需求 054 补充覆盖）───
+    //
+    // format_single_spec 依赖 read_bundled_markdown 读取 ~/.ntd/bundled 下的真实文件，
+    // 无内存注入点，因此测试必须在真实 bundled 目录建临时文件；文件名各用例唯一，
+    // 避免 cargo test 并发互踩，用毕即删。
+
+    /// 在 ~/.ntd/bundled/processes/conventions 下写临时 spec 文件，返回其 bundled:// URI。
+    fn create_test_bundled_spec(filename: &str, content: &str) -> String {
+        let dir = dirs::home_dir()
+            .expect("home dir must exist")
+            .join(".ntd/bundled/processes/conventions");
+        // 目录可能尚未存在（全新机器），由测试负责建好。
+        std::fs::create_dir_all(&dir).expect("create bundled conventions dir");
+        std::fs::write(dir.join(filename), content).expect("write temp spec");
+        format!("bundled://processes/conventions/{filename}")
+    }
+
+    /// 删除临时 spec 文件；忽略错误（文件可能已被并发清理），不让清理失败拖垮断言。
+    fn remove_test_bundled_spec(uri: &str) {
+        let path = uri.strip_prefix("bundled://").expect("bundled uri");
+        let _ = std::fs::remove_file(
+            dirs::home_dir()
+                .expect("home dir must exist")
+                .join(".ntd/bundled")
+                .join(path),
+        );
+    }
+
+    /// 正文 ≤ 上限 → 内联进渲染结果，不降级为路径引用。
+    #[test]
+    fn test_format_single_spec_inlines_content_within_limit() {
+        let uri = create_test_bundled_spec("test-054-inline.md", "# 规范\n必须遵守约束A");
+        let spec = StepTemplateRef {
+            name: "小规范".to_string(),
+            path: uri.clone(),
+        };
+        let rendered = format_single_spec(&spec);
+        assert!(rendered.contains("### 小规范"), "应含 spec 标题");
+        assert!(rendered.contains("必须遵守约束A"), "正文应内联");
+        assert!(!rendered.contains("详见"), "内联时不应出现路径降级");
+        remove_test_bundled_spec(&uri);
+    }
+
+    /// 正文恰好等于上限 → 仍内联（边界采用 <= 判定，防止边界文件被误降级）。
+    #[test]
+    fn test_format_single_spec_at_exact_limit_is_inlined() {
+        let exact = "y".repeat(SPEC_INLINE_LIMIT);
+        let uri = create_test_bundled_spec("test-054-exact.md", &exact);
+        let spec = StepTemplateRef {
+            name: "边界规范".to_string(),
+            path: uri.clone(),
+        };
+        let rendered = format_single_spec(&spec);
+        // 抽一段正文特征串判断内联，避免整段比较。
+        assert!(rendered.contains(&"y".repeat(100)), "恰好上限应内联");
+        assert!(!rendered.contains("详见"), "恰好上限不应降级");
+        remove_test_bundled_spec(&uri);
+    }
+
+    /// 正文超过上限 → 降级为路径引用，正文不得内联（防 prompt 膨胀）。
+    #[test]
+    fn test_format_single_spec_over_limit_falls_back_to_path() {
+        let big = "x".repeat(SPEC_INLINE_LIMIT + 1);
+        let uri = create_test_bundled_spec("test-054-over.md", &big);
+        let spec = StepTemplateRef {
+            name: "大规范".to_string(),
+            path: uri.clone(),
+        };
+        let rendered = format_single_spec(&spec);
+        assert!(rendered.contains("### 大规范"), "降级后仍保留 spec 名");
+        assert!(rendered.contains(&uri), "降级应给出路径引用");
+        assert!(rendered.contains("正文过长"), "降级应带原因提示");
+        assert!(
+            rendered.len() < SPEC_INLINE_LIMIT + 1,
+            "超限正文不得内联进 prompt"
+        );
+        remove_test_bundled_spec(&uri);
+    }
+
+    /// 按字段降级（验收标准）：某字段 JSON 损坏时仅该字段按空处理，另一字段仍正常注入。
+    /// 两个方向各验一遍，防止「一个脏字段拖垮整段注入」的回归。
+    #[tokio::test]
+    async fn test_inject_step_context_degrades_per_field_on_json_error() {
+        let db = Database::new(":memory:").await.unwrap();
+        let ws = db
+            .get_or_create_project_directory("/tmp/ws_054_deg", None)
+            .await
+            .unwrap();
+        let loop_model = db
+            .create_loop("t", "", Some(ws.id), Some("/tmp/ws_054_deg"), None, None, "[]")
+            .await
+            .unwrap();
+        let todo_id = db
+            .create_todo_with_extras("task", "do", None, None, false, ws.id, "/tmp/ws_054_deg")
+            .await
+            .unwrap();
+        db.create_loop_step(
+            loop_model.id, "环节", "", todo_id, true, "next", None, "break", None,
+        )
+        .await
+        .unwrap();
+
+        // 方向一：expected_artifacts 损坏 + step_template_refs 有效 → spec 段仍注入。
+        let uri = create_test_bundled_spec("test-054-deg.md", "规范正文X");
+        let refs_json = serde_json::to_string(&[StepTemplateRef {
+            name: "S".to_string(),
+            path: uri.clone(),
+        }])
+        .unwrap();
+        db.exec(&format!(
+            "UPDATE loop_steps SET expected_artifacts = 'not json', \
+             step_template_refs = '{refs_json}' WHERE todo_id = {todo_id}"
+        ))
+        .await
+        .unwrap();
+        let result = inject_step_context(&db, todo_id, "M").await;
+        assert!(result.contains("## 参考 Spec 约定"), "产物字段损坏不应拖垮 spec 注入");
+        assert!(result.contains("规范正文X"), "spec 正文应内联");
+        assert!(!result.contains("## 期望产物"), "损坏字段应按空处理");
+        assert!(result.ends_with('M'), "原 message 应在尾部");
+
+        // 方向二：expected_artifacts 有效 + step_template_refs 损坏 → 产物段仍注入。
+        let artifacts_json = serde_json::to_string(&[ExpectedArtifact {
+            name: "PRD".to_string(),
+            artifact_type: "file".to_string(),
+            path: None,
+            locator: None,
+        }])
+        .unwrap();
+        db.exec(&format!(
+            "UPDATE loop_steps SET expected_artifacts = '{artifacts_json}', \
+             step_template_refs = '{{bad' WHERE todo_id = {todo_id}"
+        ))
+        .await
+        .unwrap();
+        let result = inject_step_context(&db, todo_id, "M").await;
+        assert!(result.contains("## 期望产物"), "spec 字段损坏不应拖垮产物注入");
+        assert!(result.contains("PRD"));
+        assert!(!result.contains("## 参考 Spec 约定"), "损坏字段应按空处理");
+        assert!(result.ends_with('M'));
+        remove_test_bundled_spec(&uri);
     }
 }

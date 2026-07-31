@@ -1246,7 +1246,7 @@ impl Database {
         let sql = format!(
             "SELECT s.id, s.loop_id, s.name, s.description, s.order_index, s.todo_id, \
                     s.on_success, s.success_goto_step_id, s.on_rating_fail, s.fail_goto_step_id, \
-                    s.phase_id, s.expected_artifacts, s.gate_config, s.max_rework, \
+                    s.phase_id, s.expected_artifacts, s.step_template_refs, s.gate_config, s.max_rework, \
                     s.skill_names, s.expert_name, s.review_prompt, \
                     s.enabled, s.created_at, \
                     st.title as todo_title, st.executor as todo_executor, \
@@ -1278,6 +1278,7 @@ impl Database {
                 fail_goto_step_id: row.try_get_by::<Option<i64>, _>("fail_goto_step_id")?,
                 phase_id: row.try_get_by::<Option<i64>, _>("phase_id")?,
                 expected_artifacts: row.try_get_by::<String, _>("expected_artifacts")?,
+                step_template_refs: row.try_get_by::<String, _>("step_template_refs")?,
                 gate_config: row.try_get_by::<String, _>("gate_config")?,
                 max_rework: row.try_get_by::<i32, _>("max_rework")?,
                 skill_names: row.try_get_by::<String, _>("skill_names")?,
@@ -1803,6 +1804,50 @@ mod loop_step_count_tests {
         // 未命中：未被环节引用的 todo 返回 None
         let missing = db.find_loop_step_by_todo_id(free_todo).await.unwrap();
         assert!(missing.is_none(), "未被环节引用的 todo 应返回 None");
+    }
+
+    /// list_loop_steps_with_todo_meta 的 raw SQL 手工映射必须读出 step_template_refs（需求 054）。
+    /// 该函数绕过 SeaORM 实体、手写 SELECT 列与行映射，加列后漏改会编译中断，
+    /// 但「映射错位/读错列」只能靠「写入非标值 → 读回逐字断言」防回归。
+    #[tokio::test]
+    async fn test_list_loop_steps_with_todo_meta_maps_step_template_refs() {
+        let db = fresh_db().await;
+        let loop_id = seed_loop(&db, "L").await;
+        // 环节一：更新为非默认 JSON，验证映射真的读到了新列而非默认值兼底；
+        // 环节二：保持 INSERT 默认，验证存量行默认 '[]' 路径。
+        let todo_with_refs = seed_todo(&db, "带引用").await;
+        let todo_default = seed_todo(&db, "默认").await;
+        db.exec(&format!(
+            "INSERT INTO loop_steps (loop_id, name, todo_id, enabled) \
+             VALUES ({loop_id}, 's1', {todo_with_refs}, 1), ({loop_id}, 's2', {todo_default}, 1)"
+        ))
+        .await
+        .expect("insert steps");
+        db.exec(&format!(
+            "UPDATE loop_steps SET step_template_refs = \
+             '[{{\"name\":\"规范\",\"path\":\"bundled://x.md\"}}]' WHERE todo_id = {todo_with_refs}"
+        ))
+        .await
+        .expect("update refs");
+
+        let rows = db.list_loop_steps_with_todo_meta(loop_id).await.unwrap();
+        assert_eq!(rows.len(), 2, "两个环节都应返回");
+        let with_refs = rows
+            .iter()
+            .find(|(s, _, _, _)| s.todo_id == todo_with_refs)
+            .expect("带引用环节应在结果中");
+        assert_eq!(
+            with_refs.0.step_template_refs, r#"[{"name":"规范","path":"bundled://x.md"}]"#,
+            "raw SQL 映射应原样读回写入的 JSON"
+        );
+        let default_row = rows
+            .iter()
+            .find(|(s, _, _, _)| s.todo_id == todo_default)
+            .expect("默认环节应在结果中");
+        assert_eq!(
+            default_row.0.step_template_refs, "[]",
+            "未显式赋值的存量行应读回列默认值 '[]'"
+        );
     }
 
     /// find_loop_step_review_prompt_by_todo：按 todo_id 反查启用环节的内联 review_prompt，
