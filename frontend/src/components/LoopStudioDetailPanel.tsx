@@ -12,7 +12,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import {
   Skeleton, App as AntApp, Empty,
-  Collapse, Switch, Spin,
+  Collapse, Switch,
 } from 'antd';
 import {
   ExclamationCircleOutlined,
@@ -25,7 +25,6 @@ import { TraceBreadcrumb } from '@/components/common/TraceBreadcrumb';
 import { getWorkspaceDisplayName, useProjectDirectories } from '@/utils/workspaceDisplay';
 import { LoopStepsPanel } from './LoopStudioStepsPanel';
 import { LoopExecutionsPanel } from './loop-studio/executions';
-import { ProcessExecutionBoard } from '@/components/process/ProcessExecutionBoard';
 // 删除按钮抽到 LoopDetailActions，与 LoopDetailPage 的 titleSuffix 共用。
 import { LoopDetailActions } from './LoopDetailActions';
 
@@ -327,14 +326,6 @@ export function LoopDetailPanel({
                 </div>
               ),
             },
-            // 工艺执行看板：仅当环路是工艺实例且有执行记录时展示，取最新一条执行。
-            ...(detail.process_template_id != null && executionTotal > 0 ? [{
-              key: 'execution-board',
-              label: '执行看板',
-              children: (
-                <LatestExecBoard workspaceId={detail.workspace_id} loopId={loopId} />
-              ),
-            }] : []),
           ]}
         />
       </div>
@@ -378,31 +369,6 @@ function DetailField({ label, value }: { label: string; value: React.ReactNode }
       <div style={{ fontSize: 13, color: 'var(--color-text, #0f172a)' }}>{value}</div>
     </div>
   );
-}
-
-// 执行看板包装组件：自动取最新一条执行记录并渲染 ProcessExecutionBoard。
-// 定义在模块顶层确保 hook 规则合规（嵌套组件内不可用 hook）。
-function LatestExecBoard({ workspaceId, loopId }: { workspaceId: number | null; loopId: number }) {
-  const [execId, setExecId] = useState<number | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    if (!workspaceId) return;
-    let cancelled = false;
-    dbLoops.listExecutions(workspaceId, loopId, { limit: 1 })
-      .then(res => {
-        if (!cancelled && res.items.length > 0) {
-          setExecId(res.items[0].id);
-        }
-      })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [workspaceId, loopId]);
-
-  if (loading) return <Spin style={{ display: 'block', margin: '20px auto' }} />;
-  if (execId == null || !workspaceId) return <Empty description="暂无执行记录" />;
-
-  return <ProcessExecutionBoard workspaceId={workspaceId} loopId={loopId} executionId={execId} />;
 }
 
 // 空值占位
