@@ -1,9 +1,12 @@
 //! 任务管理 API。
+use std::collections::HashMap;
+
 use axum::extract::{Path, Query, State};
 use axum::Json;
 use axum::Router;
 use serde::{Deserialize, Serialize};
 use crate::handlers::{AppError, AppState};
+use crate::db::entity::{loops, process_templates, tasks};
 use crate::models::ApiResponse;
 
 // 设计原则：step todo 的 prompt 是只读模板，由 loop_runner 在内存中做占位符替换后
@@ -68,6 +71,65 @@ pub async fn create_task(
     }
 }
 
+/// 单任务最近一次执行的状态与需求文本（列表「最近执行」列用）。
+///
+/// loop_executions 是执行流水，按 started_at 倒序取第一行即为最近一次；
+/// trigger_meta 内嵌需求文本，解析失败或缺省时两个字段均返回 None（展示层已有兜底）。
+async fn fetch_latest_execution(
+    state: &AppState,
+    task_id: i64,
+) -> (Option<String>, Option<String>) {
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+    let sql = format!(
+        "SELECT le.status, le.trigger_meta FROM loop_executions le \
+         WHERE le.task_id={task_id} ORDER BY le.started_at DESC LIMIT 1"
+    );
+    let rows = state.db.conn.query_all(Statement::from_string(DbBackend::Sqlite, sql)).await.ok();
+    rows.and_then(|rows| rows.first().map(|r| {
+        let status = r.try_get_by::<Option<String>, _>("status").ok().flatten();
+        let requirement = r.try_get_by::<Option<String>, _>("trigger_meta").ok().flatten()
+            .and_then(|meta| serde_json::from_str::<serde_json::Value>(&meta).ok())
+            .and_then(|v| v.get("requirement").and_then(|r| r.as_str().map(|s| s.to_string())));
+        (status, requirement)
+    })).unwrap_or((None, None))
+}
+
+/// 组装单条任务列表项。
+///
+/// template 来自批量取回的工艺模板（名称 / 复杂度 / 回退版本），version 已由调用方
+/// 按「环路快照优先」口径算好；这里只做字段映射，保持 list_tasks 短小可读。
+fn build_task_item(
+    t: tasks::Model,
+    template: Option<&process_templates::Model>,
+    version: Option<String>,
+    latest: (Option<String>, Option<String>),
+) -> TaskItem {
+    TaskItem {
+        id: t.id,
+        // t 已整体移入，字符串字段直接 move，避免无谓的 clone
+        title: t.title,
+        description: t.description,
+        status: t.status,
+        workspace_id: t.workspace_id,
+        template_id: t.template_id,
+        loop_id: t.loop_id,
+        // 模板展示名：优先中文 display_name，空时回退英文唯一名 name，
+        // 与 services/process/recommender.rs 的展示名降级策略保持一致。
+        template_name: template.map(|p| {
+            if p.display_name.is_empty() {
+                p.name.clone()
+            } else {
+                p.display_name.clone()
+            }
+        }),
+        template_version: version,
+        complexity: template.map(|p| p.complexity.clone()),
+        latest_execution_status: latest.0,
+        latest_execution_requirement: latest.1,
+        created_at: t.created_at,
+    }
+}
+
 /// GET /api/v1/workspaces/{ws}/tasks
 /// 按工作空间列出任务，可选按 status 过滤。
 /// ws 来自 URL path，用于按 workspace_id 过滤（修复之前忽略 ws 导致跨工作空间数据相同的 bug）。
@@ -77,39 +139,29 @@ pub async fn list_tasks(
     Query(q): Query<ListTasksQuery>,
 ) -> Result<impl axum::response::IntoResponse, AppError> {
     let tasks = state.db.list_tasks(ws, q.status.as_deref()).await?;
-    use sea_orm::{ConnectionTrait, DbBackend, Statement};
-    let items: Vec<TaskItem> = {
-        let mut result = Vec::new();
-        for t in tasks {
-            let pt = if let Some(tid) = t.template_id { state.db.get_process_template_by_id(tid).await? } else { None };
-            let exec_sql = format!(
-                "SELECT le.status, le.trigger_meta FROM loop_executions le WHERE le.task_id={} ORDER BY le.started_at DESC LIMIT 1", t.id);
-            let exec = state.db.conn.query_all(Statement::from_string(DbBackend::Sqlite, exec_sql)).await.ok();
-            let (exec_status, exec_req) = exec.and_then(|rows| rows.first().map(|r| {
-                let s = r.try_get_by::<Option<String>,_>("status").ok().flatten();
-                let m = r.try_get_by::<Option<String>,_>("trigger_meta").ok().flatten()
-                    .and_then(|meta| serde_json::from_str::<serde_json::Value>(&meta).ok())
-                    .and_then(|v| v.get("requirement").and_then(|r| r.as_str().map(|s| s.to_string())));
-                (s, m)
-            })).unwrap_or((None, None));
-            result.push(TaskItem {
-                id: t.id, title: t.title.clone(), description: t.description.clone(), status: t.status.clone(),
-                workspace_id: t.workspace_id, template_id: t.template_id, loop_id: t.loop_id,
-            // 模板展示名：优先用中文 display_name，空时回退英文唯一名 name，
-            // 与 services/process/recommender.rs 的展示名降级策略保持一致。
-            // 前端任务列表/卡片/详情三处均从此字段取展示文本，统一为中文名。
-            template_name: pt.as_ref().map(|p| {
-                if p.display_name.is_empty() { p.name.clone() } else { p.display_name.clone() }
-            }),
-                template_version: pt.as_ref().map(|p| p.version.clone()),
-                complexity: pt.as_ref().map(|p| p.complexity.clone()),
-                latest_execution_status: exec_status,
-                latest_execution_requirement: exec_req,
-                created_at: t.created_at.clone(),
-            });
-        }
-        result
-    };
+
+    // 模板与环路各批量取一次：模板提供名称 / 复杂度 / 回退版本，
+    // 环路提供 process_template_version 快照（执行时工艺版本），避免逐任务 N+1。
+    let template_ids: Vec<i64> = tasks.iter().filter_map(|t| t.template_id).collect();
+    let loop_ids: Vec<i64> = tasks.iter().filter_map(|t| t.loop_id).collect();
+    let templates = state.db.get_process_templates_by_ids(&template_ids).await?;
+    let loops = state.db.get_loops_by_ids(&loop_ids).await?;
+    let templates_by_id: HashMap<i64, &process_templates::Model> =
+        templates.iter().map(|p| (p.id, p)).collect();
+    let loops_by_id: HashMap<i64, &loops::Model> =
+        loops.iter().map(|l| (l.id, l)).collect();
+
+    let mut items = Vec::with_capacity(tasks.len());
+    for t in tasks {
+        let template = t.template_id.and_then(|tid| templates_by_id.get(&tid).copied());
+        // 版本口径与任务详情一致（NTD-010）：环路快照优先，缺失回退模板当前版本。
+        let version = t.loop_id
+            .and_then(|lid| loops_by_id.get(&lid))
+            .and_then(|l| l.process_template_version.clone())
+            .or_else(|| template.map(|p| p.version.clone()));
+        let latest = fetch_latest_execution(&state, t.id).await;
+        items.push(build_task_item(t, template, version, latest));
+    }
     Ok(ApiResponse::ok(items))
 }
 
@@ -266,4 +318,160 @@ pub fn task_routes() -> Router<AppState> {
         .route("/api/v1/workspaces/{ws}/tasks/batch-delete", axum::routing::post(batch_delete_tasks))
         .route("/api/v1/workspaces/{ws}/tasks/{id}/executions", axum::routing::post(create_task_execution))
         .route("/api/v1/artifacts/{aid}/content", axum::routing::get(get_artifact_content))
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stdout,
+    clippy::question_mark,
+    clippy::redundant_clone,
+    clippy::needless_pass_by_value
+)]
+mod tests {
+    use std::sync::Arc;
+
+    use axum::body::{to_bytes, Body};
+    use axum::http::{Request, StatusCode};
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+    use serde_json::Value;
+    use tokio::sync::broadcast;
+    use tower::ServiceExt;
+
+    use crate::adapters::{ExecutorRegistry, claude_code::ClaudeCodeExecutor};
+    use crate::config::Config;
+    use crate::db::Database;
+    use crate::handlers::create_app;
+    use crate::scheduler::TodoScheduler;
+    use crate::service_context::ServiceContext;
+    use crate::task_manager::TaskManager;
+
+    /// 构造带内存库的测试 app，返回 router / workspace id / db。
+    ///
+    /// 返回 db 是为了种子工艺模板、环路与任务，并直接执行 UPDATE 写环路快照——
+    /// 这些是公开 DB 方法覆盖不到的字段，必须绕过 DAO 才能模拟「模板已升级、环路未升级」。
+    async fn build_app() -> (axum::Router, i64, Arc<Database>) {
+        let db = Arc::new(Database::new(":memory:").await.expect("memory db must open"));
+        let ws_id = db
+            .create_project_directory("/tmp/test-ntd010-workspace", Some("ntd010"), false, false)
+            .await
+            .expect("workspace must be created");
+
+        let executor_registry = Arc::new(ExecutorRegistry::new());
+        executor_registry
+            .register(ClaudeCodeExecutor::new("claude".to_string()))
+            .await;
+        let (tx, _rx) = broadcast::channel(100);
+        let task_manager = Arc::new(TaskManager::new());
+        let config = Arc::new(std::sync::RwLock::new(Config::default()));
+        let scheduler = Arc::new(TodoScheduler::new().await.expect("scheduler must init"));
+        let ctx = ServiceContext {
+            db: db.clone(),
+            executor_registry: executor_registry.clone(),
+            tx: tx.clone(),
+            task_manager: task_manager.clone(),
+            config: config.clone(),
+            expert_manager: Arc::new(crate::expert::ExpertIndexManager::new()),
+        };
+        scheduler.load_from_db(&ctx).await.expect("scheduler load");
+        scheduler.start().await.expect("scheduler start");
+        (create_app(ctx, scheduler).await, ws_id, db)
+    }
+
+    /// 直接对测试库执行 UPDATE：给环路绑定工艺模板与版本快照。
+    ///
+    /// create_loop 不接收模板字段，installer 写入路径又需要磁盘 YAML，
+    /// 测试里用一条 SQL 精确控制快照取值，才能稳定构造「快照 ≠ 模板当前版本」的场景。
+    async fn bind_loop_template(db: &Database, loop_id: i64, template_id: i64, version: Option<&str>) {
+        let version_sql = match version {
+            Some(v) => format!("process_template_version = '{v}'"),
+            None => "process_template_version = NULL".to_string(),
+        };
+        let sql = format!(
+            "UPDATE loops SET process_template_id = {template_id}, {version_sql} WHERE id = {loop_id}"
+        );
+        db.conn
+            .execute(Statement::from_string(DbBackend::Sqlite, sql))
+            .await
+            .expect("bind loop template must succeed");
+    }
+
+    /// NTD-010 回归：任务列表「工艺」列版本必须与详情口径一致。
+    ///
+    /// 场景：
+    /// - 任务A：环路有快照 1.0.0，模板后来升级到 2.0.0 → 列表应显示 1.0.0（快照优先）；
+    /// - 任务B：环路绑定了模板但无快照 → 列表应回退显示 2.0.0（模板当前版本）。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_list_tasks_uses_loop_snapshot_version() {
+        let (app, ws_id, db) = build_app().await;
+
+        // 先建模板（v1.0.0），再建两个环路：环路1 写快照、环路2 留空快照
+        let tpl = db
+            .upsert_user_process_template(
+                "guid-ntd010", "tpl-ntd010", "工艺A", "", "default", "medium",
+                "1.0.0", "/tmp/ntd010.yaml",
+            )
+            .await
+            .expect("upsert template v1");
+        let loop1 = db
+            .create_loop("环路1", "", Some(ws_id), Some("/tmp/test-ntd010-workspace"), None, None, "[]")
+            .await
+            .expect("create loop1")
+            .id;
+        let loop2 = db
+            .create_loop("环路2", "", Some(ws_id), Some("/tmp/test-ntd010-workspace"), None, None, "[]")
+            .await
+            .expect("create loop2")
+            .id;
+        bind_loop_template(&db, loop1, tpl, Some("1.0.0")).await;
+        bind_loop_template(&db, loop2, tpl, None).await;
+
+        // 两个任务分别挂在两个环路下
+        db.create_task("任务A", ws_id, tpl, Some(loop1)).await.expect("create task A");
+        db.create_task("任务B", ws_id, tpl, Some(loop2)).await.expect("create task B");
+
+        // 模板升级到 v2.0.0：环路快照保持不变
+        db.upsert_user_process_template(
+            "guid-ntd010", "tpl-ntd010", "工艺A", "", "default", "medium",
+            "2.0.0", "/tmp/ntd010.yaml",
+        )
+        .await
+        .expect("upsert template v2");
+
+        // 走真实 HTTP 路由取任务列表
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/workspaces/{ws_id}/tasks"))
+                    .body(Body::empty())
+                    .expect("request build"),
+            )
+            .await
+            .expect("list tasks request");
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.expect("read body");
+        let body: Value = serde_json::from_slice(&bytes).expect("parse body");
+        assert_eq!(body["code"], 0);
+        let tasks = body["data"].as_array().expect("data array");
+        let by_title = |title: &str| {
+            tasks
+                .iter()
+                .find(|t| t["title"] == title)
+                .unwrap_or_else(|| panic!("task '{title}' should be in list"))
+        };
+
+        // 有快照：显示执行时版本 1.0.0，而不是模板当前版本 2.0.0（NTD-010 核心断言）
+        let task_a = by_title("任务A");
+        assert_eq!(task_a["template_id"], tpl);
+        assert_eq!(task_a["template_name"], "工艺A");
+        assert_eq!(task_a["template_version"], "1.0.0");
+
+        // 无快照：回退模板当前版本 2.0.0
+        let task_b = by_title("任务B");
+        assert_eq!(task_b["template_id"], tpl);
+        assert_eq!(task_b["template_version"], "2.0.0");
+    }
 }
