@@ -32,6 +32,10 @@ pub struct Model {
     /// 期望产物配置（JSON 数组）。
     #[sea_orm(default_value = "[]")]
     pub expected_artifacts: String,
+    /// 环节 spec 模板引用（JSON 数组，StepTemplateRef{name,path}）。
+    /// 执行时注入执行器 prompt 供重点阅读（需求 054）。
+    #[sea_orm(default_value = "[]")]
+    pub step_template_refs: String,
     /// 门禁配置（JSON 数组）。
     #[sea_orm(default_value = "[]")]
     pub gate_config: String,

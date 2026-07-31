@@ -22,8 +22,8 @@ use crate::models::Todo;
 
 use super::pre_spawn::{
     create_run_execution_record, enforce_concurrency_limit,
-    inject_expert_context, inject_workspace_background, inject_workspace_prompt,
-    reject_start_todo_failure,
+    inject_expert_context, inject_step_context, inject_workspace_background,
+    inject_workspace_prompt, reject_start_todo_failure,
     select_executor_and_build_command, substitute_message_placeholders,
 };
 use super::spawn_lifecycle::run_spawned_executor_task;
@@ -57,13 +57,19 @@ pub(crate) async fn prepare_execution_state(
     let todo =
         enforce_concurrency_limit(&request, initial_todo, max_concurrent, &task_state.task_id)
             .await?;
+    // 4.4) 注入环节级「期望产物 + spec 模板」（需求 054）。
+    //      放在所有注入的最内层：交付要求紧贴核心任务之上，让执行器动手前明确
+    //      「要交付什么、遵循哪份 spec」。无 step（独立 todo）/ 配置全空 / 读取失败
+    //      时静默回退，不阻断执行；todo.prompt 只读，绝不写回 DB。
+    let step_message =
+        inject_step_context(&request.db, request.todo_id, &substituted.message).await;
     // 4.5) 注入工作空间级共识 prompt（需求 022）。
     //      workspace 共识是最外层，专家上下文次之，原任务在最内层。
     //      读取失败/无 prompt 时静默回退原 message，不阻断执行。
     let workspace_message = inject_workspace_prompt(
         &request.db,
         request.workspace_id,
-        &substituted.message,
+        &step_message,
     )
     .await;
     // 5) 注入专家上下文：如果 todo 关联了 expert_name，把 Agent MD 和技能信息

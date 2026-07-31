@@ -110,6 +110,7 @@ mod tests {
             fail_goto_step_id: fail_goto,
             phase_id: None,
             expected_artifacts: "[]".to_string(),
+            step_template_refs: "[]".to_string(),
             gate_config: "[]".to_string(),
             max_rework: 3,
             skill_names: "[]".to_string(),

@@ -268,6 +268,10 @@ async fn create_loop_step_for_link(
     let now = utc_timestamp();
     let expected_artifacts = serde_json::to_string(&link.expected_artifacts)
         .unwrap_or_else(|_| "[]".to_string());
+    // 环节 spec 模板引用（需求 054）：序列化为 JSON 数组串，供执行器执行时注入 prompt。
+    // as_deref 借用避免 move（link 是共享引用）；None 时 unwrap_or_default 给空切片。
+    let step_template_refs = serde_json::to_string(link.step_template.as_deref().unwrap_or_default())
+        .unwrap_or_else(|_| "[]".to_string());
     let gate_config = serde_json::to_string(&link.gates).unwrap_or_else(|_| "[]".to_string());
     let skill_names = serde_json::to_string(&link.skills).unwrap_or_else(|_| "[]".to_string());
 
@@ -299,6 +303,7 @@ async fn create_loop_step_for_link(
         }),
         phase_id: ActiveValue::Set(Some(phase_id)),
         expected_artifacts: ActiveValue::Set(expected_artifacts),
+        step_template_refs: ActiveValue::Set(step_template_refs),
         gate_config: ActiveValue::Set(gate_config),
         max_rework: ActiveValue::Set(link.max_rework),
         skill_names: ActiveValue::Set(skill_names),
@@ -530,7 +535,7 @@ fn resolve_phase_spec_refs(phases: &mut [PhaseDefinition]) {
     for phase in phases.iter_mut() {
         // 解析 spec_ref
         if let Some(ref spec_ref) = phase.spec_ref {
-            match load_bundled_markdown(spec_ref) {
+            match super::source::read_bundled_markdown(spec_ref) {
                 Ok(content) => phase.spec = content,
                 Err(e) => {
                     tracing::warn!(
@@ -541,20 +546,6 @@ fn resolve_phase_spec_refs(phases: &mut [PhaseDefinition]) {
             }
         }
     }
-}
-
-/// 加载 `bundled://` 协议的 markdown 文件。
-///
-/// 将 `bundled://processes/conventions/xxx.md` 转换为 `~/.ntd/bundled/processes/conventions/xxx.md`。
-fn load_bundled_markdown(uri: &str) -> Result<String, String> {
-    let path_str = uri
-        .strip_prefix("bundled://")
-        .ok_or_else(|| format!("不支持的协议: {}", uri))?;
-    let home = dirs::home_dir()
-        .ok_or_else(|| "无法获取 home 目录".to_string())?;
-    let file_path = home.join(".ntd").join("bundled").join(path_str);
-    std::fs::read_to_string(&file_path)
-        .map_err(|e| format!("读取 {} 失败: {}", file_path.display(), e))
 }
 
 /// 升级工艺实例环路到模板最新版本。

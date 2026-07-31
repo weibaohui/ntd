@@ -1246,7 +1246,7 @@ impl Database {
         let sql = format!(
             "SELECT s.id, s.loop_id, s.name, s.description, s.order_index, s.todo_id, \
                     s.on_success, s.success_goto_step_id, s.on_rating_fail, s.fail_goto_step_id, \
-                    s.phase_id, s.expected_artifacts, s.gate_config, s.max_rework, \
+                    s.phase_id, s.expected_artifacts, s.step_template_refs, s.gate_config, s.max_rework, \
                     s.skill_names, s.expert_name, s.review_prompt, \
                     s.enabled, s.created_at, \
                     st.title as todo_title, st.executor as todo_executor, \
@@ -1278,6 +1278,7 @@ impl Database {
                 fail_goto_step_id: row.try_get_by::<Option<i64>, _>("fail_goto_step_id")?,
                 phase_id: row.try_get_by::<Option<i64>, _>("phase_id")?,
                 expected_artifacts: row.try_get_by::<String, _>("expected_artifacts")?,
+                step_template_refs: row.try_get_by::<String, _>("step_template_refs")?,
                 gate_config: row.try_get_by::<String, _>("gate_config")?,
                 max_rework: row.try_get_by::<i32, _>("max_rework")?,
                 skill_names: row.try_get_by::<String, _>("skill_names")?,
