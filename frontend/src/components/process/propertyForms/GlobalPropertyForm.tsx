@@ -21,10 +21,11 @@ import {
   InputNumber,
   Checkbox,
   Collapse,
-  Tooltip,
   Typography,
 } from 'antd';
 import type { ProcessDefinition } from '@/types/process';
+// 需求 046：prompt 类字段统一改用 MD 编辑控件（含参数条的光标插入）
+import { PromptMdField } from './PromptMdField';
 
 const { Text } = Typography;
 
@@ -225,51 +226,13 @@ export function GlobalPropertyForm({
         label="异常处理 Prompt"
         tooltip="环路异常终止（超步数/超Token/失败）时执行此提示词。可用下方参数占位符"
       >
-        <Input.TextArea
+        {/* 需求 046：由 TextArea 升级为 MD 编辑器（200px）；
+            参数插入条迁入 PromptMdField，插入行为由尾部追加升级为光标处插入（对齐 todo 页） */}
+        <PromptMdField
           value={abnormalHandler.prompt ?? ''}
-          onChange={(e) => handleAbnormalPromptChange(e.target.value)}
-          rows={4}
-          placeholder="异常发生时执行的补救/清理提示词，可空。可用 {{abnormal_status}}、{{error_detail}} 等占位符"
+          onChange={handleAbnormalPromptChange}
+          params={ABNORMAL_HANDLER_PROMPT_PARAMS}
         />
-        {/* 快速插入参数条：点击把 {{key}} 追加到异常处理 prompt 尾部，与评审 prompt 参数条样式一致 */}
-        <div style={{
-          marginTop: 8,
-          display: 'flex',
-          flexWrap: 'wrap',
-          gap: 6,
-          alignItems: 'center',
-        }}>
-          <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginRight: 2 }}>可用参数:</span>
-          {ABNORMAL_HANDLER_PROMPT_PARAMS.map((p) => (
-            <Tooltip key={p.key} title={p.desc}>
-              <code
-                onClick={() => handleAbnormalPromptChange(
-                  (abnormalHandler.prompt ?? '') + (abnormalHandler.prompt?.endsWith(' ') || !abnormalHandler.prompt ? '' : ' ') + p.key + ' ',
-                )}
-                style={{
-                  fontSize: 11,
-                  padding: '1px 6px',
-                  borderRadius: 4,
-                  background: 'var(--color-fill-quaternary)',
-                  border: '1px solid var(--color-border-secondary)',
-                  cursor: 'pointer',
-                  color: 'var(--color-text-secondary)',
-                  transition: 'all 0.2s',
-                }}
-                onMouseEnter={(e) => {
-                  (e.currentTarget as HTMLElement).style.borderColor = 'var(--color-primary)';
-                  (e.currentTarget as HTMLElement).style.color = 'var(--color-primary)';
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLElement).style.borderColor = 'var(--color-border-secondary)';
-                  (e.currentTarget as HTMLElement).style.color = 'var(--color-text-secondary)';
-                }}
-              >
-                {p.key}
-              </code>
-            </Tooltip>
-          ))}
-        </div>
       </Form.Item>
 
 

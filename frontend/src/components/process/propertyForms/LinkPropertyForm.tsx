@@ -22,11 +22,12 @@ import {
   Button,
   Table,
   Space,
-  Tooltip,
   Typography,
 } from 'antd';
 import { DeleteOutlined, PlusOutlined, CloseOutlined } from '@ant-design/icons';
 import { DefaultReviewPromptButton } from '@/components/common/DefaultReviewPromptButton';
+// 需求 046：prompt 类字段统一改用 MD 编辑控件（含参数条的光标插入）
+import { PromptMdField } from './PromptMdField';
 import type {
   ProcessDefinition,
   LinkDefinition,
@@ -384,12 +385,12 @@ export function LinkPropertyForm({
         />
       </Form.Item>
 
+      {/* 提示词：需求 046 由 TextArea 升级为 MD 编辑器（200px）。
+          不传 params：该字段现状无参数条，保持能力不扩张（YAGNI） */}
       <Form.Item label="提示词">
-        <Input.TextArea
+        <PromptMdField
           value={link.prompt ?? ''}
-          onChange={(e) => handleFieldChange('prompt', e.target.value)}
-          rows={3}
-          placeholder="提示词，可空"
+          onChange={(v) => handleFieldChange('prompt', v)}
         />
       </Form.Item>
 
@@ -433,56 +434,22 @@ export function LinkPropertyForm({
         />
       </Form.Item>
 
-      <Form.Item label="评审 Prompt">
-        <Input.TextArea
+      {/* 评审 Prompt：需求 046 升级为 MD 编辑器（200px）。
+          原 TextArea placeholder 中的使用说明迁移到 Form.Item tooltip，避免提示信息丢失；
+          参数插入条迁入 PromptMdField，插入行为由尾部追加升级为光标处插入（对齐 todo 页）。 */}
+      <Form.Item
+        label="评审 Prompt"
+        tooltip="环节专属评审模板，可空。非空时整体替代默认评审模板；可用下方参数占位符"
+      >
+        <PromptMdField
           value={link.review_prompt ?? ''}
-          onChange={(e) => handleFieldChange('review_prompt', e.target.value)}
-          rows={4}
-          placeholder="环节专属评审模板，可空。非空时整体替代默认评审模板；可用 {{original_output}}、{{acceptance_criteria}} 等占位符"
+          onChange={(v) => handleFieldChange('review_prompt', v)}
+          params={REVIEW_PROMPT_PARAMS}
+          extraActions={
+            /* 一键填入系统默认评审 prompt（DEFAULT_REVIEWER_PROMPT 常量），直接覆盖原内容 */
+            <DefaultReviewPromptButton onApply={(t) => handleFieldChange('review_prompt', t)} />
+          }
         />
-        {/* 快速插入参数条：点击模板将 {{key}} 追加到评审 prompt 尾部。
-            与 todo 编辑区的 prompt 参数快速输入条样式一致。 */}
-        <div style={{
-          marginTop: 8,
-          display: 'flex',
-          flexWrap: 'wrap',
-          gap: 6,
-          alignItems: 'center',
-        }}>
-          <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginRight: 2 }}>可用参数:</span>
-          {REVIEW_PROMPT_PARAMS.map(p => (
-            <Tooltip key={p.key} title={p.desc}>
-              <code
-                onClick={() => handleFieldChange(
-                  'review_prompt',
-                  (link.review_prompt ?? '') + (link.review_prompt?.endsWith(' ') || !link.review_prompt ? '' : ' ') + p.key + ' ',
-                )}
-                style={{
-                  fontSize: 11,
-                  padding: '1px 6px',
-                  borderRadius: 4,
-                  background: 'var(--color-fill-quaternary)',
-                  border: '1px solid var(--color-border-secondary)',
-                  cursor: 'pointer',
-                  color: 'var(--color-text-secondary)',
-                  transition: 'all 0.2s',
-                }}
-                onMouseEnter={(e) => {
-                  (e.currentTarget as HTMLElement).style.borderColor = 'var(--color-primary)';
-                  (e.currentTarget as HTMLElement).style.color = 'var(--color-primary)';
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLElement).style.borderColor = 'var(--color-border-secondary)';
-                  (e.currentTarget as HTMLElement).style.color = 'var(--color-text-secondary)';
-                }}
-              >
-                {p.key}
-              </code>
-            </Tooltip>
-          ))}
-          {/* 一键填入系统默认评审 prompt（DEFAULT_REVIEWER_PROMPT 常量），直接覆盖原内容 */}
-          <DefaultReviewPromptButton onApply={(t) => handleFieldChange('review_prompt', t)} />
-        </div>
       </Form.Item>
 
       <Form.Item label="成功后跳转">
