@@ -40,6 +40,7 @@ mod v78;
 mod v79;
 mod v80;
 mod v81;
+mod v82;
 
 pub use v2_v5::read_applied_versions;
 pub use v2_v5::drop_column_if_exists;
@@ -139,6 +140,9 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         // 评审/门禁统一由 gate_config 表达，review_type 与 gate 语义重复已废弃
         Box::new(v80::V80LoopSlim),
         Box::new(v81::V81DropLoopStepReviewType),
+        // V82 在 V81 之后：删除废弃的 process_step_templates 表（需求 052）——
+        // step_template 原型机制已内联进 YAML link，表仅剩 bundled 缓存与查错表的 warn
+        Box::new(v82::V82DropProcessStepTemplates),
     ]
 }
 

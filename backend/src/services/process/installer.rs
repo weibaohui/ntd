@@ -31,10 +31,6 @@ pub async fn install_process_template(
     // 工艺正文由调用方从磁盘文件读取后传入；此处只负责解析，不再触碰 DB 的 definition。
     let mut definition: ProcessDefinition = serde_yaml::from_str(definition)?;
 
-    // skill 名称是自由文本（executor 在运行时注入），不做强制校验，仅记 warn。
-    // step_template 已转为 spec 引用，不再做原型存在性校验。
-    check_skill_warnings(db, &definition.phases).await?;
-
     // 解析 spec_ref 外部引用，覆盖 inline spec 文本。（阶段级 acceptance_criteria_ref 已随需求 036 移除。）
     resolve_phase_spec_refs(&mut definition.phases);
 
@@ -586,7 +582,6 @@ pub async fn upgrade_process_template_loop(
     // 工艺正文由调用方按 source_path 从磁盘读取后传入，这里只负责解析，不再读 DB 的 definition。
     let mut definition: ProcessDefinition = serde_yaml::from_str(definition)?;
 
-    check_skill_warnings(db, &definition.phases).await?;
     resolve_phase_spec_refs(&mut definition.phases);
 
     // 1. 收集旧步骤信息
@@ -682,29 +677,6 @@ pub async fn upgrade_process_template_loop(
     })
 }
 
-/// 校验环节引用的 skill 名称。
-/// step_template 已转为 spec 引用（不再是原型名），不再做存在性校验；
-/// skill 是 executor 级别的文件注入，仅记 warn，不阻断安装。
-async fn check_skill_warnings(
-    db: &Database,
-    phases: &[PhaseDefinition],
-) -> Result<(), InstallError> {
-    for phase in phases {
-        for link in &phase.links {
-            // skill 名称仅 warn，不阻断安装。
-            for skill_name in &link.skills {
-                if db.get_process_step_template_by_name(skill_name).await?.is_none() {
-                    tracing::warn!(
-                        "工艺模板安装：环节「{}」引用的 skill「{}」在当前 bundled 仓库中未找到对应环节原型，将在运行时按名称注入",
-                        link.name, skill_name
-                    );
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,
@@ -759,23 +731,6 @@ phases:
         on_gate_fail: write-prd
 "#
         .to_string()
-    }
-
-    async fn seed_step_template(db: &Database) {
-        db.upsert_system_process_step_template(
-            "write-prd",
-            "编写 PRD",
-            "请编写 PRD",
-            Some("claudecode"),
-            Some("product-manager"),
-            "[\"4p12s-prd\"]",
-            Some("claude-sonnet-5"),
-            "PRD.md 存在",
-            "bundled://processes/step-templates/write-prd.yaml",
-            "general",
-        )
-        .await
-        .unwrap();
     }
 
     async fn seed_workspace(db: &Database) -> i64 {
@@ -857,7 +812,6 @@ phases:
     #[tokio::test]
     async fn test_install_process_template_creates_loop_phases_steps() {
         let db = fresh_db().await;
-        seed_step_template(&db).await;
         let ws_id = seed_workspace(&db).await;
 
         let template = process_templates::ActiveModel {
@@ -955,7 +909,6 @@ phases:
     #[tokio::test]
     async fn test_install_link_review_type_enables_auto_review() {
         let db = fresh_db().await;
-        seed_step_template(&db).await;
         let ws_id = seed_workspace(&db).await;
 
         let template = process_templates::ActiveModel {

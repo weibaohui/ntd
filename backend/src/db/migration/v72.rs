@@ -181,6 +181,31 @@ mod tests {
             .await
             .unwrap();
 
+        // V72 会给 process_step_templates 补 category 列；该表在 v71 由全量迁移链创建，
+        // 但 v82 已把它删除，fresh 链上不复存在，故测试自行建好前置表（与上方 process_templates 同理）。
+        db.conn
+            .execute(Statement::from_string(
+                sea_orm::DbBackend::Sqlite,
+                "CREATE TABLE IF NOT EXISTS process_step_templates (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL DEFAULT '',
+                    title TEXT NOT NULL DEFAULT '',
+                    prompt TEXT NOT NULL DEFAULT '',
+                    executor TEXT,
+                    expert_name TEXT,
+                    skill_names TEXT NOT NULL DEFAULT '[]',
+                    model TEXT,
+                    acceptance_criteria TEXT NOT NULL DEFAULT '',
+                    workspace_id INTEGER,
+                    is_system INTEGER DEFAULT 0,
+                    source_path TEXT,
+                    created_at TEXT,
+                    updated_at TEXT
+                )",
+            ))
+            .await
+            .unwrap();
+
         // 2. 首次迁移。
         V72ProcessManagementV2.up(&db).await.unwrap();
 
