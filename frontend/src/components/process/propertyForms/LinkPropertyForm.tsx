@@ -3,7 +3,7 @@
 // M4 里程碑：环节属性面板（LinkPropertyForm）。
 //
 // 设计意图（对应 docs/design/029-M4-ReactFlow可视化编辑器-方案.md §3.1.9 + 设计 §7.1）：
-// - 暴露 8 个常用字段（id/name/step_template/prompt/executor/review_type/on_success/on_gate_fail）。
+// - 暴露 7 个常用字段（id/name/step_template/prompt/executor/on_success/on_gate_fail）。
 // - 嵌套字段：gates + expected_artifacts 用 Ant Design Table 增删行。
 // - on_success / on_gate_fail 用分组下拉（OptGroup by phase）。
 // - 每个字段 onChange → updateLinkField → onDefinitionChange。
@@ -420,18 +420,8 @@ export function LinkPropertyForm({
         onToggleSkill={handleToggleSkill}
       />
 
-      <Form.Item label="审核类型">
-        <Select
-          value={link.review_type}
-          onChange={(value) => handleFieldChange('review_type', value ?? undefined)}
-          allowClear
-          placeholder="默认 AI 审核"
-          options={[
-            { value: 'ai', label: 'AI 审核' },
-            { value: 'human', label: '人工审核' },
-          ]}
-        />
-      </Form.Item>
+      {/* 048：审核类型(review_type)已废弃——评审/门禁统一由下方 gates 配置
+          (ai_criteria_review / human_approval) 决定，不再单列 review_type 字段。 */}
 
       <Form.Item label="评审 Prompt">
         <Input.TextArea
@@ -642,11 +632,10 @@ const tableStyle: CSSProperties = {
   marginBottom: 16,
 };
 
-// 门禁类型可选项（对齐后端 services/process/gates 模块支持的 4 种 type）。
+// 门禁类型可选项。046 起 artifact_present/script_check 已废弃（统一并入 ai_criteria_review），
+// 编辑器不再产出这两种类型，避免建出运行时报「废弃门禁类型」错误的工艺。
 // 用下拉避免用户手填拼错 type 字符串，导致门禁匹配不到执行器而不生效。
 const GATE_TYPE_OPTIONS = [
-  { value: 'artifact_present', label: '产物存在' },
   { value: 'ai_criteria_review', label: 'AI 评审' },
   { value: 'human_approval', label: '人工审批' },
-  { value: 'script_check', label: '脚本检查' },
 ];

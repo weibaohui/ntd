@@ -230,8 +230,6 @@ pub struct LoopStepRawDto {
     pub on_rating_fail: String,
     /// on_rating_fail="goto" 时的目标 step_id
     pub fail_goto_step_id: Option<i64>,
-    /// 评审类型: "ai" = AI 自动评审, "human" = 人工审批
-    pub review_type: String,
     pub enabled: bool,
     pub created_at: Option<String>,
     /// 所属阶段 ID（process management）
@@ -255,7 +253,6 @@ impl From<loop_steps::Model> for LoopStepRawDto {
             success_goto_step_id: m.success_goto_step_id,
             on_rating_fail: m.on_rating_fail,
             fail_goto_step_id: m.fail_goto_step_id,
-            review_type: m.review_type,
             enabled: m.enabled != 0,
             created_at: m.created_at,
             phase_id: m.phase_id,

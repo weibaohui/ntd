@@ -28,7 +28,7 @@ async fn build_step_execution(db: &Database, initial_status: &str) -> (i64, i64)
     let step = db
         .create_loop_step(
             lp.id, "step_1", "", todo_id,
-            true, "next", None, "fail", None, "human",
+            true, "next", None, "fail", None,
         )
         .await
         .unwrap();

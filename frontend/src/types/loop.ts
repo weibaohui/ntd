@@ -134,8 +134,6 @@ export interface LoopStepDto {
   success_goto_step_id: number | null;
   on_rating_fail: string;
   fail_goto_step_id: number | null;
-  /** 评审类型: 'ai' = AI 自动评审, 'human' = 人工审批 */
-  review_type: string;
   enabled: boolean;
   created_at: string | null;
   /** 关联的 todo title */

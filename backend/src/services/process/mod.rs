@@ -135,9 +135,6 @@ pub struct LinkDefinition {
     #[serde(default)]
     pub skills: Vec<String>,
     pub model: Option<String>,
-    /// 评审类型：ai / human，默认 ai
-    #[serde(default = "default_review_type")]
-    pub review_type: String,
     #[serde(default)]
     pub expected_artifacts: Vec<ExpectedArtifact>,
     #[serde(default)]
@@ -159,10 +156,6 @@ pub struct LinkDefinition {
     /// 空串 = 未设置，评审时回退到环路级 `review_template_id` → 全局默认模板。
     #[serde(default)]
     pub review_prompt: String,
-}
-
-fn default_review_type() -> String {
-    "ai".to_string()
 }
 
 fn default_on_success() -> String {

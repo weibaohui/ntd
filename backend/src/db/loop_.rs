@@ -368,7 +368,6 @@ impl Database {
                     None, // success_goto 第二遍再补
                     &s.on_rating_fail,
                     None, // fail_goto 第二遍再补
-                    &s.review_type,
                 )
                 .await?;
 
@@ -691,7 +690,6 @@ impl Database {
         success_goto_step_id: Option<i64>,
         on_rating_fail: &str,
         fail_goto_step_id: Option<i64>,
-        review_type: &str,
     ) -> Result<loop_steps::Model, sea_orm::DbErr> {
         // 自动分配 order_index: 当前最大 + 1
         let next_order = self
@@ -716,7 +714,6 @@ impl Database {
             success_goto_step_id: ActiveValue::Set(success_goto_step_id),
             on_rating_fail: ActiveValue::Set(on_rating_fail.to_string()),
             fail_goto_step_id: ActiveValue::Set(fail_goto_step_id),
-            review_type: ActiveValue::Set(review_type.to_string()),
             created_at: ActiveValue::Set(Some(now)),
             ..Default::default()
         };
@@ -1231,7 +1228,6 @@ impl Database {
         let sql = format!(
             "SELECT s.id, s.loop_id, s.name, s.description, s.order_index, s.todo_id, \
                     s.on_success, s.success_goto_step_id, s.on_rating_fail, s.fail_goto_step_id, \
-                    s.review_type, \
                     s.phase_id, s.expected_artifacts, s.gate_config, s.max_rework, \
                     s.skill_names, s.expert_name, s.review_prompt, \
                     s.enabled, s.created_at, \
@@ -1262,7 +1258,6 @@ impl Database {
                 success_goto_step_id: row.try_get_by::<Option<i64>, _>("success_goto_step_id")?,
                 on_rating_fail: row.try_get_by::<String, _>("on_rating_fail")?,
                 fail_goto_step_id: row.try_get_by::<Option<i64>, _>("fail_goto_step_id")?,
-                review_type: row.try_get_by::<String, _>("review_type")?,
                 phase_id: row.try_get_by::<Option<i64>, _>("phase_id")?,
                 expected_artifacts: row.try_get_by::<String, _>("expected_artifacts")?,
                 gate_config: row.try_get_by::<String, _>("gate_config")?,
@@ -1770,22 +1765,20 @@ mod loop_step_count_tests {
         let todo_id = seed_todo(&db, "环节todo").await;
         let free_todo = seed_todo(&db, "自由todo").await;
         let loop_id = seed_loop(&db, "L").await;
-        // 044：min_rating 列已下线，闸门改由 gate_config 表达；这里只验证反查命中与 review_type
         db.exec(&format!(
-            "INSERT INTO loop_steps (loop_id, name, todo_id, enabled, review_type) \
-             VALUES ({loop_id}, 's', {todo_id}, 1, 'ai')"
+            "INSERT INTO loop_steps (loop_id, name, todo_id, enabled) \
+             VALUES ({loop_id}, 's', {todo_id}, 1)"
         ))
         .await
         .expect("insert step");
 
-        // 命中：返回该 step，review_type=ai（原 min_rating 闸门语义已迁到 gate_config）
+        // 命中：返回该 step
         let found = db
             .find_loop_step_by_todo_id(todo_id)
             .await
             .unwrap()
             .expect("step should exist");
         assert_eq!(found.todo_id, todo_id);
-        assert_eq!(found.review_type, "ai");
 
         // 未命中：未被环节引用的 todo 返回 None
         let missing = db.find_loop_step_by_todo_id(free_todo).await.unwrap();
