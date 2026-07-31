@@ -1601,4 +1601,147 @@ mod tests {
         assert!(result.contains("docs/x.md"), "应含产物路径");
         assert!(result.ends_with("原任务"), "原 message 应在尾部");
     }
+
+    // ─── spec 正文内联/超限降级 + 按字段降级（需求 054 补充覆盖）───
+    //
+    // format_single_spec 依赖 read_bundled_markdown 读取 ~/.ntd/bundled 下的真实文件，
+    // 无内存注入点，因此测试必须在真实 bundled 目录建临时文件；文件名各用例唯一，
+    // 避免 cargo test 并发互踩，用毕即删。
+
+    /// 在 ~/.ntd/bundled/processes/conventions 下写临时 spec 文件，返回其 bundled:// URI。
+    fn create_test_bundled_spec(filename: &str, content: &str) -> String {
+        let dir = dirs::home_dir()
+            .expect("home dir must exist")
+            .join(".ntd/bundled/processes/conventions");
+        // 目录可能尚未存在（全新机器），由测试负责建好。
+        std::fs::create_dir_all(&dir).expect("create bundled conventions dir");
+        std::fs::write(dir.join(filename), content).expect("write temp spec");
+        format!("bundled://processes/conventions/{filename}")
+    }
+
+    /// 删除临时 spec 文件；忽略错误（文件可能已被并发清理），不让清理失败拖垮断言。
+    fn remove_test_bundled_spec(uri: &str) {
+        let path = uri.strip_prefix("bundled://").expect("bundled uri");
+        let _ = std::fs::remove_file(
+            dirs::home_dir()
+                .expect("home dir must exist")
+                .join(".ntd/bundled")
+                .join(path),
+        );
+    }
+
+    /// 正文 ≤ 上限 → 内联进渲染结果，不降级为路径引用。
+    #[test]
+    fn test_format_single_spec_inlines_content_within_limit() {
+        let uri = create_test_bundled_spec("test-054-inline.md", "# 规范\n必须遵守约束A");
+        let spec = StepTemplateRef {
+            name: "小规范".to_string(),
+            path: uri.clone(),
+        };
+        let rendered = format_single_spec(&spec);
+        assert!(rendered.contains("### 小规范"), "应含 spec 标题");
+        assert!(rendered.contains("必须遵守约束A"), "正文应内联");
+        assert!(!rendered.contains("详见"), "内联时不应出现路径降级");
+        remove_test_bundled_spec(&uri);
+    }
+
+    /// 正文恰好等于上限 → 仍内联（边界采用 <= 判定，防止边界文件被误降级）。
+    #[test]
+    fn test_format_single_spec_at_exact_limit_is_inlined() {
+        let exact = "y".repeat(SPEC_INLINE_LIMIT);
+        let uri = create_test_bundled_spec("test-054-exact.md", &exact);
+        let spec = StepTemplateRef {
+            name: "边界规范".to_string(),
+            path: uri.clone(),
+        };
+        let rendered = format_single_spec(&spec);
+        // 抽一段正文特征串判断内联，避免整段比较。
+        assert!(rendered.contains(&"y".repeat(100)), "恰好上限应内联");
+        assert!(!rendered.contains("详见"), "恰好上限不应降级");
+        remove_test_bundled_spec(&uri);
+    }
+
+    /// 正文超过上限 → 降级为路径引用，正文不得内联（防 prompt 膨胀）。
+    #[test]
+    fn test_format_single_spec_over_limit_falls_back_to_path() {
+        let big = "x".repeat(SPEC_INLINE_LIMIT + 1);
+        let uri = create_test_bundled_spec("test-054-over.md", &big);
+        let spec = StepTemplateRef {
+            name: "大规范".to_string(),
+            path: uri.clone(),
+        };
+        let rendered = format_single_spec(&spec);
+        assert!(rendered.contains("### 大规范"), "降级后仍保留 spec 名");
+        assert!(rendered.contains(&uri), "降级应给出路径引用");
+        assert!(rendered.contains("正文过长"), "降级应带原因提示");
+        assert!(
+            rendered.len() < SPEC_INLINE_LIMIT + 1,
+            "超限正文不得内联进 prompt"
+        );
+        remove_test_bundled_spec(&uri);
+    }
+
+    /// 按字段降级（验收标准）：某字段 JSON 损坏时仅该字段按空处理，另一字段仍正常注入。
+    /// 两个方向各验一遍，防止「一个脏字段拖垮整段注入」的回归。
+    #[tokio::test]
+    async fn test_inject_step_context_degrades_per_field_on_json_error() {
+        let db = Database::new(":memory:").await.unwrap();
+        let ws = db
+            .get_or_create_project_directory("/tmp/ws_054_deg", None)
+            .await
+            .unwrap();
+        let loop_model = db
+            .create_loop("t", "", Some(ws.id), Some("/tmp/ws_054_deg"), None, None, "[]")
+            .await
+            .unwrap();
+        let todo_id = db
+            .create_todo_with_extras("task", "do", None, None, false, ws.id, "/tmp/ws_054_deg")
+            .await
+            .unwrap();
+        db.create_loop_step(
+            loop_model.id, "环节", "", todo_id, true, "next", None, "break", None,
+        )
+        .await
+        .unwrap();
+
+        // 方向一：expected_artifacts 损坏 + step_template_refs 有效 → spec 段仍注入。
+        let uri = create_test_bundled_spec("test-054-deg.md", "规范正文X");
+        let refs_json = serde_json::to_string(&[StepTemplateRef {
+            name: "S".to_string(),
+            path: uri.clone(),
+        }])
+        .unwrap();
+        db.exec(&format!(
+            "UPDATE loop_steps SET expected_artifacts = 'not json', \
+             step_template_refs = '{refs_json}' WHERE todo_id = {todo_id}"
+        ))
+        .await
+        .unwrap();
+        let result = inject_step_context(&db, todo_id, "M").await;
+        assert!(result.contains("## 参考 Spec 约定"), "产物字段损坏不应拖垮 spec 注入");
+        assert!(result.contains("规范正文X"), "spec 正文应内联");
+        assert!(!result.contains("## 期望产物"), "损坏字段应按空处理");
+        assert!(result.ends_with('M'), "原 message 应在尾部");
+
+        // 方向二：expected_artifacts 有效 + step_template_refs 损坏 → 产物段仍注入。
+        let artifacts_json = serde_json::to_string(&[ExpectedArtifact {
+            name: "PRD".to_string(),
+            artifact_type: "file".to_string(),
+            path: None,
+            locator: None,
+        }])
+        .unwrap();
+        db.exec(&format!(
+            "UPDATE loop_steps SET expected_artifacts = '{artifacts_json}', \
+             step_template_refs = '{{bad' WHERE todo_id = {todo_id}"
+        ))
+        .await
+        .unwrap();
+        let result = inject_step_context(&db, todo_id, "M").await;
+        assert!(result.contains("## 期望产物"), "spec 字段损坏不应拖垮产物注入");
+        assert!(result.contains("PRD"));
+        assert!(!result.contains("## 参考 Spec 约定"), "损坏字段应按空处理");
+        assert!(result.ends_with('M'));
+        remove_test_bundled_spec(&uri);
+    }
 }

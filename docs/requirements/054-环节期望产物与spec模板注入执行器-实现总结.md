@@ -3,6 +3,7 @@
 | 修改人 | 修改时间 | 修改内容 |
 |--------|---------|---------|
 | Claude | 2026-07-31 | 初始版本（环节期望产物 + spec 模板注入执行器） |
+| Claude | 2026-07-31 | 审查后补充 7 条测试：installer 非空落库/升级重建、spec 内联三路径、按字段降级 E2E、raw SQL 映射 |
 
 ---
 
@@ -51,10 +52,11 @@
 
 ## 5. 测试验证
 
-- `cargo clippy --all-targets -- -D warnings`：**零告警**。
-- `cargo test --lib`：**1501 passed, 0 failed**（含 v83 迁移 2 条、`inject_step_context` 系列 10 条）。
+- `cargo clippy --all-targets -- -D warnings`：**零告警**（相对 main 零新增；本机 rust 1.95.0 下的 43 个 lint 为 main 存量工具链漂移，与本 PR 无关）。
+- `cargo test --lib`：**1509 passed**（含 v83 迁移 3 条、`inject_step_context` 系列 14 条、installer 落库/升级 2 条、raw SQL 映射 1 条）。唯一失败 `git_sync::tests::test_sync_repo_restores_deleted_file` 为 main 存量环境依赖失败，与本需求无关。
 - 集成测试 `loop_step_execution_status_tests` / `services_tests` / `db_feature_supplement_tests`：**68 passed, 0 failed**。
-- 新单测覆盖：产物渲染（全字段/缺省）、spec 读取失败回退路径、配置全空返回 None、仅产物/仅 spec、无 step 回退、端到端注入（DB 写产物→段落前置→原 message 在尾）。
+- 单测覆盖：产物渲染（全字段/缺省）、spec 读取失败回退路径、**spec 正文内联（≤4KB）/超限（>4KB）降级/恰好 4KB 边界**、配置全空返回 None、仅产物/仅 spec、无 step 回退、端到端注入（DB 写产物→段落前置→原 message 在尾）、**按字段降级（一字段坏 JSON 时另一字段仍注入，双向）**、**installer 非空 step_template 落库**、**升级工艺后新列同步重建**、**list_loop_steps_with_todo_meta raw SQL 新列映射（非标值逐字读回 + 存量默认 '[]'）**。
+- 活体 E2E（人工审查验证）：PR 构建起服务后注册假 claude CLI 落盘 argv，HTTP 执行配置了产物+spec 的环节 todo，实际收到的 prompt 含完整 `# 环节交付要求`（产物清单 + spec 正文内联 + 分隔线 + 原 prompt 在尾）；未配置环节与独立 todo 的 prompt 与现状逐字一致；`todo.prompt` 未写回 DB。
 
 ## 6. 已知限制 / 后续
 

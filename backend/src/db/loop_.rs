@@ -1804,6 +1804,50 @@ mod loop_step_count_tests {
         assert!(missing.is_none(), "未被环节引用的 todo 应返回 None");
     }
 
+    /// list_loop_steps_with_todo_meta 的 raw SQL 手工映射必须读出 step_template_refs（需求 054）。
+    /// 该函数绕过 SeaORM 实体、手写 SELECT 列与行映射，加列后漏改会编译中断，
+    /// 但「映射错位/读错列」只能靠「写入非标值 → 读回逐字断言」防回归。
+    #[tokio::test]
+    async fn test_list_loop_steps_with_todo_meta_maps_step_template_refs() {
+        let db = fresh_db().await;
+        let loop_id = seed_loop(&db, "L").await;
+        // 环节一：更新为非默认 JSON，验证映射真的读到了新列而非默认值兼底；
+        // 环节二：保持 INSERT 默认，验证存量行默认 '[]' 路径。
+        let todo_with_refs = seed_todo(&db, "带引用").await;
+        let todo_default = seed_todo(&db, "默认").await;
+        db.exec(&format!(
+            "INSERT INTO loop_steps (loop_id, name, todo_id, enabled) \
+             VALUES ({loop_id}, 's1', {todo_with_refs}, 1), ({loop_id}, 's2', {todo_default}, 1)"
+        ))
+        .await
+        .expect("insert steps");
+        db.exec(&format!(
+            "UPDATE loop_steps SET step_template_refs = \
+             '[{{\"name\":\"规范\",\"path\":\"bundled://x.md\"}}]' WHERE todo_id = {todo_with_refs}"
+        ))
+        .await
+        .expect("update refs");
+
+        let rows = db.list_loop_steps_with_todo_meta(loop_id).await.unwrap();
+        assert_eq!(rows.len(), 2, "两个环节都应返回");
+        let with_refs = rows
+            .iter()
+            .find(|(s, _, _, _)| s.todo_id == todo_with_refs)
+            .expect("带引用环节应在结果中");
+        assert_eq!(
+            with_refs.0.step_template_refs, r#"[{"name":"规范","path":"bundled://x.md"}]"#,
+            "raw SQL 映射应原样读回写入的 JSON"
+        );
+        let default_row = rows
+            .iter()
+            .find(|(s, _, _, _)| s.todo_id == todo_default)
+            .expect("默认环节应在结果中");
+        assert_eq!(
+            default_row.0.step_template_refs, "[]",
+            "未显式赋值的存量行应读回列默认值 '[]'"
+        );
+    }
+
     /// find_loop_step_review_prompt_by_todo：按 todo_id 反查启用环节的内联 review_prompt，
     /// 供评审 prompt 回退（completion.rs 调用）。覆盖命中与未命中两条路径。
     /// 044：loops.review_template_id 已下线，只返回环节内联 prompt。
