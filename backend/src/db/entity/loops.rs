@@ -17,16 +17,9 @@ pub struct Model {
     pub workspace_path: Option<String>,
     /// Loop 所属的工作空间 ID（关联 project_directories.id）。
     pub workspace_id: Option<i64>,
-    #[sea_orm(default_value = false)]
-    pub webhook_enabled: bool,
     /// enabled | paused
     #[sea_orm(default_value = "paused")]
     pub status: String,
-    #[sea_orm(default_value = "#722ed1")]
-    pub color: String,
-    #[sea_orm(default_value = "loop")]
-    pub icon: String,
-    pub review_template_id: Option<i64>,
     /// JSON 全局限制配置: {"max_step_executions": 20, "max_total_tokens": null}
     #[sea_orm(default_value = "{}")]
     pub limits_config: String,
@@ -49,18 +42,12 @@ pub struct Model {
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
-    #[sea_orm(has_many = "super::loop_triggers::Entity")]
-    LoopTriggers,
     #[sea_orm(has_many = "super::loop_steps::Entity")]
     LoopSteps,
     #[sea_orm(has_many = "super::loop_executions::Entity")]
     LoopExecutions,
     #[sea_orm(has_many = "super::loop_phases::Entity")]
     LoopPhases,
-}
-
-impl Related<super::loop_triggers::Entity> for Entity {
-    fn to() -> RelationDef { Relation::LoopTriggers.def() }
 }
 
 impl Related<super::loop_steps::Entity> for Entity {

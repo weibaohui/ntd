@@ -170,8 +170,11 @@ mod tests {
 
     /// 建一个 loop，workspace_id 可选（None 模拟旧数据未归属）。
     async fn create_loop(db: &Database, ws_id: Option<i64>) -> i64 {
+        // 044：create_loop 已下线 webhook_enabled/icon/review_template_id 等参数
+        // abnormal_handler_trigger_on 传 "[]"（JSON 空数组）而非空字符串，
+        // 与项目其他测试和数据写入路径保持一致（NTD-011）。
         db.create_loop(
-            "test-loop", "", ws_id, None, false, "", None, None, None, "",
+            "test-loop", "", ws_id, None, None, None, "[]",
         )
         .await
         .expect("create loop must succeed")

@@ -18,7 +18,6 @@ pub mod loop_step_execution_gates;
 pub mod loop_step_executions;
 pub mod loop_steps;
 pub mod loop_tags;
-pub mod loop_triggers;
 pub mod tasks;
 pub mod loops;
 pub mod process_step_templates;
@@ -59,7 +58,6 @@ pub mod prelude {
     pub use super::loop_step_executions::Entity as LoopStepExecutions;
     pub use super::loop_steps::Entity as LoopSteps;
     pub use super::loop_tags::Entity as LoopTags;
-    pub use super::loop_triggers::Entity as LoopTriggers;
     pub use super::loops::Entity as Loops;
     pub use super::process_step_templates::Entity as ProcessStepTemplates;
     pub use super::process_templates::Entity as ProcessTemplates;

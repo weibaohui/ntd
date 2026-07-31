@@ -30,9 +30,10 @@ import type { LayoutEdge } from '@/components/loop-flow/flowTypes';
 
 interface FlowGraphProps {
   steps: LoopStepDto[];
-  selectedStepId: number | null;
-  onSelectStep: (step: LoopStepDto) => void;
-  onAddStep: () => void;
+  selectedStepId?: number | null;
+  /** 044 起环节只读：未注入时节点不可点、不渲染「添加环节」入口 */
+  onSelectStep?: (step: LoopStepDto) => void;
+  onAddStep?: () => void;
   /** 点击节点上的事项标题跳转事项详情（「环路 → 事项」向下钻取）；未注入时标题不可点击。 */
   onOpenTodo?: (todoId: number) => void;
 }
@@ -84,8 +85,12 @@ export function LoopFlowGraph({
         });
       }
 
-      // 失败边（仅当策略不同于成功时绘制）
-      if (step.min_rating != null && step.on_rating_fail !== step.on_success) {
+      // 失败边（仅当「策略 + 跳转目标」与成功边完全一致时才省略绘制，避免同为 goto
+      // 但目标不同的分支被误吞）。
+      // 044：min_rating 列已删，失败边按 on_rating_fail 策略直接绘制，标签不再带分数阈值
+      const sameAsSuccess = step.on_rating_fail === step.on_success
+        && step.fail_goto_step_id === step.success_goto_step_id;
+      if (!sameAsSuccess) {
         const ft = classifyEdge(step, steps, step.on_rating_fail, step.fail_goto_step_id, false);
         const ftg = resolveTargetStep(step, steps, step.on_rating_fail, step.fail_goto_step_id);
         if (ftg != null) {
@@ -97,7 +102,7 @@ export function LoopFlowGraph({
           if (!isSelf) dedges.push({ from: step.id, to: ftg, label: '' });
           ledges.push({
             from: String(step.id), to: String(ftg),
-            label: isSelf ? `<${step.min_rating}分` : isLB ? `<${step.min_rating}分` : step.on_rating_fail === 'goto' ? `❌→${targetNameOf(ftg)}` : step.on_rating_fail === 'skip' ? '失败→继续' : '',
+            label: isSelf ? '❌ 重试' : isLB ? `跳回 ${targetNameOf(ftg)}` : step.on_rating_fail === 'goto' ? `❌→${targetNameOf(ftg)}` : step.on_rating_fail === 'skip' ? '失败→继续' : '',
             type: ft, fromId: step.id, toId: ftg, isLoopBack: isLB, isSelfLoop: isSelf,
           });
         }
@@ -132,6 +137,23 @@ export function LoopFlowGraph({
 
   // ── 5) 空态 ──
   if (steps.length === 0) {
+    // 044 只读模式（onAddStep 未注入）：纯展示空态，不可点击
+    if (!onAddStep) {
+      return (
+        <div
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            minHeight: 120, width: '100%',
+            border: '1px dashed var(--color-border, #e2e8f0)',
+            borderRadius: 12,
+            color: 'var(--color-text-tertiary, #94a3b8)',
+            fontSize: 13,
+          }}
+        >
+          <span>暂无执行环节</span>
+        </div>
+      );
+    }
     return (
       <div
         onClick={onAddStep}
@@ -193,7 +215,8 @@ export function LoopFlowGraph({
           ))}
         </g>
       </svg>
-      {/* 添加环节按钮 */}
+      {/* 添加环节按钮（044：仅编辑模式注入 onAddStep 时渲染；只读模式不出现） */}
+      {onAddStep && (
       <div style={{ display: 'flex', justifyContent: 'center', marginTop: 8 }}>
         <div
           onClick={onAddStep}
@@ -217,6 +240,7 @@ export function LoopFlowGraph({
           添加环节
         </div>
       </div>
+      )}
     </div>
   );
 }

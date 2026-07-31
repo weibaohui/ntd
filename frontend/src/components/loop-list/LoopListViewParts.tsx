@@ -17,10 +17,8 @@ import type { MenuProps } from 'antd';
 // antd Menu 项 onClick 的事件参数类型（含 domEvent），从公开 API 推导避免深层依赖 rc-menu
 type MenuInfo = Parameters<NonNullable<MenuProps['onClick']>>[0];
 import {
-  CopyOutlined,
   DeleteOutlined,
   MoreOutlined,
-  PlayCircleOutlined,
   SettingOutlined,
 } from '@ant-design/icons';
 import { formatRelativeTime } from '@/utils/datetime';
@@ -63,14 +61,13 @@ export function renderTagList(tagIds: number[] | undefined, tags: TagType[], max
 }
 
 interface BuildRowActionsArgs {
-  onTrigger: (loop: LoopListItem) => void;
-  onDuplicate: (loop: LoopListItem) => void;
   onDelete: (loop: LoopListItem) => void;
   onToggleStatus: (loop: LoopListItem) => void;
 }
 
 /**
- * 构建单行操作菜单项：触发 / 复制 / 切换状态 / 删除。
+ * 构建单行操作菜单项：切换状态 / 删除。
+ * 044：触发/复制已随手工环路能力下线，唯一执行入口是「创建任务选工艺环路」。
  * 抽成纯函数避免 LoopListView 主函数膨胀。
  *
  * 注意（冒泡陷阱）：Dropdown 菜单经 React Portal 渲染，合成事件会沿
@@ -80,7 +77,7 @@ interface BuildRowActionsArgs {
  */
 export function buildRowActions(
   loop: LoopListItem,
-  { onTrigger, onDuplicate, onDelete, onToggleStatus }: BuildRowActionsArgs,
+  { onDelete, onToggleStatus }: BuildRowActionsArgs,
 ) {
   // 包装回调：统一先挡冒泡再执行业务动作，避免每个菜单项重复书写
   const guard = (action: (l: LoopListItem) => void) => (info: MenuInfo) => {
@@ -88,18 +85,6 @@ export function buildRowActions(
     action(loop);
   };
   return [
-    {
-      key: 'trigger',
-      label: '触发',
-      icon: <PlayCircleOutlined />,
-      onClick: guard(onTrigger),
-    },
-    {
-      key: 'duplicate',
-      label: '复制',
-      icon: <CopyOutlined />,
-      onClick: guard(onDuplicate),
-    },
     {
       key: 'toggle-status',
       label: loop.status === 'enabled' ? '暂停' : '启用',
@@ -129,8 +114,6 @@ export function loopProcessText(record: LoopListItem): string {
 interface BuildColumnsArgs {
   tags: TagType[];
   onSelectLoop: (id: number) => void;
-  onTrigger: (loop: LoopListItem) => void;
-  onDuplicate: (loop: LoopListItem) => void;
   onDelete: (loop: LoopListItem) => void;
   onToggleStatus: (loop: LoopListItem) => void;
 }
@@ -142,8 +125,6 @@ interface BuildColumnsArgs {
 export function buildColumns({
   tags,
   onSelectLoop,
-  onTrigger,
-  onDuplicate,
   onDelete,
   onToggleStatus,
 }: BuildColumnsArgs): ColumnsType<LoopListItem> {
@@ -199,12 +180,6 @@ export function buildColumns({
       align: 'center' as const,
     },
     {
-      title: '触发次数',
-      dataIndex: 'trigger_count',
-      width: 80,
-      align: 'center' as const,
-    },
-    {
       title: '待审批',
       dataIndex: 'pending_approval_count',
       width: 80,
@@ -235,7 +210,7 @@ export function buildColumns({
       width: 80,
       fixed: 'right' as const,
       render: (_, record) => (
-        <Dropdown menu={{ items: buildRowActions(record, { onTrigger, onDuplicate, onDelete, onToggleStatus }) }} trigger={['click']}>
+        <Dropdown menu={{ items: buildRowActions(record, { onDelete, onToggleStatus }) }} trigger={['click']}>
           <Button
             size="small"
             type="text"

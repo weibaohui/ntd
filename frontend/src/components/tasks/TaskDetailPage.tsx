@@ -1,9 +1,9 @@
-// TaskDetailPage — 031-任务详情独立路由：任务详情独立页。
+// TaskDetailPage — 任务详情独立路由（合并环路详情版）。
 //
 // 设计要点：
 // 1. URL `/#/tasks/:id`，作为任务命名空间的详情态独立挂载。
-// 2. 内部复用 `TaskDetailPanel` 组件（步骤/执行历史等），不重写详情逻辑。
-// 3. 顶部 PageCard 提供「返回列表」按钮，使用 history.back() 让浏览器原生后退保留列表状态。
+// 2. 内部复用 `TaskDetailPanel` 组件，已合并环路详情全部内容（DAG/执行历史）。
+// 3. 顶部 PageCard 提供「返回列表」按钮 + 动态标题。
 // 4. workspaceId 从当前选中的 workspace 获取，与任务列表页一致。
 
 import { useState } from 'react';
@@ -14,24 +14,27 @@ import { PageCard } from '@/components/common/PageCard';
 import { TaskDetailPanel } from './TaskDetailPanel';
 
 interface TaskDetailPageProps {
-  /** 当前任务 id（来自 URL path 段 /#/tasks/:id）。 */
   taskId: number;
-  /** 返回列表：调用方用 history.back() 或 replaceUrl('tasks')。 */
   onBack: () => void;
+  /** 点击 DAG 节点上的事项标题跳转事项详情（legacy todo 系统）。 */
+  onSelectTodo?: (todoId: number) => void;
+  /** 环路变更（删除）后通知宿主刷新列表。 */
+  onLoopChanged?: () => void;
 }
 
 /**
  * 任务详情独立页：URL `/#/tasks/:id`。
  *
  * 整体处理思路：
- * 1. PageCard 包裹 TaskDetailPanel，顶部标题 + 返回按钮。
- * 2. workspaceId 从 App state 的 selectedWorkspace 获取。
+ * 1. PageCard 包裹 TaskDetailPanel，标题动态显示任务名。
+ * 2. 传递 onSelectTodo / onLoopChanged 给内部面板。
  * 3. 返回列表走 onBack（推荐 history.back()）保留列表状态。
  */
-export function TaskDetailPage({ taskId, onBack }: TaskDetailPageProps) {
+export function TaskDetailPage({
+  taskId, onBack, onSelectTodo, onLoopChanged,
+}: TaskDetailPageProps) {
   const { state } = useApp();
   const wsId = state.selectedWorkspace ?? 0;
-  // 详情标题：数据加载后显示实际任务标题；未加载时显示 "任务 #X"。
   const [detailTitle, setDetailTitle] = useState<string>(`任务 #${taskId}`);
 
   return (
@@ -39,12 +42,7 @@ export function TaskDetailPage({ taskId, onBack }: TaskDetailPageProps) {
       icon={<OrderedListOutlined />}
       title={detailTitle}
       titleSuffix={
-        <Button
-          size="small"
-          type="text"
-          icon={<ArrowLeftOutlined />}
-          onClick={onBack}
-        >
+        <Button size="small" type="text" icon={<ArrowLeftOutlined />} onClick={onBack}>
           返回列表
         </Button>
       }
@@ -55,6 +53,8 @@ export function TaskDetailPage({ taskId, onBack }: TaskDetailPageProps) {
         taskId={taskId}
         workspaceId={wsId}
         onTitleReady={(title) => setDetailTitle(`任务 #${taskId}: ${title}`)}
+        onOpenTodo={onSelectTodo}
+        onLoopChanged={onLoopChanged}
       />
     </PageCard>
   );

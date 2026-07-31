@@ -2,30 +2,14 @@
 //
 // 与 backend/src/models/loop_.rs 一一对应：
 // - LoopDto = 环路主表 DTO
-// - LoopTriggerDto = 触发器 DTO (cron / feishu / manual)
 // - LoopExecutionDto = 单次执行记录
 //
+// 需求 044（环路瘦身）：环路降级为「工艺的运行时承载」，
+// 触发器（loop_triggers）、webhook、评审模板、手工创建/更新等概念整体下线，
+// 本文件只保留只读查询与运行态（启停/标签/审批）所需的类型。
 // 前端组件用这些类型组装 LoopStudio 页面。
 
 export type LoopStatus = 'enabled' | 'paused';
-
-export type LoopTriggerType =
-  | 'manual'
-  | 'cron'
-  | 'feishu_message'
-  | 'feishu_command'
-  | 'todo_completed'
-  | 'todo_state_changed'
-  | 'tag_added';
-
-export type LoopRunMode = 'sequential';
-
-export type LoopUnratedPolicy = 'skip' | 'continue';
-
-export type LoopOnSuccessPolicy = 'next' | 'goto' | 'end';
-export type LoopOnRatingFailPolicy = 'break' | 'skip' | 'goto' | 'end';
-
-export type ReviewType = 'ai' | 'human';
 
 export type LoopExecutionStatus = 'running' | 'success' | 'partial' | 'failed' | 'cancelled' | 'capped_step' | 'capped_token';
 
@@ -38,11 +22,9 @@ export interface LoopDto {
    * 组件间统一传 id，path 不再上送 API；前端展示用 project_directories.name/path 自行查询。
    */
   workspace_id: number | null;
-  webhook_enabled: boolean;
   status: string;
   /** 标签 ID 列表（单选，复用 Todo 的标签体系） */
   tag_ids: number[];
-  icon: string;
   limits_config: string;
   /** 异常处理提示词快照（工艺定义）；null=未配置。需求 035。 */
   abnormal_handler_prompt: string | null;
@@ -60,16 +42,6 @@ export interface LoopDto {
   process_template_display_name?: string | null;
   created_at: string | null;
   updated_at: string | null;
-}
-
-export interface LoopTriggerDto {
-  id: number;
-  loop_id: number;
-  trigger_type: string; // 后端字符串灵活
-  config: string; // JSON 字符串 (cron 表达式 / webhook_id / matches 等)
-  enabled: boolean;
-  priority: number;
-  created_at: string | null;
 }
 
 export interface LoopExecutionDto {
@@ -105,8 +77,11 @@ export interface LoopStepExecutionDto {
   error_message: string | null;
   started_at: string | null;
   finished_at: string | null;
+  /** 历史快照：旧评分制评审得分（0-100）。044 起新执行不再写入，仅为历史记录展示保留 */
   rating: number | null;
+  /** 历史快照：旧评分制未达标策略，仅为历史记录展示保留 */
   unrated_policy: string | null;
+  /** 历史快照：旧评分制阈值，仅为历史记录展示保留 */
   min_rating: number | null;
   step_name: string | null;
   sequence_index: number;
@@ -117,36 +92,16 @@ export interface LoopStepExecutionDto {
   approval_status: string | null;
   /** 审批人的备注/意见 */
   approval_comment: string | null;
+  /**
+   * 待审批的 human_approval 门禁 ID（044 门禁制审批）：
+   * 仅当环节处于 pending_approval 且存在 pending 门禁时由后端注入，
+   * 前端凭它调 POST .../steps/{seid}/gates/{gid}/approve，无需再查审计接口。
+   */
+  pending_gate_id?: number | null;
   output_tokens: number | null;
   cache_read_input_tokens: number | null;
   cache_creation_input_tokens: number | null;
   total_cost_usd: number | null;
-}
-
-export interface LoopStepRawDto {
-  id: number;
-  loop_id: number;
-  name: string;
-  description: string;
-  order_index: number;
-  /** 关联的 todo id */
-  todo_id: number;
-  run_mode: string;
-  skip_on_source_failed: boolean;
-  min_rating: number | null;
-  unrated_policy: string;
-  on_success: string;
-  success_goto_step_id: number | null;
-  on_rating_fail: string;
-  fail_goto_step_id: number | null;
-  /** 评审类型: 'ai' = AI 自动评审, 'human' = 人工审批 */
-  review_type: string;
-  enabled: boolean;
-  created_at: string | null;
-  /** 所属阶段 ID（工艺管理） */
-  phase_id?: number | null;
-  /** 所属阶段名称（工艺管理） */
-  phase_name?: string | null;
 }
 
 export interface LoopStepDto {
@@ -157,10 +112,6 @@ export interface LoopStepDto {
   order_index: number;
   /** 关联的 todo id */
   todo_id: number;
-  run_mode: string;
-  skip_on_source_failed: boolean;
-  min_rating: number | null;
-  unrated_policy: string;
   on_success: string;
   success_goto_step_id: number | null;
   on_rating_fail: string;
@@ -181,68 +132,18 @@ export interface LoopStepDto {
   phase_name?: string | null;
 }
 
-export interface CreateLoopStepRequest {
-  name: string;
-  description?: string;
-  /** 关联的 todo id */
-  todo_id: number;
-  run_mode?: string;
-  skip_on_source_failed?: boolean;
-  min_rating?: number | null;
-  unrated_policy?: string;
-  enabled?: boolean;
-  on_success?: string;
-  success_goto_step_id?: number | null;
-  on_rating_fail?: string;
-  fail_goto_step_id?: number | null;
-  /** 评审类型: 'ai' | 'human'，默认 'ai' */
-  review_type?: string;
-}
-
-export interface UpdateLoopStepRequest {
-  name: string;
-  description: string;
-  /** 关联的 todo id */
-  todo_id: number;
-  run_mode: string;
-  skip_on_source_failed: boolean;
-  min_rating: number | null;
-  unrated_policy: string;
-  enabled: boolean;
-  on_success: string;
-  success_goto_step_id: number | null;
-  on_rating_fail: string;
-  fail_goto_step_id: number | null;
-  /** 评审类型: 'ai' | 'human'，默认 'ai' */
-  review_type?: string;
-}
-
-export interface ApproveStepExecutionRequest {
-  rating: number;
-  comment?: string;
-}
-
-export interface ReorderLoopStepsRequest {
-  ordered_ids: number[];
-}
-
 export interface LoopDetail {
   id: number;
   name: string;
   description: string;
   /** 工作空间 ID（project_directories.id，唯一键）。组件间统一以 id 传递，path 不再上送。 */
   workspace_id: number | null;
-  webhook_enabled: boolean;
   status: string;
   /** 标签 ID 列表（单选，复用 Todo 的标签体系） */
   tag_ids: number[];
-  icon: string;
   limits_config: string;
-  /** Review template to use for auto-review on loop steps. null = use default. */
-  review_template_id: number | null;
   created_at: string | null;
   updated_at: string | null;
-  triggers: LoopTriggerDto[];
   steps: LoopStepDto[];
   /** 待人工审批的环节执行数 */
   pending_approval_count: number;
@@ -268,14 +169,11 @@ export interface LoopListItem {
   description: string;
   /** 工作空间 ID（project_directories.id，唯一键）。组件间统一以 id 传递，path 不再上送。 */
   workspace_id: number | null;
-  webhook_enabled: boolean;
   status: string;
   /** 标签 ID 列表（单选，复用 Todo 的标签体系） */
   tag_ids: number[];
-  icon: string;
   created_at: string | null;
   updated_at: string | null;
-  trigger_count: number;
   step_count: number;
   last_execution_status: string;
   last_execution_at: string | null;
@@ -326,62 +224,6 @@ export interface LoopExecutionListResponse {
 
 // ─── Request types ────────────────────────────────────────
 
-export interface CreateLoopRequest {
-  name: string;
-  description?: string;
-  /**
-   * 工作空间 ID（project_directories.id），必填、唯一键。
-   * 不再接受路径——避免 path 不唯一带来的歧义。
-   */
-  workspace_id: number;
-  webhook_enabled?: boolean;
-  tag_ids?: number[];
-  /** 创建时可选预绑定单个标签；省略时后端按空标签处理。 */
-  icon?: string;
-  review_template_id?: number | null;
-  /** 限制条件 JSON 字符串 */
-  limits_config?: string | null;
-  /** 异常处理提示词快照（工艺定义）；null=未配置。需求 035。 */
-  abnormal_handler_prompt?: string | null;
-  /** 异常处理触发条件 JSON 数组 */
-  abnormal_handler_trigger_on?: string;
-}
-
-export interface UpdateLoopRequest {
-  name: string;
-  description: string;
-  /**
-   * 工作空间 ID（project_directories.id）。
-   * undefined = 保持原工作空间；显式赋值（包含 null）= 迁移/清空。
-   * 不接受路径——handler 一律按 id 解析 cwd 路径写入两列。
-   */
-  workspace_id?: number | null;
-  webhook_enabled: boolean;
-  icon: string;
-  review_template_id?: number | null;
-  limits_config?: string | null;
-  /** 异常处理提示词快照（工艺定义）；null=未配置。需求 035。 */
-  abnormal_handler_prompt?: string | null;
-  /** 异常处理触发条件 JSON 数组 */
-  abnormal_handler_trigger_on?: string;
-  /** 可选更新标签 ID（传空数组清除标签，省略不更新）。合并到同一请求避免多次 API 调用导致的部分提交风险。 */
-  tag_ids?: number[] | null;
-}
-
-export interface CreateTriggerRequest {
-  trigger_type: LoopTriggerType | string;
-  config?: string; // 默认 "{}"
-  enabled?: boolean;
-  priority?: number;
-}
-
-export interface UpdateTriggerRequest {
-  trigger_type: LoopTriggerType | string;
-  config: string;
-  enabled: boolean;
-  priority: number;
-}
-
 export interface UpdateLoopStatusRequest {
   status: LoopStatus | string;
 }
@@ -391,8 +233,4 @@ export interface LoopExecutionListQuery {
   limit?: number;
   /** 按最近 N 小时过滤 */
   hours?: number;
-}
-
-export interface LoopTriggerResponse {
-  execution_id: number;
 }

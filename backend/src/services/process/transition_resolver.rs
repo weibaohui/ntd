@@ -103,10 +103,7 @@ mod tests {
             description: String::new(),
             order_index: 0,
             todo_id: 100 + id,
-            run_mode: "sequential".to_string(),
-            skip_on_source_failed: 0,
-            min_rating: None,
-            unrated_policy: "skip".to_string(),
+            // 044：run_mode/skip_on_source_failed/min_rating/unrated_policy 列已下线
             on_success: on_success.to_string(),
             success_goto_step_id: success_goto,
             on_rating_fail: on_rating_fail.to_string(),

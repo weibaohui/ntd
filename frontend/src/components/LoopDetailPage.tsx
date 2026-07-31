@@ -4,14 +4,14 @@
 // 1. URL `/#/loops/:id`，作为环路命名空间的详情态独立挂载。
 // 2. 复用 `LoopDetailPanel`（已接收 loopId prop，与 state 解耦）。
 // 3. 顶部 PageCard 提供「返回列表」按钮（紧贴标题），用 history.back() 保留列表状态。
-// 4. 触发/复制/删除/启停等操作由 useLoopDetailActions hook 提供，
+// 4. 删除/启停等操作由 useLoopDetailActions hook 提供（044：触发/复制/导出/编辑已下线），
 //    完成后通过 onLoopChanged 通知父组件刷新 LoopListPage（loopUpdateCount 递增触发其重拉）。
-// 5. 操作按钮（触发/复制/导出/编辑/删除）上提到 PageCard extra（右上角）--
+// 5. 删除按钮上提到 PageCard extra（右上角）--
 //    内层 hideTitleRow=true 隐藏标题行时按钮不会连带消失。LoopDetailPanel 通过 onActionsReady
-//    上报按钮所需上下文（detail + onExport/onEdit 内部 handler），本组件存 state 后渲染到 extra。
+//    上报按钮所需上下文，本组件存 state 后渲染到 extra。
 // 6. 单函数 ≤ 30 行：操作回调已拆到 useLoopDetailActions。
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import type { ReactNode } from 'react';
 import { Button, Space } from 'antd';
 import { ArrowLeftOutlined, RetweetOutlined } from '@ant-design/icons';
@@ -19,7 +19,6 @@ import { PageCard } from '@/components/common/PageCard';
 import { LoopDetailPanel } from './LoopStudioDetailPanel';
 import { useLoopDetailActions } from './LoopDetailPageParts';
 import { LoopDetailActions } from './LoopDetailActions';
-import type { LoopDetailActionsProps } from './LoopDetailActions';
 
 interface LoopDetailPageProps {
   /** 当前环路 id（来自 URL path 段 /#/loops/:id）。 */
@@ -58,33 +57,30 @@ export function LoopDetailPage({
   onSelectTodo,
   onLoopChanged,
 }: LoopDetailPageProps) {
-  // 操作回调（已拆到 useLoopDetailActions）
-  const { handleTrigger, handleDuplicate, handleDelete, handleToggleStatus } = useLoopDetailActions({
+  // 操作回调（已拆到 useLoopDetailActions；044 后只剩删除与启停）
+  const { handleDelete, handleToggleStatus } = useLoopDetailActions({
     loopId,
     workspaceId: workspaceId ?? null,
     onLoopChanged,
   });
 
-  // 删除后返回列表（覆盖 useLoopDetailActions 的 handleDelete，增加 onBack）
-  const handleDeleteWithBack = async () => {
+  // 删除后返回列表（覆盖 useLoopDetailActions 的 handleDelete，增加 onBack）。
+  // useCallback 保证引用稳定，避免每次重渲染都创建新函数传给 LoopStudioDetailPanel 导致
+  // onActionsReady 的 effect 循环触发（NTD-007：回调对象传递链中的引用稳定性）。
+  const handleDeleteWithBack = useCallback(async () => {
     await handleDelete();
     onBack();
-  };
+  }, [handleDelete, onBack]);
 
-  // LoopDetailPanel 上报的按钮上下文；detail 加载完成前为 null，extra 不渲染操作按钮。
-  const [actionsCtx, setActionsCtx] = useState<LoopDetailActionsProps | null>(null);
+  // LoopDetailPanel 上报的就绪标志位：detail 加载完成前为 false，extra 不渲染操作按钮。
+  // 用 boolean 而非对象状态，避免回传新对象引用触发父组件重渲染产生新 handleDeleteWithBack 再触发子
+  // effect 的死循环（NTD-007）。
+  const [actionsReady, setActionsReady] = useState(false);
 
-  // 右上角：操作按钮组（触发/复制/导出/编辑/删除），仅 detail 加载后可见
-  const extra: ReactNode = actionsCtx ? (
+  // 右上角：删除按钮（044：触发/复制/导出/编辑已下线），仅 detail 加载后可见
+  const extra: ReactNode = actionsReady ? (
     <Space size={4}>
-      <LoopDetailActions
-        detail={actionsCtx.detail}
-        onTrigger={handleTrigger}
-        onDuplicate={handleDuplicate}
-        onExport={actionsCtx.onExport}
-        onEdit={actionsCtx.onEdit}
-        onDelete={handleDeleteWithBack}
-      />
+      <LoopDetailActions onDelete={handleDeleteWithBack} />
     </Space>
   ) : undefined;
 
@@ -113,16 +109,14 @@ export function LoopDetailPage({
         loopId={loopId}
         workspaceId={workspaceId ?? null}
         tags={tags}
-        // 外层 PageCard 已渲染标题行（标题 + 返回按钮 + 操作按钮），内层隐藏避免重复头部
+        // 外层 PageCard 已渲染标题行（标题 + 返回按钮 + 删除按钮），内层隐藏避免重复头部
         hideTitleRow
-        onTrigger={handleTrigger}
-        onDuplicate={handleDuplicate}
         onDelete={handleDeleteWithBack}
         onToggleStatus={handleToggleStatus}
         onChanged={onLoopChanged}
         onOpenProcess={onOpenProcess}
         onOpenTodo={onSelectTodo}
-        onActionsReady={setActionsCtx}
+        onActionsReady={setActionsReady}
       />
     </PageCard>
   );

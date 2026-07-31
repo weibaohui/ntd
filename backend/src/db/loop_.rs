@@ -11,11 +11,11 @@
 //! 不抽象 DAO trait，因为 codebase 其它 db 文件都这样做）。
 use sea_orm::{
     ActiveModelTrait, ActiveValue, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter,
-    QueryOrder, QuerySelect, Set, DbBackend,
+    QueryOrder, QuerySelect, DbBackend,
 };
 
 use crate::db::entity::{
-    loop_executions, loop_phases, loop_step_executions, loop_steps, loop_triggers, loops,
+    loop_executions, loop_phases, loop_step_executions, loop_steps, loops,
 };
 use crate::db::Database;
 
@@ -134,14 +134,13 @@ impl Database {
         description: &str,
         workspace_id: Option<i64>,
         workspace_path: Option<&str>,
-        webhook_enabled: bool,
-        icon: &str,
-        review_template_id: Option<i64>,
         limits_config: Option<&str>,
         abnormal_handler_todo_id: Option<i64>,
         abnormal_handler_trigger_on: &str,
     ) -> Result<loops::Model, sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();
+        // 044 环路瘦身：webhook_enabled/icon/review_template_id/color 等列已下线，
+        // 创建时不再接受这些参数；status 固定 paused，由后续 update_loop_status 切换。
         let am = loops::ActiveModel {
             name: ActiveValue::Set(name.to_string()),
             description: ActiveValue::Set(description.to_string()),
@@ -149,9 +148,6 @@ impl Database {
             // 任何不一致都意味着上游解析有 bug——DAO 不再单独接受「只传 path」。
             workspace_id: ActiveValue::Set(workspace_id),
             workspace_path: ActiveValue::Set(workspace_path.map(|s| s.to_string())),
-            webhook_enabled: ActiveValue::Set(webhook_enabled),
-            icon: ActiveValue::Set(icon.to_string()),
-            review_template_id: ActiveValue::Set(review_template_id),
             limits_config: ActiveValue::Set(limits_config.unwrap_or("{}").to_string()),
             abnormal_handler_todo_id: ActiveValue::Set(abnormal_handler_todo_id),
             abnormal_handler_trigger_on: ActiveValue::Set(abnormal_handler_trigger_on.to_string()),
@@ -172,9 +168,6 @@ impl Database {
         description: &str,
         workspace_id: Option<i64>,
         workspace_path: Option<&str>,
-        webhook_enabled: bool,
-        icon: &str,
-        review_template_id: Option<i64>,
         limits_config: Option<&str>,
         abnormal_handler_todo_id: Option<i64>,
         abnormal_handler_trigger_on: &str,
@@ -193,9 +186,6 @@ impl Database {
             if let Some(wpath) = workspace_path {
                 am.workspace_path = ActiveValue::Set(Some(wpath.to_string()));
             }
-            am.webhook_enabled = ActiveValue::Set(webhook_enabled);
-            am.icon = ActiveValue::Set(icon.to_string());
-            am.review_template_id = ActiveValue::Set(review_template_id);
             // 允许显式清空：前端传 null → 写入 "{}"（无限制），传字符串 → 写入对应值。
             am.limits_config = ActiveValue::Set(limits_config.unwrap_or("{}").to_string());
             am.abnormal_handler_todo_id = ActiveValue::Set(abnormal_handler_todo_id);
@@ -235,20 +225,6 @@ impl Database {
             .one(&self.conn)
             .await?;
         Ok(existing.map(|l| l.id))
-    }
-
-    /// 仅更新 loops.description（用于任务创建时写入需求文本）。
-    pub async fn set_loop_description(&self, id: i64, description: &str) -> Result<(), sea_orm::DbErr> {
-        use sea_orm::ConnectionTrait;
-        let sql = "UPDATE loops SET description = ?1, updated_at = ?2 WHERE id = ?3";
-        let now = crate::models::utc_timestamp();
-        self.conn
-            .execute(sea_orm::Statement::from_sql_and_values(
-                sea_orm::DbBackend::Sqlite, sql,
-                [description.into(), now.into(), id.into()],
-            ))
-            .await?;
-        Ok(())
     }
 
     pub async fn delete_loop(&self, id: i64) -> Result<(), sea_orm::DbErr> {
@@ -353,27 +329,13 @@ impl Database {
                     &source.description,
                     Some(target_workspace_id),
                     Some(ws.as_str()),
-                    source.webhook_enabled,
-                    &source.icon,
-                    source.review_template_id,
                     Some(source.limits_config.as_str()),
                     source.abnormal_handler_todo_id,
                     &source.abnormal_handler_trigger_on,
                 )
                 .await?;
 
-            // 复制 triggers
-            let triggers = self.list_triggers_by_loop(id).await?;
-            for t in triggers {
-                self.create_trigger(
-                    new_loop.id,
-                    &t.trigger_type,
-                    &t.config,
-                    t.enabled != 0,
-                    t.priority,
-                )
-                .await?;
-            }
+            // 044：loop_triggers 表已下线，批量复制不再复制触发器。
 
             // 复制 steps：每个 step 关联的 todo 也要复制到目标工作空间
             // 先分两遍走：第一遍创建所有步骤并建立新/旧 id 映射，
@@ -401,10 +363,6 @@ impl Database {
                     &s.name,
                     &s.description,
                     new_todo_id,
-                    &s.run_mode,
-                    s.skip_on_source_failed != 0,
-                    s.min_rating,
-                    &s.unrated_policy,
                     s.enabled != 0,
                     &s.on_success,
                     None, // success_goto 第二遍再补
@@ -521,206 +479,6 @@ impl Database {
         Ok(Some(new_id))
     }
 
-    /// 复制 loop 及其所有 trigger.step；execution 不复制。
-    ///
-    /// 用于 UI 的「另存为」/「复制为新版本」按钮。
-    /// 复制时 name 追加「(副本)」前缀，status 重置为 paused，
-    /// 创建时间/更新时间由 trigger 重新设置。
-    pub async fn duplicate_loop(
-        &self,
-        source_id: i64,
-    ) -> Result<Option<loops::Model>, sea_orm::DbErr> {
-        let source = match self.get_loop(source_id).await? {
-            Some(l) => l,
-            None => return Ok(None),
-        };
-        let new_loop = self
-            .create_loop(
-                &format!("{}(副本)", source.name),
-                &source.description,
-                source.workspace_id,
-                source.workspace_path.as_deref(),
-                source.webhook_enabled,
-                &source.icon,
-                source.review_template_id,
-                Some(source.limits_config.as_str()),
-                source.abnormal_handler_todo_id,
-                &source.abnormal_handler_trigger_on,
-            )
-            .await?;
-
-        // 复制 triggers
-        let triggers = self.list_triggers_by_loop(source_id).await?;
-        for t in triggers {
-            self.create_trigger(
-                new_loop.id,
-                &t.trigger_type,
-                &t.config,
-                t.enabled != 0,
-                t.priority,
-            )
-            .await?;
-        }
-
-        // 复制 steps：两遍走（与 batch_copy_loops_to_workspace 一致）。
-        // 第一遍创建所有 step 并建立 旧id→新id 映射，goto 字段暂置 None；
-        // 第二遍把 success_goto_step_id / fail_goto_step_id 从「源 step id」重映射到「新 step id」。
-        // 旧实现直接写源 step id，新 step 拿到的是全新自增 id，导致副本的 goto 指向源 loop 的
-        // 步骤（悬空或错误），运行到 goto 分支时报 step not found / 跳错分支。
-        let steps = self.list_loop_steps_by_loop(source_id).await?;
-        // (old_step_id, new_step_id, old_success_goto, old_fail_goto)
-        let mut step_map: Vec<(i64, i64, Option<i64>, Option<i64>)> = Vec::new();
-        for s in &steps {
-            let new_step = self
-                .create_loop_step(
-                    new_loop.id,
-                    &s.name,
-                    &s.description,
-                    s.todo_id,
-                    &s.run_mode,
-                    s.skip_on_source_failed != 0,
-                    s.min_rating,
-                    &s.unrated_policy,
-                    s.enabled != 0,
-                    &s.on_success,
-                    None, // success_goto 第二遍再补
-                    &s.on_rating_fail,
-                    None, // fail_goto 第二遍再补
-                    &s.review_type,
-                )
-                .await?;
-            step_map.push((s.id, new_step.id, s.success_goto_step_id, s.fail_goto_step_id));
-        }
-
-        // 第二遍：更新有 goto 引用的 step，把旧 step_id 换成新 step_id
-        let old_to_new: std::collections::HashMap<i64, i64> =
-            step_map.iter().map(|(old, new, _, _)| (*old, *new)).collect();
-        for (_old_id, new_id, old_success_goto, old_fail_goto) in &step_map {
-            let new_success_goto = old_success_goto.and_then(|g| old_to_new.get(&g).copied());
-            let new_fail_goto = old_fail_goto.and_then(|g| old_to_new.get(&g).copied());
-            if new_success_goto.is_some() || new_fail_goto.is_some() {
-                let existing = loop_steps::Entity::find_by_id(*new_id).one(&self.conn).await?;
-                if let Some(c) = existing {
-                    let mut am: loop_steps::ActiveModel = c.into();
-                    if let Some(goto) = new_success_goto {
-                        am.success_goto_step_id = ActiveValue::Set(Some(goto));
-                    }
-                    if let Some(goto) = new_fail_goto {
-                        am.fail_goto_step_id = ActiveValue::Set(Some(goto));
-                    }
-                    am.update(&self.conn).await?;
-                }
-            }
-        }
-
-        Ok(Some(new_loop))
-    }
-
-    // ====== Loop Triggers ======
-
-    pub async fn list_triggers_by_loop(
-        &self,
-        loop_id: i64,
-    ) -> Result<Vec<loop_triggers::Model>, sea_orm::DbErr> {
-        loop_triggers::Entity::find()
-            .filter(loop_triggers::Column::LoopId.eq(loop_id))
-            .order_by_desc(loop_triggers::Column::Priority)
-            .order_by_asc(loop_triggers::Column::Id)
-            .all(&self.conn)
-            .await
-    }
-
-    pub async fn get_trigger(
-        &self,
-        id: i64,
-    ) -> Result<Option<loop_triggers::Model>, sea_orm::DbErr> {
-        loop_triggers::Entity::find_by_id(id).one(&self.conn).await
-    }
-
-    /// 列出指定类型、启用状态的触发器（供 dispatcher 匹配）。
-    pub async fn list_enabled_triggers_by_type(
-        &self,
-        trigger_type: &str,
-    ) -> Result<Vec<loop_triggers::Model>, sea_orm::DbErr> {
-        loop_triggers::Entity::find()
-            .filter(loop_triggers::Column::TriggerType.eq(trigger_type))
-            .filter(loop_triggers::Column::Enabled.eq(1))
-            .all(&self.conn)
-            .await
-    }
-
-    /// 列出指定 todo_id 的「todo_completed / todo_state_changed」触发器。
-    /// 注意：类型过滤留给调用方做（因为可能查多个类型）。
-    pub async fn list_triggers_by_todo(
-        &self,
-        todo_id: i64,
-    ) -> Result<Vec<loop_triggers::Model>, sea_orm::DbErr> {
-        // config 存的是 JSON,简单做法是全量扫出 todo 相关的触发器再在内存里解析。
-        // 量级预期: 数十到数百条触发器,内存解析可接受。
-        loop_triggers::Entity::find()
-            .filter(loop_triggers::Column::Enabled.eq(1))
-            .all(&self.conn)
-            .await
-            .map(|all| {
-                all.into_iter()
-                    .filter(|t| {
-                        let cfg: serde_json::Value =
-                            serde_json::from_str(&t.config).unwrap_or_default();
-                        cfg.get("todo_id")
-                            .and_then(|v| v.as_i64())
-                            .map(|id| id == todo_id)
-                            .unwrap_or(false)
-                    })
-                    .collect()
-            })
-    }
-
-    pub async fn create_trigger(
-        &self,
-        loop_id: i64,
-        trigger_type: &str,
-        config: &str,
-        enabled: bool,
-        priority: i32,
-    ) -> Result<loop_triggers::Model, sea_orm::DbErr> {
-        let now = crate::models::utc_timestamp();
-        let am = loop_triggers::ActiveModel {
-            loop_id: ActiveValue::Set(loop_id),
-            trigger_type: ActiveValue::Set(trigger_type.to_string()),
-            config: ActiveValue::Set(config.to_string()),
-            enabled: ActiveValue::Set(if enabled { 1 } else { 0 }),
-            priority: ActiveValue::Set(priority),
-            created_at: ActiveValue::Set(Some(now)),
-            ..Default::default()
-        };
-        am.insert(&self.conn).await
-    }
-
-    pub async fn update_trigger(
-        &self,
-        id: i64,
-        trigger_type: &str,
-        config: &str,
-        enabled: bool,
-        priority: i32,
-    ) -> Result<(), sea_orm::DbErr> {
-        let existing = loop_triggers::Entity::find_by_id(id).one(&self.conn).await?;
-        if let Some(c) = existing {
-            let mut am: loop_triggers::ActiveModel = c.into();
-            am.trigger_type = ActiveValue::Set(trigger_type.to_string());
-            am.config = ActiveValue::Set(config.to_string());
-            am.enabled = ActiveValue::Set(if enabled { 1 } else { 0 });
-            am.priority = ActiveValue::Set(priority);
-            am.update(&self.conn).await?;
-        }
-        Ok(())
-    }
-
-    pub async fn delete_trigger(&self, id: i64) -> Result<(), sea_orm::DbErr> {
-        loop_triggers::Entity::delete_by_id(id).exec(&self.conn).await?;
-        Ok(())
-    }
-
     // ====== Loop Steps ======
 
     pub async fn list_loop_steps_by_loop(
@@ -784,21 +542,19 @@ impl Database {
             .await
     }
 
-    /// 按 todo_id 查 loop_step + 所属 loop 的 review_template_id（设计 034）。
-    /// 用于统一评审路径中实现 prompt 三级回退：查出 step 内联 review_prompt
-    /// 和其所属 loop 的 review_template_id，走「环节内联 → 环路模板 → 默认」。
+    /// 按 todo_id 查启用的 loop_step 内联 review_prompt（设计 033）。
+    /// 044：loops.review_template_id 列已下线（评审模板归环节），环路级模板回退取消，
+    /// 统一评审路径只取环节内联 review_prompt，走「环节内联 → 默认」。
     ///
-    /// 返回 (step.review_prompt, loop.review_template_id)。
     /// step 未找到或不启用时返回 Ok(None)。
-    pub async fn find_loop_step_with_loop_review_template(
+    pub async fn find_loop_step_review_prompt_by_todo(
         &self,
         todo_id: i64,
-    ) -> Result<Option<(Option<String>, Option<i64>)>, sea_orm::DbErr> {
+    ) -> Result<Option<String>, sea_orm::DbErr> {
         use sea_orm::{ConnectionTrait, Statement, DbBackend, Value};
-        let sql = "SELECT s.review_prompt, l.review_template_id \
-                   FROM loop_steps s \
-                   INNER JOIN loops l ON l.id = s.loop_id \
-                   WHERE s.todo_id = ? AND s.enabled = 1 \
+        let sql = "SELECT review_prompt FROM loop_steps \
+                   WHERE todo_id = ? AND enabled = 1 \
+                   ORDER BY id ASC \
                    LIMIT 1";
         let rows = self
             .conn
@@ -808,13 +564,10 @@ impl Database {
                 [Value::BigInt(Some(todo_id))],
             ))
             .await?;
-        if rows.is_empty() {
-            return Ok(None);
-        }
-        let row = &rows[0];
-        let review_prompt: Option<String> = row.try_get_by("review_prompt").ok().flatten();
-        let review_template_id: Option<i64> = row.try_get_by("review_template_id").ok().flatten();
-        Ok(Some((review_prompt, review_template_id)))
+        Ok(rows
+            .into_iter()
+            .next()
+            .and_then(|r| r.try_get_by("review_prompt").ok().flatten()))
     }
 
     /// 批量统计每个 todo 被启用中的 loop_steps 引用次数（用于事项中心 Loop 驱动分桶）。
@@ -933,10 +686,6 @@ impl Database {
         name: &str,
         description: &str,
         todo_id: i64,
-        run_mode: &str,
-        skip_on_source_failed: bool,
-        min_rating: Option<i32>,
-        unrated_policy: &str,
         enabled: bool,
         on_success: &str,
         success_goto_step_id: Option<i64>,
@@ -954,16 +703,14 @@ impl Database {
             .map(|m| m + 1)
             .unwrap_or(0);
         let now = crate::models::utc_timestamp();
+        // 044：run_mode/skip_on_source_failed/min_rating/unrated_policy 已下线，
+        // 流转与评审改由 gate_config + on_success/on_rating_fail 表达。
         let am = loop_steps::ActiveModel {
             loop_id: ActiveValue::Set(loop_id),
             name: ActiveValue::Set(name.to_string()),
             description: ActiveValue::Set(description.to_string()),
             order_index: ActiveValue::Set(next_order),
             todo_id: ActiveValue::Set(todo_id),
-            run_mode: ActiveValue::Set(run_mode.to_string()),
-            skip_on_source_failed: ActiveValue::Set(if skip_on_source_failed { 1 } else { 0 }),
-            min_rating: ActiveValue::Set(min_rating),
-            unrated_policy: ActiveValue::Set(unrated_policy.to_string()),
             enabled: ActiveValue::Set(if enabled { 1 } else { 0 }),
             on_success: ActiveValue::Set(on_success.to_string()),
             success_goto_step_id: ActiveValue::Set(success_goto_step_id),
@@ -974,52 +721,6 @@ impl Database {
             ..Default::default()
         };
         am.insert(&self.conn).await
-    }
-
-    /// 参数数量由 loop_steps 表 schema 决定
-    #[allow(clippy::too_many_arguments)]
-    pub async fn update_loop_step(
-        &self,
-        id: i64,
-        name: &str,
-        description: &str,
-        todo_id: i64,
-        run_mode: &str,
-        skip_on_source_failed: bool,
-        min_rating: Option<i32>,
-        unrated_policy: &str,
-        enabled: bool,
-        on_success: &str,
-        success_goto_step_id: Option<i64>,
-        on_rating_fail: &str,
-        fail_goto_step_id: Option<i64>,
-        review_type: &str,
-    ) -> Result<(), sea_orm::DbErr> {
-        let existing = loop_steps::Entity::find_by_id(id).one(&self.conn).await?;
-        if let Some(c) = existing {
-            let mut am: loop_steps::ActiveModel = c.into();
-            am.name = ActiveValue::Set(name.to_string());
-            am.description = ActiveValue::Set(description.to_string());
-            am.todo_id = ActiveValue::Set(todo_id);
-            am.run_mode = ActiveValue::Set(run_mode.to_string());
-            am.skip_on_source_failed =
-                ActiveValue::Set(if skip_on_source_failed { 1 } else { 0 });
-            am.min_rating = ActiveValue::Set(min_rating);
-            am.unrated_policy = ActiveValue::Set(unrated_policy.to_string());
-            am.enabled = ActiveValue::Set(if enabled { 1 } else { 0 });
-            am.on_success = ActiveValue::Set(on_success.to_string());
-            am.success_goto_step_id = ActiveValue::Set(success_goto_step_id);
-            am.on_rating_fail = ActiveValue::Set(on_rating_fail.to_string());
-            am.fail_goto_step_id = ActiveValue::Set(fail_goto_step_id);
-            am.review_type = ActiveValue::Set(review_type.to_string());
-            am.update(&self.conn).await?;
-        }
-        Ok(())
-    }
-
-    pub async fn delete_loop_step(&self, id: i64) -> Result<(), sea_orm::DbErr> {
-        loop_steps::Entity::delete_by_id(id).exec(&self.conn).await?;
-        Ok(())
     }
 
     /// 仅更新步骤的 goto 跳转目标（用于导入时的伪ID解析）
@@ -1038,33 +739,6 @@ impl Database {
             if fail_goto_step_id.is_some() {
                 am.fail_goto_step_id = ActiveValue::Set(fail_goto_step_id);
             }
-            am.update(&self.conn).await?;
-        }
-        Ok(())
-    }
-
-    /// 批量重排阶段。前端拖拽排序后调用,传入完整的新顺序。
-    /// `ordered_ids` 的顺序即新的 order_index(从 0 开始递增)。
-    pub async fn reorder_loop_steps(
-        &self,
-        loop_id: i64,
-        ordered_ids: &[i64],
-    ) -> Result<(), sea_orm::DbErr> {
-        // 1. 先把所有相关 step 取出,确保 ordered_ids 全部属于 loop_id
-        let steps = self.list_loop_steps_by_loop(loop_id).await?;
-        let valid: std::collections::HashSet<i64> = steps.iter().map(|s| s.id).collect();
-        for (idx, id) in ordered_ids.iter().enumerate() {
-            if !valid.contains(id) {
-                return Err(sea_orm::DbErr::Custom(format!(
-                    "step #{} 不属于 loop #{}",
-                    id, loop_id
-                )));
-            }
-            // valid 已确认 id 存在，find 必定返回 Some
-            let step = steps.iter().find(|s| s.id == *id)
-                .ok_or_else(|| sea_orm::DbErr::Custom(format!("step {} not found in loop {}", id, loop_id)))?;
-            let mut am: loop_steps::ActiveModel = step.clone().into();
-            am.order_index = Set(idx as i32);
             am.update(&self.conn).await?;
         }
         Ok(())
@@ -1302,17 +976,16 @@ impl Database {
         todo_id: i64,
         status: &str,
         sequence_index: i32,
-        min_rating: Option<i32>,
-        unrated_policy: &str,
     ) -> Result<loop_step_executions::Model, sea_orm::DbErr> {
+        // 044：loop_steps 已无 min_rating/unrated_policy，创建时不再向 step_executions
+        // 快照这两列（保持 NULL）。阈值改由 phase_driver 评价 gate_config 后通过
+        // set_step_execution_min_rating 回写；历史列仅为旧数据展示保留。
         let am = loop_step_executions::ActiveModel {
             loop_execution_id: ActiveValue::Set(loop_execution_id),
             step_id: ActiveValue::Set(step_id),
             todo_id: ActiveValue::Set(todo_id),
             status: ActiveValue::Set(status.to_string()),
             sequence_index: ActiveValue::Set(sequence_index),
-            min_rating: ActiveValue::Set(min_rating),
-            unrated_policy: ActiveValue::Set(Some(unrated_policy.to_string())),
             ..Default::default()
         };
         let model = am.insert(&self.conn).await?;
@@ -1557,7 +1230,6 @@ impl Database {
         use sea_orm::{ConnectionTrait, Statement};
         let sql = format!(
             "SELECT s.id, s.loop_id, s.name, s.description, s.order_index, s.todo_id, \
-                    s.run_mode, s.skip_on_source_failed, s.min_rating, s.unrated_policy, \
                     s.on_success, s.success_goto_step_id, s.on_rating_fail, s.fail_goto_step_id, \
                     s.review_type, \
                     s.phase_id, s.expected_artifacts, s.gate_config, s.max_rework, \
@@ -1577,6 +1249,8 @@ impl Database {
             .await?;
         let mut out = Vec::with_capacity(rows.len());
         for row in rows {
+            // 044：loop_steps 已移除 run_mode/skip_on_source_failed/min_rating/unrated_policy 列，
+            // SELECT 与 Model 构造同步去掉这些字段。
             let model = loop_steps::Model {
                 id: row.try_get_by::<i64, _>("id")?,
                 loop_id: row.try_get_by::<i64, _>("loop_id")?,
@@ -1584,10 +1258,6 @@ impl Database {
                 description: row.try_get_by::<String, _>("description")?,
                 order_index: row.try_get_by::<i32, _>("order_index")?,
                 todo_id: row.try_get_by::<i64, _>("todo_id")?,
-                run_mode: row.try_get_by::<String, _>("run_mode")?,
-                skip_on_source_failed: row.try_get_by::<i32, _>("skip_on_source_failed")?,
-                min_rating: row.try_get_by::<Option<i32>, _>("min_rating")?,
-                unrated_policy: row.try_get_by::<String, _>("unrated_policy")?,
                 on_success: row.try_get_by::<String, _>("on_success")?,
                 success_goto_step_id: row.try_get_by::<Option<i64>, _>("success_goto_step_id")?,
                 on_rating_fail: row.try_get_by::<String, _>("on_rating_fail")?,
@@ -1616,21 +1286,22 @@ impl Database {
 
     // ====== 辅助：批量取 loop + 计数 ======
 
-    /// 一次 SQL 把所有 loop + 它的 trigger.step 数 + 最近一次 execution 状态拉出来。
-    /// 供左侧 LoopList 用,避免 N+1。按 workspace_id 过滤（唯一键，符合"筛选必须用 id"约定）。
+    /// 一次 SQL 把所有 loop + step 计数 + 最近一次 execution 状态 + 待审批数拉出来。
+    /// 供左侧 LoopList 用，避免 N+1。按 workspace_id 过滤（唯一键，符合"筛选必须用 id"约定）。
         pub async fn list_loops_with_counts(
             &self,
             workspace_id: Option<i64>,
         ) -> Result<Vec<LoopListRow>, sea_orm::DbErr> {
             use sea_orm::{ConnectionTrait, Statement};
+            // 044：loops 已移除 color/icon/review_template_id/webhook_enabled；
+            // loop_triggers 表已下线，不再 JOIN 聚合 trigger_count。
+            // 列表查询补回 l.workspace_id（筛选键），供 LoopListRow.loop_ 完整填充。
             let sql = match workspace_id {
                 Some(_) => "SELECT l.id, l.name, l.description, l.workspace_path, \
-                              l.status, l.color, l.icon, l.limits_config, l.review_template_id, \
-                              l.webhook_enabled, \
+                              l.workspace_id, l.status, l.limits_config, \
                               l.abnormal_handler_todo_id, l.abnormal_handler_trigger_on, \
                               l.process_template_id, l.process_template_version, \
                               l.created_at, l.updated_at, \
-                              (SELECT COUNT(*) FROM loop_triggers t WHERE t.loop_id = l.id) as trigger_count, \
                               (SELECT COUNT(*) FROM loop_steps s WHERE s.loop_id = l.id) as step_count, \
                               (SELECT le.status FROM loop_executions le \
                                WHERE le.loop_id = l.id ORDER BY le.started_at DESC LIMIT 1) as last_execution_status, \
@@ -1643,12 +1314,10 @@ impl Database {
                        WHERE l.workspace_id = ?1 \
                        ORDER BY l.updated_at DESC",
                 None => "SELECT l.id, l.name, l.description, l.workspace_path, \
-                          l.status, l.color, l.icon, l.limits_config, l.review_template_id, \
-                          l.webhook_enabled, \
+                          l.workspace_id, l.status, l.limits_config, \
                           l.abnormal_handler_todo_id, l.abnormal_handler_trigger_on, \
                           l.process_template_id, l.process_template_version, \
                           l.created_at, l.updated_at, \
-                          (SELECT COUNT(*) FROM loop_triggers t WHERE t.loop_id = l.id) as trigger_count, \
                           (SELECT COUNT(*) FROM loop_steps s WHERE s.loop_id = l.id) as step_count, \
                           (SELECT le.status FROM loop_executions le \
                            WHERE le.loop_id = l.id ORDER BY le.started_at DESC LIMIT 1) as last_execution_status, \
@@ -1680,11 +1349,7 @@ impl Database {
                     description: row.try_get_by::<String, _>("description")?,
                     workspace_path: row.try_get_by::<Option<String>, _>("workspace_path")?,
                     workspace_id: row.try_get_by::<Option<i64>, _>("workspace_id")?,
-                    webhook_enabled: row.try_get_by::<bool, _>("webhook_enabled")?,
                     status: row.try_get_by::<String, _>("status")?,
-                    color: row.try_get_by::<String, _>("color")?,
-                    icon: row.try_get_by::<String, _>("icon")?,
-                    review_template_id: row.try_get_by::<Option<i64>, _>("review_template_id")?,
                     limits_config: row.try_get_by::<String, _>("limits_config")?,
                     abnormal_handler_todo_id: row.try_get_by::<Option<i64>, _>("abnormal_handler_todo_id")?,
                     abnormal_handler_trigger_on: row.try_get_by::<String, _>("abnormal_handler_trigger_on")?,
@@ -1695,7 +1360,6 @@ impl Database {
                     created_at: row.try_get_by::<Option<String>, _>("created_at")?,
                     updated_at: row.try_get_by::<Option<String>, _>("updated_at")?,
                 },
-                trigger_count: row.try_get_by::<i32, _>("trigger_count")?,
                 step_count: row.try_get_by::<i32, _>("step_count")?,
                 last_execution_status: row
                     .try_get_by::<Option<String>, _>("last_execution_status")?
@@ -1912,15 +1576,14 @@ impl Database {
         let Some(loop_) = self.get_loop(loop_id).await? else {
             return Ok(None);
         };
-        let triggers = self.list_triggers_by_loop(loop_id).await?;
         let steps_with_meta = self.list_loop_steps_with_todo_meta(loop_id).await?;
         let steps: Vec<loop_steps::Model> =
             steps_with_meta.iter().map(|(s, _, _, _)| s.clone()).collect();
         // 统计该 loop 下待人工审批的环节执行数
         let pending_approval_count = self.count_pending_approvals_for_loop(loop_id).await?;
+        // 044：loop_triggers 已下线，详情视图不再聚合 triggers。
         Ok(Some(LoopFullView {
             loop_,
-            triggers,
             steps,
             steps_meta: steps_with_meta,
             pending_approval_count,
@@ -1932,7 +1595,6 @@ impl Database {
 #[derive(Debug, Clone)]
 pub struct LoopListRow {
     pub loop_: loops::Model,
-    pub trigger_count: i32,
     pub step_count: i32,
     pub last_execution_status: String,
     pub last_execution_at: Option<String>,
@@ -1944,7 +1606,6 @@ pub struct LoopListRow {
 #[derive(Debug, Clone)]
 pub struct LoopFullView {
     pub loop_: loops::Model,
-    pub triggers: Vec<loop_triggers::Model>,
     pub steps: Vec<loop_steps::Model>,
     /// (step, todo_title, todo_executor, todo_archived_at)
     /// todo_* 字段从 todos 表 JOIN 读，见 list_loop_steps_with_todo_meta。
@@ -2109,22 +1770,21 @@ mod loop_step_count_tests {
         let todo_id = seed_todo(&db, "环节todo").await;
         let free_todo = seed_todo(&db, "自由todo").await;
         let loop_id = seed_loop(&db, "L").await;
-        // 插一条带 min_rating 的 ai 评审环节，模拟「环路闸门会接管」的场景
+        // 044：min_rating 列已下线，闸门改由 gate_config 表达；这里只验证反查命中与 review_type
         db.exec(&format!(
-            "INSERT INTO loop_steps (loop_id, name, todo_id, enabled, min_rating, review_type) \
-             VALUES ({loop_id}, 's', {todo_id}, 1, 80, 'ai')"
+            "INSERT INTO loop_steps (loop_id, name, todo_id, enabled, review_type) \
+             VALUES ({loop_id}, 's', {todo_id}, 1, 'ai')"
         ))
         .await
         .expect("insert step");
 
-        // 命中：返回该 step，min_rating=80（环路闸门依赖此字段决定是否接管评审）
+        // 命中：返回该 step，review_type=ai（原 min_rating 闸门语义已迁到 gate_config）
         let found = db
             .find_loop_step_by_todo_id(todo_id)
             .await
             .unwrap()
             .expect("step should exist");
         assert_eq!(found.todo_id, todo_id);
-        assert_eq!(found.min_rating, Some(80));
         assert_eq!(found.review_type, "ai");
 
         // 未命中：未被环节引用的 todo 返回 None
@@ -2132,21 +1792,15 @@ mod loop_step_count_tests {
         assert!(missing.is_none(), "未被环节引用的 todo 应返回 None");
     }
 
-    /// find_loop_step_with_loop_review_template：按 todo_id 反查「环节内联 review_prompt +
-    /// 所属 loop 的 review_template_id」，供评审 prompt 三级回退（completion.rs 调用）。
-    /// 覆盖命中（两个值都读到）与未命中（无环节 → None）两条路径。
+    /// find_loop_step_review_prompt_by_todo：按 todo_id 反查启用环节的内联 review_prompt，
+    /// 供评审 prompt 回退（completion.rs 调用）。覆盖命中与未命中两条路径。
+    /// 044：loops.review_template_id 已下线，只返回环节内联 prompt。
     #[tokio::test]
-    async fn test_find_loop_step_with_loop_review_template_found_and_missing() {
+    async fn test_find_loop_step_review_prompt_found_and_missing() {
         let db = fresh_db().await;
         let todo_id = seed_todo(&db, "环节todo").await;
         let free_todo = seed_todo(&db, "自由todo").await;
         let loop_id = seed_loop(&db, "L").await;
-        // loop 绑定环路级评审模板 id（普通 INTEGER 列、非 FK，可直接赋任意值用于断言）
-        db.exec(&format!(
-            "UPDATE loops SET review_template_id = 7 WHERE id = {loop_id}"
-        ))
-        .await
-        .expect("set review_template_id");
         // 启用环节，带内联 review_prompt（v75 新增列）
         db.exec(&format!(
             "INSERT INTO loop_steps (loop_id, name, todo_id, enabled, review_prompt) \
@@ -2155,26 +1809,25 @@ mod loop_step_count_tests {
         .await
         .expect("insert step");
 
-        // 命中：同时返回环节内联 prompt 与 loop 级 template_id
+        // 命中：返回环节内联 prompt
         let found = db
-            .find_loop_step_with_loop_review_template(todo_id)
+            .find_loop_step_review_prompt_by_todo(todo_id)
             .await
-            .unwrap()
-            .expect("step should exist");
-        assert_eq!(found, (Some("请严格评审".to_string()), Some(7i64)));
+            .unwrap();
+        assert_eq!(found.as_deref(), Some("请严格评审"));
 
         // 未命中：未被任何环节引用的 todo 返回 None
         let missing = db
-            .find_loop_step_with_loop_review_template(free_todo)
+            .find_loop_step_review_prompt_by_todo(free_todo)
             .await
             .unwrap();
         assert!(missing.is_none(), "未被环节引用的 todo 应返回 None");
     }
 
-    /// enabled=0 的环节不应被选中：WHERE s.enabled = 1 是评审只取启用环节的关键过滤，
-    /// 禁用环节不参与 loop 执行，其 review_prompt/template_id 不应泄漏进评审回退。
+    /// enabled=0 的环节不应被选中：WHERE enabled = 1 是评审只取启用环节的关键过滤，
+    /// 禁用环节不参与 loop 执行，其 review_prompt 不应泄漏进评审回退。
     #[tokio::test]
-    async fn test_find_loop_step_with_loop_review_template_excludes_disabled() {
+    async fn test_find_loop_step_review_prompt_excludes_disabled() {
         let db = fresh_db().await;
         let todo_id = seed_todo(&db, "环节todo").await;
         let loop_id = seed_loop(&db, "L").await;
@@ -2187,7 +1840,7 @@ mod loop_step_count_tests {
         .expect("insert disabled step");
 
         let res = db
-            .find_loop_step_with_loop_review_template(todo_id)
+            .find_loop_step_review_prompt_by_todo(todo_id)
             .await
             .unwrap();
         assert!(res.is_none(), "禁用环节不应被选中");

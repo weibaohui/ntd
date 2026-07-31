@@ -25,8 +25,6 @@ vi.mock('@/components/LoopStudioDetailPanel', () => ({
     workspaceId: number | null;
     tags: Array<{ id: number; name: string; color: string }>;
     hideTitleRow?: boolean;
-    onTrigger: () => void;
-    onDuplicate: () => void;
     onDelete: () => void;
     onToggleStatus: () => void;
     onChanged: () => void;
@@ -35,8 +33,6 @@ vi.mock('@/components/LoopStudioDetailPanel', () => ({
   }) => (
     <div data-testid="mock-loop-detail-panel">
       <div data-testid="mock-hide-title-row">{props.hideTitleRow ? 'true' : 'false'}</div>
-      <button onClick={props.onTrigger} data-testid="mock-trigger">Trigger</button>
-      <button onClick={props.onDuplicate} data-testid="mock-duplicate">Duplicate</button>
       <button onClick={props.onDelete} data-testid="mock-delete">Delete</button>
       <button onClick={props.onToggleStatus} data-testid="mock-toggle-status">Toggle Status</button>
     </div>
@@ -45,8 +41,6 @@ vi.mock('@/components/LoopStudioDetailPanel', () => ({
 
 vi.mock('@/components/LoopDetailPageParts', () => ({
   useLoopDetailActions: () => ({
-    handleTrigger: vi.fn(),
-    handleDuplicate: vi.fn(),
     handleDelete: vi.fn(),
     handleToggleStatus: vi.fn(),
   }),

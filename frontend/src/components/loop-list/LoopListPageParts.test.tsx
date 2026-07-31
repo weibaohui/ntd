@@ -12,8 +12,6 @@ vi.mock('antd', () => {
 });
 
 vi.mock('@/utils/database/loops', () => ({
-  triggerLoop: vi.fn(),
-  duplicateLoop: vi.fn(),
   deleteLoop: vi.fn(),
   updateLoopStatus: vi.fn(),
 }));
@@ -31,41 +29,6 @@ describe('useLoopRowActions', () => {
   const mockLoop: LoopListItem = { id: 10, name: '测试环路', status: 'enabled' } as LoopListItem;
 
   beforeEach(() => { vi.clearAllMocks(); });
-
-  describe('handleTrigger', () => {
-    it('workspace 为空时静默返回', async () => {
-      const { result } = renderHook(() => useLoopRowActions({ workspaceId: null, onReload: mockReload }));
-      await act(() => result.current.handleTrigger(mockLoop));
-      expect(dbLoops.triggerLoop).not.toHaveBeenCalled();
-    });
-
-    it('触发成功后弹消息并通知变化', async () => {
-      vi.mocked(dbLoops.triggerLoop).mockResolvedValueOnce({ execution_id: 99 } as never);
-      const { result } = renderHook(() => useLoopRowActions({ workspaceId: 1, onReload: mockReload, onLoopChanged: mockOnLoopChanged }));
-      await act(() => result.current.handleTrigger(mockLoop));
-      expect(dbLoops.triggerLoop).toHaveBeenCalledWith(1, 10);
-      expect(message.success).toHaveBeenCalledWith(expect.stringContaining('#99'));
-      expect(mockOnLoopChanged).toHaveBeenCalledOnce();
-    });
-  });
-
-  describe('handleDuplicate', () => {
-    it('workspace 为空时静默返回', async () => {
-      const { result } = renderHook(() => useLoopRowActions({ workspaceId: null, onReload: mockReload }));
-      await act(() => result.current.handleDuplicate(mockLoop));
-      expect(dbLoops.duplicateLoop).not.toHaveBeenCalled();
-    });
-
-    it('复制成功后弹消息、刷新、通知变化', async () => {
-      vi.mocked(dbLoops.duplicateLoop).mockResolvedValueOnce(undefined as never);
-      const { result } = renderHook(() => useLoopRowActions({ workspaceId: 1, onReload: mockReload, onLoopChanged: mockOnLoopChanged }));
-      await act(() => result.current.handleDuplicate(mockLoop));
-      expect(dbLoops.duplicateLoop).toHaveBeenCalledWith(1, 10);
-      expect(message.success).toHaveBeenCalledWith(expect.stringContaining('复制'));
-      expect(mockReload).toHaveBeenCalledOnce();
-      expect(mockOnLoopChanged).toHaveBeenCalledOnce();
-    });
-  });
 
   describe('handleDelete', () => {
     it('workspace 为空时静默返回', async () => {

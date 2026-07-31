@@ -3,7 +3,7 @@
 import { useState, useCallback } from 'react';
 import { Drawer, Descriptions, Tag, Button, Skeleton, Empty, App as AntApp } from 'antd';
 import { ArrowRightOutlined, ReadOutlined } from '@ant-design/icons';
-import * as dbLoops from '@/utils/database/loops';
+import bundledApi from '@/api/bundled';
 import * as dbExecutions from '@/utils/database/executions';
 import type { LogEntry } from '@/types';
 import { LogDrawer } from '@/components/todo-post/LogDrawer';
@@ -37,10 +37,10 @@ export function StepExecList({ stepExecs, loopId, workspaceId, executionId, onAp
     }
   }, []);
 
-  // 人工审批状态
+  // 人工审批状态：记录正在提交审批的环节 id，避免重复点击；
+  // 044 起改门禁制（通过/拒绝二选一），不再需要评分滑块；
+  // 也不带「审批意见」——与 ProcessExecutionBoard 的审批操作对齐为纯通过/拒绝，两处功能一致。
   const [approvingId, setApprovingId] = useState<number | null>(null);
-  const [approveRating, setApproveRating] = useState<number>(70);
-  const [approveComment, setApproveComment] = useState<string>('');
 
   const handleCardClick = useCallback(async (s: any) => {
     if (!s.execution_record_id) return;
@@ -56,24 +56,25 @@ export function StepExecList({ stepExecs, loopId, workspaceId, executionId, onAp
     }
   }, []);
 
-  // 人工审批提交
-  const handleApprove = useCallback(async (stepExecutionId: number) => {
+  // 门禁制人工审批：通过/拒绝二选一，调门禁审批接口。
+  // gateId 由后端在 step execution 的 pending_gate_id 字段注入（仅 pending_approval 时有值）。
+  // 不带审批意见，与 ProcessExecutionBoard 的通过/拒绝保持功能一致（同一后端接口 approveGate）。
+  const handleApprove = useCallback(async (stepExecutionId: number, gateId: number | null, approved: boolean) => {
+    if (gateId == null) {
+      message.error('未找到待审批门禁');
+      return;
+    }
     setApprovingId(stepExecutionId);
     try {
-      const { approveStepExecution } = dbLoops;
-      await approveStepExecution(workspaceId, loopId, executionId, stepExecutionId, approveRating, approveComment || undefined);
-      message.success('审批已提交');
-      // 重置审批表单状态为初始值，防止下一张待审卡片复用上次的评分与备注；
-      // 70 分是默认通过评分，空字符串确保备注框干净。
-      setApproveRating(70);
-      setApproveComment('');
+      await bundledApi.approveGate(workspaceId, loopId, executionId, stepExecutionId, gateId, approved);
+      message.success(approved ? '已通过' : '已拒绝');
       onApproved();
     } catch (e: any) {
       message.error(e?.message || '审批失败');
     } finally {
       setApprovingId(null);
     }
-  }, [loopId, executionId, approveRating, approveComment, message, onApproved]);
+  }, [workspaceId, loopId, executionId, message, onApproved]);
 
   if (stepExecs.length === 0) {
     return <Empty description="无环节执行记录" />;
@@ -135,30 +136,33 @@ export function StepExecList({ stepExecs, loopId, workspaceId, executionId, onAp
                 <span style={{ fontSize: 11, color: 'var(--color-text-tertiary, #94a3b8)', fontFamily: 'monospace' }}>{duration}</span>
               </div>
 
-              {/* 评分 / 阈值 */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 4 }}>
-                {s.min_rating != null && (
+              {/* 评分 / 阈值：仅旧评分制历史记录展示（min_rating 非空）。
+                  门禁制（044）执行 min_rating 恒空，状态以 status 标签为准；
+                  approve_gate 会给通过/拒绝写入合成的 rating 100/0（仅供 resume 判定，非真实评分），
+                  若仍按 rating>=min_rating 显示「通过/不通过」会误判——通过写入 100 却因 min_rating 空而显示「不通过」。 */}
+              {s.min_rating != null && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 4 }}>
                   <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
                     阈值 {s.min_rating}
                   </span>
-                )}
-                {s.rating != null ? (
-                  <>
-                    <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
-                      评分 {s.rating}
-                    </span>
-                    <span style={{
-                      padding: '1px 6px', borderRadius: 4, fontSize: 11, fontWeight: 600,
-                      background: ratingPassed ? 'var(--color-success-bg, #f0fdf4)' : 'var(--color-error-bg, #fef2f2)',
-                      color: ratingPassed ? 'var(--color-success, #22c55e)' : 'var(--color-error, #ef4444)',
-                    }}>
-                      {ratingPassed ? '通过' : '不通过'}
-                    </span>
-                  </>
-                ) : (
-                  <span style={{ fontSize: 11, color: 'var(--color-text-tertiary, #94a3b8)' }}>未评审</span>
-                )}
-              </div>
+                  {s.rating != null ? (
+                    <>
+                      <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
+                        评分 {s.rating}
+                      </span>
+                      <span style={{
+                        padding: '1px 6px', borderRadius: 4, fontSize: 11, fontWeight: 600,
+                        background: ratingPassed ? 'var(--color-success-bg, #f0fdf4)' : 'var(--color-error-bg, #fef2f2)',
+                        color: ratingPassed ? 'var(--color-success, #22c55e)' : 'var(--color-error, #ef4444)',
+                      }}>
+                        {ratingPassed ? '通过' : '不通过'}
+                      </span>
+                    </>
+                  ) : (
+                    <span style={{ fontSize: 11, color: 'var(--color-text-tertiary, #94a3b8)' }}>未评审</span>
+                  )}
+                </div>
+              )}
 
               {/* 结论（黑板） */}
               {s.conclusion && (
@@ -206,7 +210,7 @@ export function StepExecList({ stepExecs, loopId, workspaceId, executionId, onAp
                 </div>
               )}
 
-              {/* 人工审批操作区域：pending_approval 状态时显示 */}
+              {/* 人工审批操作区域：pending_approval 状态时显示（044 门禁制：通过/拒绝二选一） */}
               {s.status === 'pending_approval' && (
                 <div
                   onClick={(e) => e.stopPropagation()}
@@ -221,42 +225,26 @@ export function StepExecList({ stepExecs, loopId, workspaceId, executionId, onAp
                   <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-warning, #f59e0b)', marginBottom: 6 }}>
                     ⏳ 等待人工审批
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>评分</span>
-                    <input
-                      type="range"
-                      min={0}
-                      max={100}
-                      value={approveRating}
-                      onChange={(e) => setApproveRating(Number(e.target.value))}
-                      style={{ flex: 1, minWidth: 60 }}
-                    />
-                    <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text)', minWidth: 24, textAlign: 'right' }}>
-                      {approveRating}
-                    </span>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <Button
+                      size="small"
+                      type="primary"
+                      loading={approvingId === s.id}
+                      onClick={() => handleApprove(s.id, s.pending_gate_id ?? null, true)}
+                      style={{ flex: 1, fontSize: 11 }}
+                    >
+                      通过
+                    </Button>
+                    <Button
+                      size="small"
+                      danger
+                      loading={approvingId === s.id}
+                      onClick={() => handleApprove(s.id, s.pending_gate_id ?? null, false)}
+                      style={{ flex: 1, fontSize: 11 }}
+                    >
+                      拒绝
+                    </Button>
                   </div>
-                  <input
-                    type="text"
-                    placeholder="审批意见（可选）"
-                    value={approveComment}
-                    onChange={(e) => setApproveComment(e.target.value)}
-                    style={{
-                      width: '100%', padding: '3px 6px', fontSize: 11,
-                      borderRadius: 4, border: '1px solid var(--color-border, #e2e8f0)',
-                      background: 'var(--color-bg-elevated, #fff)',
-                      color: 'var(--color-text)',
-                      marginBottom: 6, boxSizing: 'border-box',
-                    }}
-                  />
-                  <Button
-                    size="small"
-                    type="primary"
-                    loading={approvingId === s.id}
-                    onClick={() => handleApprove(s.id)}
-                    style={{ width: '100%', fontSize: 11 }}
-                  >
-                    提交审批
-                  </Button>
                 </div>
               )}
             </div>

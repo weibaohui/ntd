@@ -15,19 +15,17 @@ import { buildRowActions, loopProcessText } from './LoopListViewParts';
 import type { LoopListItem } from '@/types/loop';
 
 // 最小环路夹具：buildRowActions 只读取 status 决定「启用/暂停」文案
+// 044：webhook_enabled / icon / trigger_count 列已随环路瘦身移除
 function makeLoop(): LoopListItem {
   return {
     id: 1,
     name: '测试环路',
     description: '',
     workspace_id: 1,
-    webhook_enabled: false,
     status: 'enabled',
     tag_ids: [],
-    icon: '',
     created_at: null,
     updated_at: null,
-    trigger_count: 0,
     step_count: 0,
     last_execution_status: '',
     last_execution_at: null,
@@ -44,22 +42,19 @@ function makeMenuInfo() {
 
 describe('buildRowActions 冒泡防护', () => {
   it('每个菜单项 onClick 都先 stopPropagation 再调业务回调', () => {
+    // 044：菜单项只剩 启用/暂停 + 删除（触发/复制已下线）
     const callbacks = {
-      onTrigger: vi.fn(),
-      onDuplicate: vi.fn(),
       onDelete: vi.fn(),
       onToggleStatus: vi.fn(),
     };
     const items = buildRowActions(makeLoop(), callbacks);
     const expectedCallbacks = [
-      callbacks.onTrigger,
-      callbacks.onDuplicate,
       callbacks.onToggleStatus,
       callbacks.onDelete,
     ];
 
-    // 逐项验证：4 个菜单项都必须阻止冒泡，且业务回调仍被调用
-    expect(items.length).toBe(4);
+    // 逐项验证：2 个菜单项都必须阻止冒泡，且业务回调仍被调用
+    expect(items.length).toBe(2);
     items.forEach((item, i) => {
       const { info, stopPropagation } = makeMenuInfo();
       item.onClick?.(info);

@@ -1,7 +1,8 @@
 // LoopDetailPageParts — LoopDetailPage 的拆分子模块（响应 028 PR review 的函数体 ≤30 行规范）。
 //
-// 拆分原则：把环路详情的操作回调（触发/复制/删除/启停）拆到 useLoopDetailActions hook，
+// 拆分原则：把环路详情的操作回调（删除/启停）拆到 useLoopDetailActions hook，
 // 让 LoopDetailPage 主函数仅负责组合，函数体保持简短。
+// 044：触发/复制已随手工环路能力下线，只剩删除与启停。
 
 import { useCallback } from 'react';
 import { message } from 'antd';
@@ -15,7 +16,7 @@ interface UseLoopDetailActionsArgs {
 }
 
 /**
- * 环路详情操作：触发 / 复制 / 删除 / 启停状态切换。
+ * 环路详情操作：删除 / 启停状态切换。
  * 拆成 hook 让 LoopDetailPage 主函数保持简短，便于测试与复用。
  */
 export function useLoopDetailActions({
@@ -23,28 +24,6 @@ export function useLoopDetailActions({
   workspaceId,
   onLoopChanged,
 }: UseLoopDetailActionsArgs) {
-  const handleTrigger = useCallback(async () => {
-    if (workspaceId == null) return;
-    try {
-      const res = await dbLoops.triggerLoop(workspaceId, loopId);
-      message.success(`已触发 (execution #${res.execution_id})`);
-      onLoopChanged();
-    } catch (e) {
-      message.error(`触发失败: ${e instanceof Error ? e.message : '未知错误'}`);
-    }
-  }, [workspaceId, loopId, onLoopChanged]);
-
-  const handleDuplicate = useCallback(async () => {
-    if (workspaceId == null) return;
-    try {
-      await dbLoops.duplicateLoop(workspaceId, loopId);
-      message.success('已复制');
-      onLoopChanged();
-    } catch (e) {
-      message.error(`复制失败: ${e instanceof Error ? e.message : '未知错误'}`);
-    }
-  }, [workspaceId, loopId, onLoopChanged]);
-
   const handleDelete = useCallback(async () => {
     if (workspaceId == null) return;
     try {
@@ -69,5 +48,5 @@ export function useLoopDetailActions({
     }
   }, [workspaceId, loopId, onLoopChanged]);
 
-  return { handleTrigger, handleDuplicate, handleDelete, handleToggleStatus };
+  return { handleDelete, handleToggleStatus };
 }

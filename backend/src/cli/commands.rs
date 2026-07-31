@@ -9,7 +9,6 @@ use crate::db::project_directory::ProjectDirectory;
 use crate::models::{
     ClientResponse, CreateTagRequest, CreateTodoRequest, DashboardStats,
     ExecutionRecord, ExecutionRecordsPage, ExecutionSummary, Tag, Todo, ExecuteRequest, LoopDto,
-    TriggerLoopRequest,
 };
 use crate::cli::client::ApiClient;
 use crate::config;
@@ -489,21 +488,7 @@ pub enum LoopAction {
         #[arg(long, default_value = "5")]
         recent: i64,
     },
-    /// Execute loop
-    Execute {
-        /// Workspace ID (project_directories.id). v1 路由要求 workspace 嵌入 URL。
-        #[arg(long = "workspace-id")]
-        workspace_id: i64,
-
-        /// Loop ID
-        id: i64,
-
-        /// Parameters for placeholder replacement (key=value format, can be repeated)
-        /// Example: --param project_name=myproject --param env=production
-        /// These params will be injected into step prompts via {{params.key}} placeholders.
-        #[arg(long = "param", num_args = 1, value_parser = parse_key_value)]
-        params: Option<Vec<(String, String)>>,
-    },
+    // 044：Execute 子命令（基于 TriggerLoopRequest 手动触发 loop）随触发器入口下线。
     /// Execution records
     Execution {
         #[command(subcommand)]
@@ -1173,17 +1158,7 @@ async fn handle_loop(
             };
             print_response(&final_resp, output, fields)?;
         }
-        LoopAction::Execute { workspace_id, id, params } => {
-            let params_map: std::collections::HashMap<String, String> = params
-                .as_ref()
-                .map(|vec| vec.iter().cloned().collect())
-                .unwrap_or_default();
-            let req = TriggerLoopRequest { params: params_map };
-            // v1: POST /workspaces/{ws}/loops/{id}/trigger
-            let path = format!("{}/loops/{}/trigger", ws_prefix(*workspace_id), id);
-            let resp: ClientResponse<serde_json::Value> = client.post(&path, &req).await?;
-            print_response(&resp, output, fields)?;
-        }
+        // 044：LoopAction::Execute 已随触发器入口下线移除（原走 POST .../trigger）。
         LoopAction::Execution { action } => {
             match action {
                 LoopExecutionAction::List { workspace_id, loop_id, page, limit } => {

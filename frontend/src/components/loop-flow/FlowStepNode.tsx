@@ -18,9 +18,9 @@ export interface FlowStepNodeProps {
   /** SVG 左上角 y */
   y: number;
   /** 当前是否选中（编辑态） */
-  selected: boolean;
-  /** 点击节点体 → 打开环节编辑弹窗 */
-  onSelect: (step: LoopStepDto) => void;
+  selected?: boolean;
+  /** 点击节点体 → 打开环节编辑弹窗；044 只读模式未注入时节点不可点 */
+  onSelect?: (step: LoopStepDto) => void;
   /** 点击标题跳事项详情（G5 闭环）；未注入时标题不可点 */
   onOpenTodo?: (todoId: number) => void;
 }
@@ -30,8 +30,8 @@ export function FlowStepNode({
 }: FlowStepNodeProps) {
   return (
     <g
-      onClick={() => onSelect(step)}
-      style={{ cursor: 'pointer' }}
+      onClick={onSelect ? () => onSelect(step) : undefined}
+      style={onSelect ? { cursor: 'pointer' } : undefined}
     >
       {/* 阶段色带 */}
       {step.phase_id != null && (
@@ -123,17 +123,6 @@ export function FlowStepNode({
           style={{ fontFamily: 'system-ui' }}
         >
           已归档
-        </text>
-      )}
-      {/* 闸门分数 */}
-      {step.min_rating != null && (
-        <text
-          x={x + NODE_WIDTH - 8} y={y + NODE_HEIGHT - 6}
-          textAnchor="end" fontSize={9}
-          fill="#f97316"
-          style={{ fontFamily: 'monospace' }}
-        >
-          闸门:{step.min_rating}
         </text>
       )}
     </g>

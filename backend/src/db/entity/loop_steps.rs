@@ -15,17 +15,6 @@ pub struct Model {
     pub order_index: i32,
     /// 关联的 todo id
     pub todo_id: i64,
-    /// sequential (reserved for parallel)
-    #[sea_orm(default_value = "sequential")]
-    pub run_mode: String,
-    /// 上游阶段失败时是否跳过本阶段
-    #[sea_orm(default_value = "0")]
-    pub skip_on_source_failed: i32,
-    /// 0-100 评分闸门；NULL 表示无闸门
-    pub min_rating: Option<i32>,
-    /// skip | pass
-    #[sea_orm(default_value = "skip")]
-    pub unrated_policy: String,
     /// 成功时策略: "next" | "goto" | "end"
     #[sea_orm(default_value = "next")]
     pub on_success: String,

@@ -8,7 +8,7 @@ pub mod feishu_history_fetcher;
 pub mod feishu_listener;
 pub mod feishu_push;
 pub mod loop_runner;
-pub mod loop_scheduler;
+// 044：loop_scheduler（cron 触发器调度）随 loop_triggers 表下线，模块已删除。
 pub mod loop_trigger;
 pub mod message_debounce;
 pub mod process;

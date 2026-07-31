@@ -38,8 +38,7 @@ pub struct AppState {
     pub config: Arc<std::sync::RwLock<Config>>,
     pub feishu_listener: Arc<FeishuListener>,
     pub feishu_push_mutator: broadcast::Sender<crate::services::feishu_push::PushConfigUpdate>,
-    /// Loop Studio: 独立 cron 调度器（None 表示 loop 功能未启用或初始化失败）
-    pub loop_scheduler: Option<Arc<crate::services::loop_scheduler::LoopScheduler>>,
+    // 044：loop cron 调度器（loop_scheduler）随 loop_triggers 表下线，已从 AppState 移除。
     /// Loop Studio: 触发器分发器（None 同上）
     pub loop_trigger_dispatcher: Option<Arc<crate::services::loop_trigger::LoopTriggerDispatcher>>,
     /// Loop Studio: loop runner（手动触发 / dispatcher / cron 都通过它启动执行）
@@ -338,11 +337,12 @@ async fn build_app_state(
     let task_manager = ctx.task_manager.clone();
     let config = ctx.config.clone();
 
-    // ====== Loop Studio 三件套初始化 ======
-    // 用 block_in_place + Handle::block_on 走 sync 路径做 async DB 调用；
-    // 这三件套是「可选能力」,初始化失败不阻塞 daemon 启动,只把 Option 置 None。
-    // 按引用传入避免多余的 clone；函数内部按需 clone 进 Arc 包装
-    let (loop_runner, loop_trigger_dispatcher, loop_scheduler) =
+    // ====== Loop Studio 两件套初始化 ======
+    // 044：cron 调度器（loop_scheduler）随 loop_triggers 表下线，不再初始化。
+    // LoopRunner + LoopTriggerDispatcher 均为纯内存构造（无 IO），从 ServiceContext
+    // 中共享 Arc 引用；失败概率低，初始化失败不阻塞 daemon 启动（仅把 Option 置 None）。
+    // 按引用传入 ctx/tx 避免调用方额外 clone；函数内部按需 clone 进 Arc 包装。
+    let (loop_runner, loop_trigger_dispatcher) =
         init_loop_studio_services(&ctx, &tx);
 
     // MessageDebounce 在 feishu_listener 和 history_fetcher 之间共享（issue #600）
@@ -382,7 +382,7 @@ async fn build_app_state(
     ));
 
     // 后台监听 todo 执行完成事件，派发给 loop_trigger_dispatcher
-    spawn_todo_completed_listener(&tx, loop_trigger_dispatcher.clone());
+    // 044：todo_completed 触发器已下线，不再启动该监听器。
 
     // Skills 市场缓存初始化：启动时预热，避免用户首次访问时等待 10-20 秒
     let skills_cache = Arc::new(crate::handlers::bundled::SkillsMarketCache::default());
@@ -402,7 +402,6 @@ async fn build_app_state(
         config,
         feishu_listener: feishu_listener.clone(),
         feishu_push_mutator: push_mutator,
-        loop_scheduler,
         loop_trigger_dispatcher,
         loop_runner,
         expert_manager: ctx.expert_manager.clone(),
@@ -415,12 +414,11 @@ async fn build_app_state(
     state
 }
 
-/// 初始化 Loop Studio 三件套：runner / dispatcher / scheduler。
+/// 初始化 Loop Studio 两件套：runner / dispatcher。
 ///
 /// 全部失败容忍：返回 `None` 让 AppState 标记为「loop 功能不可用」,handler
-/// 在被调用时返回 503 风格错误。daemon 启动不因 loop 故障而被拖垮。
-// 返回三元组 Option<Arc<...>>，拆分为 type alias 过度抽象，允许 type_complexity
-#[allow(clippy::type_complexity)]
+/// Loop Studio 运行时核心：纯内存构造 LoopRunner + LoopTriggerDispatcher，无 IO。
+/// 044：cron 调度器随 loop_triggers 表下线，不再初始化；仅保留工艺运行时承载能力。
 fn init_loop_studio_services(
     // 按引用传入避免调用方 clone；函数内部按需 clone 进 Arc 包装
     ctx: &ServiceContext,
@@ -429,7 +427,6 @@ fn init_loop_studio_services(
 ) -> (
     Option<Arc<crate::services::loop_runner::LoopRunner>>,
     Option<Arc<crate::services::loop_trigger::LoopTriggerDispatcher>>,
-    Option<Arc<crate::services::loop_scheduler::LoopScheduler>>,
 ) {
     use crate::services::loop_runner::{LoopRunner, LoopRunnerCtx};
     use crate::services::loop_trigger::LoopTriggerDispatcher;
@@ -444,72 +441,16 @@ fn init_loop_studio_services(
     };
     // clone tx 进 LoopRunner 内部，broadcast::Sender 是 Arc 包装，clone 只增加引用计数
     let runner = Arc::new(LoopRunner::new(loop_runner_ctx, tx.clone()));
-    // dispatcher 只需要 db（查 loop/trigger 元数据），执行交给 runner 自带的 ctx
+    // dispatcher 只需要 db（查 loop 元数据），执行交给 runner 自带的 ctx
     let dispatcher = Arc::new(LoopTriggerDispatcher::new(
         runner.clone(),
         ctx.db.clone(),
     ));
-    // scheduler 启动时需要 DB 读 + 启动后台 task,这里 block_in_place
-    let scheduler_res = tokio::task::block_in_place(|| {
-        let handle = tokio::runtime::Handle::current();
-        handle.block_on(crate::services::loop_scheduler::LoopScheduler::start(
-            ctx.db.clone(),
-            runner.clone(),
-        ))
-    });
-    let scheduler = match scheduler_res {
-        Ok(s) => Some(s),
-        Err(e) => {
-            tracing::error!("loop_scheduler start failed: {}", e);
-            None
-        }
-    };
-    // 即使 scheduler 失败,runner / dispatcher 仍可用（手动触发仍可工作）
-    (Some(runner), Some(dispatcher), scheduler)
+    (Some(runner), Some(dispatcher))
 }
 
-/// 后台任务：监听 ExecEvent::Finished 事件并派发到 loop_trigger_dispatcher。
-///
-/// 当 todo 执行完成时，触发 loop 的 todo_completed 触发器。
-/// 这是一个 fire-and-forget 任务，失败不影响 daemon 主流程。
-fn spawn_todo_completed_listener(
-    // subscribe() 只需 &self，按引用传入避免 clone
-    tx: &tokio::sync::broadcast::Sender<ExecEvent>,
-    dispatcher: Option<Arc<crate::services::loop_trigger::LoopTriggerDispatcher>>,
-) {
-    let Some(dispatcher) = dispatcher else {
-        return;
-    };
-    let mut rx = tx.subscribe();
-    tokio::spawn(async move {
-        loop {
-            match rx.recv().await {
-                Ok(ExecEvent::Finished {
-                    todo_id,
-                    success: true,
-                    ..
-                }) => {
-                    // 仅当执行成功时派发 todo_completed 触发器
-                    let _ = dispatcher.dispatch_todo_completed(todo_id, None).await;
-                }
-                // 忽略其它事件类型
-                Ok(_) => {}
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    tracing::warn!(
-                        "todo_completed_listener: lagged by {} events",
-                        n
-                    );
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                    tracing::info!(
-                        "todo_completed_listener: channel closed, exiting"
-                    );
-                    break;
-                }
-            }
-        }
-    });
-}
+// 044：spawn_todo_completed_listener（监听 todo 完成后派发 loop todo_completed 触发器）
+// 已随 loop_triggers 表下线移除——dispatcher 不再提供事件派发入口。
 
 /// 后台任务：启动所有已启用的飞书 bot。失败仅记录日志，不影响主流程。
 fn spawn_feishu_bot_starter(feishu_listener: Arc<FeishuListener>, db: Arc<Database>) {
@@ -891,7 +832,6 @@ mod app_state_config_helpers_tests {
             feishu_listener,
             feishu_push_mutator,
             // 测试用最小 AppState 不需要 loop 服务
-            loop_scheduler: None,
             loop_trigger_dispatcher: None,
             loop_runner: None,
             expert_manager: ctx.expert_manager.clone(),

@@ -1,7 +1,7 @@
-/* 任务详情面板：顶部条 + Tabs 两区布局的局部样式。
-   主题色全部引用 App.css 的 CSS 变量，明暗模式自动适配，不硬编码颜色。 */
+/* 任务详情面板（合并环路详情版）：顶部条 + Tabs 布局。
+   主题色全部引用 App.css 的 CSS 变量，明暗模式自动适配。 */
 
-/* 面板根容器：纵向 flex，占满宿主给的高度，内部两区各自滚动。 */
+/* 面板根容器：纵向 flex，占满宿主高度，内部两区各自滚动。 */
 .panel {
   display: flex;
   flex-direction: column;
@@ -9,7 +9,7 @@
   min-height: 0;
 }
 
-/* 顶部条：标题/元信息 在左，主操作在右；窄屏自动换行。 */
+/* 顶部条：标题/元信息 在左，操作按钮在右；窄屏自动换行。 */
 .headerBar {
   display: flex;
   align-items: flex-start;
@@ -25,7 +25,7 @@
   min-width: 0;
 }
 
-/* 标题行：#id + 标题 + 状态/复杂度 Tag 基线对齐。 */
+/* 标题行：#id + 标题 + 状态/复杂度 Tag + 环路启停 Switch，基线对齐。 */
 .titleRow {
   display: flex;
   align-items: baseline;
@@ -33,7 +33,7 @@
   flex-wrap: wrap;
 }
 
-/* 任务标题：用 h2 保证语义与字号，颜色随主题。 */
+/* 任务标题：h2 保证语义与字号。 */
 .taskTitle {
   font-size: 18px;
   font-weight: 600;
@@ -41,7 +41,7 @@
   margin: 0;
 }
 
-/* 元信息行：模板/版本等次要信息，次级文字色。 */
+/* 元信息行：模板/版本等次要信息。 */
 .metaRow {
   margin-top: 6px;
   display: flex;
@@ -65,9 +65,7 @@
   flex-direction: column;
 }
 
-/* Tab 导航条（概览 / 工艺要求 / 执行历史）：提供左侧 24px 内边距，
-   避免「左边框贴左边框」——PageCard contentStyle 为 padding:0，
-   若 nav 不从左侧留空，导航文字紧贴容器左边框，视觉难受。 */
+/* Tab 导航条左侧留空，避免贴边。 */
 .tabsWrap :global(.ant-tabs-nav) {
   padding-left: 24px;
 }
@@ -79,7 +77,7 @@
   flex-direction: column;
 }
 
-/* 内容容器成为滚动区：flex:1 + min-height:0 才能在 flex 子项中正确滚动。 */
+/* 内容容器成为滚动区。 */
 .tabsWrap :global(.ant-tabs-content-holder) {
   flex: 1;
   min-height: 0;
@@ -91,7 +89,9 @@
   padding: 16px 24px 24px;
 }
 
-/* 工艺步骤列表容器。 */
+/* ====== 步骤验收标准列表 ====== */
+
+/* 步骤列表容器。 */
 .steps {
   display: flex;
   flex-direction: column;
@@ -105,12 +105,12 @@
   border-bottom: 1px solid var(--color-border-light);
 }
 
-/* 最后一步不画分隔线，避免尾部多余线条。 */
+/* 最后一步不画分隔线。 */
 .stepItem:last-child {
   border-bottom: none;
 }
 
-/* 圆形序号徽标：主题浅色底 + 主题主色字。 */
+/* 圆形序号徽标。 */
 .stepIndex {
   flex: 0 0 auto;
   width: 22px;
@@ -126,7 +126,7 @@
   margin-top: 2px;
 }
 
-/* 步骤内容区：占满剩余宽度，min-width:0 防溢出。 */
+/* 步骤内容区。 */
 .stepBody {
   flex: 1;
   min-width: 0;
@@ -139,7 +139,7 @@
   margin-bottom: 6px;
 }
 
-/* 技能/产物/门禁 一行：标签 + 标签组，可换行。 */
+/* 技能/产物/门禁一行。 */
 .stepMetaRow {
   display: flex;
   gap: 6px;
@@ -148,118 +148,9 @@
   margin-bottom: 4px;
 }
 
-/* 行内分组标签（技能/产物/门禁）前的说明文字。 */
+/* 行内分组标签前的说明文字。 */
 .stepLabel {
   color: var(--color-text-tertiary);
   font-size: 12px;
   margin-right: 2px;
-}
-
-/* ===== 执行历史：内联手风琴 ===== */
-
-/* 折叠项纵向排列，项间留间距。 */
-.execList {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-/* 单个执行项：带边框卡片，作为「表头 + 详情」的整体外框。 */
-.execItem {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-bg-elevated);
-  overflow: hidden;
-  transition: border-color 150ms ease, box-shadow 150ms ease;
-}
-
-/* hover 时边框略加深，给出明确可交互反馈（不引起位移）。 */
-.execItem:hover {
-  border-color: var(--color-border-secondary);
-}
-
-/* 可点击的表头行：左右分布，整行可点。 */
-.execRow {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px 16px;
-  cursor: pointer;
-  transition: background-color 150ms ease;
-}
-
-/* 行 hover 底色变化。 */
-.execRow:hover {
-  background: var(--color-bg-hover);
-}
-
-/* 键盘焦点可见环（可访问性）。 */
-.execRow:focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: -2px;
-}
-
-/* 表头左侧主区：标签行 + 需求/时间描述。 */
-.execRowMain {
-  min-width: 0;
-}
-
-/* 表头描述行：次级文字色，与标签行拉开层次。 */
-.execRowDesc {
-  margin-top: 4px;
-  color: var(--color-text-secondary);
-  font-size: 13px;
-}
-
-/* 右侧操作区：箭头 + 文案，固定不伸缩。 */
-.execRowAction {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex: 0 0 auto;
-  color: var(--color-text-secondary);
-}
-
-/* 展开箭头：用 transform 旋转（性能友好），200ms 过渡。 */
-.execChevron {
-  display: inline-flex;
-  transition: transform 200ms ease;
-  transform: rotate(0deg);
-}
-
-/* 展开态：箭头旋转 90° 指向「已展开」。 */
-.execChevron[data-expanded='true'] {
-  transform: rotate(90deg);
-}
-
-/* 内联展开区：与表头同框。顶部一条分隔线 + 略深底色，
-   视觉上「表头 + 详情」是一个整体单元（外层卡片已 overflow:hidden 裁圆角）。 */
-.execDetail {
-  border-top: 1px solid var(--color-border);
-  background: var(--color-bg-tertiary);
-  padding: 16px;
-  animation: execExpandIn 200ms ease;
-}
-
-/* 展开淡入：轻微上移 + 透明度，避免突兀跳变。 */
-@keyframes execExpandIn {
-  from {
-    opacity: 0;
-    transform: translateY(-4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-/* 尊重减少动效偏好：关闭过渡与动画。 */
-@media (prefers-reduced-motion: reduce) {
-  .execDetail {
-    animation: none;
-  }
-  .execChevron {
-    transition: none;
-  }
 }

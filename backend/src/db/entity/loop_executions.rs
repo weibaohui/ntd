@@ -43,22 +43,12 @@ pub enum Relation {
         to = "super::loops::Column::Id"
     )]
     BelongsToLoop,
-    #[sea_orm(
-        belongs_to = "super::loop_triggers::Entity",
-        from = "Column::TriggerId",
-        to = "super::loop_triggers::Column::Id"
-    )]
-    BelongsToTrigger,
     #[sea_orm(has_many = "super::loop_step_executions::Entity")]
     LoopStepExecutions,
 }
 
 impl Related<super::loops::Entity> for Entity {
     fn to() -> RelationDef { Relation::BelongsToLoop.def() }
-}
-
-impl Related<super::loop_triggers::Entity> for Entity {
-    fn to() -> RelationDef { Relation::BelongsToTrigger.def() }
 }
 
 impl Related<super::loop_step_executions::Entity> for Entity {

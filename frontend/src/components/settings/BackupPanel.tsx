@@ -5,12 +5,12 @@ import yaml from 'js-yaml';
 import { TodoBackupTab } from './backup/TodoBackupTab';
 import { SkillBackupTab } from './backup/SkillBackupTab';
 import { DatabaseBackupTab } from './backup/DatabaseBackupTab';
-import { LoopBackupTab } from '@/components/settings/backup/LoopBackupTab';
 import { ImportExportModals, BackupDataYaml, ImportItem } from './backup/ImportExportModals';
 import type { ProjectDirectory } from '@/utils/database/todos';
 
 // 备份子 tab 的合法 key——每个子 tab 对应 URL 里的一个 sub 参数，支持深链直达
-const BACKUP_SUB_KEYS = ['todo', 'skill-backup', 'loop', 'database'] as const;
+// 044：环路备份已随导入导出能力下线（工艺迁移/分享由 YAML 文件承担）
+const BACKUP_SUB_KEYS = ['todo', 'skill-backup', 'database'] as const;
 type BackupSubKey = (typeof BACKUP_SUB_KEYS)[number];
 
 // 从 hash URL（如 #/settings?tab=backup&sub=loop）解析当前备份子 tab
@@ -564,13 +564,6 @@ export function BackupPanel() {
                 onDeleteBackup={handleDeleteSkillBackup}
                 onDownloadBackupFile={handleDownloadSkillBackupFile}
               />
-            ),
-          },
-          {
-            key: 'loop',
-            label: '环路备份',
-            children: (
-              <LoopBackupTab />
             ),
           },
           {
