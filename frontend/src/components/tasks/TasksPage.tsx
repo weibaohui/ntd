@@ -129,7 +129,16 @@ export function TasksPage({ workspaceId }: TasksPageProps) {
       setLoops(
         lpList
           .filter((l) => l.process_template_id != null)
-          .map((l) => ({ id: l.id, name: l.name })),
+          // 049：透传工艺来源字段，供新建任务下拉显示「（#工艺ID 工艺名 版本）」；
+          // listLoops 返回的 LoopListItem 已由后端注入这些字段，此前映射时被裁掉。
+          .map((l) => ({
+            id: l.id,
+            name: l.name,
+            process_template_id: l.process_template_id,
+            process_template_display_name: l.process_template_display_name,
+            process_template_name: l.process_template_name,
+            process_template_version: l.process_template_version,
+          })),
       );
     } catch (e) {
       message.error(`加载任务失败：${e instanceof Error ? e.message : String(e)}`);

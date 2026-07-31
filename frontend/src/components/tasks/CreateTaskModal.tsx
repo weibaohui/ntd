@@ -9,6 +9,9 @@ import { Modal, Input, Select, Form, message } from 'antd';
 import { ThunderboltOutlined } from '@ant-design/icons';
 import bundledApi from '@/api/bundled';
 import type { LoopLite } from '@/components/tasks/constants';
+// loopOptionLabel：049 统一的选项文案拼装入口，弹窗不内联模板字符串，
+// 防止多处拼装口径漂移（回退规则只维护一份）。
+import { loopOptionLabel } from '@/components/tasks/constants';
 
 interface CreateTaskModalProps {
   open: boolean;
@@ -132,8 +135,10 @@ export function CreateTaskModal({
           <Select
             placeholder="选择一个工艺环路"
             options={loops.map((l) => ({
-              // 带 #<ID> 前缀：同一工艺可被安装成多个同名环路，靠 ID 才能区分。
-              label: `#${l.id} ${l.name}`,
+              // 049：label 由 loopOptionLabel 拼装，格式
+              // 「#<环路ID> 环路名称（#工艺ID 工艺名称 工艺版本）」，
+              // 同名环路靠 ID 区分，同 ID 环路靠工艺名+版本区分来源。
+              label: loopOptionLabel(l),
               value: l.id,
             }))}
             notFoundContent="暂无可用工艺环路"
