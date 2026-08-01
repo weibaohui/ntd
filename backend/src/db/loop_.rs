@@ -980,6 +980,37 @@ impl Database {
         Ok(())
     }
 
+    /// 终态化所有 running phase：loop 终态时调用，确保 phase 执行记录与 loop 状态一致。
+    ///
+    /// BUG-004：挂起时 phase 不会被终态化（保持 running），loop 成功后需要把剩余 running
+    /// phase 全部标为 success；loop 失败时标为 failed。
+    pub async fn finalize_phase_executions(
+        &self,
+        loop_execution_id: i64,
+        status: &str,
+    ) -> Result<(), sea_orm::DbErr> {
+        use sea_orm::{ConnectionTrait, Statement};
+        let phase_status = if status == "success" {
+            "success"
+        } else {
+            "failed"
+        };
+        let sql = format!(
+            "UPDATE loop_phase_executions SET status = '{}', finished_at = ? \
+             WHERE loop_execution_id = {} AND status = 'running'",
+            phase_status, loop_execution_id
+        );
+        let now = crate::models::utc_timestamp();
+        self.conn
+            .execute(Statement::from_sql_and_values(
+                sea_orm::DbBackend::Sqlite,
+                &sql,
+                [sea_orm::Value::from(now)],
+            ))
+            .await?;
+        Ok(())
+    }
+
     // ====== Loop Step Executions ======
 
     /// 参数数量由 loop_step_executions 表 schema 决定
@@ -2433,5 +2464,103 @@ mod loop_approval_tests {
             .await
             .expect("count");
         assert_eq!(counts.get(&exec_id).copied().unwrap_or(0), 0);
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod loop_phase_finalization_tests {
+    use crate::db::Database;
+    use sea_orm::ConnectionTrait;
+
+    async fn fresh_db() -> Database {
+        Database::new(":memory:").await.expect("memory db must open")
+    }
+
+    /// 造一条 loop + phase + phase_execution，phase 状态为 running。
+    async fn seed_running_phase(db: &Database) -> (i64, i64) {
+        db.exec("INSERT INTO loops (name) VALUES ('L')")
+            .await
+            .expect("insert loop");
+        let loop_id = max_id(db, "loops").await;
+
+        db.exec(&format!(
+            "INSERT INTO loop_phases (loop_id, name) VALUES ({loop_id}, 'P1')"
+        ))
+        .await
+        .expect("insert phase");
+        let phase_id = max_id(db, "loop_phases").await;
+
+        db.exec(&format!(
+            "INSERT INTO loop_executions (loop_id, status, trigger_type, started_at) \
+             VALUES ({loop_id}, 'running', 'manual', '2026-01-01T00:00:00Z')"
+        ))
+        .await
+        .expect("insert loop_exec");
+        let exec_id = max_id(db, "loop_executions").await;
+
+        db.exec(&format!(
+            "INSERT INTO loop_phase_executions (loop_execution_id, phase_id, status, started_at) \
+             VALUES ({exec_id}, {phase_id}, 'running', '2026-01-01T00:00:00Z')"
+        ))
+        .await
+        .expect("insert phase_exec");
+        (exec_id, phase_id)
+    }
+
+    async fn max_id(db: &Database, table: &str) -> i64 {
+        let sql = format!("SELECT MAX(id) AS m FROM {table}");
+        let row = db
+            .conn
+            .query_one(sea_orm::Statement::from_string(sea_orm::DbBackend::Sqlite, sql))
+            .await
+            .expect("query max id")
+            .expect("max id row exists");
+        row.try_get_by::<i64, _>("m").unwrap_or(0)
+    }
+
+    #[tokio::test]
+    async fn test_finalize_phase_executions_marks_running_success() {
+        let db = fresh_db().await;
+        let (exec_id, _phase_id) = seed_running_phase(&db).await;
+
+        db.finalize_phase_executions(exec_id, "success")
+            .await
+            .expect("finalize");
+
+        // 验证 phase 被标为 success 且有 finished_at
+        let row = db
+            .conn
+            .query_one(sea_orm::Statement::from_sql_and_values(
+                sea_orm::DbBackend::Sqlite,
+                "SELECT status FROM loop_phase_executions WHERE loop_execution_id = ?",
+                [sea_orm::Value::from(exec_id)],
+            ))
+            .await
+            .expect("query")
+            .expect("row exists");
+        assert_eq!(row.try_get_by::<String, _>("status").unwrap(), "success");
+    }
+
+    #[tokio::test]
+    async fn test_finalize_phase_executions_marks_running_failed() {
+        let db = fresh_db().await;
+        let (exec_id, _phase_id) = seed_running_phase(&db).await;
+
+        db.finalize_phase_executions(exec_id, "failed")
+            .await
+            .expect("finalize");
+
+        let row = db
+            .conn
+            .query_one(sea_orm::Statement::from_sql_and_values(
+                sea_orm::DbBackend::Sqlite,
+                "SELECT status FROM loop_phase_executions WHERE loop_execution_id = ?",
+                [sea_orm::Value::from(exec_id)],
+            ))
+            .await
+            .expect("query")
+            .expect("row exists");
+        assert_eq!(row.try_get_by::<String, _>("status").unwrap(), "failed");
     }
 }
