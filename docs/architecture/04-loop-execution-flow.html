@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ntd 环路（Loop）执行链路框图</title>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<!-- JetBrains Mono removed: self-contained page uses system monospace fallback -->
 <style>
 :root,[data-theme="dark"]{--bg:#020617;--grid:#1e293b;--text:#fff;--text-muted:#94a3b8;--mask:#0f172a;
 --start-fill:rgba(52,211,153,.3);--start-stroke:#34d399;
@@ -176,7 +176,7 @@ svg{display:block;margin:0 auto;max-width:100%;height:auto;background:var(--bg);
 <text x="112" y="690" class="t-muted" font-size="9">• human_approval：人工审批门禁，pending → 审批推进 passed/failed</text>
 <text x="112" y="708" class="t-muted" font-size="9">• 废弃类型 artifact_present / script_check 已统一并入 ai_criteria_review</text>
 <text x="700" y="672" class="t-muted" font-size="9">• 流转策略：next / skip / end / break / 裸 step_id（goto 跳转）</text>
-<text x="700" y="690" class="t-muted" font-size="9">• 返工判定：target_idx <= current_idx → rework_count++，超 max_rework 强制失败</text>
+<text x="700" y="690" class="t-muted" font-size="9">• 返工判定：target_idx &lt;= current_idx → rework_count++，超 max_rework 强制失败</text>
 <text x="700" y="708" class="t-muted" font-size="9">• 评分等待：ai_criteria_review 门禁存在时，按 timeout_secs 等评分写回</text>
 
 <!-- 泳道2连线 -->
@@ -215,7 +215,7 @@ svg{display:block;margin:0 auto;max-width:100%;height:auto;background:var(--bg);
 <rect x="280" y="850" width="200" height="60" rx="6" class="c-mask"/>
 <rect x="280" y="850" width="200" height="60" rx="6" class="c-proc" stroke-width="1.5"/>
 <text x="380" y="875" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">计算最终 status</text>
-<text x="380" y="893" class="t-muted" font-size="9" text-anchor="middle">success/failed/partial</text>
+<text x="380" y="893" class="t-muted" font-size="8" text-anchor="middle">success/partial/failed/capped_step/capped_token</text>
 
 <rect x="520" y="850" width="200" height="60" rx="6" class="c-mask"/>
 <rect x="520" y="850" width="200" height="60" rx="6" class="c-err" stroke-width="1.5"/>

@@ -115,9 +115,9 @@ ntd 是一个 AI 驱动的任务引擎，采用 Rust 后端 + React 前端 + 多
 - loop_steps.todo_id → todos.id
 - loop_steps 通过 template_guid → process_templates
 - loop_executions.loop_id → loops.id
-- loop_step_executions.step_exec_id → loop_step_executions
-- execution_records.record_id 关联链路
-- loop_step_artifacts.step_execution_id → loop_step_executions
+- loop_step_execution_gates.loop_step_execution_id → loop_step_executions.id
+- loop_step_artifacts.loop_step_execution_id → loop_step_executions.id
+- loop_step_artifacts.execution_record_id → execution_records.id
 
 ---
 

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ntd 事项任务执行链路框图</title>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<!-- JetBrains Mono removed: self-contained page uses system monospace fallback -->
 <style>
 :root,[data-theme="dark"]{--bg:#020617;--grid:#1e293b;--text:#fff;--text-muted:#94a3b8;--mask:#0f172a;
 --start-fill:rgba(52,211,153,.3);--start-stroke:#34d399;
@@ -195,8 +195,10 @@ svg{display:block;margin:0 auto;max-width:100%;height:auto;background:var(--bg);
 <line x1="1000" y1="630" x2="1038" y2="630" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
 <line x1="1240" y1="630" x2="1278" y2="630" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
 
-<line x1="1360" y1="660" x2="1360" y2="880" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
-<text x="1375" y="780" class="t-muted" font-size="9">→ 完成</text>
+<line x1="1360" y1="660" x2="1360" y2="780" class="a-main" stroke-width="1.5"/>
+<line x1="1360" y1="780" x2="180" y2="780" class="a-main" stroke-width="1.5"/>
+<line x1="180" y1="780" x2="180" y2="898" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
+<text x="600" y="774" class="t-muted" font-size="9">→ persist_completion（完成处理链路起点）</text>
 
 <!-- 取消/超时分支 -->
 <line x1="1140" y1="660" x2="1140" y2="900" class="a-branch" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#ah-b)"/>
