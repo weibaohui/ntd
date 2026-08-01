@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ntd 功能架构图</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root,[data-theme="dark"]{
+  --bg:#020617;--grid:#1e293b;--text:#fff;--text-muted:#94a3b8;--mask:#0f172a;
+  --frontend-fill:rgba(8,51,68,.4);--frontend-stroke:#22d3ee;
+  --backend-fill:rgba(6,78,59,.4);--backend-stroke:#34d399;
+  --database-fill:rgba(76,29,149,.4);--database-stroke:#a78bfa;
+  --external-fill:rgba(30,41,59,.5);--external-stroke:#94a3b8;
+  --region-stroke:#fbbf24;--region-fill:rgba(251,191,36,.05);
+  --sg-stroke:#fb7185;--sg-fill:rgba(251,113,133,.05);
+  --arrow:#64748b;--arrow-emphasis:#34d399;--arrow-dashed:#fbbf24;--arrow-security:#fb7185;
+}
+[data-theme="light"]{
+  --bg:#f8fafc;--grid:#e2e8f0;--text:#0f172a;--text-muted:#475569;--mask:#fff;
+  --frontend-fill:rgba(34,211,238,.15);--frontend-stroke:#0891b2;
+  --backend-fill:rgba(52,211,153,.18);--backend-stroke:#059669;
+  --database-fill:rgba(167,139,250,.2);--database-stroke:#7c3aed;
+  --external-fill:rgba(148,163,184,.18);--external-stroke:#64748b;
+  --region-stroke:#d97706;--region-fill:rgba(251,191,36,.08);
+  --sg-stroke:#e11d48;--sg-fill:rgba(251,113,133,.08);
+  --arrow:#94a3b8;--arrow-emphasis:#059669;--arrow-dashed:#d97706;--arrow-security:#e11d48;
+}
+body{margin:0;background:var(--bg);color:var(--text);font-family:'JetBrains Mono',monospace;}
+.toolbar{position:sticky;top:0;background:rgba(15,23,42,.85);backdrop-filter:blur(8px);border-bottom:1px solid #334155;padding:10px 16px;display:flex;align-items:center;gap:12px;z-index:10;}
+.toolbar h1{font-size:14px;margin:0;font-weight:600;}
+.toolbar button{background:transparent;border:1px solid #334155;color:#e2e8f0;padding:4px 10px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:12px;}
+.toolbar button:hover{background:rgba(30,41,59,.8);}
+.diagram-wrap{padding:20px;overflow:auto;}
+svg{display:block;margin:0 auto;max-width:100%;height:auto;background:var(--bg);}
+.c-mask{fill:var(--mask);}
+.c-frontend{fill:var(--frontend-fill);stroke:var(--frontend-stroke);}
+.c-backend{fill:var(--backend-fill);stroke:var(--backend-stroke);}
+.c-database{fill:var(--database-fill);stroke:var(--database-stroke);}
+.c-external{fill:var(--external-fill);stroke:var(--external-stroke);}
+.c-region{fill:var(--region-fill);stroke:var(--region-stroke);stroke-dasharray:6 4;}
+.c-sg{fill:var(--sg-fill);stroke:var(--sg-stroke);stroke-dasharray:6 4;}
+.t-primary{fill:var(--text);}.t-muted{fill:var(--text-muted);}
+.t-frontend{fill:var(--frontend-stroke);}.t-backend{fill:var(--backend-stroke);}
+.t-database{fill:var(--database-stroke);}.t-external{fill:var(--external-stroke);}
+.t-region{fill:var(--region-stroke);}.t-sg{fill:var(--sg-stroke);}
+.a-default{stroke:var(--arrow);fill:none;}.a-emphasis{stroke:var(--arrow-emphasis);fill:none;}
+.a-dashed{stroke:var(--arrow-dashed);fill:none;stroke-dasharray:5 3;}.a-security{stroke:var(--arrow-security);fill:none;stroke-dasharray:5 3;}
+</style>
+</head>
+<body>
+<div class="toolbar">
+<h1>ntd 功能架构图（基于代码重新推导）</h1>
+<button onclick="toggleTheme()">切换主题</button>
+</div>
+<div class="diagram-wrap">
+<svg viewBox="0 0 1500 980" role="img" aria-label="ntd 功能架构图">
+<defs>
+<marker id="ah" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0,10 3.5,0 7" fill="#64748b"/></marker>
+<marker id="ah-e" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0,10 3.5,0 7" fill="#34d399"/></marker>
+<marker id="ah-d" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0,10 3.5,0 7" fill="#fbbf24"/></marker>
+<marker id="ah-s" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0,10 3.5,0 7" fill="#fb7185"/></marker>
+<pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0L0 0 0 40" stroke="var(--grid)" stroke-width="0.5"/></pattern>
+</defs>
+<rect width="100%" height="100%" fill="url(#grid)"/>
+
+<!-- 边界 -->
+<rect x="40" y="40" width="440" height="900" rx="12" class="c-region"/>
+<text x="52" y="62" class="t-region" font-size="11" font-weight="600">前端 React SPA</text>
+
+<rect x="520" y="40" width="560" height="900" rx="12" class="c-sg"/>
+<text x="532" y="62" class="t-sg" font-size="11" font-weight="600">后端 Rust 服务进程</text>
+
+<!-- 前端组件 -->
+<rect x="60" y="80" width="160" height="56" rx="6" class="c-mask"/>
+<rect x="60" y="80" width="160" height="56" rx="6" class="c-external" stroke-width="1.5"/>
+<text x="140" y="104" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">浏览器</text>
+<text x="140" y="122" class="t-muted" font-size="9" text-anchor="middle">React SPA</text>
+
+<rect x="60" y="170" width="160" height="56" rx="6" class="c-mask"/>
+<rect x="60" y="170" width="160" height="56" rx="6" class="c-frontend" stroke-width="1.5"/>
+<text x="140" y="194" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">前端路由</text>
+<text x="140" y="212" class="t-muted" font-size="9" text-anchor="middle">react-router</text>
+
+<rect x="60" y="260" width="160" height="56" rx="6" class="c-mask"/>
+<rect x="60" y="260" width="160" height="56" rx="6" class="c-frontend" stroke-width="1.5"/>
+<text x="140" y="284" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">Dashboard</text>
+<text x="140" y="302" class="t-muted" font-size="9" text-anchor="middle">概览/统计</text>
+
+<rect x="60" y="350" width="160" height="56" rx="6" class="c-mask"/>
+<rect x="60" y="350" width="160" height="56" rx="6" class="c-frontend" stroke-width="1.5"/>
+<text x="140" y="374" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">Todo 中心</text>
+<text x="140" y="392" class="t-muted" font-size="9" text-anchor="middle">事项任务</text>
+
+<rect x="60" y="440" width="160" height="56" rx="6" class="c-mask"/>
+<rect x="60" y="440" width="160" height="56" rx="6" class="c-frontend" stroke-width="1.5"/>
+<text x="140" y="464" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">Loop Studio</text>
+<text x="140" y="482" class="t-muted" font-size="9" text-anchor="middle">环路编排</text>
+
+<rect x="60" y="530" width="160" height="56" rx="6" class="c-mask"/>
+<rect x="60" y="530" width="160" height="56" rx="6" class="c-frontend" stroke-width="1.5"/>
+<text x="140" y="554" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">工艺编辑器</text>
+<text x="140" y="572" class="t-muted" font-size="9" text-anchor="middle">Monaco+Flow</text>
+
+<rect x="60" y="620" width="160" height="56" rx="6" class="c-mask"/>
+<rect x="60" y="620" width="160" height="56" rx="6" class="c-frontend" stroke-width="1.5"/>
+<text x="140" y="644" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">消息监控</text>
+<text x="140" y="662" class="t-muted" font-size="9" text-anchor="middle">飞书消息流</text>
+
+<rect x="280" y="170" width="160" height="56" rx="6" class="c-mask"/>
+<rect x="280" y="170" width="160" height="56" rx="6" class="c-frontend" stroke-width="1.5"/>
+<text x="360" y="194" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">API Client</text>
+<text x="360" y="212" class="t-muted" font-size="9" text-anchor="middle">fetch + WS</text>
+
+<!-- 后端组件 -->
+<rect x="540" y="80" width="180" height="56" rx="6" class="c-mask"/>
+<rect x="540" y="80" width="180" height="56" rx="6" class="c-backend" stroke-width="1.5"/>
+<text x="630" y="104" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">axum HTTP</text>
+<text x="630" y="122" class="t-muted" font-size="9" text-anchor="middle">REST 入口</text>
+
+<rect x="540" y="170" width="180" height="56" rx="6" class="c-mask"/>
+<rect x="540" y="170" width="180" height="56" rx="6" class="c-backend" stroke-width="1.5"/>
+<text x="630" y="194" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">WebSocket</text>
+<text x="630" y="212" class="t-muted" font-size="9" text-anchor="middle">事件广播</text>
+
+<rect x="540" y="260" width="180" height="56" rx="6" class="c-mask"/>
+<rect x="540" y="260" width="180" height="56" rx="6" class="c-backend" stroke-width="1.5"/>
+<text x="630" y="284" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">Handlers</text>
+<text x="630" y="302" class="t-muted" font-size="9" text-anchor="middle">todo/loop/process</text>
+
+<rect x="540" y="350" width="180" height="56" rx="6" class="c-mask"/>
+<rect x="540" y="350" width="180" height="56" rx="6" class="c-backend" stroke-width="1.5"/>
+<text x="630" y="374" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">Services 层</text>
+<text x="630" y="392" class="t-muted" font-size="9" text-anchor="middle">业务逻辑编排</text>
+
+<rect x="540" y="440" width="180" height="56" rx="6" class="c-mask"/>
+<rect x="540" y="440" width="180" height="56" rx="6" class="c-backend" stroke-width="1.5"/>
+<text x="630" y="464" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">DB 抽象层</text>
+<text x="630" y="482" class="t-muted" font-size="9" text-anchor="middle">migration+entity</text>
+
+<rect x="820" y="80" width="200" height="56" rx="6" class="c-mask"/>
+<rect x="820" y="80" width="200" height="56" rx="6" class="c-backend" stroke-width="1.5"/>
+<text x="920" y="104" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">Executor Service</text>
+<text x="920" y="122" class="t-muted" font-size="9" text-anchor="middle">三阶段执行编排</text>
+
+<rect x="820" y="170" width="200" height="56" rx="6" class="c-mask"/>
+<rect x="820" y="170" width="200" height="56" rx="6" class="c-backend" stroke-width="1.5"/>
+<text x="920" y="194" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">LoopRunner</text>
+<text x="920" y="212" class="t-muted" font-size="9" text-anchor="middle">环路主循环+续跑</text>
+
+<rect x="820" y="260" width="200" height="56" rx="6" class="c-mask"/>
+<rect x="820" y="260" width="200" height="56" rx="6" class="c-backend" stroke-width="1.5"/>
+<text x="920" y="284" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">TodoScheduler</text>
+<text x="920" y="302" class="t-muted" font-size="9" text-anchor="middle">tokio-cron 定时</text>
+
+<rect x="820" y="350" width="200" height="56" rx="6" class="c-mask"/>
+<rect x="820" y="350" width="200" height="56" rx="6" class="c-backend" stroke-width="1.5"/>
+<text x="920" y="374" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">工艺服务</text>
+<text x="920" y="392" class="t-muted" font-size="9" text-anchor="middle">phase_driver+gates</text>
+
+<rect x="820" y="440" width="200" height="56" rx="6" class="c-mask"/>
+<rect x="820" y="440" width="200" height="56" rx="6" class="c-backend" stroke-width="1.5"/>
+<text x="920" y="464" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">黑板服务</text>
+<text x="920" y="482" class="t-muted" font-size="9" text-anchor="middle">debouncer+wiki</text>
+
+<rect x="820" y="530" width="200" height="56" rx="6" class="c-mask"/>
+<rect x="820" y="530" width="200" height="56" rx="6" class="c-backend" stroke-width="1.5"/>
+<text x="920" y="554" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">飞书 SDK</text>
+<text x="920" y="572" class="t-muted" font-size="9" text-anchor="middle">WS+HTTP+Token</text>
+
+<rect x="820" y="620" width="200" height="56" rx="6" class="c-mask"/>
+<rect x="820" y="620" width="200" height="56" rx="6" class="c-backend" stroke-width="1.5"/>
+<text x="920" y="644" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">Git 同步</text>
+<text x="920" y="662" class="t-muted" font-size="9" text-anchor="middle">内置资源拉取</text>
+
+<!-- 外部与存储 -->
+<rect x="1140" y="80" width="200" height="56" rx="6" class="c-mask"/>
+<rect x="1140" y="80" width="200" height="56" rx="6" class="c-external" stroke-width="1.5"/>
+<text x="1240" y="104" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">AI 执行器</text>
+<text x="1240" y="122" class="t-muted" font-size="9" text-anchor="middle">claude/codex/atomcode</text>
+
+<rect x="1140" y="170" width="200" height="56" rx="6" class="c-mask"/>
+<rect x="1140" y="170" width="200" height="56" rx="6" class="c-external" stroke-width="1.5"/>
+<text x="1240" y="194" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">专家系统</text>
+<text x="1240" y="212" class="t-muted" font-size="9" text-anchor="middle">plugin.json + MD</text>
+
+<rect x="1140" y="260" width="200" height="56" rx="6" class="c-mask"/>
+<rect x="1140" y="260" width="200" height="56" rx="6" class="c-external" stroke-width="1.5"/>
+<text x="1240" y="284" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">Webhook 入</text>
+<text x="1240" y="302" class="t-muted" font-size="9" text-anchor="middle">外部事件</text>
+
+<rect x="1140" y="440" width="200" height="56" rx="6" class="c-mask"/>
+<rect x="1140" y="440" width="200" height="56" rx="6" class="c-database" stroke-width="1.5"/>
+<text x="1240" y="464" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">SQLite</text>
+<text x="1240" y="482" class="t-muted" font-size="9" text-anchor="middle">30+ 表</text>
+
+<rect x="1140" y="530" width="200" height="56" rx="6" class="c-mask"/>
+<rect x="1140" y="530" width="200" height="56" rx="6" class="c-external" stroke-width="1.5"/>
+<text x="1240" y="554" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">飞书 IM</text>
+<text x="1240" y="572" class="t-muted" font-size="9" text-anchor="middle">用户对话</text>
+
+<!-- 连线 -->
+<line x1="140" y1="136" x2="140" y2="168" class="a-emphasis" stroke-width="1.5" marker-end="url(#ah-e)"/>
+<line x1="220" y1="198" x2="278" y2="198" class="a-emphasis" stroke-width="1.5" marker-end="url(#ah-e)"/>
+<text x="249" y="192" class="t-muted" font-size="9" text-anchor="middle">REST/WS</text>
+
+<line x1="140" y1="226" x2="140" y2="258" class="a-default" stroke-width="1.5" marker-end="url(#ah)"/>
+<line x1="140" y1="316" x2="140" y2="348" class="a-default" stroke-width="1.5" marker-end="url(#ah)"/>
+<line x1="140" y1="406" x2="140" y2="438" class="a-default" stroke-width="1.5" marker-end="url(#ah)"/>
+<line x1="140" y1="496" x2="140" y2="528" class="a-default" stroke-width="1.5" marker-end="url(#ah)"/>
+<line x1="140" y1="586" x2="140" y2="618" class="a-default" stroke-width="1.5" marker-end="url(#ah)"/>
+
+<line x1="440" y1="198" x2="538" y2="108" class="a-emphasis" stroke-width="1.5" marker-end="url(#ah-e)"/>
+<text x="490" y="150" class="t-muted" font-size="9">HTTP</text>
+<line x1="440" y1="198" x2="538" y2="198" class="a-dashed" stroke-width="1.5" marker-end="url(#ah-d)"/>
+<text x="490" y="192" class="t-muted" font-size="9">WS</text>
+
+<line x1="630" y1="136" x2="630" y2="168" class="a-emphasis" stroke-width="1.5" marker-end="url(#ah-e)"/>
+<text x="645" y="156" class="t-muted" font-size="9">路由</text>
+<line x1="630" y1="226" x2="630" y2="258" class="a-emphasis" stroke-width="1.5" marker-end="url(#ah-e)"/>
+<text x="645" y="246" class="t-muted" font-size="9">调用</text>
+<line x1="630" y1="316" x2="630" y2="348" class="a-emphasis" stroke-width="1.5" marker-end="url(#ah-e)"/>
+<text x="645" y="336" class="t-muted" font-size="9">CRUD</text>
+<line x1="630" y1="406" x2="630" y2="438" class="a-emphasis" stroke-width="1.5" marker-end="url(#ah-e)"/>
+
+<line x1="720" y1="288" x2="818" y2="108" class="a-emphasis" stroke-width="1.5" marker-end="url(#ah-e)"/>
+<text x="770" y="190" class="t-muted" font-size="9">执行</text>
+<line x1="720" y1="288" x2="818" y2="198" class="a-emphasis" stroke-width="1.5" marker-end="url(#ah-e)"/>
+<text x="770" y="250" class="t-muted" font-size="9">触发环路</text>
+
+<line x1="1020" y1="108" x2="1138" y2="108" class="a-emphasis" stroke-width="1.5" marker-end="url(#ah-e)"/>
+<text x="1080" y="102" class="t-muted" font-size="9" text-anchor="middle">spawn 子进程</text>
+<line x1="1020" y1="198" x2="1138" y2="468" class="a-emphasis" stroke-width="1.5" marker-end="url(#ah-e)"/>
+
+<line x1="920" y1="136" x2="920" y2="168" class="a-dashed" stroke-width="1.5" marker-end="url(#ah-d)"/>
+<text x="935" y="156" class="t-muted" font-size="9">逐环节执行</text>
+<line x1="920" y1="288" x2="920" y2="348" class="a-dashed" stroke-width="1.5" marker-end="url(#ah-d)"/>
+<text x="935" y="320" class="t-muted" font-size="9">定时触发</text>
+<line x1="920" y1="406" x2="920" y2="438" class="a-dashed" stroke-width="1.5" marker-end="url(#ah-d)"/>
+<text x="935" y="426" class="t-muted" font-size="9">黑板更新</text>
+
+<line x1="1020" y1="558" x2="1138" y2="558" class="a-emphasis" stroke-width="1.5" marker-end="url(#ah-e)"/>
+<text x="1080" y="552" class="t-muted" font-size="9" text-anchor="middle">消息收发</text>
+<line x1="1138" y1="558" x2="1020" y2="558" class="a-dashed" stroke-width="1.5" marker-end="url(#ah-d)"/>
+<text x="1080" y="572" class="t-muted" font-size="9" text-anchor="middle">触发执行</text>
+
+<line x1="1240" y1="136" x2="1240" y2="168" class="a-dashed" stroke-width="1.5" marker-end="url(#ah-d)"/>
+<text x="1255" y="156" class="t-muted" font-size="9">专家上下文</text>
+
+<line x1="1240" y1="316" x2="1240" y2="438" class="a-security" stroke-width="1.5" marker-end="url(#ah-s)"/>
+<text x="1255" y="380" class="t-muted" font-size="9">webhook</text>
+
+<line x1="920" y1="676" x2="920" y2="710" class="a-dashed" stroke-width="1.5" marker-end="url(#ah-d)"/>
+<text x="935" y="696" class="t-muted" font-size="9">同步专家</text>
+
+<!-- 图例 -->
+<text x="60" y="780" class="t-primary" font-size="11" font-weight="600">图例</text>
+<rect x="60" y="792" width="16" height="10" rx="2" class="c-frontend" stroke-width="1"/><text x="82" y="800" class="t-muted" font-size="9">前端</text>
+<rect x="130" y="792" width="16" height="10" rx="2" class="c-backend" stroke-width="1"/><text x="152" y="800" class="t-muted" font-size="9">后端</text>
+<rect x="200" y="792" width="16" height="10" rx="2" class="c-database" stroke-width="1"/><text x="222" y="800" class="t-muted" font-size="9">数据库</text>
+<rect x="280" y="792" width="16" height="10" rx="2" class="c-external" stroke-width="1"/><text x="302" y="800" class="t-muted" font-size="9">外部</text>
+<rect x="360" y="792" width="16" height="10" rx="2" class="c-region" stroke-width="1"/><text x="382" y="800" class="t-muted" font-size="9">区域边界</text>
+<rect x="460" y="792" width="16" height="10" rx="2" class="c-sg" stroke-width="1"/><text x="482" y="800" class="t-muted" font-size="9">安全组边界</text>
+<line x1="560" y1="800" x2="576" y2="800" class="a-emphasis" stroke-width="1.5"/><text x="582" y="803" class="t-muted" font-size="9">主路径</text>
+<line x1="640" y1="800" x2="656" y2="800" class="a-dashed" stroke-width="1.5"/><text x="662" y="803" class="t-muted" font-size="9">异步/辅助</text>
+<line x1="720" y1="800" x2="736" y2="800" class="a-security" stroke-width="1.5"/><text x="742" y="803" class="t-muted" font-size="9">安全流</text>
+</svg>
+</div>
+<script>function toggleTheme(){var h=document.documentElement;var cur=h.getAttribute('data-theme');h.setAttribute('data-theme',cur==='dark'?'light':'dark');}</script>
+</body>
+</html>

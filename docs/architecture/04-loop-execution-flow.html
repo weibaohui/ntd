@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ntd 环路（Loop）执行链路框图</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root,[data-theme="dark"]{--bg:#020617;--grid:#1e293b;--text:#fff;--text-muted:#94a3b8;--mask:#0f172a;
+--start-fill:rgba(52,211,153,.3);--start-stroke:#34d399;
+--proc-fill:rgba(8,51,68,.4);--proc-stroke:#22d3ee;
+--dec-fill:rgba(251,191,36,.15);--dec-stroke:#fbbf24;
+--data-fill:rgba(76,29,149,.4);--data-stroke:#a78bfa;
+--end-fill:rgba(244,63,94,.2);--end-stroke:#f43f5e;
+--err-fill:rgba(136,19,55,.4);--err-stroke:#fb7185;
+--lane1:rgba(8,51,68,.08);--lane2:rgba(76,29,149,.08);--lane3:rgba(251,113,133,.08);}
+[data-theme="light"]{--bg:#f8fafc;--grid:#e2e8f0;--text:#0f172a;--text-muted:#475569;--mask:#fff;
+--start-fill:rgba(52,211,153,.18);--start-stroke:#059669;
+--proc-fill:rgba(34,211,238,.15);--proc-stroke:#0891b2;
+--dec-fill:rgba(251,191,36,.2);--dec-stroke:#d97706;
+--data-fill:rgba(167,139,250,.2);--data-stroke:#7c3aed;
+--end-fill:rgba(244,63,94,.12);--end-stroke:#e11d48;
+--err-fill:rgba(251,113,133,.12);--err-stroke:#e11d48;
+--lane1:rgba(34,211,238,.06);--lane2:rgba(167,139,250,.06);--lane3:rgba(251,113,133,.06);}
+body{margin:0;background:var(--bg);color:var(--text);font-family:'JetBrains Mono',monospace;}
+.toolbar{position:sticky;top:0;background:rgba(15,23,42,.85);border-bottom:1px solid #334155;padding:10px 16px;display:flex;align-items:center;gap:12px;z-index:10;}
+.toolbar h1{font-size:14px;margin:0;font-weight:600;}
+.toolbar button{background:transparent;border:1px solid #334155;color:#e2e8f0;padding:4px 10px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:12px;}
+.toolbar button:hover{background:rgba(30,41,59,.8);}
+.diagram-wrap{padding:20px;overflow:auto;}
+svg{display:block;margin:0 auto;max-width:100%;height:auto;background:var(--bg);}
+.c-mask{fill:var(--mask);}
+.c-start{fill:var(--start-fill);stroke:var(--start-stroke);}
+.c-proc{fill:var(--proc-fill);stroke:var(--proc-stroke);}
+.c-dec{fill:var(--dec-fill);stroke:var(--dec-stroke);}
+.c-data{fill:var(--data-fill);stroke:var(--data-stroke);}
+.c-end{fill:var(--end-fill);stroke:var(--end-stroke);}
+.c-err{fill:var(--err-fill);stroke:var(--err-stroke);}
+.t-primary{fill:var(--text);}.t-muted{fill:var(--text-muted);}
+.a-main{stroke:#34d399;fill:none;}.a-branch{stroke:#fbbf24;fill:none;stroke-dasharray:5 3;}
+.a-err{stroke:#fb7185;fill:none;stroke-dasharray:5 3;}.a-data{stroke:#a78bfa;fill:none;stroke-dasharray:5 3;}
+</style>
+</head>
+<body>
+<div class="toolbar"><h1>ntd 环路（Loop）执行链路框图</h1><button onclick="toggleTheme()">切换主题</button></div>
+<div class="diagram-wrap">
+<svg viewBox="0 0 1500 1080" role="img" aria-label="环路执行链路框图">
+<defs>
+<marker id="ah-m" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0,10 3.5,0 7" fill="#34d399"/></marker>
+<marker id="ah-b" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0,10 3.5,0 7" fill="#fbbf24"/></marker>
+<marker id="ah-e" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0,10 3.5,0 7" fill="#fb7185"/></marker>
+<marker id="ah-d" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0,10 3.5,0 7" fill="#a78bfa"/></marker>
+<pattern id="grid4" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0L0 0 0 40" stroke="var(--grid)" stroke-width="0.5"/></pattern>
+</defs>
+<rect width="100%" height="100%" fill="url(#grid4)"/>
+
+<!-- 泳道背景 -->
+<rect x="40" y="60" width="1420" height="280" rx="8" fill="var(--lane1)" stroke="var(--proc-stroke)" stroke-width="0.5" stroke-dasharray="4 3"/>
+<text x="52" y="82" class="t-muted" font-size="11" font-weight="600">泳道 1：触发与启动</text>
+
+<rect x="40" y="360" width="1420" height="420" rx="8" fill="var(--lane2)" stroke="var(--data-stroke)" stroke-width="0.5" stroke-dasharray="4 3"/>
+<text x="52" y="382" class="t-muted" font-size="11" font-weight="600">泳道 2：主循环（逐环节执行）</text>
+
+<rect x="40" y="800" width="1420" height="260" rx="8" fill="var(--lane3)" stroke="var(--err-stroke)" stroke-width="0.5" stroke-dasharray="4 3"/>
+<text x="52" y="822" class="t-muted" font-size="11" font-weight="600">泳道 3：终止与异常处理</text>
+
+<!-- 泳道1节点 -->
+<rect x="80" y="120" width="160" height="60" rx="30" class="c-mask"/>
+<rect x="80" y="120" width="160" height="60" rx="30" class="c-start" stroke-width="1.5"/>
+<text x="160" y="145" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">手动触发</text>
+<text x="160" y="163" class="t-muted" font-size="9" text-anchor="middle">dispatch_manual_with_meta</text>
+
+<rect x="280" y="120" width="200" height="60" rx="6" class="c-mask"/>
+<rect x="280" y="120" width="200" height="60" rx="6" class="c-proc" stroke-width="1.5"/>
+<text x="380" y="145" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">创建 loop_execution</text>
+<text x="380" y="163" class="t-muted" font-size="9" text-anchor="middle">status=running, total_steps=0</text>
+
+<rect x="520" y="120" width="200" height="60" rx="6" class="c-mask"/>
+<rect x="520" y="120" width="200" height="60" rx="6" class="c-proc" stroke-width="1.5"/>
+<text x="620" y="145" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">加载 enabled steps</text>
+<text x="620" y="163" class="t-muted" font-size="9" text-anchor="middle">list_enabled_loop_steps_by_loop</text>
+
+<rect x="760" y="120" width="200" height="60" rx="6" class="c-mask"/>
+<rect x="760" y="120" width="200" height="60" rx="6" class="c-dec" stroke-width="1.5"/>
+<text x="860" y="145" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">校验 workspace 一致性</text>
+<text x="860" y="163" class="t-muted" font-size="9" text-anchor="middle">check_workspace_consistency</text>
+
+<rect x="1000" y="120" width="200" height="60" rx="6" class="c-mask"/>
+<rect x="1000" y="120" width="200" height="60" rx="6" class="c-proc" stroke-width="1.5"/>
+<text x="1100" y="145" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">解析 trigger_meta</text>
+<text x="1100" y="163" class="t-muted" font-size="9" text-anchor="middle">params + requirement</text>
+
+<rect x="1240" y="120" width="180" height="60" rx="6" class="c-mask"/>
+<rect x="1240" y="120" width="180" height="60" rx="6" class="c-proc" stroke-width="1.5"/>
+<text x="1330" y="145" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">初始化计数器</text>
+<text x="1330" y="163" class="t-muted" font-size="9" text-anchor="middle">completed/failed/total</text>
+
+<!-- 泳道1连线 -->
+<line x1="240" y1="150" x2="278" y2="150" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
+<line x1="480" y1="150" x2="518" y2="150" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
+<line x1="720" y1="150" x2="758" y2="150" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
+<line x1="960" y1="150" x2="998" y2="150" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
+<line x1="1200" y1="150" x2="1238" y2="150" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
+<line x1="1330" y1="180" x2="1330" y2="400" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
+<text x="1345" y="290" class="t-muted" font-size="9">进入主循环</text>
+
+<!-- 泳道2：主循环 -->
+<rect x="80" y="400" width="200" height="60" rx="6" class="c-mask"/>
+<rect x="80" y="400" width="200" height="60" rx="6" class="c-dec" stroke-width="1.5"/>
+<text x="180" y="425" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">全局限制检查</text>
+<text x="180" y="443" class="t-muted" font-size="9" text-anchor="middle">max_executions / max_tokens</text>
+
+<rect x="320" y="400" width="200" height="60" rx="6" class="c-mask"/>
+<rect x="320" y="400" width="200" height="60" rx="6" class="c-dec" stroke-width="1.5"/>
+<text x="420" y="425" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">死循环检测</text>
+<text x="420" y="443" class="t-muted" font-size="9" text-anchor="middle">连续 5 次 → abort</text>
+
+<rect x="560" y="400" width="200" height="60" rx="6" class="c-mask"/>
+<rect x="560" y="400" width="200" height="60" rx="6" class="c-proc" stroke-width="1.5"/>
+<text x="660" y="425" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">构造 enhanced_prompt</text>
+<text x="660" y="443" class="t-muted" font-size="9" text-anchor="middle">黑板+上环节输出+需求注入</text>
+
+<rect x="800" y="400" width="200" height="60" rx="6" class="c-mask"/>
+<rect x="800" y="400" width="200" height="60" rx="6" class="c-proc" stroke-width="1.5"/>
+<text x="900" y="425" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">创建 step_execution</text>
+<text x="900" y="443" class="t-muted" font-size="9" text-anchor="middle">mark_started</text>
+
+<rect x="1040" y="400" width="200" height="60" rx="6" class="c-mask"/>
+<rect x="1040" y="400" width="200" height="60" rx="6" class="c-proc" stroke-width="1.5"/>
+<text x="1140" y="425" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">spawn 子进程执行</text>
+<text x="1140" y="443" class="t-muted" font-size="9" text-anchor="middle">start_step_todo_with_prompt</text>
+
+<rect x="1280" y="400" width="160" height="60" rx="6" class="c-mask"/>
+<rect x="1280" y="400" width="160" height="60" rx="6" class="c-proc" stroke-width="1.5"/>
+<text x="1360" y="425" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">wait_for_step_finish</text>
+<text x="1360" y="443" class="t-muted" font-size="9" text-anchor="middle">等待完成</text>
+
+<!-- PhaseDriver 子流程 -->
+<rect x="80" y="500" width="1360" height="240" rx="8" fill="rgba(251,191,36,.05)" stroke="#fbbf24" stroke-width="0.5" stroke-dasharray="4 3"/>
+<text x="92" y="522" class="t-muted" font-size="11" font-weight="600">PhaseDriver 子流程（has_process_config 时委托）</text>
+
+<rect x="100" y="540" width="200" height="60" rx="6" class="c-mask"/>
+<rect x="100" y="540" width="200" height="60" rx="6" class="c-proc" stroke-width="1.5"/>
+<text x="200" y="565" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">产物捕获</text>
+<text x="200" y="583" class="t-muted" font-size="9" text-anchor="middle">capture_step_artifacts</text>
+
+<rect x="340" y="540" width="200" height="60" rx="6" class="c-mask"/>
+<rect x="340" y="540" width="200" height="60" rx="6" class="c-dec" stroke-width="1.5"/>
+<text x="440" y="565" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">门禁评价</text>
+<text x="440" y="583" class="t-muted" font-size="9" text-anchor="middle">evaluate_step_gates</text>
+
+<rect x="580" y="540" width="200" height="60" rx="6" class="c-mask"/>
+<rect x="580" y="540" width="200" height="60" rx="6" class="c-proc" stroke-width="1.5"/>
+<text x="680" y="565" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">流转解析</text>
+<text x="680" y="583" class="t-muted" font-size="9" text-anchor="middle">transition_resolver.resolve_next</text>
+
+<rect x="820" y="540" width="200" height="60" rx="6" class="c-mask"/>
+<rect x="820" y="540" width="200" height="60" rx="6" class="c-proc" stroke-width="1.5"/>
+<text x="920" y="565" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">返工统计</text>
+<text x="920" y="583" class="t-muted" font-size="9" text-anchor="middle">rework_tracker.evaluate_rework</text>
+
+<rect x="1060" y="540" width="200" height="60" rx="6" class="c-mask"/>
+<rect x="1060" y="540" width="200" height="60" rx="6" class="c-dec" stroke-width="1.5"/>
+<text x="1160" y="565" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">确定最终状态</text>
+<text x="1160" y="583" class="t-muted" font-size="9" text-anchor="middle">success/failed/pending_approval</text>
+
+<rect x="1300" y="540" width="140" height="60" rx="6" class="c-mask"/>
+<rect x="1300" y="540" width="140" height="60" rx="6" class="c-proc" stroke-width="1.5"/>
+<text x="1370" y="565" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">更新 phase</text>
+<text x="1370" y="583" class="t-muted" font-size="9" text-anchor="middle">生命周期</text>
+
+<!-- 门禁类型说明 -->
+<rect x="100" y="630" width="1360" height="100" rx="6" fill="rgba(251,191,36,.08)" stroke="#fbbf24" stroke-width="0.5" stroke-dasharray="3 2"/>
+<text x="112" y="652" class="t-muted" font-size="10" font-weight="600">门禁类型（gate_config）</text>
+<text x="112" y="672" class="t-muted" font-size="9">• ai_criteria_review：AI 评分门禁，min_score 阈值</text>
+<text x="112" y="690" class="t-muted" font-size="9">• human_approval：人工审批门禁，pending → 审批推进 passed/failed</text>
+<text x="112" y="708" class="t-muted" font-size="9">• 废弃类型 artifact_present / script_check 已统一并入 ai_criteria_review</text>
+<text x="700" y="672" class="t-muted" font-size="9">• 流转策略：next / skip / end / break / 裸 step_id（goto 跳转）</text>
+<text x="700" y="690" class="t-muted" font-size="9">• 返工判定：target_idx <= current_idx → rework_count++，超 max_rework 强制失败</text>
+<text x="700" y="708" class="t-muted" font-size="9">• 评分等待：ai_criteria_review 门禁存在时，按 timeout_secs 等评分写回</text>
+
+<!-- 泳道2连线 -->
+<line x1="280" y1="430" x2="318" y2="430" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
+<line x1="520" y1="430" x2="558" y2="430" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
+<line x1="760" y1="430" x2="798" y2="430" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
+<line x1="1000" y1="430" x2="1038" y2="430" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
+<line x1="1240" y1="430" x2="1278" y2="430" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
+
+<line x1="1360" y1="460" x2="1360" y2="498" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
+<text x="1375" y="480" class="t-muted" font-size="9">→ PhaseDriver</text>
+
+<line x1="300" y1="570" x2="338" y2="570" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
+<line x1="540" y1="570" x2="578" y2="570" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
+<line x1="780" y1="570" x2="818" y2="570" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
+<line x1="1020" y1="570" x2="1058" y2="570" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
+<line x1="1260" y1="570" x2="1298" y2="570" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
+
+<line x1="200" y1="600" x2="200" y2="630" class="a-data" stroke-width="1.2" marker-end="url(#ah-d)"/>
+<line x1="440" y1="600" x2="440" y2="630" class="a-data" stroke-width="1.2" marker-end="url(#ah-d)"/>
+
+<line x1="1360" y1="600" x2="1360" y2="750" class="a-branch" stroke-width="1.5" marker-end="url(#ah-b)"/>
+<text x="1375" y="680" class="t-muted" font-size="9">→ 下一环节</text>
+
+<!-- 回到主循环顶部的箭头 -->
+<line x1="1360" y1="730" x2="180" y2="730" class="a-branch" stroke-width="1.5" stroke-dasharray="5 3"/>
+<line x1="180" y1="730" x2="180" y2="462" class="a-branch" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#ah-b)"/>
+<text x="700" y="724" class="t-muted" font-size="9">current_idx = resolve_next(...)，回到主循环顶部</text>
+
+<!-- 泳道3：终止与异常 -->
+<rect x="80" y="850" width="160" height="60" rx="30" class="c-mask"/>
+<rect x="80" y="850" width="160" height="60" rx="30" class="c-end" stroke-width="1.5"/>
+<text x="160" y="875" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">终止</text>
+<text x="160" y="893" class="t-muted" font-size="9" text-anchor="middle">finish_loop_execution</text>
+
+<rect x="280" y="850" width="200" height="60" rx="6" class="c-mask"/>
+<rect x="280" y="850" width="200" height="60" rx="6" class="c-proc" stroke-width="1.5"/>
+<text x="380" y="875" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">计算最终 status</text>
+<text x="380" y="893" class="t-muted" font-size="9" text-anchor="middle">success/failed/partial</text>
+
+<rect x="520" y="850" width="200" height="60" rx="6" class="c-mask"/>
+<rect x="520" y="850" width="200" height="60" rx="6" class="c-err" stroke-width="1.5"/>
+<text x="620" y="875" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">触发异常处理 Todo</text>
+<text x="620" y="893" class="t-muted" font-size="9" text-anchor="middle">trigger_abnormal_handler</text>
+
+<rect x="760" y="850" width="200" height="60" rx="6" class="c-mask"/>
+<rect x="760" y="850" width="200" height="60" rx="6" class="c-proc" stroke-width="1.5"/>
+<text x="860" y="875" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">同步 task 状态</text>
+<text x="860" y="893" class="t-muted" font-size="9" text-anchor="middle">sync_task_status</text>
+
+<rect x="1000" y="850" width="200" height="60" rx="6" class="c-mask"/>
+<rect x="1000" y="850" width="200" height="60" rx="6" class="c-proc" stroke-width="1.5"/>
+<text x="1100" y="875" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">广播 LoopFinished</text>
+<text x="1100" y="893" class="t-muted" font-size="9" text-anchor="middle">或发送飞书结果</text>
+
+<rect x="1240" y="850" width="180" height="60" rx="30" class="c-mask"/>
+<rect x="1240" y="850" width="180" height="60" rx="30" class="c-start" stroke-width="1.5"/>
+<text x="1330" y="875" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">完成</text>
+<text x="1330" y="893" class="t-muted" font-size="9" text-anchor="middle">FeishuPushService 推送</text>
+
+<!-- 泳道3连线 -->
+<line x1="240" y1="880" x2="278" y2="880" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
+<line x1="480" y1="880" x2="518" y2="880" class="a-err" stroke-width="1.5" marker-end="url(#ah-e)"/>
+<line x1="720" y1="880" x2="758" y2="880" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
+<line x1="960" y1="880" x2="998" y2="880" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
+<line x1="1200" y1="880" x2="1238" y2="880" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
+
+<!-- 异常路径连线（从限制检查/死循环检测到终止）-->
+<line x1="180" y1="460" x2="180" y2="848" class="a-err" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#ah-e)"/>
+<text x="50" y="650" class="t-muted" font-size="8">超限/超时</text>
+
+<line x1="420" y1="460" x2="420" y2="848" class="a-err" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#ah-e)"/>
+<text x="240" y="650" class="t-muted" font-size="8">死循环检测</text>
+
+<!-- 图例 -->
+<text x="60" y="1010" class="t-primary" font-size="11" font-weight="600">图例</text>
+<rect x="60" y="1022" width="16" height="10" rx="5" class="c-start" stroke-width="1"/><text x="82" y="1030" class="t-muted" font-size="9">起止</text>
+<rect x="130" y="1022" width="16" height="10" rx="2" class="c-proc" stroke-width="1"/><text x="152" y="1030" class="t-muted" font-size="9">处理</text>
+<rect x="200" y="1022" width="16" height="10" rx="2" class="c-dec" stroke-width="1"/><text x="222" y="1030" class="t-muted" font-size="9">判断</text>
+<rect x="270" y="1022" width="16" height="10" rx="2" class="c-data" stroke-width="1"/><text x="292" y="1030" class="t-muted" font-size="9">数据</text>
+<rect x="340" y="1022" width="16" height="10" rx="2" class="c-end" stroke-width="1"/><text x="362" y="1030" class="t-muted" font-size="9">终止</text>
+<rect x="410" y="1022" width="16" height="10" rx="2" class="c-err" stroke-width="1"/><text x="432" y="1030" class="t-muted" font-size="9">异常</text>
+<line x1="480" y1="1030" x2="496" y2="1030" class="a-main" stroke-width="1.5"/><text x="502" y="1033" class="t-muted" font-size="9">主路径</text>
+<line x1="570" y1="1030" x2="586" y2="1030" class="a-branch" stroke-width="1.5"/><text x="592" y="1033" class="t-muted" font-size="9">分支/回环</text>
+<line x1="670" y1="1030" x2="686" y2="1030" class="a-err" stroke-width="1.5"/><text x="692" y="1033" class="t-muted" font-size="9">异常路径</text>
+</svg>
+</div>
+<script>function toggleTheme(){var h=document.documentElement;var cur=h.getAttribute('data-theme');h.setAttribute('data-theme',cur==='dark'?'light':'dark');}</script>
+</body>
+</html>
