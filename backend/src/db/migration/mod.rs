@@ -43,6 +43,8 @@ mod v81;
 mod v82;
 mod v83;
 mod v84;
+mod v85;
+mod v86;
 
 pub use v2_v5::read_applied_versions;
 pub use v2_v5::drop_column_if_exists;
@@ -151,6 +153,12 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         // V84 在 V83 之后：todos 新增 skills 列（需求 055）——
         // 事项携带技能列表，安装工艺时从环节 skills 写入，执行时注入 prompt
         Box::new(v84::V84AddTodoSkills),
+        // V85 在 V84 之后：loop_phase_executions 外键改为 SET NULL（BUG-008）——
+        // 升级重建 loop_phases 时不再级联删除历史 phase 执行记录
+        Box::new(v85::V85PhaseExecSetNull),
+        // V86 在 V85 之后：process_template_versions 版本快照表（BUG-005）——
+        // 保存工艺时记录版本快照，versions/diff 从快照读取
+        Box::new(v86::V86ProcessTemplateVersions),
     ]
 }
 

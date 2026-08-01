@@ -1,5 +1,5 @@
 use sea_orm::{
-    ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, QueryFilter, QueryOrder,
+    ActiveModelTrait, ActiveValue, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder,
 };
 
 use crate::db::Database;
@@ -232,6 +232,70 @@ impl Database {
             .exec(&self.conn)
             .await?;
         Ok(result.rows_affected)
+    }
+
+    /// 写入版本快照：保存工艺时调用，记录 (guid, version, definition)。
+    /// UNIQUE(guid, version) 保证同版本幂等。
+    pub async fn snapshot_process_template_version(
+        &self,
+        guid: &str,
+        version: &str,
+        definition: &str,
+    ) -> Result<(), sea_orm::DbErr> {
+        let now = crate::models::utc_timestamp();
+        let sql = "INSERT INTO process_template_versions (guid, version, definition, created_at) \
+                   VALUES (?1, ?2, ?3, ?4) \
+                   ON CONFLICT(guid, version) DO NOTHING";
+        self.conn
+            .execute(sea_orm::Statement::from_sql_and_values(
+                sea_orm::DbBackend::Sqlite,
+                sql,
+                [guid.into(), version.into(), definition.into(), now.into()],
+            ))
+            .await?;
+        Ok(())
+    }
+
+    /// 按 guid 列出所有版本快照，按 created_at 升序。
+    pub async fn list_process_template_versions(
+        &self,
+        guid: &str,
+    ) -> Result<Vec<serde_json::Value>, sea_orm::DbErr> {
+        let sql = "SELECT id, version, created_at, definition FROM process_template_versions \
+                   WHERE guid = ?1 ORDER BY created_at ASC";
+        let rows = self.conn
+            .query_all(sea_orm::Statement::from_sql_and_values(
+                sea_orm::DbBackend::Sqlite,
+                sql,
+                [guid.into()],
+            ))
+            .await?;
+        let versions = rows.into_iter().map(|r| {
+            let version: String = r.try_get_by("version").unwrap_or_default();
+            let created_at: String = r.try_get_by("created_at").unwrap_or_default();
+            serde_json::json!({
+                "version": version,
+                "updated_at": created_at,
+            })
+        }).collect();
+        Ok(versions)
+    }
+
+    /// 按 guid + version 读取版本快照正文。
+    pub async fn get_process_template_definition_by_version(
+        &self,
+        guid: &str,
+        version: &str,
+    ) -> Result<Option<String>, sea_orm::DbErr> {
+        let sql = "SELECT definition FROM process_template_versions WHERE guid = ?1 AND version = ?2";
+        let row = self.conn
+            .query_one(sea_orm::Statement::from_sql_and_values(
+                sea_orm::DbBackend::Sqlite,
+                sql,
+                [guid.into(), version.into()],
+            ))
+            .await?;
+        Ok(row.and_then(|r| r.try_get_by::<String, _>("definition").ok()))
     }
 }
 

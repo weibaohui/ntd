@@ -103,10 +103,12 @@ function SelectedSkillTags({
   skillSource: ReadonlyMap<string, string[]>;
   onRemove: (name: string) => void;
 }): JSX.Element | null {
-  if (!selected?.length) return null;
+  // BUG-007：trim 过滤纯空白技能名，避免渲染无文字的「·自定义」Tag
+  const visible = (selected ?? []).filter((n) => n.trim().length > 0);
+  if (visible.length === 0) return null;
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 8 }}>
-      {selected.map((name) => {
+      {visible.map((name) => {
         const meta = skillTagMeta(name, skillSource);
         return (
           <Tag
