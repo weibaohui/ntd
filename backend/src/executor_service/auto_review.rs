@@ -301,6 +301,10 @@ pub async fn resolve_review_template(
 /// Step 4: 合并评审 prompt（截断原 output + 替换模板占位符）。
 /// `template_prompt` 是解析后的模板正文（可以是默认模板 prompt 或环节内联 review_prompt）。
 ///
+/// 占位符兼容：同时支持单大括号 `{original_prompt}`（历史模板）和双大括号
+/// `{{original_prompt}}`（设计 029 引入），先试双大括号、未命中再试单大括号，
+/// 确保存量 DB 行和新模板都能正确替换。
+///
 /// `pub(crate)` 让端到端穿透测试（installer_tests）可直接调用，
 /// 复用同一段占位符替换逻辑，避免在测试里复制实现导致语义漂移。
 pub(crate) fn compose_review_prompt(
@@ -322,11 +326,22 @@ pub(crate) fn compose_review_prompt(
         .as_deref()
         .filter(|s| !s.trim().is_empty())
         .unwrap_or("(无验收标准 —— 由评审师自行判断输出质量)");
+
+    // 兼容历史单大括号和新双大括号两种占位符：
+    // 先替换双大括号（新模板），再替换单大括号（存量模板）。
+    // 若模板同时包含两种写法，双大括号先被替换后不会误伤单大括号版本。
+    let prompt = original.prompt.clone();
+    let max_chars_str = MAX_OUTPUT_CHARS.to_string();
     template_prompt
-        .replace("{{original_prompt}}", &original.prompt)
-        .replace("{{max_output_chars}}", &MAX_OUTPUT_CHARS.to_string())
+        .replace("{{original_prompt}}", &prompt)
+        .replace("{{max_output_chars}}", &max_chars_str)
         .replace("{{original_output}}", &truncated)
         .replace("{{acceptance_criteria}}", acceptance_criteria)
+        // 存量模板兼容：单大括号占位符（PR #945 之前的写法）
+        .replace("{original_prompt}", &prompt)
+        .replace("{max_output_chars}", &max_chars_str)
+        .replace("{original_output}", &truncated)
+        .replace("{acceptance_criteria}", acceptance_criteria)
 }
 
 /// Step 5: 标记 review pending + emit event。
@@ -492,4 +507,93 @@ async fn poll_review_to_terminal(
         "auto-review done: original_todo=#{} record=#{} review_record=#{} status={} rating={:?}",
         todo_id, record_id, review_record_id, review_status_str, rating
     );
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::compose_review_prompt;
+    use crate::models::Todo;
+
+    fn sample_todo(prompt: &str, criteria: Option<&str>) -> Todo {
+        Todo {
+            id: 1,
+            title: "test".to_string(),
+            prompt: prompt.to_string(),
+            status: crate::models::TodoStatus::Pending,
+            created_at: Default::default(),
+            updated_at: Default::default(),
+            tag_ids: Vec::new(),
+            executor: None,
+            scheduler_enabled: false,
+            scheduler_config: None,
+            scheduler_timezone: None,
+            scheduler_next_run_at: None,
+            task_id: None,
+            workspace_path: None,
+            workspace_id: None,
+            webhook_enabled: false,
+            acceptance_criteria: criteria.map(String::from),
+            todo_type: 0,
+            parent_todo_id: None,
+            review_template_id: None,
+            auto_review_enabled: true,
+            action_type: None,
+            action_key: None,
+            archived_at: None,
+            expert_name: None,
+            model: None,
+            skills: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn test_compose_double_braces_replaces_all() {
+        // 新模板：双大括号占位符
+        let template = "任务: {{original_prompt}}\n截断: {{max_output_chars}}\n输出: {{original_output}}\n标准: {{acceptance_criteria}}";
+        let todo = sample_todo("do something", Some("must work"));
+        let result = compose_review_prompt(&todo, template, Some("actual output"));
+        assert!(result.contains("任务: do something"));
+        assert!(result.contains("截断: 8000"));
+        assert!(result.contains("输出: actual output"));
+        assert!(result.contains("标准: must work"));
+    }
+
+    #[test]
+    fn test_compose_single_braces_replaces_all() {
+        // 存量模板：单大括号占位符（BUG-002 复现场景）
+        let template = "任务: {original_prompt}\n截断: {max_output_chars}\n输出: {original_output}\n标准: {acceptance_criteria}";
+        let todo = sample_todo("do something", Some("must work"));
+        let result = compose_review_prompt(&todo, template, Some("actual output"));
+        assert!(result.contains("任务: do something"));
+        assert!(result.contains("截断: 8000"));
+        assert!(result.contains("输出: actual output"));
+        assert!(result.contains("标准: must work"));
+    }
+
+    #[test]
+    fn test_compose_no_output_uses_default() {
+        let template = "{{original_output}}";
+        let todo = sample_todo("task", None);
+        let result = compose_review_prompt(&todo, template, None);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_compose_no_criteria_uses_fallback() {
+        let template = "{{acceptance_criteria}}";
+        let todo = sample_todo("task", None);
+        let result = compose_review_prompt(&todo, template, Some("output"));
+        assert!(result.contains("无验收标准"));
+    }
+
+    #[test]
+    fn test_compose_mixed_braces_both_replaced() {
+        // 极端情况：模板混用两种占位符（不应发生，但兼容）
+        let template = "{{original_prompt}} + {acceptance_criteria}";
+        let todo = sample_todo("task", Some("must work"));
+        let result = compose_review_prompt(&todo, template, Some("out"));
+        assert!(result.contains("task"));
+        assert!(result.contains("must work"));
+    }
 }
