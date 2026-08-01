@@ -736,6 +736,37 @@ pub(crate) async fn inject_step_context(db: &Database, todo_id: i64, message: &s
         .unwrap_or_else(|| message.to_string())
 }
 
+// ─── 事项级 skills 注入（需求 055）───
+//
+// 与上述前置段落的注入不同：skills 是给执行器 CLI 的斜杠命令而非说明文本，
+// 因此不前置标题段，而是把 `/skill-name` 逐行追加到最终 message 尾部。
+// 与 TodoDrawer 手动点击技能把 `/name` 插入 prompt 的既有语义完全一致。
+
+/// 把事项 skills 以 `/skill-name` 逐行追加到 message 尾部（需求 055）。
+///
+/// 纯函数：todo 已由 prepare_execution_state 加载，无需再查库。
+/// todo=None / skills 为空 → 原样返回（独立 todo、无技能事项零副作用）；
+/// 纯空白技能名会被过滤（数据卫生），但不去重——决策 3B：统一追加。
+pub(crate) fn inject_todo_skills(todo: &Option<crate::models::Todo>, message: &str) -> String {
+    // 无 todo（执行前加载失败）或未配置技能 → 原样返回，prompt 逐字不变。
+    let Some(todo) = todo else {
+        return message.to_string();
+    };
+    // 过滤纯空白技能名，避免脏数据产生裸 "/" 行。
+    let lines: Vec<String> = todo
+        .skills
+        .iter()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| format!("/{s}"))
+        .collect();
+    if lines.is_empty() {
+        return message.to_string();
+    }
+    // trim_end 收齐原 message 尾部空白后再补空行，保证 skills 区起始位置稳定。
+    format!("{}\n\n{}", message.trim_end(), lines.join("\n"))
+}
+
 /// 解析环节 JSON 数组字段为 `Vec<T>`；空串或解析失败返回空 Vec（不阻断注入）。
 fn parse_step_json_field<T: serde::de::DeserializeOwned>(raw: &str) -> Vec<T> {
     // 空串视作无配置，避免对空数据做无谓解析。
@@ -1295,6 +1326,8 @@ mod tests {
             action_key: None,
             archived_at: None,
             expert_name: expert_name.map(|s| s.to_string()),
+            // 需求 055 新增字段；专家注入用例不关心技能，给空数组即可
+            skills: vec![],
         }
     }
 
@@ -1743,5 +1776,58 @@ mod tests {
         assert!(!result.contains("## 参考 Spec 约定"), "损坏字段应按空处理");
         assert!(result.ends_with('M'));
         remove_test_bundled_spec(&uri);
+    }
+
+    // -------- inject_todo_skills（需求 055）--------
+
+    /// 构造一个带指定 skills 的 Todo（复用 make_todo_with_expert 再覆写技能字段）。
+    fn make_todo_with_skills(skills: Vec<&str>) -> crate::models::Todo {
+        let mut todo = make_todo_with_expert(None);
+        todo.skills = skills.into_iter().map(|s| s.to_string()).collect();
+        todo
+    }
+
+    /// todo 为 None（执行前加载失败）时原样返回，prompt 逐字不变。
+    #[test]
+    fn test_inject_todo_skills_none_todo_returns_original() {
+        let original = "原始任务内容";
+        let result = inject_todo_skills(&None, original);
+        assert_eq!(result, original);
+    }
+
+    /// skills 为空数组时原样返回，prompt 逐字不变。
+    #[test]
+    fn test_inject_todo_skills_empty_skills_returns_original() {
+        let todo = make_todo_with_skills(vec![]);
+        let original = "原始任务内容";
+        let result = inject_todo_skills(&Some(todo), original);
+        assert_eq!(result, original);
+    }
+
+    /// 非空 skills 逐行追加到尾部，以空行与原 prompt 分隔；原 prompt 内容保持在前。
+    #[test]
+    fn test_inject_todo_skills_appends_slash_lines_at_tail() {
+        let todo = make_todo_with_skills(vec!["code-review", "test-gen"]);
+        let result = inject_todo_skills(&Some(todo), "原始任务内容");
+        assert_eq!(result, "原始任务内容\n\n/code-review\n/test-gen");
+        assert!(result.starts_with("原始任务内容"), "原 prompt 应完整保留在前");
+    }
+
+    /// 不去重（决策 3B）：prompt 已含同名引用也统一追加。
+    #[test]
+    fn test_inject_todo_skills_no_dedup_appends_anyway() {
+        let todo = make_todo_with_skills(vec!["code-review"]);
+        let result = inject_todo_skills(&Some(todo), "请使用 /code-review 检查");
+        assert!(result.ends_with("\n\n/code-review"), "即使 prompt 已含引用也应追加");
+    }
+
+    /// 纯空白技能名被过滤；全部空白时原样返回（不产生裸 "/" 行）。
+    #[test]
+    fn test_inject_todo_skills_filters_blank_names() {
+        let todo = make_todo_with_skills(vec!["  ", "real-skill", ""]);
+        let result = inject_todo_skills(&Some(todo), "M");
+        assert_eq!(result, "M\n\n/real-skill");
+        let all_blank = make_todo_with_skills(vec![" ", ""]);
+        assert_eq!(inject_todo_skills(&Some(all_blank), "M"), "M");
     }
 }

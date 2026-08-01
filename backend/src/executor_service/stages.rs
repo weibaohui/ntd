@@ -22,7 +22,7 @@ use crate::models::Todo;
 
 use super::pre_spawn::{
     create_run_execution_record, enforce_concurrency_limit,
-    inject_expert_context, inject_step_context, inject_workspace_background,
+    inject_expert_context, inject_step_context, inject_todo_skills, inject_workspace_background,
     inject_workspace_prompt, reject_start_todo_failure,
     select_executor_and_build_command, substitute_message_placeholders,
 };
@@ -85,9 +85,14 @@ pub(crate) async fn prepare_execution_state(
         .or_else(|| todo.as_ref().and_then(|t| t.workspace_id));
     let background_message =
         inject_workspace_background(&request.db, ws_id, &expert_message).await;
+    // 5.6) 注入事项级 skills（需求 055）：todo.skills 非空时把 /skill-name 逐行追加到
+    //      最终 message 尾部，由执行器 CLI 自行解析 slash command。
+    //      放在所有前缀注入之后，使技能命令落在执行器实际收到的 prompt 最尾部；
+    //      无技能/无 todo 时逐字回退，不阻断执行。
+    let final_message = inject_todo_skills(&todo, &background_message);
     // 6) 选定 executor 并构造 command_args（传入注入后的 message）。
     let selected =
-        select_executor_and_build_command(&request, &todo, &background_message).await?;
+        select_executor_and_build_command(&request, &todo, &final_message).await?;
     // 7) 创建 execution record 并把 stage 1 产物聚合成 PreparedExecution。
     create_run_execution_record(request, task_state, todo, timeout_secs, selected).await
 }

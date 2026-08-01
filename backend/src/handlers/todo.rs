@@ -275,6 +275,8 @@ pub async fn create_todo(
         action_key: req.action_key.clone(),
         // 新建事项未归档
         archived_at: None,
+        // 新建 API 不接收 skills（需求 055：仅工艺安装路径写入），响应与库中默认 '[]' 对齐
+        skills: vec![],
     }))
 }
 

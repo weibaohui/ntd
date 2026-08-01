@@ -55,6 +55,11 @@ pub struct Model {
     /// 任务级指定的执行模型（覆盖 executor.default_model）。
     /// NULL = 未指定，回退到执行器默认模型；执行器也未指定则不传 --model。
     pub model: Option<String>,
+    /// 事项级技能名列表（JSON 数组串，需求 055）。
+    /// 工艺安装时从环节 skills 写入；执行时以 `/skill-name` 逐行注入 prompt 尾部，
+    /// 由执行器 CLI 自行解析 slash command。与 loop_steps.skill_names 同构。
+    #[sea_orm(default_value = "[]")]
+    pub skills: String,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

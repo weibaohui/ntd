@@ -153,6 +153,11 @@ pub struct Todo {
     /// None = 未指定，执行时回退到执行器默认模型；执行器也未指定则不传 --model。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// 事项级技能名列表（需求 055）。工艺安装时从环节 skills 写入；
+    /// 执行时以 `/skill-name` 逐行注入 prompt 尾部，由执行器 CLI 解析。
+    /// `#[serde(default)]` 保证旧客户端/旧数据反序列化不受影响。
+    #[serde(default)]
+    pub skills: Vec<String>,
 }
 
 /// 事项中心的五类驱动分类（computed_bucket）。
