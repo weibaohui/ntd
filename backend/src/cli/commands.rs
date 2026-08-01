@@ -1146,7 +1146,7 @@ async fn handle_process(
     fields: &Option<String>,
 ) -> Result<()> {
     // 纯分派：每个动作一个 process_* 小函数，本函数不掺业务逻辑（与 run_command 同构）。
-    // arm 较多是工艺能力齐全的结果，但每条都是单行调用、无嵌套，符合「扁平分派」豁免。
+    // 函数体未超 50 行、无需豁免；arm 多是工艺能力齐全的结果，每条都是单行调用、无嵌套。
     match action {
         ProcessAction::List { system, user } => {
             process_list(client, *system, *user, output, fields).await
@@ -1202,12 +1202,17 @@ async fn process_list(
     output: &OutputFormat,
     fields: &Option<String>,
 ) -> Result<()> {
+    // 两个过滤开关语义互斥：同传会让后端困惑该返回哪一类，提前在客户端拦下并给出可操作提示。
     let path = match (system, user) {
         (true, true) => return Err(anyhow::anyhow!("--system 与 --user 互斥，请只选其一")),
+        // is_system=true 只返回 bundled 同步来的系统工艺
         (true, false) => "/bundled/processes?is_system=true",
+        // is_system=false 只返回用户自建工艺
         (false, true) => "/bundled/processes?is_system=false",
+        // 都不传：返回全量，与旧版 list 行为一致
         (false, false) => "/bundled/processes",
     };
+    // 列表端点返回数组，交 print_response 统一按 --output/--fields 渲染（AI/脚本友好）
     let resp: ClientResponse<Vec<Value>> = client.get(path).await?;
     print_response(&resp, output, fields)?;
     Ok(())
@@ -1220,7 +1225,9 @@ async fn process_show(
     output: &OutputFormat,
     fields: &Option<String>,
 ) -> Result<()> {
+    // 后端 040 起按 guid 寻址，直接传 name 进 {guid} 路径段会 404，必须先解析成 guid
     let guid = resolve_process_guid(client, name_or_guid).await?;
+    // guid 是 UUID 无特殊字符，encode 实际是 no-op；保留是为与其它路径一致的防御习惯
     let path = format!("/bundled/processes/{}", percent_encode_slug(&guid));
     let resp: ClientResponse<Value> = client.get(&path).await?;
     print_response(&resp, output, fields)?;
@@ -1234,7 +1241,9 @@ async fn process_recommend(
     output: &OutputFormat,
     fields: &Option<String>,
 ) -> Result<()> {
+    // recommend 端点只吃一个 description 字段（见后端 RecommendRequest），直接拼 body
     let body = serde_json::json!({ "description": description });
+    // client 自动补 /api/v1；返回按 score 排序的推荐工艺 + reasons
     let resp: ClientResponse<Value> = client.post("/processes/recommend", &body).await?;
     print_response(&resp, output, fields)?;
     Ok(())
@@ -1311,8 +1320,10 @@ async fn process_delete(
     output: &OutputFormat,
     fields: &Option<String>,
 ) -> Result<()> {
+    // 同 show：先解析成 guid 再入 URL，避免 name 直传 404
     let guid = resolve_process_guid(client, name_or_guid).await?;
     let path = format!("/processes/{}", percent_encode_slug(&guid));
+    // 系统工艺 / 已有实例 loop 时后端会 409 拒绝，错误经 print_response 抛 anyhow 透出
     let resp: ClientResponse<Value> = client.delete(&path).await?;
     print_response(&resp, output, fields)?;
     Ok(())
@@ -1327,11 +1338,13 @@ async fn process_upgrade(
     fields: &Option<String>,
 ) -> Result<()> {
     let guid = resolve_process_guid(client, name_or_guid).await?;
+    // 升级按 (guid, loop_id) 定位；loop 不属于该工艺时后端返回 400
     let path = format!(
         "/processes/{}/loops/{}/upgrade",
         percent_encode_slug(&guid),
         loop_id
     );
+    // upgrade 无请求体，传 Null 占位（client.post 要求一个可序列化的 body）
     let resp: ClientResponse<Value> = client.post(&path, &serde_json::Value::Null).await?;
     print_response(&resp, output, fields)?;
     Ok(())
@@ -1345,6 +1358,7 @@ async fn process_loops(
     fields: &Option<String>,
 ) -> Result<()> {
     let guid = resolve_process_guid(client, name_or_guid).await?;
+    // 返回该工艺实例化的全部 loop，含各 loop 执行次数（后端批量聚合，避免 N+1）
     let path = format!("/processes/{}/loops", percent_encode_slug(&guid));
     let resp: ClientResponse<Value> = client.get(&path).await?;
     print_response(&resp, output, fields)?;
@@ -1359,6 +1373,7 @@ async fn process_versions(
     fields: &Option<String>,
 ) -> Result<()> {
     let guid = resolve_process_guid(client, name_or_guid).await?;
+    // 按 guid 聚合版本历史（040 起 name 可重复，不能按 name 聚合版本）
     let path = format!("/processes/{}/versions", percent_encode_slug(&guid));
     let resp: ClientResponse<Value> = client.get(&path).await?;
     print_response(&resp, output, fields)?;
@@ -1375,6 +1390,7 @@ async fn process_diff(
     fields: &Option<String>,
 ) -> Result<()> {
     let guid = resolve_process_guid(client, name_or_guid).await?;
+    // 版本号是 semver（含 '.'），percent_encode_slug 把 '.' 列为安全字符，不会被破坏
     let path = format!(
         "/processes/{}/versions/{}/diff?base={}",
         percent_encode_slug(&guid),
