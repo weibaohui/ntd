@@ -11,6 +11,7 @@
 
 use crate::db::{Database, migration::Migration};
 use async_trait::async_trait;
+use sea_orm::ConnectionTrait;
 use tracing::info;
 
 pub struct V85PhaseExecSetNull;
@@ -21,7 +22,31 @@ impl Migration for V85PhaseExecSetNull {
     fn name(&self) -> &'static str { "fix_phase_exec_cascade" }
 
     async fn up(&self, db: &Database) -> Result<(), sea_orm::DbErr> {
+        // 幂等：如果表已存在且 FK 已是 SET NULL，跳过。
+        let ddl = db
+            .conn
+            .query_all(sea_orm::Statement::from_string(
+                sea_orm::DbBackend::Sqlite,
+                "SELECT sql FROM sqlite_master WHERE name='loop_phase_executions'",
+            ))
+            .await?;
+        let ddl_str: String = ddl
+            .first()
+            .and_then(|r| r.try_get_by::<String, _>("sql").ok())
+            .unwrap_or_default();
+        if ddl_str.contains("ON DELETE SET NULL") {
+            info!("v85: loop_phase_executions FK 已是 SET NULL，跳过");
+            return Ok(());
+        }
+        // 表不存在（fresh DB）：V71 已用 CASCADE 建好，无需重建。
+        if ddl_str.is_empty() {
+            info!("v85: loop_phase_executions 表不存在（fresh DB），跳过");
+            return Ok(());
+        }
+
         // SQLite 不支持 ALTER FOREIGN KEY，必须重建表。
+        // 先清理可能的残留（上次迁移中断的情况）。
+        db.exec("DROP TABLE IF EXISTS _loop_phase_executions_new").await?;
         db.exec(
             "CREATE TABLE IF NOT EXISTS _loop_phase_executions_new (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,7 +69,9 @@ impl Migration for V85PhaseExecSetNull {
         )
         .await?;
 
-        // 替换原表。
+        // 替换原表：先删旧索引，再删旧表，再改名。
+        db.exec("DROP INDEX IF EXISTS idx_loop_phase_executions_exec").await?;
+        db.exec("DROP INDEX IF EXISTS idx_loop_phase_executions_phase").await?;
         db.exec("DROP TABLE IF EXISTS loop_phase_executions").await?;
         db.exec("ALTER TABLE _loop_phase_executions_new RENAME TO loop_phase_executions").await?;
 
@@ -74,7 +101,14 @@ mod tests {
     async fn test_v85_migration_sets_null_on_phase_delete() {
         let db = fresh_db().await;
 
-        // 执行迁移：fresh_db 上没有旧表，v85 会创建新表
+        // fresh_db() 已包含 V71 建的表（CASCADE FK），直接用现有表验证迁移。
+        // 先建 loop，再插入 phase/exec 数据（满足外键）。
+        db.exec("INSERT INTO loops (id, name) VALUES (1, 'L')").await.expect("insert loop");
+        db.exec("INSERT INTO loop_phases (id, loop_id, name) VALUES (1, 1, 'P1')").await.expect("insert phase");
+        db.exec("INSERT INTO loop_executions (id, loop_id, status, started_at, trigger_type) VALUES (1, 1, 'running', '2026-01-01T00:00:00Z', 'manual')").await.expect("insert exec");
+        db.exec("INSERT INTO loop_phase_executions (id, loop_execution_id, phase_id, status) VALUES (1, 1, 1, 'running')").await.expect("insert phase_exec");
+
+        // 执行迁移
         V85PhaseExecSetNull.up(&db).await.expect("migration must succeed");
 
         // 验证新表结构：FOREIGN KEY 含 SET NULL
@@ -92,5 +126,17 @@ mod tests {
             "FK 应改为 SET NULL：{}",
             ddl
         );
+
+        // 验证数据还在
+        let cnt = db
+            .conn
+            .query_all(sea_orm::Statement::from_string(
+                sea_orm::DbBackend::Sqlite,
+                "SELECT COUNT(*) FROM loop_phase_executions",
+            ))
+            .await
+            .expect("count");
+        let n: i64 = cnt[0].try_get_by_index(0).unwrap_or(0);
+        assert_eq!(n, 1, "数据应保留");
     }
 }
