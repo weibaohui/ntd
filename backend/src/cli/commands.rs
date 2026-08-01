@@ -448,7 +448,7 @@ pub enum ProcessAction {
         #[arg(short = 'f', long)]
         file: Option<String>,
 
-        /// 从 stdin 读取完整 JSON body（覆盖以上字段）
+        /// 从 stdin 读取内容（JSON body 或 YAML 正文；有 --name 时按 YAML 解析）
         #[arg(long)]
         stdin: bool,
     },
@@ -1275,16 +1275,42 @@ async fn process_create(
 }
 
 /// 构造新建工艺请求体。
-/// 两条来源：--stdin 读全量 JSON body；否则 --name + --file(definition) 组装，可选元数据按需附上。
+/// 两条来源：--stdin 读全量 JSON body（无 --name 时）；否则 --name + --file(definition) 组装，可选元数据按需附上。
+/// 有 --name 时 stdin 视作 YAML 正文（与 --file 同语义）。
 fn build_create_body(args: &ProcessCreateArgs<'_>) -> Result<Value> {
     if args.stdin {
-        // read_stdin_json 已返回 Result<Value>，直接转发，无需 Ok(...?) 多此一举。
+        // 有 --name 时 stdin 是 YAML 正文（方便 shell heredoc），无 --name 时是 JSON body
+        if args.name.is_some() {
+            let yaml = read_stdin_string()?;
+            return Ok(build_body_from_parts(args.name, Some(yaml), args)?);
+        }
         return read_stdin_json();
     }
     let name = args
         .name
         .ok_or_else(|| anyhow::anyhow!("新建工艺需要 --name（或用 --stdin 传完整 body）"))?;
     let definition = read_definition_source(args.file)?;
+    Ok(build_body_from_parts(Some(name), Some(definition), args)?)
+}
+
+/// 从 stdin 读取原始字符串。
+fn read_stdin_string() -> Result<String> {
+    use std::io::Read;
+    let mut buf = String::new();
+    std::io::stdin()
+        .read_to_string(&mut buf)
+        .map_err(|e| anyhow::anyhow!("读取 stdin 失败: {}", e))?;
+    Ok(buf)
+}
+
+/// 组装 JSON body 的公共逻辑。
+fn build_body_from_parts(
+    name: Option<&str>,
+    definition: Option<String>,
+    args: &ProcessCreateArgs<'_>,
+) -> Result<Value> {
+    let name = name.ok_or_else(|| anyhow::anyhow!("新建工艺需要 --name"))?;
+    let definition = definition.ok_or_else(|| anyhow::anyhow!("新建工艺需要 YAML 正文"))?;
     let mut obj = serde_json::Map::new();
     obj.insert("name".to_string(), Value::String(name.to_string()));
     obj.insert("definition".to_string(), Value::String(definition));

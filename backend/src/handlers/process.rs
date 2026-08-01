@@ -391,6 +391,16 @@ pub async fn update_process(
     // 原子写盘（已含自动递增后的版本号），避免崩溃导致文件损坏。
     atomic_write(&target_path, &new_yaml)?;
 
+    // 版本快照：把当前版本写入 process_template_versions（BUG-005），
+    // 供 versions/diff 查询历史版本。
+    if let Err(e) = state
+        .db
+        .snapshot_process_template_version(&guid, &bumped, &new_yaml)
+        .await
+    {
+        tracing::warn!("版本快照写入失败 {}: {}", guid, e);
+    }
+
     // 触发用户层 upsert，把刚保存的文件刷新入库为 is_system=false。
     if let Err(e) =
         crate::services::process::user_dir::import_user_process_templates(&state).await
@@ -767,18 +777,26 @@ pub async fn get_process_versions(
     State(state): State<AppState>,
     Path(guid): Path<String>,
 ) -> Result<impl axum::response::IntoResponse, AppError> {
-    let templates = state.db.list_process_templates(None).await?;
-    // 040：按 guid 过滤（name 可重复，不能按 name 聚合版本）。
-    let versions: Vec<_> = templates
-        .iter()
-        .filter(|t| t.guid == guid)
-        .map(|t| serde_json::json!({
-            "id": t.id,
-            "version": t.version,
-            "updated_at": t.updated_at,
-            "source_path": t.source_path,
-        }))
-        .collect();
+    // 先确认工艺存在。
+    let template = state
+        .db
+        .get_process_template_by_guid(&guid)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    // 从版本快照表读取历史版本（比 process_templates 表更完整）。
+    let versions = state
+        .db
+        .list_process_template_versions(&template.guid)
+        .await
+        .map_err(|e| AppError::Internal(format!("读取版本列表失败: {}", e)))?;
+    // 如果快照表为空（老实例），回退到当前模板行。
+    if versions.is_empty() {
+        let fallback = vec![serde_json::json!({
+            "version": template.version,
+            "updated_at": template.updated_at,
+        })];
+        return Ok(ApiResponse::ok(serde_json::json!({ "guid": guid, "versions": fallback })));
+    }
     Ok(ApiResponse::ok(serde_json::json!({ "guid": guid, "versions": versions })))
 }
 
@@ -789,13 +807,27 @@ pub async fn diff_process_versions(
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<impl axum::response::IntoResponse, AppError> {
     let base_version = params.get("base").cloned().unwrap_or_default();
+
+    // 优先从版本快照表读取（支持跨版本 diff）。
+    if let (Ok(Some(base_def)), Ok(Some(target_def))) = (
+        state.db.get_process_template_definition_by_version(&guid, &base_version).await,
+        state.db.get_process_template_definition_by_version(&guid, &_version).await,
+    ) {
+        let diff_lines = simple_diff(&base_def, &target_def);
+        return Ok(ApiResponse::ok(serde_json::json!({
+            "guid": guid,
+            "base_version": base_version,
+            "target_version": _version,
+            "diff": diff_lines,
+        })));
+    }
+
+    // 快照表没有 → 回退到 process_templates 表（只有当前版本可 diff）。
     let templates = state.db.list_process_templates(None).await?;
     let base = templates.iter().find(|t| t.guid == guid && t.version == base_version);
     let target = templates.iter().find(|t| t.guid == guid && t.version == _version);
-
     match (base, target) {
         (Some(b), Some(t)) => {
-            // 工艺正文不在 DB，按各自的 source_path 从磁盘文件读取后再做 diff。
             let local_path = state.config_snapshot(|c| c.bundled_source.local_path.clone());
             let base_def = read_definition(b.source_path.as_deref().unwrap_or_default(), &local_path)?;
             let target_def = read_definition(t.source_path.as_deref().unwrap_or_default(), &local_path)?;
