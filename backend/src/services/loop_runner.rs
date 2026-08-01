@@ -1104,6 +1104,13 @@ impl LoopRunner {
             .await
             .map_err(|e| e.to_string())?;
 
+        // 终态化所有 running phase（BUG-004）：loop success 后 phase 不应停留在 running。
+        self.ctx
+            .db
+            .finalize_phase_executions(loop_execution_id, final_status)
+            .await
+            .map_err(|e| e.to_string())?;
+
         // 对异常状态触发异常处理 Todo（主循环结束态无具体错误信息，error_detail 传空串）
         if final_status == "failed" || final_status == "partial" {
             let _ = self

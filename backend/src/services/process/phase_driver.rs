@@ -213,7 +213,7 @@ pub async fn execute_step(
     .await?;
 
     // 7. 更新 phase 生命周期。
-    update_phase_execution(db, loop_execution_id, step, gates_passed).await?;
+    update_phase_execution(db, loop_execution_id, step, human_pending, gates_passed).await?;
 
     Ok(StepOutcome {
         gate_passed: gates_passed,
@@ -278,10 +278,13 @@ fn extract_review_threshold(effective_gate_config: &str) -> Option<i32> {
 }
 
 /// 更新阶段生命周期：当步骤进入新 phase 或完成后，更新 `loop_phase_executions`。
+///
+/// 人工挂起时不更新 phase 状态（既不标 success 也不标 failed），保持 running 等待审批后流转。
 async fn update_phase_execution(
     db: &Arc<Database>,
     loop_execution_id: i64,
     step: &loop_steps::Model,
+    human_pending: bool,
     gates_passed: bool,
 ) -> Result<(), sea_orm::DbErr> {
     let Some(phase_id) = step.phase_id else {
@@ -291,8 +294,9 @@ async fn update_phase_execution(
     // 检查是否已有 phase execution 记录。
     let existing = loop_phase_executions_for_execution(db, loop_execution_id, phase_id).await?;
     if let Some(pex) = existing {
-        // 已有记录：如果步骤完成且阶段状态仍为 running → 更新为 success（或 failed）。
-        if pex.status == "running" {
+        // 已有记录：步骤完成且未挂起时，更新为 success（或 failed）。
+        // 人工挂起时保持 running，不标失败（BUG-004：挂起不应让 phase 终态化）。
+        if pex.status == "running" && !human_pending {
             let new_status = if gates_passed { "success" } else { "failed" };
             update_phase_status(db, pex.id, new_status).await?;
         }
