@@ -127,58 +127,33 @@ pub async fn execute_step(
     )
     .await?;
 
-    // 3. 流转解析。
+    // 3. 流转解析与返工决策（提取为纯函数便于测试）。
     let step_id_to_idx: HashMap<i64, usize> = all_steps
         .iter()
         .enumerate()
         .map(|(i, s)| (s.id, i))
         .collect();
     let gates_passed = gate_summary.all_passed && !gate_summary.has_pending_human;
-
-    let next_idx = transition_resolver::resolve_next(
-        step,
-        gates_passed,
-        &step_id_to_idx,
-        current_idx,
-    );
-
-    // 4. 返工统计。
-    let rework_decision = rework_tracker::evaluate_rework(
-        step_exec.rework_count,
-        step.max_rework,
-        current_idx,
-        next_idx,
-    );
-
-    let (actual_next_idx, final_rework_count, _paused, error_message) = match rework_decision {
-        rework_tracker::ReworkDecision::MaxedOut { current_rework, max_rework } => {
-            // 返工超限：强制失败，不跳转。
-            db.set_step_execution_rework_count(step_exec.id, current_rework)
-                .await?;
-            (
-                None, // 终止
-                current_rework,
-                false,
-                Some(format!(
-                    "返工次数 {} 已达到上限 {}，工艺终止",
-                    current_rework, max_rework
-                )),
-            )
-        }
-        rework_tracker::ReworkDecision::Allowed(new_count) => {
-            if new_count > step_exec.rework_count {
-                db.set_step_execution_rework_count(step_exec.id, new_count)
-                    .await?;
-            }
-            (next_idx, new_count, false, None)
-        }
-        rework_tracker::ReworkDecision::NotRework => {
-            (next_idx, step_exec.rework_count, false, None)
-        }
-    };
-
-    // 5. 确定最终状态。
     let human_pending = gate_summary.has_pending_human;
+
+    // 人工挂起时不解析流转、不统计返工：pending 不是失败，环节处于等待状态，
+    // 下一步由 resume_loop_execution（审批后）决定。
+    let (actual_next_idx, final_rework_count, error_message) =
+        decide_transition_and_rework(
+            step,
+            step_exec,
+            gates_passed,
+            human_pending,
+            &step_id_to_idx,
+            current_idx,
+        );
+    // 返工计数需要持久化到 step_execution（供后续环节读取）。
+    if final_rework_count != step_exec.rework_count {
+        db.set_step_execution_rework_count(step_exec.id, final_rework_count)
+            .await?;
+    }
+
+    // 4. 确定最终状态。
     let final_status = if human_pending {
         "pending_approval"
     } else if gates_passed {
@@ -275,6 +250,55 @@ fn extract_review_threshold(effective_gate_config: &str) -> Option<i32> {
         .into_iter()
         .find(|g| g.gate_type == "ai_criteria_review")
         .and_then(|g| g.min_score)
+}
+
+/// 决定下一步流转与返工计数（纯函数，可测试）。
+///
+/// 人工挂起时返回 `(None, 原值, None)`：不推进、不计返工、无错误信息。
+/// 非挂起时正常解析流转（transition_resolver）并统计返工（rework_tracker）。
+fn decide_transition_and_rework(
+    step: &loop_steps::Model,
+    step_exec: &loop_step_executions::Model,
+    gates_passed: bool,
+    human_pending: bool,
+    step_id_to_idx: &HashMap<i64, usize>,
+    current_idx: usize,
+) -> (Option<usize>, i32, Option<String>) {
+    if human_pending {
+        // 挂起：不推进、不计返工、无错误信息，rework_count 保持原值。
+        return (None, step_exec.rework_count, None);
+    }
+
+    let next_idx = transition_resolver::resolve_next(
+        step,
+        gates_passed,
+        step_id_to_idx,
+        current_idx,
+    );
+
+    let rework_decision = rework_tracker::evaluate_rework(
+        step_exec.rework_count,
+        step.max_rework,
+        current_idx,
+        next_idx,
+    );
+
+    match rework_decision {
+        rework_tracker::ReworkDecision::MaxedOut { current_rework, max_rework } => (
+            None,
+            current_rework,
+            Some(format!(
+                "返工次数 {} 已达到上限 {}，工艺终止",
+                current_rework, max_rework
+            )),
+        ),
+        rework_tracker::ReworkDecision::Allowed(new_count) => {
+            (next_idx, new_count, None)
+        }
+        rework_tracker::ReworkDecision::NotRework => {
+            (next_idx, step_exec.rework_count, None)
+        }
+    }
 }
 
 /// 更新阶段生命周期：当步骤进入新 phase 或完成后，更新 `loop_phase_executions`。
@@ -417,5 +441,131 @@ mod tests {
         // 其他类型（含历史 artifact_present）应返回 None。
         let config = r#"[{"name":"产物存在","type":"artifact_present","artifact":"x"}]"#;
         assert_eq!(extract_review_threshold(config), None);
+    }
+
+    // ── BUG-003：人工挂起不误记返工 ──
+
+    fn make_step_with_goto(
+        id: i64,
+        on_success: &str,
+        on_rating_fail: &str,
+        fail_goto: Option<i64>,
+        max_rework: i32,
+    ) -> loop_steps::Model {
+        loop_steps::Model {
+            id,
+            loop_id: 1,
+            name: format!("step_{id}"),
+            description: String::new(),
+            order_index: 0,
+            todo_id: 100 + id,
+            on_success: on_success.to_string(),
+            success_goto_step_id: None,
+            on_rating_fail: on_rating_fail.to_string(),
+            fail_goto_step_id: fail_goto,
+            review_prompt: None,
+            phase_id: None,
+            expected_artifacts: "[]".to_string(),
+            step_template_refs: "[]".to_string(),
+            gate_config: "[]".to_string(),
+            max_rework,
+            skill_names: "[]".to_string(),
+            expert_name: None,
+            enabled: 1,
+            created_at: None,
+        }
+    }
+
+    fn make_step(id: i64, on_success: &str, on_rating_fail: &str, max_rework: i32) -> loop_steps::Model {
+        make_step_with_goto(id, on_success, on_rating_fail, None, max_rework)
+    }
+
+    fn make_step_exec(rework_count: i32) -> loop_step_executions::Model {
+        loop_step_executions::Model {
+            id: 1,
+            loop_execution_id: 1,
+            step_id: 1,
+            todo_id: 100,
+            execution_record_id: None,
+            status: "pending_approval".to_string(),
+            started_at: None,
+            finished_at: None,
+            error_message: None,
+            min_rating: None,
+            unrated_policy: None,
+            rating: None,
+            sequence_index: 1,
+            conclusion: None,
+            approval_status: Some("pending".to_string()),
+            approval_comment: None,
+            rework_count,
+        }
+    }
+
+    fn idx_map(steps: &[loop_steps::Model]) -> std::collections::HashMap<i64, usize> {
+        steps.iter().enumerate().map(|(i, s)| (s.id, i)).collect()
+    }
+
+    #[test]
+    fn bug003_pending_human_does_not_count_rework() {
+        // t03: human_approval 挂起，on_gate_fail=t01（上游），max_rework=1
+        // 预期：next=None，rework_count 保持原值，error_message 为空
+        let steps = vec![
+            make_step(1, "next", "break", 2),       // t01 (idx 0)
+            make_step(2, "next", "break", 3),       // t02 (idx 1)
+            make_step(3, "next", "t01", 1),          // t03 (idx 2) on_gate_fail=t01
+        ];
+        let step_exec = make_step_exec(0);
+        let map = idx_map(&steps);
+        let (next, rework, err) = decide_transition_and_rework(&steps[2], &step_exec, false, true, &map, 2);
+        assert_eq!(next, None, "人工挂起时不推进");
+        assert_eq!(rework, 0, "人工挂起时不计返工");
+        assert!(err.is_none(), "人工挂起时无错误信息");
+    }
+
+    #[test]
+    fn bug003_pending_human_preserves_existing_rework() {
+        // 已有返工计数的环节挂起，不应覆盖为 1
+        let steps = vec![
+            make_step(1, "next", "break", 2),
+            make_step(2, "next", "t01", 3),
+        ];
+        let step_exec = make_step_exec(2);
+        let map = idx_map(&steps);
+        let (next, rework, err) = decide_transition_and_rework(&steps[1], &step_exec, false, true, &map, 1);
+        assert_eq!(next, None);
+        assert_eq!(rework, 2, "挂起时保留原有返工计数");
+        assert!(err.is_none());
+    }
+
+    #[test]
+    fn bug003_gate_fail_still_counts_rework() {
+        // 非挂起的门禁失败：正常计返工
+        // on_gate_fail=t01（id=1，idx=0）→ fail_goto_step_id=Some(1)
+        let steps = vec![
+            make_step(1, "next", "break", 2),
+            make_step_with_goto(2, "next", "t01", Some(1), 3),
+        ];
+        let step_exec = make_step_exec(0);
+        let map = idx_map(&steps);
+        let (next, rework, err) = decide_transition_and_rework(&steps[1], &step_exec, false, false, &map, 1);
+        assert_eq!(next, Some(0), "on_gate_fail=t01 应跳回 idx 0");
+        assert_eq!(rework, 1, "门禁失败应计返工");
+        assert!(err.is_none(), "未超限不应有错误信息");
+    }
+
+    #[test]
+    fn bug003_rework_maxed_out_has_error() {
+        // 返工超限：应返回错误信息
+        let steps = vec![
+            make_step(1, "next", "break", 2),
+            make_step_with_goto(2, "next", "t01", Some(1), 1), // max_rework=1，一返工就超限
+        ];
+        let step_exec = make_step_exec(0);
+        let map = idx_map(&steps);
+        let (next, rework, err) = decide_transition_and_rework(&steps[1], &step_exec, false, false, &map, 1);
+        assert_eq!(next, None, "超限时终止");
+        assert_eq!(rework, 1);
+        assert!(err.is_some(), "超限应有错误信息");
     }
 }
