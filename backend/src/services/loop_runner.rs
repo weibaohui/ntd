@@ -461,6 +461,11 @@ impl LoopRunner {
     ) {
         match result {
             Ok(LoopRunOutcome::Finished) => {
+                // 终态化所有 running phase（BUG-004）：无论是否走 run_inner 的 finish 路径，
+                // 兜底把 phase 从 running 终态化。
+                let le = self.ctx.db.get_loop_execution(loop_execution_id).await;
+                let final_status = le.ok().flatten().map(|l| l.status).unwrap_or_else(|| "failed".to_string());
+                let _ = self.ctx.db.finalize_phase_executions(loop_execution_id, &final_status).await;
                 self.sync_task_status(loop_execution_id).await;
                 self.broadcast_loop_finished(loop_id, loop_execution_id).await;
             }
@@ -608,6 +613,8 @@ impl LoopRunner {
             let _ = self.ctx.db.finish_loop_execution(
                 loop_execution_id, final_status, completed, failed, None,
             ).await;
+            // 终态化所有 running phase（BUG-004）：与 run_inner 路径一致。
+            let _ = self.ctx.db.finalize_phase_executions(loop_execution_id, final_status).await;
             info!("resume: loop_execution #{} ended with status {}", loop_execution_id, final_status);
             // 就地终态化同样要完成收尾：同步任务状态 + 广播 LoopFinished（NTD-005）。
             self.sync_task_status(loop_execution_id).await;
