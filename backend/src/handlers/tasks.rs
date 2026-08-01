@@ -51,8 +51,15 @@ pub async fn create_task(
     Json(req): Json<CreateTaskRequest>,
 ) -> Result<impl axum::response::IntoResponse, AppError> {
     let lp = state.db.get_loop(req.loop_id).await?.ok_or(AppError::NotFound)?;
+    // 取首行作为标题，按**字符**截断（上限 60 字符），避免 CJK 多字节字符上按字节切片 panic。
     let title = req.requirement.lines().next().unwrap_or(&req.requirement).trim();
-    let title = if title.len() > 60 { format!("{}…", &title[..60]) } else { title.to_string() };
+    let title = if title.chars().count() > 60 {
+        // chars().take(60) 保证在字符边界截断，不会落在多字节 UTF-8 中间。
+        let truncated: String = title.chars().take(60).collect();
+        format!("{}…", truncated)
+    } else {
+        title.to_string()
+    };
     let task = state.db.create_task(&title, lp.workspace_id.unwrap_or(1), lp.process_template_id.unwrap_or(0), Some(req.loop_id)).await?;
     state.db.update_task_description(task.id, &req.requirement).await?;
     // 需求不写入 step todo 的 prompt（避免污染模板），通过 trigger_meta 传递给 LoopRunner。
@@ -473,5 +480,50 @@ mod tests {
         let task_b = by_title("任务B");
         assert_eq!(task_b["template_id"], tpl);
         assert_eq!(task_b["template_version"], "2.0.0");
+    }
+
+    /// BUG-001 回归：CJK 长标题按字符截断（≤60 字符），不 panic。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_create_task_cjk_title_does_not_panic() {
+        let (app, ws_id, db) = build_app().await;
+
+        // 建模板与环路
+        let tpl = db
+            .upsert_user_process_template(
+                "guid-bug001", "tpl-bug001", "工艺", "", "default", "medium",
+                "1.0.0", "/tmp/bug001.yaml",
+            )
+            .await
+            .expect("upsert template");
+        let lp = db
+            .create_loop("环路", "", Some(ws_id), Some("/tmp/test-ntd010-workspace"), None, None, "[]")
+            .await
+            .expect("create loop")
+            .id;
+        bind_loop_template(&db, lp, tpl, Some("1.0.0")).await;
+
+        // requirement 首行 >60 字符且含 CJK（>60 字节，切片会落在多字节中间 → panic）
+        let requirement = "【E2E-REQUIREMENT-MARKER】端到端验证需求：这一段 deliberately 超过六十个字节让切片落在多字节字符内部";
+        let body = serde_json::json!({ "loop_id": lp, "requirement": requirement });
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/v1/workspaces/{ws_id}/tasks"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&body).expect("json")))
+                    .expect("request build"),
+            )
+            .await
+            .expect("create task request");
+        // 关键断言：不应 panic/断开连接，必须返回 201
+        assert_eq!(response.status(), StatusCode::CREATED);
+
+        // 额外验证：任务 title 按字符截断（≤60 字符 + …），不应包含乱码或截断一半的 CJK
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.expect("read body");
+        let res: Value = serde_json::from_slice(&bytes).expect("parse body");
+        let task_title = res["data"]["task_id"].as_i64();
+        assert!(task_title.is_some(), "task_id 必须存在");
     }
 }
