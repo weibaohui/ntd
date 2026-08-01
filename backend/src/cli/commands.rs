@@ -1282,7 +1282,7 @@ fn build_create_body(args: &ProcessCreateArgs<'_>) -> Result<Value> {
         // 有 --name 时 stdin 是 YAML 正文（方便 shell heredoc），无 --name 时是 JSON body
         if args.name.is_some() {
             let yaml = read_stdin_string()?;
-            return Ok(build_body_from_parts(args.name, Some(yaml), args)?);
+            return build_body_from_parts(args.name, Some(yaml), args);
         }
         return read_stdin_json();
     }
@@ -1290,7 +1290,7 @@ fn build_create_body(args: &ProcessCreateArgs<'_>) -> Result<Value> {
         .name
         .ok_or_else(|| anyhow::anyhow!("新建工艺需要 --name（或用 --stdin 传完整 body）"))?;
     let definition = read_definition_source(args.file)?;
-    Ok(build_body_from_parts(Some(name), Some(definition), args)?)
+    build_body_from_parts(Some(name), Some(definition), args)
 }
 
 /// 从 stdin 读取原始字符串。
