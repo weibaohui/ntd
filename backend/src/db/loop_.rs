@@ -996,7 +996,7 @@ impl Database {
             "failed"
         };
         let sql = format!(
-            "UPDATE loop_phase_executions SET status = '{}', finished_at = ? \
+            "UPDATE loop_phase_executions SET status = '{}', finished_at = ?1 \
              WHERE loop_execution_id = {} AND status = 'running'",
             phase_status, loop_execution_id
         );
