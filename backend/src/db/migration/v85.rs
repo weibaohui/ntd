@@ -38,13 +38,31 @@ impl Migration for V85PhaseExecSetNull {
             info!("v85: loop_phase_executions FK 已是 SET NULL，跳过");
             return Ok(());
         }
-        // 表不存在（fresh DB）：V71 已用 CASCADE 建好，无需重建。
+        // 表不存在（fresh DB 或被手动删过）：直接建新表（带 SET NULL）。
         if ddl_str.is_empty() {
-            info!("v85: loop_phase_executions 表不存在（fresh DB），跳过");
+            info!("v85: loop_phase_executions 表不存在，直接创建（SET NULL）");
+            db.exec(
+                "CREATE TABLE loop_phase_executions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    loop_execution_id INTEGER NOT NULL,
+                    phase_id INTEGER,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    started_at TEXT,
+                    finished_at TEXT,
+                    FOREIGN KEY (loop_execution_id) REFERENCES loop_executions(id) ON DELETE CASCADE,
+                    FOREIGN KEY (phase_id) REFERENCES loop_phases(id) ON DELETE SET NULL
+                )",
+            )
+            .await?;
+            db.exec("CREATE INDEX IF NOT EXISTS idx_loop_phase_executions_exec ON loop_phase_executions(loop_execution_id)")
+                .await?;
+            db.exec("CREATE INDEX IF NOT EXISTS idx_loop_phase_executions_phase ON loop_phase_executions(phase_id)")
+                .await?;
+            info!("v85: loop_phase_executions 已创建（SET NULL）");
             return Ok(());
         }
 
-        // SQLite 不支持 ALTER FOREIGN KEY，必须重建表。
+        // 表存在但 FK 是 CASCADE：重建改为 SET NULL。
         // 先清理可能的残留（上次迁移中断的情况）。
         db.exec("DROP TABLE IF EXISTS _loop_phase_executions_new").await?;
         db.exec("DROP INDEX IF EXISTS idx_loop_phase_executions_exec").await?;
@@ -140,5 +158,30 @@ mod tests {
             .expect("count");
         let n: i64 = cnt[0].try_get_by_index(0).unwrap_or(0);
         assert_eq!(n, 1, "数据应保留");
+    }
+
+    #[tokio::test]
+    async fn test_v85_migration_creates_table_if_missing() {
+        let db = fresh_db().await;
+        // fresh_db() 已包含 V71 建的表，先删掉模拟「表不存在」场景。
+        db.exec("DROP TABLE loop_phase_executions").await.expect("drop");
+
+        V85PhaseExecSetNull.up(&db).await.expect("migration must succeed");
+
+        // 验证新表存在且 FK 是 SET NULL
+        let sql = db
+            .conn
+            .query_all(sea_orm::Statement::from_string(
+                sea_orm::DbBackend::Sqlite,
+                "SELECT sql FROM sqlite_master WHERE name='loop_phase_executions'",
+            ))
+            .await
+            .expect("query");
+        let ddl: String = sql[0].try_get_by("sql").unwrap_or_default();
+        assert!(
+            ddl.contains("ON DELETE SET NULL"),
+            "FK 应为 SET NULL：{}",
+            ddl
+        );
     }
 }
