@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ntd 事项任务执行链路框图</title>
+<!-- JetBrains Mono removed: self-contained page uses system monospace fallback -->
+<style>
+:root,[data-theme="dark"]{--bg:#020617;--grid:#1e293b;--text:#fff;--text-muted:#94a3b8;--mask:#0f172a;
+--start-fill:rgba(52,211,153,.3);--start-stroke:#34d399;
+--proc-fill:rgba(8,51,68,.4);--proc-stroke:#22d3ee;
+--dec-fill:rgba(251,191,36,.15);--dec-stroke:#fbbf24;
+--data-fill:rgba(76,29,149,.4);--data-stroke:#a78bfa;
+--end-fill:rgba(244,63,94,.2);--end-stroke:#f43f5e;
+--err-fill:rgba(136,19,55,.4);--err-stroke:#fb7185;
+--lane1:rgba(8,51,68,.08);--lane2:rgba(76,29,149,.08);--lane3:rgba(251,191,36,.08);--lane4:rgba(52,211,153,.08);}
+[data-theme="light"]{--bg:#f8fafc;--grid:#e2e8f0;--text:#0f172a;--text-muted:#475569;--mask:#fff;
+--start-fill:rgba(52,211,153,.18);--start-stroke:#059669;
+--proc-fill:rgba(34,211,238,.15);--proc-stroke:#0891b2;
+--dec-fill:rgba(251,191,36,.2);--dec-stroke:#d97706;
+--data-fill:rgba(167,139,250,.2);--data-stroke:#7c3aed;
+--end-fill:rgba(244,63,94,.12);--end-stroke:#e11d48;
+--err-fill:rgba(251,113,133,.12);--err-stroke:#e11d48;
+--lane1:rgba(34,211,238,.06);--lane2:rgba(167,139,250,.06);--lane3:rgba(251,191,36,.06);--lane4:rgba(52,211,153,.06);}
+body{margin:0;background:var(--bg);color:var(--text);font-family:'JetBrains Mono',monospace;}
+.toolbar{position:sticky;top:0;background:rgba(15,23,42,.85);border-bottom:1px solid #334155;padding:10px 16px;display:flex;align-items:center;gap:12px;z-index:10;}
+.toolbar h1{font-size:14px;margin:0;font-weight:600;}
+.toolbar button{background:transparent;border:1px solid #334155;color:#e2e8f0;padding:4px 10px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:12px;}
+.toolbar button:hover{background:rgba(30,41,59,.8);}
+.diagram-wrap{padding:20px;overflow:auto;}
+svg{display:block;margin:0 auto;max-width:100%;height:auto;background:var(--bg);}
+.c-mask{fill:var(--mask);}
+.c-start{fill:var(--start-fill);stroke:var(--start-stroke);}
+.c-proc{fill:var(--proc-fill);stroke:var(--proc-stroke);}
+.c-dec{fill:var(--dec-fill);stroke:var(--dec-stroke);}
+.c-data{fill:var(--data-fill);stroke:var(--data-stroke);}
+.c-end{fill:var(--end-fill);stroke:var(--end-stroke);}
+.c-err{fill:var(--err-fill);stroke:var(--err-stroke);}
+.t-primary{fill:var(--text);}.t-muted{fill:var(--text-muted);}
+.a-main{stroke:#34d399;fill:none;}.a-branch{stroke:#fbbf24;fill:none;stroke-dasharray:5 3;}
+.a-err{stroke:#fb7185;fill:none;stroke-dasharray:5 3;}.a-data{stroke:#a78bfa;fill:none;stroke-dasharray:5 3;}
+</style>
+</head>
+<body>
+<div class="toolbar"><h1>ntd 事项任务（Todo）执行链路框图</h1><button onclick="toggleTheme()">切换主题</button></div>
+<div class="diagram-wrap">
+<svg viewBox="0 0 1500 1120" role="img" aria-label="事项任务执行链路框图">
+<defs>
+<marker id="ah-m" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0,10 3.5,0 7" fill="#34d399"/></marker>
+<marker id="ah-b" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0,10 3.5,0 7" fill="#fbbf24"/></marker>
+<marker id="ah-e" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0,10 3.5,0 7" fill="#fb7185"/></marker>
+<marker id="ah-d" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0,10 3.5,0 7" fill="#a78bfa"/></marker>
+<pattern id="grid5" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0L0 0 0 40" stroke="var(--grid)" stroke-width="0.5"/></pattern>
+</defs>
+<rect width="100%" height="100%" fill="url(#grid5)"/>
+
+<!-- 泳道背景 -->
+<rect x="40" y="60" width="1420" height="200" rx="8" fill="var(--lane1)" stroke="var(--proc-stroke)" stroke-width="0.5" stroke-dasharray="4 3"/>
+<text x="52" y="82" class="t-muted" font-size="11" font-weight="600">泳道 1：触发入口</text>
+
+<rect x="40" y="280" width="1420" height="240" rx="8" fill="var(--lane2)" stroke="var(--data-stroke)" stroke-width="0.5" stroke-dasharray="4 3"/>
+<text x="52" y="302" class="t-muted" font-size="11" font-weight="600">泳道 2：ExecutorService 三阶段编排</text>
+
+<rect x="40" y="540" width="1420" height="280" rx="8" fill="var(--lane3)" stroke="var(--dec-stroke)" stroke-width="0.5" stroke-dasharray="4 3"/>
+<text x="52" y="562" class="t-muted" font-size="11" font-weight="600">泳道 3：spawn 子进程执行</text>
+
+<rect x="40" y="840" width="1420" height="260" rx="8" fill="var(--lane4)" stroke="var(--start-stroke)" stroke-width="0.5" stroke-dasharray="4 3"/>
+<text x="52" y="862" class="t-muted" font-size="11" font-weight="600">泳道 4：完成与产物</text>
+
+<!-- 泳道1：触发入口 -->
+<rect x="80" y="120" width="180" height="60" rx="30" class="c-mask"/>
+<rect x="80" y="120" width="180" height="60" rx="30" class="c-start" stroke-width="1.5"/>
+<text x="170" y="145" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">execute_action</text>
+<text x="170" y="163" class="t-muted" font-size="9" text-anchor="middle">action 触发</text>
+
+<rect x="300" y="120" width="180" height="60" rx="30" class="c-mask"/>
+<rect x="300" y="120" width="180" height="60" rx="30" class="c-start" stroke-width="1.5"/>
+<text x="390" y="145" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">smart_create</text>
+<text x="390" y="163" class="t-muted" font-size="9" text-anchor="middle">默认响应 Todo</text>
+
+<rect x="520" y="120" width="180" height="60" rx="30" class="c-mask"/>
+<rect x="520" y="120" width="180" height="60" rx="30" class="c-start" stroke-width="1.5"/>
+<text x="610" y="145" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">Todo CLI</text>
+<text x="610" y="163" class="t-muted" font-size="9" text-anchor="middle">ntd todo execute</text>
+
+<rect x="740" y="120" width="200" height="60" rx="6" class="c-mask"/>
+<rect x="740" y="120" width="200" height="60" rx="6" class="c-dec" stroke-width="1.5"/>
+<text x="840" y="145" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">find_or_create_todo</text>
+<text x="840" y="163" class="t-muted" font-size="9" text-anchor="middle">查找/创建 todo + workspace</text>
+
+<rect x="980" y="120" width="200" height="60" rx="6" class="c-mask"/>
+<rect x="980" y="120" width="200" height="60" rx="6" class="c-proc" stroke-width="1.5"/>
+<text x="1080" y="145" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">replace_placeholders</text>
+<text x="1080" y="163" class="t-muted" font-size="9" text-anchor="middle">params 替换 prompt</text>
+
+<rect x="1220" y="120" width="200" height="60" rx="6" class="c-mask"/>
+<rect x="1220" y="120" width="200" height="60" rx="6" class="c-proc" stroke-width="1.5"/>
+<text x="1320" y="145" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">start_todo_execution</text>
+<text x="1320" y="163" class="t-muted" font-size="9" text-anchor="middle">进入 ExecutorService</text>
+
+<!-- 泳道1连线 -->
+<line x1="170" y1="180" x2="840" y2="180" class="a-main" stroke-width="1.5"/>
+<line x1="390" y1="180" x2="840" y2="180" class="a-main" stroke-width="1.5"/>
+<line x1="610" y1="180" x2="840" y2="180" class="a-main" stroke-width="1.5"/>
+<line x1="840" y1="180" x2="840" y2="180" class="a-main" stroke-width="1.5"/>
+<line x1="940" y1="150" x2="978" y2="150" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
+<line x1="1180" y1="150" x2="1218" y2="150" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
+
+<line x1="1320" y1="180" x2="1320" y2="320" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
+<text x="1335" y="250" class="t-muted" font-size="9">→ ExecutorService</text>
+
+<!-- 泳道2：三阶段编排 -->
+<rect x="80" y="320" width="1360" height="180" rx="8" fill="rgba(8,51,68,.05)" stroke="var(--proc-stroke)" stroke-width="0.5" stroke-dasharray="4 3"/>
+<text x="92" y="342" class="t-muted" font-size="11" font-weight="600">三阶段：prepare_execution_state → start_todo_and_prepare_spawn → dispatch_spawned_executor_task</text>
+
+<rect x="100" y="360" width="200" height="60" rx="6" class="c-mask"/>
+<rect x="100" y="360" width="200" height="60" rx="6" class="c-proc" stroke-width="1.5"/>
+<text x="200" y="385" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">register_task</text>
+<text x="200" y="403" class="t-muted" font-size="9" text-anchor="middle">task_id + guard + cancel_rx</text>
+
+<rect x="340" y="360" width="200" height="60" rx="6" class="c-mask"/>
+<rect x="340" y="360" width="200" height="60" rx="6" class="c-proc" stroke-width="1.5"/>
+<text x="440" y="385" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">注入 prompt</text>
+<text x="440" y="403" class="t-muted" font-size="9" text-anchor="middle">step_context + workspace + expert</text>
+
+<rect x="580" y="360" width="200" height="60" rx="6" class="c-mask"/>
+<rect x="580" y="360" width="200" height="60" rx="6" class="c-dec" stroke-width="1.5"/>
+<text x="680" y="385" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">enforce_concurrency</text>
+<text x="680" y="403" class="t-muted" font-size="9" text-anchor="middle">max_concurrent 检查</text>
+
+<rect x="820" y="360" width="200" height="60" rx="6" class="c-mask"/>
+<rect x="820" y="360" width="200" height="60" rx="6" class="c-proc" stroke-width="1.5"/>
+<text x="920" y="385" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">select_executor</text>
+<text x="920" y="403" class="t-muted" font-size="9" text-anchor="middle">选执行器 + command_args</text>
+
+<rect x="1060" y="360" width="200" height="60" rx="6" class="c-mask"/>
+<rect x="1060" y="360" width="200" height="60" rx="6" class="c-proc" stroke-width="1.5"/>
+<text x="1160" y="385" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">create_run_record</text>
+<text x="1160" y="403" class="t-muted" font-size="9" text-anchor="middle">execution_records 落库</text>
+
+<rect x="1300" y="360" width="140" height="60" rx="6" class="c-mask"/>
+<rect x="1300" y="360" width="140" height="60" rx="6" class="c-proc" stroke-width="1.5"/>
+<text x="1370" y="385" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">dispatch_spawn</text>
+<text x="1370" y="403" class="t-muted" font-size="9" text-anchor="middle">tokio::spawn</text>
+
+<!-- 泳道2连线 -->
+<line x1="300" y1="390" x2="338" y2="390" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
+<line x1="540" y1="390" x2="578" y2="390" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
+<line x1="780" y1="390" x2="818" y2="390" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
+<line x1="1020" y1="390" x2="1058" y2="390" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
+<line x1="1260" y1="390" x2="1298" y2="390" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
+
+<line x1="1370" y1="420" x2="1370" y2="600" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
+<text x="1385" y="510" class="t-muted" font-size="9">→ spawn 子进程</text>
+
+<!-- 并发超限异常 -->
+<line x1="680" y1="420" x2="680" y2="900" class="a-err" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#ah-e)"/>
+<text x="490" y="660" class="t-muted" font-size="8">超并发上限 → 错误返回</text>
+
+<!-- 泳道3：spawn 子进程执行 -->
+<rect x="80" y="600" width="200" height="60" rx="6" class="c-mask"/>
+<rect x="80" y="600" width="200" height="60" rx="6" class="c-proc" stroke-width="1.5"/>
+<text x="180" y="625" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">emit_started_event</text>
+<text x="180" y="643" class="t-muted" font-size="9" text-anchor="middle">WebSocket 广播</text>
+
+<rect x="320" y="600" width="200" height="60" rx="6" class="c-mask"/>
+<rect x="320" y="600" width="200" height="60" rx="6" class="c-proc" stroke-width="1.5"/>
+<text x="420" y="625" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">try_spawn_executor_child</text>
+<text x="420" y="643" class="t-muted" font-size="9" text-anchor="middle">启动子进程</text>
+
+<rect x="560" y="600" width="200" height="60" rx="6" class="c-mask"/>
+<rect x="560" y="600" width="200" height="60" rx="6" class="c-proc" stroke-width="1.5"/>
+<text x="660" y="625" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">save_child_pid</text>
+<text x="660" y="643" class="t-muted" font-size="9" text-anchor="middle">记录 PID + 关闭 stdin</text>
+
+<rect x="800" y="600" width="200" height="60" rx="6" class="c-mask"/>
+<rect x="800" y="600" width="200" height="60" rx="6" class="c-proc" stroke-width="1.5"/>
+<text x="900" y="625" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">setup_log_capture</text>
+<text x="900" y="643" class="t-muted" font-size="9" text-anchor="middle">stdout/stderr 捕获</text>
+
+<rect x="1040" y="600" width="200" height="60" rx="6" class="c-mask"/>
+<rect x="1040" y="600" width="200" height="60" rx="6" class="c-dec" stroke-width="1.5"/>
+<text x="1140" y="625" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">await_run_outcome</text>
+<text x="1140" y="643" class="t-muted" font-size="9" text-anchor="middle">超时 / 取消 / 完成</text>
+
+<rect x="1280" y="600" width="160" height="60" rx="6" class="c-mask"/>
+<rect x="1280" y="600" width="160" height="60" rx="6" class="c-proc" stroke-width="1.5"/>
+<text x="1360" y="625" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">dispatch_outcome</text>
+<text x="1360" y="643" class="t-muted" font-size="9" text-anchor="middle">分发结果</text>
+
+<!-- 泳道3连线 -->
+<line x1="280" y1="630" x2="318" y2="630" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
+<line x1="520" y1="630" x2="558" y2="630" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
+<line x1="760" y1="630" x2="798" y2="630" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
+<line x1="1000" y1="630" x2="1038" y2="630" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
+<line x1="1240" y1="630" x2="1278" y2="630" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
+
+<line x1="1360" y1="660" x2="1360" y2="780" class="a-main" stroke-width="1.5"/>
+<line x1="1360" y1="780" x2="180" y2="780" class="a-main" stroke-width="1.5"/>
+<line x1="180" y1="780" x2="180" y2="898" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
+<text x="600" y="774" class="t-muted" font-size="9">→ persist_completion（完成处理链路起点）</text>
+
+<!-- 取消/超时分支 -->
+<line x1="1140" y1="660" x2="1140" y2="900" class="a-branch" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#ah-b)"/>
+<text x="1155" y="780" class="t-muted" font-size="8">取消/超时</text>
+
+<!-- 泳道4：完成与产物 -->
+<rect x="80" y="900" width="200" height="60" rx="6" class="c-mask"/>
+<rect x="80" y="900" width="200" height="60" rx="6" class="c-proc" stroke-width="1.5"/>
+<text x="180" y="925" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">persist_completion</text>
+<text x="180" y="943" class="t-muted" font-size="9" text-anchor="middle">finalize_normal_completion</text>
+
+<rect x="320" y="900" width="200" height="60" rx="6" class="c-mask"/>
+<rect x="320" y="900" width="200" height="60" rx="6" class="c-proc" stroke-width="1.5"/>
+<text x="420" y="925" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">提取 conclusion</text>
+<text x="420" y="943" class="t-muted" font-size="9" text-anchor="middle">extract_conclusion</text>
+
+<rect x="560" y="900" width="200" height="60" rx="6" class="c-mask"/>
+<rect x="560" y="900" width="200" height="60" rx="6" class="c-proc" stroke-width="1.5"/>
+<text x="660" y="925" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">blackboard_debouncer</text>
+<text x="660" y="943" class="t-muted" font-size="9" text-anchor="middle">push_pending_record</text>
+
+<rect x="800" y="900" width="200" height="60" rx="6" class="c-mask"/>
+<rect x="800" y="900" width="200" height="60" rx="6" class="c-proc" stroke-width="1.5"/>
+<text x="900" y="925" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">触发 hooks</text>
+<text x="900" y="943" class="t-muted" font-size="9" text-anchor="middle">fire_post_completion_hooks</text>
+
+<rect x="1040" y="900" width="200" height="60" rx="6" class="c-mask"/>
+<rect x="1040" y="900" width="200" height="60" rx="6" class="c-proc" stroke-width="1.5"/>
+<text x="1140" y="925" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">更新 todo 状态</text>
+<text x="1140" y="943" class="t-muted" font-size="9" text-anchor="middle">sync_task_status</text>
+
+<rect x="1280" y="900" width="160" height="60" rx="30" class="c-mask"/>
+<rect x="1280" y="900" width="160" height="60" rx="30" class="c-end" stroke-width="1.5"/>
+<text x="1360" y="925" class="t-primary" font-size="12" font-weight="600" text-anchor="middle">执行完成</text>
+<text x="1360" y="943" class="t-muted" font-size="9" text-anchor="middle">LoopFinished 广播</text>
+
+<!-- 泳道4连线 -->
+<line x1="280" y1="930" x2="318" y2="930" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
+<line x1="520" y1="930" x2="558" y2="930" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
+<line x1="760" y1="930" x2="798" y2="930" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
+<line x1="1000" y1="930" x2="1038" y2="930" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
+<line x1="1240" y1="930" x2="1278" y2="930" class="a-main" stroke-width="1.5" marker-end="url(#ah-m)"/>
+
+<!-- 数据流说明 -->
+<text x="80" y="1000" class="t-primary" font-size="11" font-weight="600">数据落库</text>
+<text x="80" y="1020" class="t-muted" font-size="9">• execution_records：执行记录主表（status/result/rating/usage/session_id/agent_runs）</text>
+<text x="80" y="1038" class="t-muted" font-size="9">• execution_logs：stdout/stderr 流式捕获（stream_type/sequence/content）</text>
+<text x="80" y="1056" class="t-muted" font-size="9">• todos：todo 状态同步（status: pending→running→completed/failed）</text>
+
+<!-- 图例 -->
+<text x="700" y="1000" class="t-primary" font-size="11" font-weight="600">图例</text>
+<rect x="700" y="1012" width="16" height="10" rx="5" class="c-start" stroke-width="1"/><text x="722" y="1020" class="t-muted" font-size="9">起止</text>
+<rect x="770" y="1012" width="16" height="10" rx="2" class="c-proc" stroke-width="1"/><text x="792" y="1020" class="t-muted" font-size="9">处理</text>
+<rect x="840" y="1012" width="16" height="10" rx="2" class="c-dec" stroke-width="1"/><text x="862" y="1020" class="t-muted" font-size="9">判断</text>
+<rect x="910" y="1012" width="16" height="10" rx="2" class="c-data" stroke-width="1"/><text x="932" y="1020" class="t-muted" font-size="9">数据</text>
+<rect x="980" y="1012" width="16" height="10" rx="2" class="c-end" stroke-width="1"/><text x="1002" y="1020" class="t-muted" font-size="9">终止</text>
+<rect x="1050" y="1012" width="16" height="10" rx="2" class="c-err" stroke-width="1"/><text x="1072" y="1020" class="t-muted" font-size="9">异常</text>
+<line x1="1120" y1="1020" x2="1136" y2="1020" class="a-main" stroke-width="1.5"/><text x="1142" y="1023" class="t-muted" font-size="9">主路径</text>
+<line x1="1210" y1="1020" x2="1226" y2="1020" class="a-branch" stroke-width="1.5"/><text x="1232" y="1023" class="t-muted" font-size="9">分支</text>
+<line x1="1300" y1="1020" x2="1316" y2="1020" class="a-err" stroke-width="1.5"/><text x="1322" y="1023" class="t-muted" font-size="9">异常路径</text>
+</svg>
+</div>
+<script>function toggleTheme(){var h=document.documentElement;var cur=h.getAttribute('data-theme');h.setAttribute('data-theme',cur==='dark'?'light':'dark');}</script>
+</body>
+</html>
