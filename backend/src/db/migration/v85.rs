@@ -47,8 +47,12 @@ impl Migration for V85PhaseExecSetNull {
         // SQLite 不支持 ALTER FOREIGN KEY，必须重建表。
         // 先清理可能的残留（上次迁移中断的情况）。
         db.exec("DROP TABLE IF EXISTS _loop_phase_executions_new").await?;
+        db.exec("DROP INDEX IF EXISTS idx_loop_phase_executions_exec").await?;
+        db.exec("DROP INDEX IF EXISTS idx_loop_phase_executions_phase").await?;
+
+        // 建新表。
         db.exec(
-            "CREATE TABLE IF NOT EXISTS _loop_phase_executions_new (
+            "CREATE TABLE _loop_phase_executions_new (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 loop_execution_id INTEGER NOT NULL,
                 phase_id INTEGER,
@@ -69,10 +73,8 @@ impl Migration for V85PhaseExecSetNull {
         )
         .await?;
 
-        // 替换原表：先删旧索引，再删旧表，再改名。
-        db.exec("DROP INDEX IF EXISTS idx_loop_phase_executions_exec").await?;
-        db.exec("DROP INDEX IF EXISTS idx_loop_phase_executions_phase").await?;
-        db.exec("DROP TABLE IF EXISTS loop_phase_executions").await?;
+        // 替换原表：先删旧表，再改名。
+        db.exec("DROP TABLE loop_phase_executions").await?;
         db.exec("ALTER TABLE _loop_phase_executions_new RENAME TO loop_phase_executions").await?;
 
         // 重建索引。
