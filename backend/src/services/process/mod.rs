@@ -131,6 +131,10 @@ pub struct LinkDefinition {
     #[serde(default)]
     pub prompt: String,
     pub executor: Option<String>,
+    /// 专家名。`alias = "expert_name"`：bundled 工艺 YAML 历史上 `expert:` 与
+    /// `expert_name:` 两种键并存（需求 055），不加别名时 serde 会静默丢弃后者，
+    /// 导致专家配置在安装后丢失。别名只影响反序列化，序列化仍输出 `expert`。
+    #[serde(alias = "expert_name")]
     pub expert: Option<String>,
     #[serde(default)]
     pub skills: Vec<String>,
@@ -304,6 +308,27 @@ mod process_definition_tests {
             }
         }
         assert!(parsed >= 3, "应至少解析 3 个内置工艺模板");
+    }
+
+    /// 需求 055：环节专家字段两种 YAML 键都要能解析——
+    /// `expert:` 是标准键，`expert_name:` 是 bundled 工艺历史写法，
+    /// 靠 `#[serde(alias)]` 兼容；缺省时为 None。
+    #[test]
+    fn test_link_definition_expert_key_variants() {
+        // 标准键 expert:
+        let yaml = "id: l1\nname: 环节一\nexpert: senior-dev\n";
+        let link: LinkDefinition = serde_yaml::from_str(yaml).expect("expert 键应可解析");
+        assert_eq!(link.expert.as_deref(), Some("senior-dev"));
+
+        // 历史别名 expert_name:（bundled 工艺在用，未加别名前会被 serde 静默丢弃）
+        let yaml = "id: l1\nname: 环节一\nexpert_name: architect\n";
+        let link: LinkDefinition = serde_yaml::from_str(yaml).expect("expert_name 别名应可解析");
+        assert_eq!(link.expert.as_deref(), Some("architect"));
+
+        // 缺省 → None（未配置专家的环节不受影响）
+        let yaml = "id: l1\nname: 环节一\n";
+        let link: LinkDefinition = serde_yaml::from_str(yaml).expect("缺省 expert 应可解析");
+        assert!(link.expert.is_none());
     }
 
     #[test]

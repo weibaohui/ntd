@@ -217,6 +217,13 @@ async fn create_todo_for_link(
             .await;
     }
 
+    // 环节 skills → todo.skills（需求 055）：事项自身携带技能列表，
+    // 执行时由 inject_todo_skills 以 /skill-name 形式注入 prompt 尾部。
+    // 错误处理沿用上面 expert/model 追写的既有模式：写失败不中断安装。
+    if !link.skills.is_empty() {
+        let _ = db.update_todo_skills(todo_id, &link.skills).await;
+    }
+
     // 048：评审是否启用由 gate_config 决定——环节含 ai_criteria_review 门禁才需要 auto_review 打分。
     // 不穿透这层，todo 会停在 create_todo_with_extras 硬编码的 false，AI 评审门禁拿不到评分。
     let has_ai_review_gate = link.gates.iter().any(|g| g.gate_type == "ai_criteria_review");
@@ -1191,6 +1198,8 @@ phases:
             archived_at: None,
             expert_name: None,
             model: None,
+            // 需求 055 新增字段；本用例聚焦评审 prompt 穿透，技能给空数组即可
+            skills: vec![],
         };
         let final_review_prompt = compose_review_prompt(
             &original,
@@ -1339,5 +1348,146 @@ todo_template: 旧字段应被忽略
             serde_yaml::from_str(yaml).expect("含旧 todo_template 不应报错");
         assert_eq!(cfg.prompt.as_deref(), Some("新版提示词"));
         assert!(cfg.trigger_on.contains(&"failed".to_string()));
+    }
+
+    /// 需求 055 夹具：环节带 executor/expert/skills 的工艺 YAML。
+    /// expert 键名与技能列表可参数化，供「expert:」与「expert_name:」两种写法复用。
+    fn yaml_with_exec_config(expert_key: &str, skills: &str) -> String {
+        format!(
+            r#"
+process:
+  name: exec-config-test
+  display_name: 执行配置落库测试
+  version: 0.1.0
+phases:
+  - id: p1
+    name: 阶段一
+    links:
+      - id: l1
+        name: 环节一
+        prompt: 执行任务
+        executor: claudecode
+        {expert_key}: senior-dev
+        skills: {skills}
+        on_success: end
+        on_gate_fail: break
+"#
+        )
+    }
+
+    /// 插入一条最小工艺模板记录，返回模型（供 install/upgrade 复用）。
+    async fn seed_exec_config_template(db: &Database) -> process_templates::Model {
+        process_templates::ActiveModel {
+            guid: ActiveValue::Set("guid-exec-config".to_string()),
+            name: ActiveValue::Set("exec-config-test".to_string()),
+            display_name: ActiveValue::Set("执行配置落库测试".to_string()),
+            description: ActiveValue::Set(String::new()),
+            category: ActiveValue::Set("test".to_string()),
+            complexity: ActiveValue::Set("light".to_string()),
+            version: ActiveValue::Set("0.1.0".to_string()),
+            source_path: ActiveValue::Set(Some("bundled://exec-config.yaml".to_string())),
+            is_system: ActiveValue::Set(true),
+            ..Default::default()
+        }
+        .insert(&db.conn)
+        .await
+        .expect("insert exec-config template")
+    }
+
+    /// 校验（需求 055 F2/F3/F6）：环节设置 executor/expert/skills 后，
+    /// 安装创建的事项三项配置齐全；expert 用标准 `expert:` 键。
+    #[tokio::test]
+    async fn test_install_writes_executor_expert_skills_to_todo() {
+        let db = fresh_db().await;
+        let ws_id = seed_workspace(&db).await;
+        let template = seed_exec_config_template(&db).await;
+
+        let result = install_process_template(
+            &db,
+            &template,
+            &yaml_with_exec_config("expert", "[code-review, test-gen]"),
+            ws_id,
+            "/tmp/test-ws",
+        )
+        .await
+        .expect("install should succeed");
+
+        let steps = db.list_loop_steps_by_loop(result.loop_id).await.unwrap();
+        assert_eq!(steps.len(), 1, "应只有一个环节");
+        let todo = db.get_todo(steps[0].todo_id).await.unwrap().unwrap();
+        assert_eq!(todo.executor.as_deref(), Some("claudecode"), "executor 应落到事项");
+        assert_eq!(todo.expert_name.as_deref(), Some("senior-dev"), "expert 应落到事项");
+        assert_eq!(
+            todo.skills,
+            vec!["code-review".to_string(), "test-gen".to_string()],
+            "skills 应落到事项"
+        );
+    }
+
+    /// 校验（需求 055 F3）：YAML 用历史 `expert_name:` 键时专家不再静默丢失。
+    /// bundled 工艺（lightweight-task 等）大量使用该写法，此前 serde 直接丢弃。
+    #[tokio::test]
+    async fn test_install_writes_expert_via_expert_name_alias() {
+        let db = fresh_db().await;
+        let ws_id = seed_workspace(&db).await;
+        let template = seed_exec_config_template(&db).await;
+
+        let result = install_process_template(
+            &db,
+            &template,
+            &yaml_with_exec_config("expert_name", "[]"),
+            ws_id,
+            "/tmp/test-ws",
+        )
+        .await
+        .expect("install should succeed");
+
+        let steps = db.list_loop_steps_by_loop(result.loop_id).await.unwrap();
+        let todo = db.get_todo(steps[0].todo_id).await.unwrap().unwrap();
+        assert_eq!(
+            todo.expert_name.as_deref(),
+            Some("senior-dev"),
+            "expert_name 别名键应同样落到事项"
+        );
+        // 未配置 skills 时事项技能为空数组（列默认值），而非脏数据
+        assert!(todo.skills.is_empty(), "未配置 skills 应为空数组");
+    }
+
+    /// 校验（需求 055 F5）：升级工艺换了 skills 后，重建的事项携带新技能列表。
+    #[tokio::test]
+    async fn test_upgrade_rebuilds_todo_skills() {
+        let db = fresh_db().await;
+        let ws_id = seed_workspace(&db).await;
+        let template = seed_exec_config_template(&db).await;
+
+        let installed = install_process_template(
+            &db,
+            &template,
+            &yaml_with_exec_config("expert", "[old-skill]"),
+            ws_id,
+            "/tmp/test-ws",
+        )
+        .await
+        .expect("install should succeed");
+
+        let upgraded = upgrade_process_template_loop(
+            &db,
+            &template,
+            &yaml_with_exec_config("expert", "[new-skill, another-skill]"),
+            installed.loop_id,
+            ws_id,
+            "/tmp/test-ws",
+        )
+        .await
+        .expect("upgrade should succeed");
+
+        let steps = db.list_loop_steps_by_loop(upgraded.loop_id).await.unwrap();
+        assert_eq!(steps.len(), 1, "升级后应重建为 1 个环节");
+        let todo = db.get_todo(steps[0].todo_id).await.unwrap().unwrap();
+        assert_eq!(
+            todo.skills,
+            vec!["new-skill".to_string(), "another-skill".to_string()],
+            "升级后事项 skills 应同步为新 YAML 的值"
+        );
     }
 }

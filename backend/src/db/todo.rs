@@ -103,6 +103,9 @@ impl Database {
             executor: m.executor,
             expert_name: m.expert_name,
             model: m.model,
+            // skills 列为 JSON 数组串（需求 055）；脏数据回退空数组，
+            // 与 loop_steps.skill_names / step_template_refs 的解析口径一致。
+            skills: serde_json::from_str(&m.skills).unwrap_or_default(),
             scheduler_enabled,
             scheduler_config,
             scheduler_timezone,
@@ -606,6 +609,28 @@ impl Database {
         if let Some(m) = model {
             am.model = ActiveValue::Set(if m.is_empty() { None } else { Some(m.to_string()) });
         }
+        self.exec_update(am).await
+    }
+
+    /// 仅更新 todo 的 skills（工艺模板安装时从环节 skills 写入，需求 055）。
+    ///
+    /// skills 以 JSON 数组串落库，与 `loop_steps.skill_names` 同构；
+    /// 传空切片会写回 `"[]"`，即显式清空事项技能。
+    pub async fn update_todo_skills(
+        &self,
+        id: i64,
+        skills: &[String],
+    ) -> Result<(), sea_orm::DbErr> {
+        let now = crate::models::utc_timestamp();
+        // 序列化失败兜底 "[]"：技能名是纯字符串数组，理论上不会失败，
+        // 这里与 installer 里 expected_artifacts 的序列化兜底口径保持一致。
+        let skills_json = serde_json::to_string(skills).unwrap_or_else(|_| "[]".to_string());
+        let am = todos::ActiveModel {
+            id: ActiveValue::Unchanged(id),
+            skills: ActiveValue::Set(skills_json),
+            updated_at: ActiveValue::Set(Some(now)),
+            ..Default::default()
+        };
         self.exec_update(am).await
     }
 
@@ -2136,6 +2161,64 @@ mod todo_center_tests {
             action_type: None,
             action_key: None,
             archived_at: None,
+            // 需求 055 新增字段；build_center_item 用例不关心技能，给空数组即可
+            skills: vec![],
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod todo_skills_tests {
+    //! `update_todo_skills` 与 `model_to_todo` skills 解析的单元测试（需求 055）。
+    //!
+    //! 关注三点：写入后能读回、覆盖写生效、未设置时默认为空数组（列默认值 '[]'）。
+
+    // 只用 Database 的公开方法，不引用父模块私有项，故不导 super::*。
+    use crate::db::Database;
+
+    async fn fresh_db() -> Database {
+        Database::new(":memory:").await.expect("memory db must open")
+    }
+
+    #[tokio::test]
+    async fn test_update_todo_skills_round_trip() {
+        let db = fresh_db().await;
+        let todo_id = db
+            .create_todo("带技能的事项", "do something")
+            .await
+            .expect("create todo");
+        // 新建事项默认无技能（列默认值 '[]' → 空数组）
+        let todo = db.get_todo(todo_id).await.unwrap().unwrap();
+        assert!(todo.skills.is_empty(), "新建事项 skills 应为空数组");
+
+        // 写入两个技能后能逐字读回
+        let skills = vec!["code-review".to_string(), "test-gen".to_string()];
+        db.update_todo_skills(todo_id, &skills).await.expect("update skills");
+        let todo = db.get_todo(todo_id).await.unwrap().unwrap();
+        assert_eq!(todo.skills, skills, "skills 写入后应读回一致");
+    }
+
+    #[tokio::test]
+    async fn test_update_todo_skills_overwrite_and_clear() {
+        let db = fresh_db().await;
+        let todo_id = db
+            .create_todo("覆盖写事项", "do something")
+            .await
+            .expect("create todo");
+        db.update_todo_skills(todo_id, &["a".to_string(), "b".to_string()])
+            .await
+            .expect("seed skills");
+        // 覆盖写：新列表整体替换旧列表（升级工艺重建场景依赖该语义）
+        db.update_todo_skills(todo_id, &["c".to_string()])
+            .await
+            .expect("overwrite skills");
+        let todo = db.get_todo(todo_id).await.unwrap().unwrap();
+        assert_eq!(todo.skills, vec!["c".to_string()], "覆盖写应整体替换");
+
+        // 传空切片 → 显式清空回 '[]'
+        db.update_todo_skills(todo_id, &[]).await.expect("clear skills");
+        let todo = db.get_todo(todo_id).await.unwrap().unwrap();
+        assert!(todo.skills.is_empty(), "空切片应清空 skills");
     }
 }

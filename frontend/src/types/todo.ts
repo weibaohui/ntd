@@ -14,6 +14,8 @@ export interface Todo {
   expert_name?: string | null;
   /** 任务级执行模型（覆盖执行器默认）。null = 用执行器默认模型。 */
   model?: string | null;
+  /** 事项级技能名列表（需求 055）。工艺安装时从环节 skills 写入；执行时以 /skill-name 注入 prompt 尾部。 */
+  skills?: string[];
   scheduler_enabled?: boolean;
   scheduler_config?: string | null;
   scheduler_timezone?: string | null;

@@ -42,6 +42,7 @@ mod v80;
 mod v81;
 mod v82;
 mod v83;
+mod v84;
 
 pub use v2_v5::read_applied_versions;
 pub use v2_v5::drop_column_if_exists;
@@ -147,6 +148,9 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         // V83 在 V82 之后：loop_steps 新增 step_template_refs 列（需求 054）——
         // 持久化环节 spec 模板引用，供执行器执行时注入 prompt「重点阅读」
         Box::new(v83::V83AddLoopStepTemplateRefs),
+        // V84 在 V83 之后：todos 新增 skills 列（需求 055）——
+        // 事项携带技能列表，安装工艺时从环节 skills 写入，执行时注入 prompt
+        Box::new(v84::V84AddTodoSkills),
     ]
 }
 
