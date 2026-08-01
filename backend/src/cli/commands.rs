@@ -392,25 +392,114 @@ pub enum TagAction {
 
 // ============== Loop Commands ==============
 
-/// 工艺模板 CLI 动作：列出 / 查看 / 安装并执行 / 审计状态。
+/// 工艺模板 CLI 动作。
+///
+/// 主标识统一用位置参数 `<NAME_OR_GUID>`：传人类可读的 name（如 4p12s-delivery）
+/// 或 guid（UUID v4）都行，由 `resolve_process_guid` 自动解析——修复了 040 之后
+/// 旧版把 name 直接塞进 guid 路径段导致 404 的 bug。
+///
+/// 风格与 todo/loop 对齐：位置参数放主标识、内容走 --file/--stdin、输出复用全局
+/// --output/--fields。后端能力（recommend/create/delete/upgrade/loops/versions/diff）
+/// 已就绪，这里只做 CLI 封装。
 #[derive(Debug, Clone, Subcommand)]
 pub enum ProcessAction {
-    /// 列出所有工艺模板
-    List,
-    /// 查看工艺模板详情
-    Show {
-        /// 工艺模板名称（如 4p12s-delivery）
-        name: String,
+    /// 列出所有工艺模板（--system 只看系统模板，--user 只看用户自建，二者互斥）
+    List {
+        /// 只看系统工艺（bundled 同步来的）
+        #[arg(long)]
+        system: bool,
+        /// 只看用户自建工艺
+        #[arg(long)]
+        user: bool,
     },
-    /// 安装工艺模板到工作空间并触发执行
+    /// 查看工艺模板详情（name 或 guid 都可）
+    Show {
+        /// 工艺 name（如 4p12s-delivery）或 guid（UUID v4）
+        name_or_guid: String,
+    },
+    /// 根据任务描述推荐合适的工艺（AI 最常用：描述目标 → 拿到匹配工艺 + 理由）
+    Recommend {
+        /// 任务描述（自然语言，描述你想达成什么目标）
+        description: String,
+    },
+    /// 新建用户工艺（YAML 正文走 --file 或 --stdin）
+    Create {
+        /// 工艺唯一标识，^[a-zA-Z0-9_-]+$（--stdin 模式下可省略，从 body 读）
+        #[arg(short = 'n', long)]
+        name: Option<String>,
+
+        /// 人类可读名称（可空，回退到 name）
+        #[arg(long)]
+        display_name: Option<String>,
+
+        /// 分类（可空）
+        #[arg(long)]
+        category: Option<String>,
+
+        /// 复杂度（可空）
+        #[arg(long)]
+        complexity: Option<String>,
+
+        /// 版本（可空，默认由后端给 1.0.0）
+        #[arg(long)]
+        version: Option<String>,
+
+        /// 从文件读取工艺 YAML 正文
+        #[arg(short = 'f', long)]
+        file: Option<String>,
+
+        /// 从 stdin 读取完整 JSON body（覆盖以上字段）
+        #[arg(long)]
+        stdin: bool,
+    },
+    /// 删除用户工艺（系统工艺后端会拒绝，错误经统一通道透出）
+    Delete {
+        /// 工艺 name 或 guid
+        name_or_guid: String,
+    },
+    /// 安装工艺到工作空间并触发执行
     Run {
-        /// 工艺模板名称
-        name: String,
-        /// 目标工作空间路径
+        /// 工艺 name 或 guid
+        name_or_guid: String,
+
+        /// 目标工作空间路径（按 path 反查 workspace_id）
+        /// process 域一直按 path 消费（与 todo/loop 的 --workspace-id 不同），
+        /// 因为 AI 手里通常是项目路径而非 ws_id，按 path 更顺手。
         #[arg(long = "workspace")]
         workspace: String,
     },
-    /// 查看工艺实例审计状态
+    /// 把指定 loop 升级到工艺模板最新版
+    Upgrade {
+        /// 工艺 name 或 guid
+        name_or_guid: String,
+
+        /// 要升级的 loop id（先用 `ntd process loops <name-or-guid>` 查到）
+        #[arg(long = "loop-id")]
+        loop_id: i64,
+    },
+    /// 列出该工艺实例化的所有 loop
+    Loops {
+        /// 工艺 name 或 guid
+        name_or_guid: String,
+    },
+    /// 查看工艺版本历史
+    Versions {
+        /// 工艺 name 或 guid
+        name_or_guid: String,
+    },
+    /// 对比两个版本的工艺正文 diff
+    Diff {
+        /// 工艺 name 或 guid
+        name_or_guid: String,
+
+        /// 目标版本号（如 1.2.0）
+        version: String,
+
+        /// 基准版本号
+        #[arg(long = "base")]
+        base: String,
+    },
+    /// 查看工艺实例审计状态（按 loop execution id 遍历工作空间查找）
     ExecutionStatus {
         /// Loop execution ID
         id: i64,
@@ -968,6 +1057,86 @@ async fn handle_workspace(
 }
 
 // ============== Process Handlers ==============
+// 工艺 CLI：所有子命令在 handle_process 分派，每个动作拆成独立小函数（≤30 行）。
+// handle_process 只做 match 路由、不掺业务逻辑（与 run_command 同构）。
+
+/// name/guid 解析结果。Ambiguous 携带候选 guid 列表，供错误提示直接列出，AI 可复制重试。
+#[derive(Debug, PartialEq)]
+enum GuidResolution {
+    Found(String),
+    NotFound,
+    Ambiguous(Vec<String>),
+}
+
+/// 纯逻辑：在已拉取的工艺模板列表里，把 name-or-guid 解析成 guid。
+/// 抽出来不碰网络，便于单测覆盖 0/1/多条与 guid 直命中等分支。
+///
+/// 规则：guid 全局唯一，先看 key 本身是否某条 guid，命中即返回；
+/// 否则按 name 匹配——0 条 NotFound、1 条返回该 guid、>1 条 Ambiguous（040 起 name 不唯一）。
+fn resolve_guid_from_items(items: &[Value], key: &str) -> GuidResolution {
+    // 1. guid 精确命中：guid 唯一，找到即确定，无需再判 name。
+    let guid_hit = items
+        .iter()
+        .find(|t| t.get("guid").and_then(Value::as_str) == Some(key));
+    if let Some(guid) = guid_hit.and_then(|t| t.get("guid").and_then(Value::as_str)) {
+        return GuidResolution::Found(guid.to_string());
+    }
+    // 2. 按 name 匹配：收集所有同名项的 guid，用数量区分 NotFound/唯一/歧义。
+    let hits: Vec<String> = items
+        .iter()
+        .filter(|t| t.get("name").and_then(Value::as_str) == Some(key))
+        .filter_map(|t| t.get("guid").and_then(Value::as_str).map(str::to_string))
+        .collect();
+    match hits.len() {
+        0 => GuidResolution::NotFound,
+        1 => GuidResolution::Found(hits[0].clone()),
+        _ => GuidResolution::Ambiguous(hits),
+    }
+}
+
+/// 网络：GET /bundled/processes 拉全量后用纯逻辑解析。
+/// 一次请求搞定，避免「guid 直查 404 → 再 list」的二次往返；
+/// name 命中多条时给出候选 guid 清单，引导 AI 改用 guid 重试。
+async fn resolve_process_guid(client: &ApiClient, key: &str) -> Result<String> {
+    let resp: ClientResponse<Vec<Value>> = client.get("/bundled/processes").await?;
+    let items = resp.data.unwrap_or_default();
+    match resolve_guid_from_items(&items, key) {
+        GuidResolution::Found(guid) => Ok(guid),
+        GuidResolution::NotFound => Err(anyhow::anyhow!(
+            "未找到工艺「{}」。用 `ntd process list` 查看可用工艺。",
+            key
+        )),
+        GuidResolution::Ambiguous(guids) => Err(anyhow::anyhow!(
+            "工艺名「{}」命中 {} 条，请改用 guid：\n  {}",
+            key,
+            guids.len(),
+            guids.join("\n  ")
+        )),
+    }
+}
+
+/// 按 path 反查 workspace_id。project_directories.path 不保证唯一，取第一条匹配。
+/// 抽出来供 run 复用，统一 path→id 解析口径（修复旧版 /v1/project-directories 双前缀 404）。
+async fn resolve_workspace_id_by_path(client: &ApiClient, path: &str) -> Result<i64> {
+    let resp: ClientResponse<Vec<Value>> = client.get("/project-directories").await?;
+    let ws_id = resp
+        .data
+        .as_deref()
+        .unwrap_or(&[])
+        .iter()
+        .find_map(|ws| {
+            let p = ws.get("path").and_then(Value::as_str)?;
+            if p == path {
+                ws.get("id").and_then(Value::as_i64)
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| {
+            anyhow::anyhow!("工作空间 {} 未找到，用 `ntd workspace list` 查看已注册工作空间", path)
+        })?;
+    Ok(ws_id)
+}
 
 #[allow(clippy::print_stdout)]
 async fn handle_process(
@@ -976,72 +1145,310 @@ async fn handle_process(
     output: &OutputFormat,
     fields: &Option<String>,
 ) -> Result<()> {
+    // 纯分派：每个动作一个 process_* 小函数，本函数不掺业务逻辑（与 run_command 同构）。
+    // 函数体未超 50 行、无需豁免；arm 多是工艺能力齐全的结果，每条都是单行调用、无嵌套。
     match action {
-        ProcessAction::List => {
-            let resp: ClientResponse<Vec<serde_json::Value>> =
-                client.get("/bundled/processes").await?;
-            print_response(&resp, output, fields)?;
+        ProcessAction::List { system, user } => {
+            process_list(client, *system, *user, output, fields).await
         }
-        ProcessAction::Show { name } => {
-            let encoded = percent_encode_slug(name);
-            let path = format!("/bundled/processes/{}", encoded);
-            let resp: ClientResponse<serde_json::Value> = client.get(&path).await?;
-            print_response(&resp, output, fields)?;
+        ProcessAction::Show { name_or_guid } => {
+            process_show(client, name_or_guid, output, fields).await
         }
-        ProcessAction::Run { name, workspace } => {
-            run_process_install(client, name, workspace, output, fields).await?
+        ProcessAction::Recommend { description } => {
+            process_recommend(client, description, output, fields).await
+        }
+        ProcessAction::Create { name, display_name, category, complexity, version, file, stdin } => {
+            // 7 个字段收拢成结构体再传，避免 process_create 触发 too_many_arguments。
+            let args = ProcessCreateArgs {
+                name: name.as_deref(),
+                display_name: display_name.as_deref(),
+                category: category.as_deref(),
+                complexity: complexity.as_deref(),
+                version: version.as_deref(),
+                file: file.as_deref(),
+                stdin: *stdin,
+            };
+            process_create(client, &args, output, fields).await
+        }
+        ProcessAction::Delete { name_or_guid } => {
+            process_delete(client, name_or_guid, output, fields).await
+        }
+        ProcessAction::Run { name_or_guid, workspace } => {
+            run_process_install(client, name_or_guid, workspace, output, fields).await
+        }
+        ProcessAction::Upgrade { name_or_guid, loop_id } => {
+            process_upgrade(client, name_or_guid, *loop_id, output, fields).await
+        }
+        ProcessAction::Loops { name_or_guid } => {
+            process_loops(client, name_or_guid, output, fields).await
+        }
+        ProcessAction::Versions { name_or_guid } => {
+            process_versions(client, name_or_guid, output, fields).await
+        }
+        ProcessAction::Diff { name_or_guid, version, base } => {
+            process_diff(client, name_or_guid, version, base, output, fields).await
         }
         ProcessAction::ExecutionStatus { id } => {
-            query_execution_status(client, *id, output, fields).await?
+            query_execution_status(client, *id, output, fields).await
         }
     }
+}
+
+/// list：--system/--user 决定 ?is_system 查询参数（同传报错，二者语义互斥）。
+async fn process_list(
+    client: &ApiClient,
+    system: bool,
+    user: bool,
+    output: &OutputFormat,
+    fields: &Option<String>,
+) -> Result<()> {
+    // 两个过滤开关语义互斥：同传会让后端困惑该返回哪一类，提前在客户端拦下并给出可操作提示。
+    let path = match (system, user) {
+        (true, true) => return Err(anyhow::anyhow!("--system 与 --user 互斥，请只选其一")),
+        // is_system=true 只返回 bundled 同步来的系统工艺
+        (true, false) => "/bundled/processes?is_system=true",
+        // is_system=false 只返回用户自建工艺
+        (false, true) => "/bundled/processes?is_system=false",
+        // 都不传：返回全量，与旧版 list 行为一致
+        (false, false) => "/bundled/processes",
+    };
+    // 列表端点返回数组，交 print_response 统一按 --output/--fields 渲染（AI/脚本友好）
+    let resp: ClientResponse<Vec<Value>> = client.get(path).await?;
+    print_response(&resp, output, fields)?;
     Ok(())
 }
 
-/// ProcessRun：查找工作空间 → 安装工艺模板 → 打印结果。
+/// show：先 name-or-guid → guid，再取详情。修复旧版把 name 塞进 guid 槽的 bug。
+async fn process_show(
+    client: &ApiClient,
+    name_or_guid: &str,
+    output: &OutputFormat,
+    fields: &Option<String>,
+) -> Result<()> {
+    // 后端 040 起按 guid 寻址，直接传 name 进 {guid} 路径段会 404，必须先解析成 guid
+    let guid = resolve_process_guid(client, name_or_guid).await?;
+    // guid 是 UUID 无特殊字符，encode 实际是 no-op；保留是为与其它路径一致的防御习惯
+    let path = format!("/bundled/processes/{}", percent_encode_slug(&guid));
+    let resp: ClientResponse<Value> = client.get(&path).await?;
+    print_response(&resp, output, fields)?;
+    Ok(())
+}
+
+/// recommend：把任务描述发给后端，返回按 score 排序的推荐工艺 + reasons。
+async fn process_recommend(
+    client: &ApiClient,
+    description: &str,
+    output: &OutputFormat,
+    fields: &Option<String>,
+) -> Result<()> {
+    // recommend 端点只吃一个 description 字段（见后端 RecommendRequest），直接拼 body
+    let body = serde_json::json!({ "description": description });
+    // client 自动补 /api/v1；返回按 score 排序的推荐工艺 + reasons
+    let resp: ClientResponse<Value> = client.post("/processes/recommend", &body).await?;
+    print_response(&resp, output, fields)?;
+    Ok(())
+}
+
+/// Create 子命令的 7 个字段收拢成一个结构，避免 process_create 参数过多触发 too_many_arguments。
+/// 借用 Create arm 解构出的 &String → &str，零拷贝传给 body 构造。
+struct ProcessCreateArgs<'a> {
+    name: Option<&'a str>,
+    display_name: Option<&'a str>,
+    category: Option<&'a str>,
+    complexity: Option<&'a str>,
+    version: Option<&'a str>,
+    file: Option<&'a str>,
+    stdin: bool,
+}
+
+/// 新建用户工艺。body 构造抽到 build_create_body，本函数保持纤薄只发请求。
+async fn process_create(
+    client: &ApiClient,
+    args: &ProcessCreateArgs<'_>,
+    output: &OutputFormat,
+    fields: &Option<String>,
+) -> Result<()> {
+    let body = build_create_body(args)?;
+    let resp: ClientResponse<Value> = client.post("/processes", &body).await?;
+    print_response(&resp, output, fields)?;
+    Ok(())
+}
+
+/// 构造新建工艺请求体。
+/// 两条来源：--stdin 读全量 JSON body；否则 --name + --file(definition) 组装，可选元数据按需附上。
+fn build_create_body(args: &ProcessCreateArgs<'_>) -> Result<Value> {
+    if args.stdin {
+        // read_stdin_json 已返回 Result<Value>，直接转发，无需 Ok(...?) 多此一举。
+        return read_stdin_json();
+    }
+    let name = args
+        .name
+        .ok_or_else(|| anyhow::anyhow!("新建工艺需要 --name（或用 --stdin 传完整 body）"))?;
+    let definition = read_definition_source(args.file)?;
+    let mut obj = serde_json::Map::new();
+    obj.insert("name".to_string(), Value::String(name.to_string()));
+    obj.insert("definition".to_string(), Value::String(definition));
+    // 可选元数据：只附用户显式传入的字段，避免把 null 写进 body。
+    for (k, v) in [
+        ("display_name", args.display_name),
+        ("category", args.category),
+        ("complexity", args.complexity),
+        ("version", args.version),
+    ] {
+        if let Some(val) = v {
+            obj.insert(k.to_string(), Value::String(val.to_string()));
+        }
+    }
+    Ok(Value::Object(obj))
+}
+
+/// 读取工艺 YAML 正文来源。非 stdin 模式下 --file 必填，缺失给出可操作的错误。
+fn read_definition_source(file: Option<&str>) -> Result<String> {
+    match file {
+        Some(p) => std::fs::read_to_string(p)
+            .map_err(|e| anyhow::anyhow!("读取 YAML 文件 {} 失败: {}", p, e)),
+        None => Err(anyhow::anyhow!(
+            "新建工艺需要 YAML 正文：用 --file <yaml> 或 --stdin 传入"
+        )),
+    }
+}
+
+/// delete：name-or-guid → guid → DELETE。系统工艺或有实例 loop 时后端会拒绝。
+async fn process_delete(
+    client: &ApiClient,
+    name_or_guid: &str,
+    output: &OutputFormat,
+    fields: &Option<String>,
+) -> Result<()> {
+    // 同 show：先解析成 guid 再入 URL，避免 name 直传 404
+    let guid = resolve_process_guid(client, name_or_guid).await?;
+    let path = format!("/processes/{}", percent_encode_slug(&guid));
+    // 系统工艺 / 已有实例 loop 时后端会 409 拒绝，错误经 print_response 抛 anyhow 透出
+    let resp: ClientResponse<Value> = client.delete(&path).await?;
+    print_response(&resp, output, fields)?;
+    Ok(())
+}
+
+/// upgrade：把指定 loop 升级到工艺模板最新版。
+async fn process_upgrade(
+    client: &ApiClient,
+    name_or_guid: &str,
+    loop_id: i64,
+    output: &OutputFormat,
+    fields: &Option<String>,
+) -> Result<()> {
+    let guid = resolve_process_guid(client, name_or_guid).await?;
+    // 升级按 (guid, loop_id) 定位；loop 不属于该工艺时后端返回 400
+    let path = format!(
+        "/processes/{}/loops/{}/upgrade",
+        percent_encode_slug(&guid),
+        loop_id
+    );
+    // upgrade 无请求体，传 Null 占位（client.post 要求一个可序列化的 body）
+    let resp: ClientResponse<Value> = client.post(&path, &serde_json::Value::Null).await?;
+    print_response(&resp, output, fields)?;
+    Ok(())
+}
+
+/// loops：列出该工艺实例化的全部 loop（含各 loop 执行次数）。
+async fn process_loops(
+    client: &ApiClient,
+    name_or_guid: &str,
+    output: &OutputFormat,
+    fields: &Option<String>,
+) -> Result<()> {
+    let guid = resolve_process_guid(client, name_or_guid).await?;
+    // 返回该工艺实例化的全部 loop，含各 loop 执行次数（后端批量聚合，避免 N+1）
+    let path = format!("/processes/{}/loops", percent_encode_slug(&guid));
+    let resp: ClientResponse<Value> = client.get(&path).await?;
+    print_response(&resp, output, fields)?;
+    Ok(())
+}
+
+/// versions：该工艺的版本历史（id/version/updated_at/source_path）。
+async fn process_versions(
+    client: &ApiClient,
+    name_or_guid: &str,
+    output: &OutputFormat,
+    fields: &Option<String>,
+) -> Result<()> {
+    let guid = resolve_process_guid(client, name_or_guid).await?;
+    // 按 guid 聚合版本历史（040 起 name 可重复，不能按 name 聚合版本）
+    let path = format!("/processes/{}/versions", percent_encode_slug(&guid));
+    let resp: ClientResponse<Value> = client.get(&path).await?;
+    print_response(&resp, output, fields)?;
+    Ok(())
+}
+
+/// diff：对比 base → version 两个版本的工艺正文逐行 diff。
+async fn process_diff(
+    client: &ApiClient,
+    name_or_guid: &str,
+    version: &str,
+    base: &str,
+    output: &OutputFormat,
+    fields: &Option<String>,
+) -> Result<()> {
+    let guid = resolve_process_guid(client, name_or_guid).await?;
+    // 版本号是 semver（含 '.'），percent_encode_slug 把 '.' 列为安全字符，不会被破坏
+    let path = format!(
+        "/processes/{}/versions/{}/diff?base={}",
+        percent_encode_slug(&guid),
+        percent_encode_slug(version),
+        percent_encode_slug(base)
+    );
+    let resp: ClientResponse<Value> = client.get(&path).await?;
+    print_response(&resp, output, fields)?;
+    Ok(())
+}
+
+/// ProcessRun：path→workspace_id → name/guid→guid → 安装 → 打印结果。
+/// 线性管道：三步紧密依赖上一步、每步只调一次，拆开反而要传一堆中间参数，故按豁免保留为流水线。
 #[allow(clippy::print_stdout)]
 async fn run_process_install(
-    client: &ApiClient, name: &str, workspace: &str,
-    output: &OutputFormat, fields: &Option<String>,
+    client: &ApiClient,
+    name_or_guid: &str,
+    workspace: &str,
+    output: &OutputFormat,
+    fields: &Option<String>,
 ) -> Result<()> {
-    let ws_resp: ClientResponse<Vec<serde_json::Value>> = client.get("/v1/project-directories").await?;
-    let ws_list = ws_resp.data.as_deref().unwrap_or(&[]);
-    let ws_id = ws_list.iter().find_map(|ws| {
-        let path = ws.get("path").and_then(|p| p.as_str())?;
-        if path == workspace { ws.get("id").and_then(|id| id.as_i64()) } else { None }
-    }).ok_or_else(|| anyhow::anyhow!("工作空间 {} 未找到", workspace))?;
+    let ws_id = resolve_workspace_id_by_path(client, workspace).await?;
+    let guid = resolve_process_guid(client, name_or_guid).await?;
     let install_req = serde_json::json!({ "workspace_id": ws_id });
-    let install_path = format!("/bundled/processes/{}/install", percent_encode_slug(name));
-    let install_resp: ClientResponse<serde_json::Value> = client.post(&install_path, &install_req).await?;
-    println!("工艺模板「{}」已安装到工作空间「{}」", name, workspace);
+    let install_path = format!("/bundled/processes/{}/install", percent_encode_slug(&guid));
+    let install_resp: ClientResponse<Value> = client.post(&install_path, &install_req).await?;
+    println!("工艺模板「{}」已安装到工作空间「{}」", name_or_guid, workspace);
     if let Some(ref data) = install_resp.data {
-        if let Some(loop_id) = data.get("loop_id").and_then(|v| v.as_i64()) {
-            println!("创建 Loop #{}，请在前端或 CLI 启用后触发执行", loop_id);
+        if let Some(loop_id) = data.get("loop_id").and_then(Value::as_i64) {
+            println!("创建 Loop #{}，可用 `ntd process upgrade` 升级或在前端启用触发", loop_id);
         }
     }
     print_response(&install_resp, output, fields)?;
     Ok(())
 }
 
-/// ProcessExecutionStatus：遍历工作空间查找审计数据。
+/// ProcessExecutionStatus：遍历工作空间 → loop → 查找审计数据。
+/// audit 端点是 workspace/loop 作用域的，CLI 不持有这层映射，只能穷举查找命中即返回。
 #[allow(clippy::print_stdout)]
 async fn query_execution_status(
-    client: &ApiClient, id: i64,
-    output: &OutputFormat, fields: &Option<String>,
+    client: &ApiClient,
+    id: i64,
+    output: &OutputFormat,
+    fields: &Option<String>,
 ) -> Result<()> {
-    let ws_resp: ClientResponse<Vec<serde_json::Value>> = client.get("/v1/project-directories").await?;
-    let ws_data = ws_resp.data.as_deref().unwrap_or(&[]);
-    for ws in ws_data {
-        let Some(ws_id) = ws.get("id").and_then(|v| v.as_i64()) else { continue };
-        let loops_resp: ClientResponse<Vec<serde_json::Value>> =
-            match client.get(&format!("/v1/workspaces/{}/loops", ws_id)).await {
+    let ws_resp: ClientResponse<Vec<Value>> = client.get("/project-directories").await?;
+    for ws in ws_resp.data.as_deref().unwrap_or(&[]) {
+        let Some(ws_id) = ws.get("id").and_then(Value::as_i64) else { continue };
+        // 修复旧版 /v1/workspaces 双前缀 404：client 已自动补 /api/v1。
+        let loops_resp: ClientResponse<Vec<Value>> =
+            match client.get(&format!("/workspaces/{}/loops", ws_id)).await {
                 Ok(r) => r,
                 Err(_) => continue,
             };
         for lp in loops_resp.data.as_deref().unwrap_or(&[]) {
-            let Some(lp_id) = lp.get("id").and_then(|v| v.as_i64()) else { continue };
-            let audit_path = format!("/v1/workspaces/{}/loops/{}/executions/{}/audit", ws_id, lp_id, id);
-            if let Ok(audit_resp) = client.get::<ClientResponse<serde_json::Value>>(&audit_path).await {
+            let Some(lp_id) = lp.get("id").and_then(Value::as_i64) else { continue };
+            let audit_path = format!("/workspaces/{}/loops/{}/executions/{}/audit", ws_id, lp_id, id);
+            if let Ok(audit_resp) = client.get::<ClientResponse<Value>>(&audit_path).await {
                 if audit_resp.data.is_some() {
                     return print_response(&audit_resp, output, fields);
                 }
@@ -1949,6 +2356,330 @@ mod tests {
         });
         let out = render_blackboard_to_string(Some(&data));
         assert!(out.contains("异常处理"), "missing anomaly handler name: {out}");
+    }
+
+    // ===== Process CLI 解析测试 =====
+    // 每个新子命令一条 try_parse_from 断言，沿用现有 test_cli_parse_* 风格，
+    // 确保命令面/flag/位置参数与设计文档一致。
+
+    #[test]
+    fn test_cli_parse_process_list_default() {
+        // 无过滤：列出全部工艺
+        let cli = Cli::try_parse_from(["ntd", "process", "list"]).unwrap();
+        match cli.command {
+            Commands::Process { action: ProcessAction::List { system, user } } => {
+                assert!(!system && !user);
+            }
+            _ => panic!("Expected Process::List"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_process_list_filters() {
+        // --system / --user 两个互斥过滤开关各解析一次
+        let cli = Cli::try_parse_from(["ntd", "process", "list", "--system"]).unwrap();
+        match cli.command {
+            Commands::Process { action: ProcessAction::List { system, user } } => {
+                assert!(system && !user);
+            }
+            _ => panic!("Expected Process::List --system"),
+        }
+        let cli = Cli::try_parse_from(["ntd", "process", "list", "--user"]).unwrap();
+        match cli.command {
+            Commands::Process { action: ProcessAction::List { system, user } } => {
+                assert!(!system && user);
+            }
+            _ => panic!("Expected Process::List --user"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_process_show() {
+        // show 接受 name 或 guid（运行期解析，CLI 层只校验位置参数到位）
+        let cli = Cli::try_parse_from(["ntd", "process", "show", "4p12s-delivery"]).unwrap();
+        match cli.command {
+            Commands::Process { action: ProcessAction::Show { name_or_guid } } => {
+                assert_eq!(name_or_guid, "4p12s-delivery");
+            }
+            _ => panic!("Expected Process::Show"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_process_recommend() {
+        // recommend：位置参数是任务描述，含中文/空格也应以单参传入
+        let cli =
+            Cli::try_parse_from(["ntd", "process", "recommend", "Rust 持续交付流水线"]).unwrap();
+        match cli.command {
+            Commands::Process { action: ProcessAction::Recommend { description } } => {
+                assert_eq!(description, "Rust 持续交付流水线");
+            }
+            _ => panic!("Expected Process::Recommend"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_process_create_file() {
+        // 非 stdin：--name 必填 + 可选元数据 + --file 读 YAML
+        let cli = Cli::try_parse_from([
+            "ntd", "process", "create",
+            "--name", "my-delivery",
+            "--display-name", "我的交付",
+            "--category", "devops",
+            "--complexity", "high",
+            "--version", "1.0.0",
+            "--file", "/tmp/delivery.yaml",
+        ])
+        .unwrap();
+        match cli.command {
+            Commands::Process {
+                action:
+                    ProcessAction::Create {
+                        name, display_name, category, complexity, version, file, stdin,
+                    },
+            } => {
+                assert_eq!(name.as_deref(), Some("my-delivery"));
+                assert_eq!(display_name.as_deref(), Some("我的交付"));
+                assert_eq!(category.as_deref(), Some("devops"));
+                assert_eq!(complexity.as_deref(), Some("high"));
+                assert_eq!(version.as_deref(), Some("1.0.0"));
+                assert_eq!(file.as_deref(), Some("/tmp/delivery.yaml"));
+                assert!(!stdin);
+            }
+            _ => panic!("Expected Process::Create"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_process_create_stdin() {
+        // --stdin 模式：name 可省略，body 从 stdin 读
+        let cli = Cli::try_parse_from(["ntd", "process", "create", "--stdin"]).unwrap();
+        match cli.command {
+            Commands::Process { action: ProcessAction::Create { stdin, name, .. } } => {
+                assert!(stdin);
+                assert!(name.is_none());
+            }
+            _ => panic!("Expected Process::Create --stdin"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_process_delete() {
+        let cli = Cli::try_parse_from(["ntd", "process", "delete", "abc-123-guid"]).unwrap();
+        match cli.command {
+            Commands::Process { action: ProcessAction::Delete { name_or_guid } } => {
+                assert_eq!(name_or_guid, "abc-123-guid");
+            }
+            _ => panic!("Expected Process::Delete"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_process_run() {
+        // run：位置 name-or-guid + --workspace 路径
+        let cli = Cli::try_parse_from([
+            "ntd", "process", "run", "4p12s-delivery", "--workspace", "/tmp/proj",
+        ])
+        .unwrap();
+        match cli.command {
+            Commands::Process { action: ProcessAction::Run { name_or_guid, workspace } } => {
+                assert_eq!(name_or_guid, "4p12s-delivery");
+                assert_eq!(workspace, "/tmp/proj");
+            }
+            _ => panic!("Expected Process::Run"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_process_upgrade() {
+        let cli =
+            Cli::try_parse_from(["ntd", "process", "upgrade", "my-proc", "--loop-id", "7"]).unwrap();
+        match cli.command {
+            Commands::Process { action: ProcessAction::Upgrade { name_or_guid, loop_id } } => {
+                assert_eq!(name_or_guid, "my-proc");
+                assert_eq!(loop_id, 7);
+            }
+            _ => panic!("Expected Process::Upgrade"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_process_loops() {
+        let cli = Cli::try_parse_from(["ntd", "process", "loops", "my-proc"]).unwrap();
+        match cli.command {
+            Commands::Process { action: ProcessAction::Loops { name_or_guid } } => {
+                assert_eq!(name_or_guid, "my-proc");
+            }
+            _ => panic!("Expected Process::Loops"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_process_versions() {
+        let cli = Cli::try_parse_from(["ntd", "process", "versions", "my-proc"]).unwrap();
+        match cli.command {
+            Commands::Process { action: ProcessAction::Versions { name_or_guid } } => {
+                assert_eq!(name_or_guid, "my-proc");
+            }
+            _ => panic!("Expected Process::Versions"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_process_diff() {
+        // diff：位置 name-or-guid + 位置目标版本 + --base 基准版本
+        let cli =
+            Cli::try_parse_from(["ntd", "process", "diff", "my-proc", "1.2.0", "--base", "1.1.0"])
+                .unwrap();
+        match cli.command {
+            Commands::Process { action: ProcessAction::Diff { name_or_guid, version, base } } => {
+                assert_eq!(name_or_guid, "my-proc");
+                assert_eq!(version, "1.2.0");
+                assert_eq!(base, "1.1.0");
+            }
+            _ => panic!("Expected Process::Diff"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_process_execution_status() {
+        // execution-status：保留命令，确认 kebab-case 子命令名可解析
+        let cli = Cli::try_parse_from(["ntd", "process", "execution-status", "42"]).unwrap();
+        match cli.command {
+            Commands::Process { action: ProcessAction::ExecutionStatus { id } } => {
+                assert_eq!(id, 42);
+            }
+            _ => panic!("Expected Process::ExecutionStatus"),
+        }
+    }
+
+    // ===== name/guid 解析纯逻辑测试 =====
+    // resolve_guid_from_items 不碰网络，直接喂数据断言 0/1/多条与优先级分支。
+
+    /// 构造一份模拟的 GET /bundled/processes data，覆盖唯一 name、guid 直命中、同名多条。
+    fn sample_process_items() -> Vec<Value> {
+        vec![
+            json!({ "id": 1, "guid": "11111111-1111-1111-1111-111111111111", "name": "alpha" }),
+            json!({ "id": 2, "guid": "22222222-2222-2222-2222-222222222222", "name": "beta" }),
+            // 同名 gamma 两条：模拟 040 后 name 不唯一的歧义场景
+            json!({ "id": 3, "guid": "33333333-3333-3333-3333-333333333333", "name": "gamma" }),
+            json!({ "id": 4, "guid": "44444444-4444-4444-4444-444444444444", "name": "gamma" }),
+        ]
+    }
+
+    #[test]
+    fn test_resolve_guid_from_items_by_guid() {
+        // 传 guid 直接命中，唯一确定
+        let items = sample_process_items();
+        let key = "22222222-2222-2222-2222-222222222222";
+        assert_eq!(resolve_guid_from_items(&items, key), GuidResolution::Found(key.to_string()));
+    }
+
+    #[test]
+    fn test_resolve_guid_from_items_by_name_unique() {
+        // name 唯一命中：返回该条的 guid
+        let items = sample_process_items();
+        match resolve_guid_from_items(&items, "beta") {
+            GuidResolution::Found(g) => assert_eq!(g, "22222222-2222-2222-2222-222222222222"),
+            other => panic!("expected Found, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_resolve_guid_from_items_by_name_ambiguous() {
+        // name 命中多条：返回 Ambiguous 并携带全部候选 guid，供错误提示列出
+        let items = sample_process_items();
+        match resolve_guid_from_items(&items, "gamma") {
+            GuidResolution::Ambiguous(g) => {
+                assert_eq!(g.len(), 2);
+                assert!(g.contains(&"33333333-3333-3333-3333-333333333333".to_string()));
+                assert!(g.contains(&"44444444-4444-4444-4444-444444444444".to_string()));
+            }
+            other => panic!("expected Ambiguous, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_resolve_guid_from_items_not_found() {
+        let items = sample_process_items();
+        assert_eq!(resolve_guid_from_items(&items, "nope"), GuidResolution::NotFound);
+    }
+
+    #[test]
+    fn test_resolve_guid_from_items_guid_priority_over_name() {
+        // 极端：某条 name 恰好等于另一条的 guid 字符串时，guid 直命中应优先、不误判为 name
+        let items = vec![
+            json!({ "guid": "special-guid", "name": "alpha" }),
+            json!({ "guid": "real-guid", "name": "special-guid" }),
+        ];
+        assert_eq!(
+            resolve_guid_from_items(&items, "special-guid"),
+            GuidResolution::Found("special-guid".to_string())
+        );
+    }
+
+    /// 写一段内容到系统临时目录的固定文件，返回路径供 build_create_body 测 --file 来源。
+    /// 不用 tempfile 的 guard（drop 即删），改用固定路径 + 测试结束手动清理，避免生命周期问题。
+    fn temp_yaml_with(content: &str) -> String {
+        let path = std::env::temp_dir().join("ntd_cli_test_def.yaml");
+        std::fs::write(&path, content).expect("write temp file");
+        path.to_string_lossy().to_string()
+    }
+
+    #[test]
+    fn test_build_create_body_name_and_file() {
+        // 非 stdin：name + 文件正文组装，可选元数据按需附上，未传字段不应出现
+        let tmp = temp_yaml_with("process: dummy");
+        let args = ProcessCreateArgs {
+            name: Some("my-proc"),
+            display_name: Some("显示名"),
+            category: None,
+            complexity: None,
+            version: Some("2.0.0"),
+            file: Some(&tmp),
+            stdin: false,
+        };
+        let body = build_create_body(&args).unwrap();
+        assert_eq!(body["name"], "my-proc");
+        assert_eq!(body["definition"], "process: dummy");
+        assert_eq!(body["display_name"], "显示名");
+        assert_eq!(body["version"], "2.0.0");
+        // 未传字段不应落进 body，避免把 null 写给后端
+        assert!(body.get("category").is_none());
+        assert!(body.get("complexity").is_none());
+        std::fs::remove_file(&tmp).ok();
+    }
+
+    #[test]
+    fn test_build_create_body_requires_name_without_stdin() {
+        // 非 stdin 且无 --name：给出可操作错误，而不是静默构造空 name
+        let args = ProcessCreateArgs {
+            name: None,
+            display_name: None,
+            category: None,
+            complexity: None,
+            version: None,
+            file: None,
+            stdin: false,
+        };
+        let err = build_create_body(&args).unwrap_err();
+        assert!(err.to_string().contains("--name"), "应提示 --name: {}", err);
+    }
+
+    #[test]
+    fn test_build_create_body_requires_file_without_stdin() {
+        // 有 name 但无 --file 且非 stdin：提示用 --file 或 --stdin
+        let args = ProcessCreateArgs {
+            name: Some("my-proc"),
+            display_name: None,
+            category: None,
+            complexity: None,
+            version: None,
+            file: None,
+            stdin: false,
+        };
+        let err = build_create_body(&args).unwrap_err();
+        assert!(err.to_string().contains("--file"), "应提示 --file: {}", err);
     }
 
     /// 把 render_blackboard 的全部输出收集到 String，便于测试断言关键片段。

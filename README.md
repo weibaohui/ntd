@@ -279,6 +279,21 @@ ntd loop stats <id>                 # 执行统计
 ntd loop execution blackboard <eid> --human   # 人类可读的黑板视图
 ```
 
+#### 工艺（Process）操作
+
+```bash
+ntd process list                         # 列出所有工艺模板（--system / --user 过滤）
+ntd process recommend "搭持续交付流水线"  # 按任务描述推荐工艺
+ntd process show 4p12s-delivery          # 查看工艺详情（name 或 guid 都行）
+ntd process run 4p12s-delivery --workspace /path/to/proj   # 装到工作空间并触发
+ntd process loops 4p12s-delivery         # 该工艺装出了哪些 loop
+ntd process upgrade 4p12s-delivery --loop-id 7             # 把 loop 升级到工艺最新版
+ntd process create --name my-proc --file ./proc.yaml       # 新建自建工艺
+ntd process delete my-proc               # 删除自建工艺
+ntd process versions my-proc             # 版本历史
+ntd process diff my-proc 1.2.0 --base 1.1.0                # 版本对比
+```
+
 #### 标签 / 统计 / 工作空间
 
 ```bash
