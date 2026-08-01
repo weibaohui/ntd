@@ -603,7 +603,201 @@ ntd loop results <EXECUTION_ID>
 
 ---
 
-### 7. 守护进程命令
+### 7. 工艺（Process）管理命令
+
+> **工艺（Process）** 是可复用的多环节任务流水线模板（有序环节 + 门禁 + 期望产物）。
+> `ntd process` 让你在终端完成「选工艺 → 装到工作空间 → 跑 → 升级 → 版本回溯」全链路。
+>
+> **name 或 guid 都能标识工艺**：下面带 `<NAME_OR_GUID>` 的命令，位置参数既接受人类可读的 name（如 `4p12s-delivery`），也接受 UUID 形式的 guid。同名命中多条时 CLI 会列出候选 guid，复制其一改用 guid 重试即可。
+
+#### `ntd process list`
+列出所有工艺模板。
+
+```bash
+ntd process list [OPTIONS]
+```
+
+**选项：**
+
+| 选项 | 说明 |
+|------|------|
+| `--system` | 只看系统工艺（bundled 同步来的） |
+| `--user` | 只看用户自建工艺（与 `--system` 互斥） |
+
+**示例：**
+```bash
+ntd process list                       # 全部
+ntd process list --system              # 只看系统模板
+ntd process list --user --output raw --fields "name,guid,version,is_system"
+```
+
+---
+
+#### `ntd process show <NAME_OR_GUID>`
+查看工艺模板详情（环节定义）。
+
+```bash
+ntd process show <NAME_OR_GUID>
+```
+
+**示例：**
+```bash
+ntd process show 4p12s-delivery                          # 用 name
+ntd process show 11111111-1111-1111-1111-111111111111    # 用 guid
+```
+
+---
+
+#### `ntd process recommend <DESCRIPTION>`
+根据任务描述推荐合适的工艺（返回推荐工艺 + 匹配理由 + score）。不确定用哪个工艺时的首选入口。
+
+```bash
+ntd process recommend "<任务描述>"
+```
+
+**示例：**
+```bash
+ntd process recommend "给 Rust 项目搭持续交付流水线"
+```
+
+---
+
+#### `ntd process create`
+新建用户工艺。YAML 正文从 `--file` 读取，或用 `--stdin` 传完整 JSON body。
+
+```bash
+ntd process create [OPTIONS]
+```
+
+**选项：**
+
+| 选项 | 简写 | 说明 |
+|------|------|------|
+| `--name <SLUG>` | `-n` | 工艺唯一标识，`^[a-zA-Z0-9_-]+$`（非 `--stdin` 时必填） |
+| `--display-name <NAME>` | - | 人类可读名称（可空） |
+| `--category <CAT>` | - | 分类（可空） |
+| `--complexity <LVL>` | - | 复杂度（可空） |
+| `--version <VER>` | - | 版本（可空，默认 `1.0.0`） |
+| `--file <PATH>` | `-f` | 从文件读取工艺 YAML 正文（非 `--stdin` 时必填） |
+| `--stdin` | - | 从 stdin 读取完整 JSON body |
+
+**示例：**
+```bash
+# 从 YAML 文件创建
+ntd process create --name my-delivery --display-name "我的交付" --file ./delivery.yaml
+
+# 用 --stdin 传完整 body
+ntd process create --stdin <<EOF
+{ "name": "my-delivery", "definition": "process: ...", "version": "1.0.0" }
+EOF
+```
+
+---
+
+#### `ntd process delete <NAME_OR_GUID>`
+删除用户工艺（系统工艺后端会拒绝）。
+
+```bash
+ntd process delete <NAME_OR_GUID>
+```
+
+**示例：**
+```bash
+ntd process delete my-delivery
+```
+
+---
+
+#### `ntd process run <NAME_OR_GUID>`
+安装工艺到工作空间并触发执行。`--workspace` 按项目路径指定，CLI 会自动反查 workspace_id。
+
+```bash
+ntd process run <NAME_OR_GUID> --workspace <PATH>
+```
+
+**选项：**
+
+| 选项 | 说明 |
+|------|------|
+| `--workspace <PATH>` | 必填，目标工作空间路径 |
+
+**示例：**
+```bash
+ntd process run 4p12s-delivery --workspace /Users/me/projects/myapp
+```
+
+---
+
+#### `ntd process upgrade <NAME_OR_GUID>`
+把指定 loop 升级到工艺模板最新版。
+
+```bash
+ntd process upgrade <NAME_OR_GUID> --loop-id <ID>
+```
+
+**选项：**
+
+| 选项 | 说明 |
+|------|------|
+| `--loop-id <ID>` | 必填，要升级的 loop id（先用 `ntd process loops` 查到） |
+
+**示例：**
+```bash
+ntd process loops 4p12s-delivery           # 先拿到 loop_id
+ntd process upgrade 4p12s-delivery --loop-id 7
+```
+
+---
+
+#### `ntd process loops <NAME_OR_GUID>`
+列出该工艺实例化的所有 loop（含各 loop 执行次数）。
+
+```bash
+ntd process loops <NAME_OR_GUID>
+```
+
+---
+
+#### `ntd process versions <NAME_OR_GUID>`
+查看工艺版本历史。
+
+```bash
+ntd process versions <NAME_OR_GUID>
+```
+
+---
+
+#### `ntd process diff <NAME_OR_GUID> <VERSION>`
+对比两个版本的工艺正文逐行 diff。
+
+```bash
+ntd process diff <NAME_OR_GUID> <VERSION> --base <BASE_VERSION>
+```
+
+**参数 / 选项：**
+
+| 参数 | 说明 |
+|------|------|
+| `<VERSION>` | 必填（位置参数），目标版本号 |
+| `--base <BASE_VERSION>` | 必填，基准版本号 |
+
+**示例：**
+```bash
+ntd process diff my-delivery 1.2.0 --base 1.1.0
+```
+
+---
+
+#### `ntd process execution-status <ID>`
+查看工艺实例审计状态（按 loop execution id 遍历工作空间查找）。
+
+```bash
+ntd process execution-status <LOOP_EXECUTION_ID>
+```
+
+---
+
+### 8. 守护进程命令
 
 #### `ntd daemon install`
 安装 ntd 为系统守护进程。
@@ -739,7 +933,7 @@ ntd daemon status -v
 
 ---
 
-## 7. 技能管理命令
+## 9. 技能管理命令
 
 > 用于将内嵌的 `ntd-usage` skill 安装到各执行器的技能目录，让 AI 助手在执行时能自动发现并加载 ntd 使用说明。
 >
