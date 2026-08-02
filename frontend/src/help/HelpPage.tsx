@@ -1,30 +1,35 @@
-// 帮助抽屉容器：左树右内容。
+// 帮助页面：独立全屏窗口，左菜单 + 右内容（PageCard 包裹）。
 //
 // 设计要点：
-// 1. 右侧 Drawer，width 560，与现有 navDrawerOpen 模式一致。
-// 2. 左侧 Antd Tree 展示「页面 → 功能点」两级，自动选中当前页面总览。
-// 3. 右侧用 HelpContentRenderer 渲染选中节点的 md。
-// 4. 树形数据从 HELP_PAGES 派生，节点 key 编码：页面='p:<pageId>', 功能点='f:<pageId>/<featureId>'。
+// 1. 取代旧的 HelpDrawer（窄抽屉），改为占满主内容区的「新窗口」形态，
+//    与项目其他 PageCard 页面保持一致的交互与视觉风格。
+// 2. 左侧 Antd Tree 展示「页面 → 功能点」两级，自动选中当前页面总览；
+//    右侧用 PageCard 包裹 HelpContentRenderer，标题展示当前选中节点名。
+// 3. 树形数据从 HELP_PAGES 派生，节点 key 编码：
+//    页面='p:<pageId>', 功能点='f:<pageId>/<featureId>'。
+// 4. 顶部右上角放「关闭」按钮，关闭后回到原视图。
 
 import { useMemo, useState, useEffect } from 'react';
-import { Drawer, Tree, Empty } from 'antd';
+import { Tree, Empty, Button } from 'antd';
+import { CloseOutlined } from '@ant-design/icons';
 import type { TreeDataNode } from 'antd';
 import { HELP_PAGES } from './index';
 import { findHelpPage, loadHelpDoc, useDefaultPageId } from './useHelpContent';
 import { decideTreeSelect } from './helpTreeSelect';
 import { HelpContentRenderer } from './HelpContentRenderer';
+import { PageCard } from '@/components/common/PageCard';
 import type { View } from '@/hooks/useViewState';
 
-interface HelpDrawerProps {
-  /** 是否展开。 */
+interface HelpPageProps {
+  /** 是否展示帮助页面。 */
   open: boolean;
-  /** 关闭抽屉的回调。 */
+  /** 关闭帮助页面的回调。 */
   onClose: () => void;
   /** 当前所在视图，用于树形默认选中。 */
   activeView: View;
   /** 是否处于详情形态（todoDetailId/loopDetailId/taskDetailId != null）。 */
   hasDetail: boolean;
-  /** 是否移动端：移动端抽屉全屏，树形与内容上下排列。 */
+  /** 是否移动端：移动端菜单与内容上下排列。 */
   isMobile?: boolean;
 }
 
@@ -78,8 +83,32 @@ function resolveDocFile(selectedKey: string): string {
   return '';
 }
 
-/** 帮助抽屉容器。 */
-export function HelpDrawer({ open, onClose, activeView, hasDetail, isMobile }: HelpDrawerProps) {
+/**
+ * 根据选中节点 key 解析出展示标题。
+ *
+ * @param selectedKey 树节点 key
+ * @returns 标题文本
+ */
+function resolveTitle(selectedKey: string): string {
+  // 页面节点：取页面标题
+  if (selectedKey.startsWith('p:')) {
+    const page = findHelpPage(selectedKey.slice(2));
+    return page ? page.title : '帮助';
+  }
+  // 功能点节点：取所属页面 + 功能点标题
+  if (selectedKey.startsWith('f:')) {
+    const rest = selectedKey.slice(2);
+    const slashIdx = rest.indexOf('/');
+    if (slashIdx < 0) return '帮助';
+    const page = findHelpPage(rest.slice(0, slashIdx));
+    const feature = page?.features.find(f => f.id === rest.slice(slashIdx + 1));
+    return feature ? feature.title : '帮助';
+  }
+  return '帮助';
+}
+
+/** 帮助页面容器：左菜单 + 右 PageCard 内容。 */
+export function HelpPage({ open, onClose, activeView, hasDetail, isMobile }: HelpPageProps) {
   const treeData = useHelpTreeData();
   // 默认选中当前页面总览
   const defaultPageId = useDefaultPageId(activeView, hasDetail);
@@ -95,9 +124,10 @@ export function HelpDrawer({ open, onClose, activeView, hasDetail, isMobile }: H
     setExpandedKeys([newKey]);
   }, [defaultPageId]);
 
-  // 解析当前选中节点对应的 md 文件名
+  // 解析当前选中节点对应的 md 文件名与标题
   const docFile = useMemo(() => resolveDocFile(selectedKey), [selectedKey]);
   const docSource = useMemo(() => loadHelpDoc(docFile), [docFile]);
+  const pageTitle = useMemo(() => resolveTitle(selectedKey), [selectedKey]);
 
   // 树节点选中回调。
   // 决策逻辑抽在 helpTreeSelect.decideTreeSelect（纯函数，便于单测）：
@@ -120,45 +150,77 @@ export function HelpDrawer({ open, onClose, activeView, hasDetail, isMobile }: H
     setExpandedKeys(keys.map(String));
   }
 
+  // open=false 时不渲染，由父组件控制挂载
+  if (!open) return null;
+
+  // 左菜单宽度：桌面 220px，移动端全宽
+  const menuWidth = isMobile ? '100%' : 220;
+
   return (
-    <Drawer
-      title="帮助"
-      placement="right"
-      open={open}
-      onClose={onClose}
-      width={isMobile ? '100%' : 560}
-      styles={{ body: { padding: 0 } }}
+    <div
+      style={{
+        // 占满父容器（App Content 区域），作为「新窗口」覆盖原视图
+        position: 'absolute',
+        inset: 0,
+        background: 'var(--color-bg-base, #fff)',
+        zIndex: 100,
+        display: 'flex',
+        flexDirection: isMobile ? 'column' : 'row',
+        gap: isMobile ? 0 : 12,
+        padding: isMobile ? 0 : 12,
+      }}
     >
-      <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', height: '100%' }}>
-        {/* 左侧树（移动端在上） */}
-        <div
-          style={{
-            width: isMobile ? '100%' : 180,
-            maxHeight: isMobile ? 200 : undefined,
-            borderRight: isMobile ? undefined : '1px solid var(--ant-color-border, #f0f0f0)',
-            borderBottom: isMobile ? '1px solid var(--ant-color-border, #f0f0f0)' : undefined,
+      {/* 左侧菜单（移动端在上） */}
+      <div
+        style={{
+          width: menuWidth,
+          flexShrink: 0,
+          maxHeight: isMobile ? 240 : undefined,
+          overflow: 'auto',
+          background: 'var(--color-bg-elevated, #fff)',
+          borderRadius: 'var(--radius-lg, 12px)',
+          boxShadow: 'var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.06))',
+          padding: '8px 0',
+        }}
+      >
+        <Tree
+          treeData={treeData}
+          selectedKeys={[selectedKey]}
+          expandedKeys={expandedKeys}
+          onSelect={handleSelect}
+          onExpand={handleExpand}
+          blockNode
+        />
+      </div>
+
+      {/* 右侧内容：PageCard 包裹，标题随选中节点变化 */}
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+        <PageCard
+          icon={<span style={{ fontSize: 15 }}>📖</span>}
+          title={pageTitle}
+          extra={
+            <Button
+              type="text"
+              size="small"
+              icon={<CloseOutlined />}
+              onClick={onClose}
+              aria-label="关闭帮助"
+            />
+          }
+          contentStyle={{
+            // 内容区可滚动，承载较长 markdown
             overflow: 'auto',
-            padding: '8px 0',
+            padding: '16px 20px',
           }}
+          style={{ flex: 1, minHeight: 0 }}
         >
-          <Tree
-            treeData={treeData}
-            selectedKeys={[selectedKey]}
-            expandedKeys={expandedKeys}
-            onSelect={handleSelect}
-            onExpand={handleExpand}
-            blockNode
-          />
-        </div>
-        {/* 右侧内容 */}
-        <div style={{ flex: 1, overflow: 'auto', padding: '16px 20px' }}>
           {docSource ? (
             <HelpContentRenderer source={docSource} />
           ) : (
             <Empty description="暂无帮助内容" />
           )}
-        </div>
+        </PageCard>
       </div>
-    </Drawer>
+    </div>
   );
 }

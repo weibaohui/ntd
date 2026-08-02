@@ -38,7 +38,7 @@ import { MobileHeader } from './components/shell/MobileHeader';
 import { FloatingActionButton } from '@/components/shell/FloatingActionButton';
 import { WikiChatFloatingWindow, type WikiChatMode } from '@/components/WikiChatFloatingWindow';
 import { WikiViewPage } from '@/components/WikiViewPage';
-import { HelpDrawer } from '@/help/HelpDrawer';
+import { HelpPage } from '@/help/HelpPage';
 
 import { EXECUTION_PANEL, LEFT_RAIL_WIDTH } from './constants';
 import * as db from './utils/database';
@@ -298,10 +298,12 @@ function AppContent() {
       )}
 
       {/* Main Content */}
+      {/* position: relative 作为 HelpPage 全屏覆盖的定位上下文 */}
       <Layout
         style={{
           flex: 1,
           minWidth: 0,
+          position: 'relative',
         }}
       >
         <Content
@@ -534,8 +536,8 @@ function AppContent() {
         onClose={() => setWikiChatMode('minimized')}
       />
 
-      {/* 帮助抽屉：左树右内容，按页面→功能点两级组织 */}
-      <HelpDrawer
+      {/* 帮助页面：独立全屏窗口，左菜单 + 右 PageCard 内容 */}
+      <HelpPage
         open={helpDrawerOpen}
         onClose={() => setHelpDrawerOpen(false)}
         activeView={activeView}
