@@ -110,16 +110,6 @@ impl SkillsMarketCache {
         *initialized_guard = true;
     }
 
-    /// 标记缓存为未初始化（强制重新扫描）
-    pub fn invalidate(&self) {
-        let mut initialized = self.initialized.write();
-        *initialized = false;
-    }
-
-    /// 检查缓存是否已初始化
-    pub fn is_initialized(&self) -> bool {
-        *self.initialized.read()
-    }
 }
 
 /// 异步预热缓存（在后台线程扫描磁盘）

@@ -112,23 +112,6 @@ impl Database {
         Ok(())
     }
 
-    pub async fn update_feishu_history_chat_last_fetch(
-        &self,
-        id: i64,
-    ) -> Result<(), sea_orm::DbErr> {
-        let model = feishu_history_chats::Entity::find_by_id(id)
-            .one(&self.conn)
-            .await?
-            .ok_or(sea_orm::DbErr::RecordNotFound("Record not found".to_string()))?;
-
-        let now = crate::models::utc_timestamp();
-        let mut am: feishu_history_chats::ActiveModel = model.into();
-        am.last_fetch_time = ActiveValue::Set(Some(now));
-
-        am.update(&self.conn).await?;
-        Ok(())
-    }
-
     pub async fn delete_feishu_history_chat(&self, id: i64) -> Result<(), sea_orm::DbErr> {
         let model = feishu_history_chats::Entity::find_by_id(id)
             .one(&self.conn)

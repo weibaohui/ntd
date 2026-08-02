@@ -85,21 +85,6 @@ impl ExpertIndexManager {
         self.experts.read().get(name).cloned()
     }
 
-    /// 根据分类获取专家
-    pub fn get_experts_by_category(&self, category_id: &str) -> Vec<ExpertMetadata> {
-        let names = self
-            .category_index
-            .read()
-            .get(category_id)
-            .cloned()
-            .unwrap_or_default();
-        let experts = self.experts.read();
-        names
-            .iter()
-            .filter_map(|name| experts.get(name).cloned())
-            .collect()
-    }
-
     /// 获取指定专家的 Agent MD 文件内容（按需加载）
     ///
     /// 按 `(expert_name, agent_name)` 复合键查找，避免不同专家同名 agent 互窜。
@@ -126,22 +111,6 @@ impl ExpertIndexManager {
             .get(expert_name)
             .map(|m| m.values().cloned().collect())
             .unwrap_or_default()
-    }
-
-    /// 获取指定专家的 Skill 的 SKILL.md 完整内容（按需加载）
-    pub fn get_skill_md_content(
-        &self,
-        expert_name: &str,
-        skill_name: &str,
-    ) -> Result<String, ExpertError> {
-        let skill = self
-            .skills
-            .read()
-            .get(expert_name)
-            .and_then(|m| m.get(skill_name).cloned())
-            .ok_or_else(|| ExpertError::SkillNotFound(skill_name.to_string()))?;
-        std::fs::read_to_string(&skill.skill_md_path)
-            .map_err(|e| ExpertError::FileReadError(skill.skill_md_path.clone(), e))
     }
 
     /// 重新加载指定专家

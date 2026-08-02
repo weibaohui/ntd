@@ -98,16 +98,6 @@ impl Database {
         Ok(models.into_iter().map(Self::binding_from_model).collect())
     }
 
-    /// Get all bindings across all bots.
-    pub async fn get_all_feishu_project_bindings(
-        &self,
-    ) -> Result<Vec<FeishuProjectBinding>, sea_orm::DbErr> {
-        let models = feishu_project_bindings::Entity::find()
-            .all(&self.conn)
-            .await?;
-        Ok(models.into_iter().map(Self::binding_from_model).collect())
-    }
-
     /// 按 bot_id + chat_id 查最近 N 条执行记录（飞书卡片「最近任务」用）。
     /// 走两跳：先查当前会话绑定，再按 binding.todo_id 取记录。
     /// 没有绑定、或绑定未关联 todo（todo_id<=0）时短路返回空 Vec，不当作错误——
@@ -183,31 +173,6 @@ impl Database {
         self.exec_update(am).await
     }
 
-    /// 将 pending 绑定（chat_id="__pending__"）连接到真实聊天
-    ///
-    /// 流程：Web UI 预先创建了 binding（含 Todo + project_dir），用户在飞书发送
-    /// /bind <名称> 时，此方法将 pending binding 的 chat_id 从 "__pending__" 更新为
-    /// 真实 chat_id，从而激活绑定。
-    ///
-    /// 前提：调用前需确保该 chat 尚未绑定（或已由调用方清理旧绑定）。
-    pub async fn attach_feishu_project_binding(
-        &self,
-        id: i64,
-        chat_id: &str,
-        chat_type: &str,
-    ) -> Result<(), sea_orm::DbErr> {
-        let now = crate::models::utc_timestamp();
-        let am = feishu_project_bindings::ActiveModel {
-            id: ActiveValue::Unchanged(id),
-            chat_id: ActiveValue::Set(chat_id.to_string()),
-            chat_type: ActiveValue::Set(chat_type.to_string()),
-            updated_at: ActiveValue::Set(now),
-            ..Default::default()
-        };
-        self.exec_update(am).await?;
-        Ok(())
-    }
-
     /// Update binding status (e.g. back to idle after execution ends).
     pub async fn update_feishu_project_binding_status(
         &self,
@@ -249,18 +214,6 @@ impl Database {
             .exec(&self.conn)
             .await
             .map(|_| ())
-    }
-
-    /// Delete binding by bot_id + chat_id.
-    pub async fn delete_feishu_project_binding_by_chat(
-        &self,
-        bot_id: i64,
-        chat_id: &str,
-    ) -> Result<(), sea_orm::DbErr> {
-        if let Some(binding) = self.get_feishu_project_binding(bot_id, chat_id).await? {
-            self.delete_feishu_project_binding(binding.id).await?;
-        }
-        Ok(())
     }
 
     /// Atomically reset bindings whose latest_record is no longer running.

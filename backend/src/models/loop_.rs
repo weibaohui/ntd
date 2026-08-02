@@ -438,42 +438,6 @@ pub fn validate_loop_status(s: &str) -> Result<(), String> {
     }
 }
 
-/// 把 loop_execution.status 归类为前端展示用的颜色。
-/// 注意区分「步数超限」和「Token 超限」两种 capped 场景，
-/// 分别用不同的颜色让用户一目了然。
-pub fn loop_execution_color(status: &str) -> &'static str {
-    match status {
-        "running" => "#1890ff",
-        "success" => "#52c41a",
-        "failed" => "#f5222d",
-        "partial" => "#fa8c16",
-        "cancelled" => "#8c8c8c",
-        "capped_step" => "#d4b106",   // 步数超限：黄色
-        "capped_token" => "#722ed1",  // Token 超限：紫色
-        _ => "#bfbfbf",
-    }
-}
-
-pub fn loop_status_color(status: &str) -> &'static str {
-    match status {
-        "enabled" => "#52c41a",
-        "paused" => "#fa8c16",
-        _ => "#bfbfbf",
-    }
-}
-
-pub fn step_execution_color(status: &str) -> &'static str {
-    match status {
-        "pending" => "#bfbfbf",
-        "pending_approval" => "#fa8c16", // 等待人工审批
-        "running" => "#1890ff",
-        "success" => "#52c41a",
-        "failed" => "#f5222d",
-        "skipped" => "#fa8c16",
-        _ => "#bfbfbf",
-    }
-}
-
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod loop_dto_tests {

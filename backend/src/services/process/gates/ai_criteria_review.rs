@@ -13,17 +13,6 @@
 
 use super::{GateContext, GateResult};
 
-/// AI 评审结果。
-#[derive(Debug, Clone, PartialEq)]
-pub enum ReviewStatus {
-    /// 已有评分，通过。
-    Passed { score: i32 },
-    /// 已有评分，未通过。
-    Failed { score: i32, min_score: i32 },
-    /// 需要触发 auto-review（无评分）。
-    NeedsReview,
-}
-
 /// 检查 `ai_criteria_review` 门禁状态（不触发 auto-review）。
 ///
 /// # 返回

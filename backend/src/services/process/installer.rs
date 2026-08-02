@@ -509,28 +509,6 @@ impl ExpectedArtifact {
 
 /// 用于序列化 GateDefinition 的辅助：转换为门禁配置 JSON。
 impl GateDefinition {
-    pub fn to_config_json(&self) -> String {
-        let mut map = serde_json::Map::new();
-        if let Some(v) = &self.artifact {
-            map.insert("artifact".to_string(), serde_json::Value::String(v.clone()));
-        }
-        if let Some(v) = &self.criteria_ref {
-            map.insert(
-                "criteria_ref".to_string(),
-                serde_json::Value::String(v.clone()),
-            );
-        }
-        if let Some(v) = self.min_score {
-            map.insert(
-                "min_score".to_string(),
-                serde_json::Value::Number(v.into()),
-            );
-        }
-        if let Some(v) = &self.script {
-            map.insert("script".to_string(), serde_json::Value::String(v.clone()));
-        }
-        serde_json::Value::Object(map).to_string()
-    }
 }
 
 /// 解析 phase 的 spec_ref 外部引用。

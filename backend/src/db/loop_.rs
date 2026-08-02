@@ -79,12 +79,6 @@ fn group_count_by_loop_id(
 }
 
 impl Database {
-    pub async fn list_loops(&self) -> Result<Vec<loops::Model>, sea_orm::DbErr> {
-        loops::Entity::find()
-            .order_by_desc(loops::Column::UpdatedAt)
-            .all(&self.conn)
-            .await
-    }
 
     pub async fn get_loop(&self, id: i64) -> Result<Option<loops::Model>, sea_orm::DbErr> {
         loops::Entity::find_by_id(id).one(&self.conn).await
@@ -232,17 +226,6 @@ impl Database {
             am.update(&self.conn).await?;
         }
         Ok(())
-    }
-
-    /// 查找同模板+同工作空间已存在的任务 Loop（复用检测）。
-    pub async fn find_task_loop(&self, template_id: i64, workspace_id: i64) -> Result<Option<i64>, sea_orm::DbErr> {
-        use sea_orm::EntityTrait;
-        let existing = loops::Entity::find()
-            .filter(loops::Column::ProcessTemplateId.eq(template_id))
-            .filter(loops::Column::WorkspaceId.eq(Some(workspace_id)))
-            .one(&self.conn)
-            .await?;
-        Ok(existing.map(|l| l.id))
     }
 
     pub async fn delete_loop(&self, id: i64) -> Result<(), sea_orm::DbErr> {
@@ -807,29 +790,6 @@ impl Database {
         Ok(())
     }
 
-    /// 创建带 task_id 的 loop execution（任务管理）。
-    pub async fn create_loop_execution_with_task(
-        &self,
-        loop_id: i64,
-        task_id: i64,
-        trigger_type: &str,
-        trigger_meta: &str,
-        total_steps: i32,
-    ) -> Result<loop_executions::Model, sea_orm::DbErr> {
-        let now = crate::models::utc_timestamp();
-        let am = loop_executions::ActiveModel {
-            loop_id: ActiveValue::Set(loop_id),
-            task_id: ActiveValue::Set(Some(task_id)),
-            trigger_type: ActiveValue::Set(trigger_type.to_string()),
-            trigger_meta: ActiveValue::Set(trigger_meta.to_string()),
-            started_at: ActiveValue::Set(now),
-            status: ActiveValue::Set("running".to_string()),
-            total_steps: ActiveValue::Set(total_steps),
-            ..Default::default()
-        };
-        am.insert(&self.conn).await
-    }
-
     pub async fn get_loop_execution(
         &self,
         id: i64,
@@ -1169,20 +1129,6 @@ impl Database {
         if let Some(c) = existing {
             let mut am: loop_step_executions::ActiveModel = c.into();
             am.conclusion = ActiveValue::Set(Some(conclusion.to_string()));
-            am.update(&self.conn).await?;
-        }
-        Ok(())
-    }
-
-    pub async fn set_step_execution_rating(
-        &self,
-        id: i64,
-        rating: i32,
-    ) -> Result<(), sea_orm::DbErr> {
-        let existing = loop_step_executions::Entity::find_by_id(id).one(&self.conn).await?;
-        if let Some(c) = existing {
-            let mut am: loop_step_executions::ActiveModel = c.into();
-            am.rating = ActiveValue::Set(Some(rating));
             am.update(&self.conn).await?;
         }
         Ok(())
