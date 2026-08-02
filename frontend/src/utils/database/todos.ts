@@ -27,7 +27,8 @@ export async function getTodoIds(workspaceId: number): Promise<number[]> {
 
 /**
  * 056：E 类「确实需要全量」场景的分批拉取（备份导入去重需要 prompt 判重）。
- * 逐页拉取直到末页；单页 200 条上限由后端强制，这里循环翻页。
+ * 翻页由响应的 total 驱动（CodeRabbit#14）：不以「本页条数 < 请求的 page_size」
+ * 判定末页——后端若调整 page_size 上限，该判定会提前终止造成静默截断。
  */
 export async function getAllTodosBatched(workspaceId: number): Promise<Todo[]> {
   const all: Todo[] = [];
@@ -35,7 +36,8 @@ export async function getAllTodosBatched(workspaceId: number): Promise<Todo[]> {
   for (;;) {
     const res = await getTodosPage(workspaceId, { page, pageSize: 200 });
     all.push(...res.items);
-    if (res.items.length < 200) break;
+    // 已拿够总数或本页为空（防御后端忽略 page 参数导致死循环）时结束
+    if (all.length >= res.total || res.items.length === 0) break;
     page += 1;
   }
   return all;

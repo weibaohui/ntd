@@ -808,10 +808,12 @@ async fn handle_todo(
                 );
                 let resp: ClientResponse<crate::models::TodoListPage> = client.get(&path).await?;
                 let Some(page_data) = resp.data else { break };
-                let fetched = page_data.items.len() as i64;
+                let fetched = page_data.items.len();
+                let total = page_data.total;
                 all_todos.extend(page_data.items);
-                // 拿满一页说明可能还有下一页；不满则为最后一页
-                if fetched < 200 {
+                // CodeRabbit#14：翻页由响应 total 驱动——不以「条数 < 请求的 page_size」
+                // 判末页（后端若调整 page_size 上限会提前截断）；本页为空防御死循环
+                if all_todos.len() as i64 >= total || fetched == 0 {
                     break;
                 }
                 page += 1;

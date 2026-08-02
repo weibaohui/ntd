@@ -208,10 +208,14 @@ export const TodoCard = memo(function TodoCard({
             </div>
             {promptExpanded && (
               <div className="kanban-card-section-content">
-                {promptLoading || prompt == null ? (
+                {promptLoading ? (
                   <Spin size="small" />
-                ) : (
+                ) : prompt != null ? (
                   <XMarkdown content={prompt} />
+                ) : (
+                  // CodeRabbit#10：加载失败后 promptLoading=false 且 prompt 为 null，
+                  // 必须给出终态文案，否则永远停在加载动画
+                  <span style={{ color: 'var(--color-text-tertiary)', fontSize: 12 }}>加载失败，收起后重试</span>
                 )}
               </div>
             )}

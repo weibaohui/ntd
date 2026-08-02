@@ -1851,12 +1851,16 @@ impl FeishuListener {
         let todos = match wid {
             Some(id) => db
                 // 056：卡片只展示最近 20 条摘要（id+标题+状态图标），
-                // 用 brief 接口替代整行全量拉取；take(20) 截断保持卡片体积
+                // 用 brief 接口替代整行全量拉取；take(20) 截断保持卡片体积。
+                // DB 失败时记 error（含 bot/ws 上下文）后降级为空列表——
+                // 卡片缺区块可接受，但静默吞错会让故障无法定位（CodeRabbit#4）。
                 .get_todo_briefs(Some(id), None, None)
                 .await
-                .ok()
                 .map(|ts| ts.into_iter().take(20).map(Self::brief_to_item).collect())
-                .unwrap_or_default(),
+                .unwrap_or_else(|e| {
+                    tracing::error!("飞书卡片加载 todo 摘要失败（bot={bot_id}, ws={id}）: {e}");
+                    Vec::new()
+                }),
             None => vec![],
         };
         let loops = match wid {

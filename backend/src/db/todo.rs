@@ -335,8 +335,12 @@ impl Database {
         &self,
         q: TodoCenterPageQuery<'_>,
     ) -> Result<(Vec<TodoCenterItem>, i64, std::collections::HashMap<String, i64>, Vec<String>), sea_orm::DbErr> {
-        let page = q.page.max(1);
         let page_size = q.page_size.clamp(1, 200);
+        // 先计数再钳页码（CodeRabbit#2）：page 无上界时大 OFFSET 是外部可触发的慢查询；
+        // offset 超出 total 时截断到最后一页，而不是让 SQLite 逐行跳过几千万行。
+        let total = self.count_todo_center(&q).await?;
+        let max_page = if total == 0 { 1 } else { (total + page_size - 1) / page_size };
+        let page = q.page.max(1).min(max_page.max(1));
         let (where_sql, values) = Self::center_page_where(&q);
         let order = if q.sort_desc { "DESC" } else { "ASC" };
         let sql = format!(
@@ -359,7 +363,6 @@ impl Database {
             .filter_map(|r| r.try_get_by::<i64, _>("id").ok())
             .collect();
 
-        let total = self.count_todo_center(&q).await?;
         let bucket_counts = self.count_todo_center_buckets(&q).await?;
         let action_types = self.list_center_action_types(q.workspace_id).await?;
         let items = self.build_center_items_by_ids(&ids).await?;
@@ -491,18 +494,23 @@ impl Database {
              (prompt IS NOT NULL AND prompt != '') AS has_prompt FROM todos WHERE deleted_at IS NULL",
         );
         let mut values: Vec<sea_orm::Value> = Vec::new();
-        if let Some(wid) = workspace_id {
-            sql.push_str(" AND workspace_id = ?");
-            values.push(wid.into());
-        }
         match ids {
             Some(ids) if !ids.is_empty() => {
+                // 定点模式（CodeRabbit#6）：id 全局唯一，不再叠加 workspace_id 条件——
+                // Dashboard 全局运营视图的跨 ws 标题反查、运行记录抽屉补标题都依赖这一点。
                 let (ph, vals) = Database::in_clause(ids);
                 sql.push_str(&format!(" AND id IN ({ph})"));
                 values.extend(vals);
             }
             Some(_) => return Ok(Vec::new()), // 空 id 集 = 空结果，避免 IN () 非法 SQL
-            None => sql.push_str(" AND archived_at IS NULL"), // 看板模式隐藏已归档
+            None => {
+                // 看板模式：按 ws 过滤且隐藏已归档（与旧 getAllTodos 数据源语义一致）
+                if let Some(wid) = workspace_id {
+                    sql.push_str(" AND workspace_id = ?");
+                    values.push(wid.into());
+                }
+                sql.push_str(" AND archived_at IS NULL");
+            }
         }
         if let Some(h) = hours.filter(|&h| h > 0) {
             // hours 已验证 > 0 的 u32，format! 是构建 SQL 时间表达式的唯一途径
@@ -585,19 +593,22 @@ impl Database {
                 "REPLACE(REPLACE(updated_at, 'T', ' '), 'Z', '') >= datetime('now', '-{h} hours')"
             )));
         }
-        let models = todos::Entity::find()
+        // 先计数再钳页码（CodeRabbit#2）：大 OFFSET 是外部可触发的慢查询
+        let total: i64 = todos::Entity::find()
             .filter(cond.clone())
+            .count(&self.conn)
+            .await?
+            .try_into()
+            .unwrap_or(i64::MAX);
+        let max_page = if total == 0 { 1 } else { (total + page_size - 1) / page_size };
+        let page = page.min(max_page.max(1));
+        let models = todos::Entity::find()
+            .filter(cond)
             .order_by_desc(todos::Column::UpdatedAt)
             .limit(page_size as u64)
             .offset(((page - 1) * page_size) as u64)
             .all(&self.conn)
             .await?;
-        let total: i64 = todos::Entity::find()
-            .filter(cond)
-            .count(&self.conn)
-            .await?
-            .try_into()
-            .unwrap_or(i64::MAX);
         let ids: Vec<i64> = models.iter().map(|m| m.id).collect();
         let tag_map = self.fetch_tag_ids_for_many(&ids).await?;
         Ok((
@@ -613,18 +624,27 @@ impl Database {
     }
 
     /// 云同步合并用（056）：只取 id+title 两列建 title→id 映射，替代整行全量拉取。
+    ///
+    /// 实现说明：用原生 SQL 而非 select_only()——SeaORM 的 Model 反序列化要求全列
+    /// （CodeRabbit#1 复核确认缺列会在运行时 ColumnNotFound），两列投影必须走原生 SQL。
     pub async fn get_todo_title_id_map(
         &self,
     ) -> Result<std::collections::HashMap<String, i64>, sea_orm::DbErr> {
-        let models = todos::Entity::find()
-            .select_only()
-            .columns([todos::Column::Id, todos::Column::Title])
-            .filter(todos::Column::DeletedAt.is_null())
-            .all(&self.conn)
+        let rows = self
+            .conn
+            .query_all(sea_orm::Statement::from_string(
+                sea_orm::DbBackend::Sqlite,
+                "SELECT id, title FROM todos WHERE deleted_at IS NULL".to_string(),
+            ))
             .await?;
-        Ok(models
-            .into_iter()
-            .map(|m| (m.title.trim().to_lowercase(), m.id))
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                Some((
+                    r.try_get_by::<String, _>("title").ok()?.trim().to_lowercase(),
+                    r.try_get_by::<i64, _>("id").ok()?,
+                ))
+            })
             .collect())
     }
 
@@ -2887,6 +2907,49 @@ mod todo_center_tests {
             .await
             .unwrap();
         assert_eq!(total4, 2, "pending 应命中 待办+快捷（{pending_id}/{act_id}）");
+    }
+
+    /// CodeRabbit#1 回归：两列投影必须走原生 SQL（select_only + 部分列 + Model 反序列化
+    /// 会在运行时 ColumnNotFound）。验证映射键为小写 title、值为 id。
+    #[tokio::test]
+    async fn test_todo_title_id_map_two_column_projection() {
+        let db = fresh_db().await;
+        let id = seed_todo(&db, "MyTask").await;
+        let map = db.get_todo_title_id_map().await.unwrap();
+        assert_eq!(map.get("mytask"), Some(&id), "键为小写化 title");
+    }
+
+    /// CodeRabbit#2 回归：page 超界时按 total 截断到最后一页，不执行大 OFFSET。
+    #[tokio::test]
+    async fn test_center_page_clamps_overflow_page() {
+        let db = fresh_db().await;
+        for i in 0..5 {
+            seed_todo(&db, &format!("项{i}")).await;
+        }
+        // page=100000 应被截断到最后一页（total=5, page_size=2 → max_page=3）
+        let (items, total, _, _) = db
+            .get_todo_center_page(crate::db::TodoCenterPageQuery {
+                workspace_id: None,
+                bucket: None,
+                search: None,
+                status: None,
+                action_type: None,
+                sort_by: None,
+                sort_desc: true,
+                page: 100000,
+                page_size: 2,
+            })
+            .await
+            .unwrap();
+        assert_eq!(total, 5);
+        assert_eq!(items.len(), 1, "截断到最后一页只剩 1 条");
+
+        // 旧 /todos 分页同样截断
+        let (items2, _) = db
+            .get_todos_page_by_workspace(None, None, 99999, 2)
+            .await
+            .unwrap();
+        assert_eq!(items2.len(), 1);
     }
 }
 

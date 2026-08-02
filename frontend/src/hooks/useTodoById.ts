@@ -25,6 +25,10 @@ interface CacheEntry {
 /** key = `${workspaceId}:${todoId}`（todo 按 workspace 隔离，跨 ws 同 id 不共享） */
 const cache = new Map<string, CacheEntry>();
 
+/** CodeRabbit#12：缓存代际计数。clear() 时 +1；在途请求写回前比对代际，
+ *  代际不同说明结果产生于「清空」之前，属于陈旧数据，丢弃不写回。 */
+let cacheGeneration = 0;
+
 function cacheKey(workspaceId: number, todoId: number): string {
   return `${workspaceId}:${todoId}`;
 }
@@ -36,16 +40,18 @@ function fetchTodo(workspaceId: number, todoId: number): Promise<Todo | null> {
   if (entry.value !== undefined) return Promise.resolve(entry.value);
   if (entry.inflight) return entry.inflight;
 
+  const gen = cacheGeneration;
   const inflight = db
     .getTodo(workspaceId, todoId)
     .then((todo) => {
-      cache.set(key, { value: todo });
+      // 代际一致才写回：clear() 之后的晚到响应属于旧世界，不复活旧数据
+      if (gen === cacheGeneration) cache.set(key, { value: todo });
       return todo as Todo | null;
     })
     .catch(() => {
       // 失败也缓存 null：避免失败 id 被每个组件反复重试打爆后端；
       // TODO_LIST_REFRESH_EVENT 到达时缓存会整体失效，给后续重试机会。
-      cache.set(key, { value: null });
+      if (gen === cacheGeneration) cache.set(key, { value: null });
       return null;
     });
   cache.set(key, { inflight });
@@ -53,9 +59,12 @@ function fetchTodo(workspaceId: number, todoId: number): Promise<Todo | null> {
 }
 
 // 列表刷新事件到达时清空缓存（保存/删除/批量操作后，旧缓存可能已过期）。
-// 模块级注册一次即可——监听器只做 Map.clear()，无组件生命周期负担。
+// 模块级注册一次即可——监听器只做失效标记，无组件生命周期负担。
 if (typeof window !== 'undefined') {
-  window.addEventListener(TODO_LIST_REFRESH_EVENT, () => cache.clear());
+  window.addEventListener(TODO_LIST_REFRESH_EVENT, () => {
+    cacheGeneration += 1;
+    cache.clear();
+  });
 }
 
 /**

@@ -25,11 +25,12 @@ test.describe('056 服务端分页', () => {
     const total = await totalText.textContent();
     console.log('列表分页总数:', total);
 
-    // 表格应有行
+    // 表格应有行（dev 库有种子数据；空库环境下跳过本用例——
+    // CodeRabbit#15：调试脚本依赖种子数据，干净环境不硬失败）
     const rows = page.locator('.ant-table-tbody tr.ant-table-row');
     const rowCount = await rows.count();
     console.log('当前页行数:', rowCount);
-    expect(rowCount).toBeGreaterThan(0);
+    test.skip(rowCount === 0, '当前环境无种子数据，跳过分页行数断言');
 
     // 行数应 ≤ 默认页大小 20（服务端分页的直接证据：不是全量）
     expect(rowCount).toBeLessThanOrEqual(20);

@@ -23,8 +23,6 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
   // 056：看板数据源改为 TodoBrief（决策 1a）——不含 prompt 大字段，
   // 卡片 prompt 区块按 has_prompt 显示入口、展开时按需取全文。
   const [briefs, setBriefs] = useState<TodoBrief[]>([]);
-  // 本地时间过滤后的 brief 列表：当 hours 有值时，按 API 过滤结果只保留最近 N 小时的。
-  const [kanbanTodos, setKanbanTodos] = useState<TodoBrief[] | null>(null);
   // 按需加载的 prompt 全文缓存（id → prompt），首次展开时拉取
   const [promptCache, setPromptCache] = useState<Map<number, string>>(new Map());
   const [promptLoadingIds, setPromptLoadingIds] = useState<Set<number>>(new Set());
@@ -45,20 +43,22 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
   const isMobile = useIsMobile();
   const [activeKey, setActiveKey] = useState<Todo['status']>('pending');
 
-  // 渲染用的列表：有本地过滤结果则用，否则用全量 brief
-  const displayTodos = kanbanTodos ?? briefs;
+  // 渲染用的列表即 briefs（hours 由请求参数下推服务端）
+  const displayTodos = briefs;
 
   /* ─── Execution record cache (delegated to hook) ─── */
   const cache = useKanbanExecutionCache({ todos: displayTodos, storeRecords: state.executionRecords, workspaceId: state.selectedWorkspace });
 
-  // 056：切换工作空间后拉取该 ws 的 brief 列表；
-  // TODO_LIST_REFRESH_EVENT（保存/删除/执行事件）触发重拉，保持与列表页一致。
+  // 056（CodeRabbit#7）：合并为单一 effect——按当前 hours 拉取 brief 并监听刷新事件。
+  // 旧实现两个 effect 分别维护 briefs/kanbanTodos：刷新事件只更新不被渲染的 briefs，
+  // 看板在 hours 过滤下永不刷新；且挂载时并发两请求，全量那次结果不会被渲染。
   useEffect(() => {
     const wid = state.selectedWorkspace;
     if (wid == null) return;
     let cancelled = false;
     const load = () => {
-      db.getTodoBriefs(wid).then(bs => {
+      // hours 为 null 表示「全部」不传参；为数值时下推服务端过滤
+      db.getTodoBriefs(wid, hours == null ? {} : { hours }).then(bs => {
         if (!cancelled) setBriefs(bs);
       }).catch((e) => console.error('看板 brief 列表加载失败:', e));
     };
@@ -68,14 +68,6 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
       cancelled = true;
       window.removeEventListener(TODO_LIST_REFRESH_EVENT, load);
     };
-  }, [state.selectedWorkspace]);
-
-  // 时间分段按钮切换时，用 hours 参数重新拉取（只影响本地 kanbanTodos，不污染基础列表）。
-  useEffect(() => {
-    const wid = state.selectedWorkspace;
-    if (wid == null) return;
-    if (hours == null) { setKanbanTodos(null); return; }
-    db.getTodoBriefs(wid, { hours }).then(setKanbanTodos).catch((e) => console.error('看板 hours 过滤加载失败:', e));
   }, [state.selectedWorkspace, hours]);
 
   // 加载项目目录列表，供项目维度过滤使用。
@@ -184,7 +176,6 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
       await db.updateTodoStatus(todo.workspace_id, todoId, targetStatus);
       // 本地就地更新 brief 状态（避免整列重拉闪烁）
       setBriefs(prev => prev.map(b => b.id === todoId ? { ...b, status: targetStatus } : b));
-      setKanbanTodos(prev => prev ? prev.map(b => b.id === todoId ? { ...b, status: targetStatus } : b) : prev);
       message.success(`已移动到「${getColumnForStatus(targetStatus).label}」`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : '更新状态失败';

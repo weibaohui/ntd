@@ -417,6 +417,12 @@ export function BackupPanel() {
       }
 
       // 056：逐空间分批拉取后合并（备份导入去重需 title+prompt+workspace 判重，属 E 类全量）
+      // CodeRabbit#9：无工作空间时判重会静默失效（existingTodos 恒为空、重复项被当新建），
+      // 必须显式警告而不是继续导入。
+      if (workspaces.length === 0) {
+        message.warning('当前没有任何工作空间，无法校验重复事项；请先创建工作空间再导入');
+        return false;
+      }
       const allExisting = await Promise.all(
         workspaces.map(ws => db.getAllTodosBatched(ws.id).catch(() => []))
       );
