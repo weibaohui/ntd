@@ -181,16 +181,16 @@ fn compute_next_check_time(interval: &str, hour: u32) -> chrono::DateTime<chrono
 fn resolve_local_datetime(
     dt: chrono::NaiveDateTime,
 ) -> chrono::DateTime<chrono::Local> {
-    use chrono::{Local, TimeZone};
+    use chrono::Local;
     match dt.and_local_timezone(Local) {
         chrono::LocalResult::Single(t) => t,
         chrono::LocalResult::Ambiguous(earlier, _) => earlier,
         chrono::LocalResult::None => (dt + chrono::Duration::hours(1))
             .and_local_timezone(Local)
             .single()
-            .unwrap_or_else(|| {
-                Local.from_local_datetime(&dt).single().unwrap_or_else(Local::now)
-            }),
+            // dt+1h 仍落不进本地时间（理论上连续两次切换）时兜底当前时间，
+            // sleep 逻辑会自然修正到下一轮检查点。
+            .unwrap_or_else(Local::now),
     }
 }
 

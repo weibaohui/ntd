@@ -60,7 +60,7 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
     const load = () => {
       db.getTodoBriefs(wid).then(bs => {
         if (!cancelled) setBriefs(bs);
-      }).catch(() => {});
+      }).catch((e) => console.error('看板 brief 列表加载失败:', e));
     };
     load();
     window.addEventListener(TODO_LIST_REFRESH_EVENT, load);
@@ -75,7 +75,7 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
     const wid = state.selectedWorkspace;
     if (wid == null) return;
     if (hours == null) { setKanbanTodos(null); return; }
-    db.getTodoBriefs(wid, { hours }).then(setKanbanTodos).catch(() => {});
+    db.getTodoBriefs(wid, { hours }).then(setKanbanTodos).catch((e) => console.error('看板 hours 过滤加载失败:', e));
   }, [state.selectedWorkspace, hours]);
 
   // 加载项目目录列表，供项目维度过滤使用。
@@ -172,7 +172,12 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
     if (isNaN(todoId)) return;
 
     const todo = displayTodos.find(t => t.id === todoId);
-    if (!todo || todo.status === targetStatus || todo.workspace_id == null) return;
+    if (!todo || todo.status === targetStatus) return;
+    if (todo.workspace_id == null) {
+      // 无归属工作空间的事项无法定位更新路径，明确告知而非静默失败
+      message.warning('该事项缺少工作空间归属，无法移动');
+      return;
+    }
 
     try {
       // 056：force-status 单字段更新，无需携带 prompt 全量字段
@@ -202,7 +207,7 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
       .then(full => {
         setPromptCache(prev => new Map(prev).set(todoId, full.prompt || ''));
       })
-      .catch(() => {})
+      .catch((e) => console.error(`prompt 加载失败 (todo ${todoId}):`, e))
       .finally(() => {
         setPromptLoadingIds(prev => {
           const next = new Set(prev);

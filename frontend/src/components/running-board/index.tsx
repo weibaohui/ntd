@@ -53,7 +53,7 @@ export function RunningBoard({ searchText, hours }: RunningBoardProps = {}) {
       .then(briefs => {
         if (!cancelled) setBriefMap(new Map(briefs.map(b => [b.id, b])));
       })
-      .catch(() => {});
+      .catch((e) => console.error('运行面板 brief 加载失败:', e));
     // cancelled 防御快速切换：晚返回的响应若发现参数已变，直接丢弃
     return () => { cancelled = true; };
   }, [state.selectedWorkspace, records, scheduledTodos]);

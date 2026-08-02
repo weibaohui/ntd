@@ -86,11 +86,12 @@ export function useTodoById(workspaceId: number | null, todoId: number | null): 
     const entry = cache.get(cacheKey(workspaceId, todoId));
     if (entry?.value !== undefined) {
       setTodo(entry.value);
-      return;
+    } else {
+      const seq = ++requestSeq.current;
+      load(workspaceId, todoId, seq);
     }
-    const seq = ++requestSeq.current;
-    load(workspaceId, todoId, seq);
-    // 监听刷新事件：缓存清空后重新拉取本条
+    // 无论缓存命中与否都订阅刷新事件（评审 I2 修复）：
+    // 命中路径之前 early return 不订阅，该 todo 被编辑后组件仍显示旧数据。
     const onRefresh = () => {
       const s = ++requestSeq.current;
       load(workspaceId, todoId, s);

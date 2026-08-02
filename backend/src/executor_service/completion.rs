@@ -953,7 +953,8 @@ fn emit_completion_events(
             trigger_type,
         },
     );
-    // 056：正常终态落定后主动失效 dashboard 缓存（调用方为 async 上下文，直接 await）
+    // 056：正常终态落定后主动失效 dashboard 缓存。
+    // emit_completion_events 是 sync fn 无法 await，spawn 异步失效（下一拍执行）。
     tokio::spawn(crate::handlers::execution::invalidate_dashboard_cache());
 }
 

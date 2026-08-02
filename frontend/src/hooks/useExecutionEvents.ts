@@ -190,13 +190,13 @@ function connectShared(dispatch: ReturnType<typeof useApp>['dispatch']) {
             dispatch({ type: 'ADD_RUNNING_TASK', payload: { taskId: task.task_id, todoId: task.todo_id, todoTitle: task.todo_title, executor: task.executor || 'claudecode', logs: parsedLogs, status: 'running', startedAt: new Date().toISOString() } });
           });
           // 056：全局 todos 桶已删除，列表页改从服务端拉取——Sync 到达即通知列表刷新
-          window.dispatchEvent(new Event(TODO_LIST_REFRESH_EVENT));
+          dispatchListRefreshDebounced();
           break;
         }
         case 'Started': {
           dispatch({ type: 'ADD_RUNNING_TASK', payload: { taskId: data.task_id, todoId: data.todo_id, todoTitle: data.todo_title, executor: data.executor || 'claudecode', logs: [], status: 'running', startedAt: new Date().toISOString() } });
           // 056：状态不再写全局桶，改为通知列表页刷新（服务端数据源为准）
-          window.dispatchEvent(new Event(TODO_LIST_REFRESH_EVENT));
+          dispatchListRefreshDebounced();
           window.dispatchEvent(new CustomEvent('executionStarted', { detail: { todoId: data.todo_id } }));
           break;
         }
@@ -222,7 +222,7 @@ function connectShared(dispatch: ReturnType<typeof useApp>['dispatch']) {
           }, 3000);
           sharedRemoveTaskTimers.set(data.task_id, timer);
           // 056：终态落定，通知列表页刷新（服务端数据源为准）
-          window.dispatchEvent(new Event(TODO_LIST_REFRESH_EVENT));
+          dispatchListRefreshDebounced();
           window.dispatchEvent(new CustomEvent('executionFinished', { detail: { todoId: data.todo_id, success: data.success } }));
           break;
         }
@@ -281,6 +281,11 @@ function teardownShared() {
   }
   sharedRemoveTaskTimers.forEach(clearTimeout);
   sharedRemoveTaskTimers.clear();
+  // 056：清掉未触发的刷新 debounce，避免 teardown 后还向已卸载页面发事件
+  if (refreshDebounceTimer) {
+    clearTimeout(refreshDebounceTimer);
+    refreshDebounceTimer = null;
+  }
   if (sharedWs) {
     sharedWs.close();
     sharedWs = null;
@@ -294,6 +299,22 @@ function cancelRemoveTimer(taskId: string) {
     clearTimeout(timer);
     sharedRemoveTaskTimers.delete(taskId);
   }
+}
+
+/** 列表刷新事件的共享 trailing debounce 定时器。 */
+let refreshDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** 列表刷新事件的 debounce 毫秒数（评审 I1：Loop 连续执行时 Started/Finished 密集触发，
+ *  每条都让各列表视图重拉一页，30 步 Loop = 60 次全视图 HTTP。合并为 trailing 一次）。 */
+const REFRESH_DEBOUNCE_MS = 500;
+
+/** 500ms trailing debounce 派发列表刷新事件：密集触发只保留最后一次。 */
+function dispatchListRefreshDebounced() {
+  if (refreshDebounceTimer) clearTimeout(refreshDebounceTimer);
+  refreshDebounceTimer = setTimeout(() => {
+    refreshDebounceTimer = null;
+    window.dispatchEvent(new Event(TODO_LIST_REFRESH_EVENT));
+  }, REFRESH_DEBOUNCE_MS);
 }
 
 /**

@@ -67,9 +67,8 @@ pub struct TodoCenterPageQuery<'a> {
 fn brief_from_row(row: &sea_orm::QueryResult) -> Result<crate::models::TodoBrief, sea_orm::DbErr> {
     Ok(crate::models::TodoBrief {
         id: row.try_get_by("id")?,
-        title: row
-            .try_get_by::<Option<String>, _>("title")?
-            .unwrap_or_default(),
+        // title 在 schema 上 NOT NULL：读不出来是数据损坏信号，传播错误而非静默置空
+        title: row.try_get_by("title")?,
         status: row
             .try_get_by::<Option<String>, _>("status")?
             .as_deref()
@@ -290,15 +289,11 @@ impl Database {
     // 两侧实现由集成测试对拍，防止语义漂移（见 todo.rs 测试模块）。
 
     /// bucket 过滤/计数共用的 WHERE 组装：返回 (sql_fragment, values)。
-    /// `include_bucket` 控制是否叠加 bucket 条件——bucket_counts 统计要用
-    /// 「应用 search 但不应用 bucket」的口径，保证 Tab 角标不随当前选中分类塌缩。
-    /// bucket 过滤/计数共用的 WHERE 组装：返回 (sql_fragment, values)。
-    /// `include_bucket` 控制是否叠加 bucket 条件——bucket_counts 统计要用
-    /// 「应用 search/status/action_type 但不应用 bucket」的口径，
+    /// bucket 条件由 `q.bucket` 决定——bucket_counts 统计时调用方传
+    /// `bucket=None` 的克隆，即「应用 search/status/action_type 但不应用 bucket」，
     /// 保证 Tab 角标不随当前选中分类塌缩。
     fn center_page_where(
         q: &TodoCenterPageQuery<'_>,
-        include_bucket: bool,
     ) -> (String, Vec<sea_orm::Value>) {
         let mut sql = String::from("t.deleted_at IS NULL");
         let mut values: Vec<sea_orm::Value> = Vec::new();
@@ -322,13 +317,11 @@ impl Database {
             values.push(pattern.clone().into());
             values.push(pattern.into());
         }
-        if include_bucket {
-            if let Some(b) = q.bucket {
-                sql.push_str(" AND ");
-                sql.push_str(TODO_CENTER_BUCKET_EXPR);
-                sql.push_str(" = ?");
-                values.push(center_bucket_str(b).into());
-            }
+        if let Some(b) = q.bucket {
+            sql.push_str(" AND ");
+            sql.push_str(TODO_CENTER_BUCKET_EXPR);
+            sql.push_str(" = ?");
+            values.push(center_bucket_str(b).into());
         }
         (sql, values)
     }
@@ -344,7 +337,7 @@ impl Database {
     ) -> Result<(Vec<TodoCenterItem>, i64, std::collections::HashMap<String, i64>, Vec<String>), sea_orm::DbErr> {
         let page = q.page.max(1);
         let page_size = q.page_size.clamp(1, 200);
-        let (where_sql, values) = Self::center_page_where(&q, true);
+        let (where_sql, values) = Self::center_page_where(&q);
         let order = if q.sort_desc { "DESC" } else { "ASC" };
         let sql = format!(
             "SELECT t.id FROM todos t WHERE {where_sql} ORDER BY {} {order} LIMIT ? OFFSET ?",
@@ -407,7 +400,7 @@ impl Database {
         &self,
         q: &TodoCenterPageQuery<'_>,
     ) -> Result<i64, sea_orm::DbErr> {
-        let (where_sql, values) = Self::center_page_where(q, true);
+        let (where_sql, values) = Self::center_page_where(q);
         let sql = format!("SELECT COUNT(*) AS cnt FROM todos t WHERE {where_sql}");
         let row = self
             .conn
@@ -430,7 +423,7 @@ impl Database {
         // bucket 角标口径：应用 search/status/action_type，但不应用 bucket 过滤
         let mut count_q = q.clone();
         count_q.bucket = None;
-        let (where_sql, values) = Self::center_page_where(&count_q, false);
+        let (where_sql, values) = Self::center_page_where(&count_q);
         let sql = format!(
             "SELECT {TODO_CENTER_BUCKET_EXPR} AS bucket, COUNT(*) AS cnt FROM todos t WHERE {where_sql} GROUP BY bucket"
         );
@@ -2750,6 +2743,150 @@ mod todo_center_tests {
         let ids = db.get_todo_ids_by_workspace(ws).await.unwrap();
         assert_eq!(ids, vec![keep]);
         assert_eq!(db.count_todos_by_workspace(ws).await.unwrap(), 1);
+    }
+
+    /// 056 评审补测：sort_by=computed_bucket 的 SQL 表达式排序。
+    /// 按 CASE 输出串字典序：archived < event_driven < loop_driven < manual < time_driven。
+    #[tokio::test]
+    async fn test_center_page_sort_by_computed_bucket() {
+        let db = fresh_db().await;
+        let manual_id = seed_todo(&db, "m").await;
+        let time_id = seed_todo(&db, "t").await;
+        db.exec(&format!(
+            "UPDATE todos SET scheduler_config = '0 0 9 * * *' WHERE id = {time_id}"
+        ))
+        .await
+        .unwrap();
+        let archived_id = seed_todo(&db, "a").await;
+        db.archive_todo(archived_id).await.unwrap();
+
+        let (items, _, _, _) = db
+            .get_todo_center_page(crate::db::TodoCenterPageQuery {
+                workspace_id: None,
+                bucket: None,
+                search: None,
+                status: None,
+                action_type: None,
+                sort_by: Some("computed_bucket"),
+                sort_desc: false, // ASC
+                page: 1,
+                page_size: 20,
+            })
+            .await
+            .unwrap();
+        let order: Vec<i64> = items.iter().map(|i| i.todo.id).collect();
+        assert_eq!(
+            order,
+            vec![archived_id, manual_id, time_id],
+            "ASC 应按 bucket 名字典序 archived < manual < time_driven"
+        );
+    }
+
+    /// 056 评审补测：搜索词含 LIKE 通配符（%/_）时被转义，不作为通配符匹配。
+    #[tokio::test]
+    async fn test_center_page_search_escapes_like_wildcards() {
+        let db = fresh_db().await;
+        seed_todo(&db, "进度 50% 完成").await;
+        seed_todo(&db, "进度 50x 完成").await;
+        // 未转义时 "%50%" 中的 % 会同时命中两条；转义后只命中字面条目
+        let (items, total, _, _) = db
+            .get_todo_center_page(crate::db::TodoCenterPageQuery {
+                workspace_id: None,
+                bucket: None,
+                search: Some("50%"),
+                status: None,
+                action_type: None,
+                sort_by: None,
+                sort_desc: true,
+                page: 1,
+                page_size: 20,
+            })
+            .await
+            .unwrap();
+        assert_eq!(total, 1, "% 必须按字面匹配");
+        assert_eq!(items[0].todo.title, "进度 50% 完成");
+        // 下划线同样转义
+        let (_, total2, _, _) = db
+            .get_todo_center_page(crate::db::TodoCenterPageQuery {
+                workspace_id: None,
+                bucket: None,
+                search: Some("50_"),
+                status: None,
+                action_type: None,
+                sort_by: None,
+                sort_desc: true,
+                page: 1,
+                page_size: 20,
+            })
+            .await
+            .unwrap();
+        assert_eq!(total2, 0, "_ 必须按字面匹配，不存在含 50_ 的标题");
+    }
+
+    /// 056 评审补测：status / action_type 精确过滤下推 SQL。
+    #[tokio::test]
+    async fn test_center_page_status_and_action_type_filters() {
+        let db = fresh_db().await;
+        let pending_id = seed_todo(&db, "待办").await;
+        let done_id = seed_todo(&db, "完成").await;
+        db.exec(&format!("UPDATE todos SET status = 'completed' WHERE id = {done_id}"))
+            .await
+            .unwrap();
+        let act_id = seed_todo(&db, "快捷").await;
+        db.exec(&format!("UPDATE todos SET action_type = 'quick' WHERE id = {act_id}"))
+            .await
+            .unwrap();
+
+        let base = crate::db::TodoCenterPageQuery {
+            workspace_id: None,
+            bucket: None,
+            search: None,
+            status: None,
+            action_type: None,
+            sort_by: None,
+            sort_desc: true,
+            page: 1,
+            page_size: 20,
+        };
+        let (items, total, _, _) = db
+            .get_todo_center_page(crate::db::TodoCenterPageQuery {
+                status: Some("completed"),
+                ..base.clone()
+            })
+            .await
+            .unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(items[0].todo.id, done_id);
+
+        let (items, total, _, _) = db
+            .get_todo_center_page(crate::db::TodoCenterPageQuery {
+                action_type: Some("quick"),
+                ..base.clone()
+            })
+            .await
+            .unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(items[0].todo.id, act_id);
+
+        // 组合过滤：completed + quick 应无交集（quick 是 pending）
+        let (_, total3, _, _) = db
+            .get_todo_center_page(crate::db::TodoCenterPageQuery {
+                status: Some("completed"),
+                action_type: Some("quick"),
+                ..base.clone()
+            })
+            .await
+            .unwrap();
+        assert_eq!(total3, 0);
+        // pending_id 只是防止 unused 警告，并验证 status=pending 能命中
+        let (_, total4, _, _) = db
+            .get_todo_center_page(crate::db::TodoCenterPageQuery {
+                status: Some("pending"),
+                ..base.clone()
+            })
+            .await
+            .unwrap();
+        assert_eq!(total4, 2, "pending 应命中 待办+快捷（{pending_id}/{act_id}）");
     }
 }
 

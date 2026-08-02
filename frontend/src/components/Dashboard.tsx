@@ -86,7 +86,10 @@ export function Dashboard() {
       // 056：按最近执行记录的 todo_id 集合拉 brief 反查标题（替代全量 todos）
       const todoIds = [...new Set((data.recent_executions ?? []).map(r => r.todo_id))];
       if (todoIds.length > 0 && state.selectedWorkspace != null) {
-        const briefs = await db.getTodoBriefs(state.selectedWorkspace, { ids: todoIds }).catch(() => []);
+        const briefs = await db.getTodoBriefs(state.selectedWorkspace, { ids: todoIds }).catch((e) => {
+          console.error('最近执行记录的 todo 标题反查失败:', e);
+          return [];
+        });
         setRecentTodos(briefs);
       } else {
         setRecentTodos([]);

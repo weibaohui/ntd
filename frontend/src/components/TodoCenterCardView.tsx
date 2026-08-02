@@ -86,10 +86,25 @@ export function TodoCenterCardView({
       return 'manual';
     }
   });
-  // 状态筛选（设计文档工具栏「状态筛选」）：'all' 或具体 status
+  // 状态筛选（设计文档工具栏「状态筛选」下拉）：'all' 或具体 status
   const [statusFilter, setStatusFilter] = useState<string>('all');
-  // 动作类型筛选（设计文档工具栏「动作类型筛选」）：'all' 或具体 action_type
+  // 动作类型筛选（设计文档工具栏「动作类型筛选」下拉）：'all' 或具体 action_type
   const [actionTypeFilter, setActionTypeFilter] = useState<string>('all');
+
+  // 筛选 setter 合并「回第 1 页」：与条件变更同批次提交（React 批处理后单次 render），
+  // 避免「条件先变→用旧页码发请求→页码再变→再发一次」的双重请求与响应竞争（评审 C1）。
+  const changeBucket = useCallback((b: ComputedBucket) => {
+    setActiveBucket(b);
+    setPage(1);
+  }, []);
+  const changeStatusFilter = useCallback((s: string) => {
+    setStatusFilter(s);
+    setPage(1);
+  }, []);
+  const changeActionTypeFilter = useCallback((t: string) => {
+    setActionTypeFilter(t);
+    setPage(1);
+  }, []);
 
   // 拉取事项中心当前页（056：bucket/search/status/actionType/分页全部下推 SQL）。
   // 工作空间变化、筛选变化、翻页或手动刷新时触发；
@@ -119,11 +134,6 @@ export function TodoCenterCardView({
   useEffect(() => {
     reload();
   }, [reload, refreshKey]);
-
-  // 筛选/分类变化时重回第 1 页（当前页在新过滤口径下可能越界）
-  useEffect(() => {
-    setPage(1);
-  }, [activeBucket, statusFilter, actionTypeFilter]);
 
   // activeBucket 变化时持久化到 localStorage
   useEffect(() => {
@@ -162,7 +172,7 @@ export function TodoCenterCardView({
         <div className="todo-center-tabs-toolbar">
           <Segmented
             value={activeBucket}
-            onChange={(val) => setActiveBucket(val as ComputedBucket)}
+            onChange={(val) => changeBucket(val as ComputedBucket)}
             options={BUCKETS.map((b) => ({
               label: (
                 <span data-testid={`todo-center-tab-${b.value}`}>
@@ -179,7 +189,7 @@ export function TodoCenterCardView({
               <Select
                 size="small"
                 value={statusFilter}
-                onChange={setStatusFilter}
+                onChange={changeStatusFilter}
                 style={{ width: 120 }}
                 options={[
                   { value: 'all', label: '全部状态' },
@@ -193,7 +203,7 @@ export function TodoCenterCardView({
               <Select
                 size="small"
                 value={actionTypeFilter}
-                onChange={setActionTypeFilter}
+                onChange={changeActionTypeFilter}
                 style={{ width: 140 }}
                 options={[{ value: 'all', label: '全部来源' }, ...actionTypeOptions.map((t) => ({ value: t, label: sourceLabel(t) ?? t }))]}
                 data-testid="todo-center-action-filter"
