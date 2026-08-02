@@ -21,6 +21,7 @@ import {
   RobotOutlined,
   TeamOutlined,
   BuildOutlined,
+  QuestionCircleOutlined,
 } from '@ant-design/icons';
 import { TfiBlackboard } from 'react-icons/tfi';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
@@ -76,6 +77,8 @@ interface LeftRailProps {
   onWorkspaceChange?: (workspaceId: number | null) => void;
   themeMode: 'light' | 'dark';
   toggleTheme: () => void;
+  /** 打开帮助抽屉的回调（rail 底部帮助按钮）。 */
+  onOpenHelp?: () => void;
 }
 
 /**
@@ -92,6 +95,7 @@ export function LeftRail({
   onWorkspaceChange,
   themeMode,
   toggleTheme,
+  onOpenHelp,
 }: LeftRailProps) {
   const sections = useMemo(() => ([
     // 「概览」前置：新用户首次进入应先看「导航」理解概念，
@@ -257,6 +261,17 @@ export function LeftRail({
               {themeMode === 'light' ? '暗色模式' : '亮色模式'}
             </span>
           </Button>
+          {/* 帮助按钮：与主题切换并列，移动端 drawer 形态下也可见 */}
+          <Button
+            type="text"
+            block
+            icon={<QuestionCircleOutlined />}
+            onClick={onOpenHelp}
+            className="ntd-left-rail-drawer-btn"
+            data-testid="left-rail-help"
+          >
+            <span className="ntd-left-rail-drawer-label">帮助</span>
+          </Button>
         </div>
       )}
 
@@ -271,6 +286,17 @@ export function LeftRail({
               onClick={toggleTheme}
               aria-label={themeMode === 'light' ? '切换暗色' : '切换亮色'}
               data-testid="left-rail-theme-toggle"
+            />
+          </Tooltip>
+          {/* 帮助按钮：打开帮助抽屉，与主题切换并列属「全局辅助操作」 */}
+          <Tooltip title="帮助" placement="right">
+            <Button
+              type="text"
+              className="ntd-left-rail-help"
+              icon={<QuestionCircleOutlined />}
+              onClick={onOpenHelp}
+              aria-label="帮助"
+              data-testid="left-rail-help"
             />
           </Tooltip>
           <Tooltip title={shouldShowLabels ? '收起导航' : '展开导航'} placement="right">

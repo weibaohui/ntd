@@ -38,6 +38,7 @@ import { MobileHeader } from './components/shell/MobileHeader';
 import { FloatingActionButton } from '@/components/shell/FloatingActionButton';
 import { WikiChatFloatingWindow, type WikiChatMode } from '@/components/WikiChatFloatingWindow';
 import { WikiViewPage } from '@/components/WikiViewPage';
+import { HelpDrawer } from '@/help/HelpDrawer';
 
 import { EXECUTION_PANEL, LEFT_RAIL_WIDTH } from './constants';
 import * as db from './utils/database';
@@ -66,6 +67,8 @@ function AppContent() {
   const [editingTodo, setEditingTodo] = useState<import('@/types').Todo | null>(null);
   const [smartCreateOpen, setSmartCreateOpen] = useState(false);
   const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
+  // 帮助抽屉开关：由 LeftRail 底部「帮助」按钮触发
+  const [helpDrawerOpen, setHelpDrawerOpen] = useState(false);
   const [wikiChatMode, setWikiChatMode] = useState<WikiChatMode>(() => {
     try {
       const saved = localStorage.getItem('wiki_chat_mode') as WikiChatMode | null;
@@ -289,6 +292,7 @@ function AppContent() {
             }}
             themeMode={themeMode}
             toggleTheme={toggleTheme}
+            onOpenHelp={() => setHelpDrawerOpen(true)}
           />
         </div>
       )}
@@ -528,6 +532,15 @@ function AppContent() {
       <WikiChatFloatingWindow
         forceMode={wikiChatMode}
         onClose={() => setWikiChatMode('minimized')}
+      />
+
+      {/* 帮助抽屉：左树右内容，按页面→功能点两级组织 */}
+      <HelpDrawer
+        open={helpDrawerOpen}
+        onClose={() => setHelpDrawerOpen(false)}
+        activeView={activeView}
+        hasDetail={todoDetailId != null || loopDetailId != null || taskDetailId != null}
+        isMobile={isMobile}
       />
     </Layout>
   );
