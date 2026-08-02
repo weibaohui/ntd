@@ -5135,21 +5135,42 @@ code {
   text-decoration: underline;
 }
 
-/* Mermaid 图容器：约束 SVG 尺寸，避免宽高比失控 */
+/*
+ * Mermaid 图容器：自适应缩放。
+ *
+ * 设计意图：
+ * - 图按容器宽度等比缩放（width:100% height:auto 由 viewBox 保比例），
+ *   容器变窄时图自动变小，不出现横向滚动条。
+ * - 当图原始尺寸大于容器、或图过高（超过 maxHeight）时，overflow:auto 兜底，
+ *   出现左右/上下滚动条，保证内容可访问不裁切。
+ * - maxHeight 避免超高图（如纵向 classDiagram）把整页撑成几屏长。
+ */
 .ntd-help-content .help-mermaid {
   margin: 20px 0;
   padding: 20px;
   background: var(--color-bg-elevated, #fff);
   border: 1px solid var(--color-border-light, #e2e8f0);
   border-radius: 8px;
-  overflow-x: auto;
+  /* 双向滚动兜底：图过大时出现滚动条，不裁切 */
+  overflow: auto;
+  /* 限高避免纵向图把整页撑长；超出后上下滚动条兜底 */
+  max-height: 70vh;
   text-align: center;
 }
 
-/* Mermaid SVG 尺寸约束：max-width 100% 防溢出，height auto 保比例 */
+/*
+ * Mermaid SVG 自适应接管。
+ *
+ * 配合 MermaidDiagram.tsx 的 normalizeSvgForResponsive：
+ * - 移除了 mermaid 默认注入的固定像素 width/height，保留 viewBox 坐标空间。
+ * - width:100% 让 svg 按容器宽度撑满，height:auto 由 viewBox 保比例自动跟随。
+ * - 图原始位图大于容器时，因容器 overflow:auto 会出现滚动条。
+ * - min-width 兜底：防止极窄容器把图压到看不清，最小 320px，超出走横向滚动条。
+ */
 .ntd-help-content .help-mermaid svg {
-  max-width: 100%;
+  width: 100%;
   height: auto;
+  min-width: 320px;
   display: inline-block;
 }
 

@@ -6,6 +6,10 @@
 // 3. securityLevel: 'strict' 禁止 mermaid 源码里嵌入 HTML/script，防止 XSS。
 // 4. 渲染失败（语法错误）时显示空，不打断整个文档。
 // 5. mermaid.render 返回的是 mermaid 自己 sanitize 过的 svg，可安全用 dangerouslySetInnerHTML 注入。
+// 6. SVG 自适应：mermaid 默认给 svg 打固定 width/height 像素值，会导致图按固定尺寸渲染、
+//    宽度被 CSS 压缩时高度不跟随、比例失调。注入前规整属性——保留 viewBox（缺则从 width/height 派生）、
+//    移除固定 width/height，让 svg 用 width:100% height:auto 真正按容器等比缩放；
+//    容器 overflow:auto 兼底，图过大时出现滚动条。
 
 import { useEffect, useRef, useState } from 'react';
 import { useTheme } from '@/hooks/useTheme';
@@ -34,6 +38,69 @@ function loadMermaid(): Promise<MermaidModule> {
   return mermaidModulePromise;
 }
 
+/**
+ * 规整 mermaid 渲染出的 svg 字串，使其支持容器自适应缩放。
+ *
+ * mermaid 默认给 svg 打固定 width/height 像素（如 width="800" height="400"），
+ * 直接注入会让图按固定尺寸渲染，宽度被 CSS 压缩时高度不跟随、比例失调。
+ *
+ * 处理步骤：
+ * 1. 解析 svg 根节点上的 width/height 属性（像素或百分比）。
+ * 2. 若无 viewBox，用解析到的 width/height 派生 viewBox（保留原始比例坐标空间）。
+ * 3. 移除 svg 根节点的 width/height/style.max-width/style.max-height 属性，
+ *    让外层 CSS 的 width:100% height:auto 接管。
+ * 4. 给 svg 加 preserveAspectRatio="xMidYMid meet"，确保居中等比缩放。
+ *
+ * 失败（解析不到 svg、属性异常）时原样返回，由 CSS 兜底兜底。
+ *
+ * @param svg mermaid render 返回的 svg 字串
+ * @returns 规整后的 svg 字串
+ */
+function normalizeSvgForResponsive(svg: string): string {
+  // 只处理根 svg 开标签；mermaid 输出无 DOCTYPE/外层注释干扰
+  const svgOpenMatch = svg.match(/<svg\b[^>]*>/i);
+  if (!svgOpenMatch) return svg;
+
+  const svgOpen = svgOpenMatch[0];
+  // 提取 width / height 属性值（mermaid 常给像素整数或带 px 单位，也可能给百分比）
+  const widthMatch = svgOpen.match(/\swidth="([^"]+)"/i);
+  const heightMatch = svgOpen.match(/\sheight="([^"]+)"/i);
+  const viewBoxMatch = svgOpen.match(/\sviewBox="([^"]+)"/i);
+
+  // 解析出数字 px 值，用于派生 viewBox；非数字（如百分比）则跳过派生
+  const widthPx = widthMatch ? parseFloat(widthMatch[1]) : NaN;
+  const heightPx = heightMatch ? parseFloat(heightMatch[1]) : NaN;
+
+  // 组装新 svg 开标签：移除 width/height/style 中的 max-width/max-height，保留其他属性
+  // 用正则去掉 width / height / style 整段，后面再按需补回 viewBox / preserveAspectRatio
+  let cleaned = svgOpen
+    .replace(/\swidth="[^"]*"/i, '')
+    .replace(/\sheight="[^"]*"/i, '')
+    // 只移 style 里的 max-width/max-height 声明，保留其他 style（如字体）
+    .replace(/\sstyle="([^"]*)"/i, (_m, styleVal: string) => {
+      const kept = styleVal
+        .split(';')
+        .map(s => s.trim())
+        .filter(s => s && !/^max-width/i.test(s) && !/^max-height/i.test(s));
+      return kept.length ? ` style="${kept.join('; ')}"` : '';
+    });
+
+  // 若原本无 viewBox 且能解析到有效宽高，派生 viewBox 保住比例坐标空间
+  if (!viewBoxMatch && Number.isFinite(widthPx) && Number.isFinite(heightPx) && widthPx > 0 && heightPx > 0) {
+    cleaned = cleaned.replace(/<svg\b/i, `<svg viewBox="0 0 ${widthPx} ${heightPx}"`);
+  }
+
+  // 加 preserveAspectRatio 保证居中等比缩放（已有则替换，无则追加）
+  if (/\spreserveAspectRatio="/i.test(cleaned)) {
+    cleaned = cleaned.replace(/\spreserveAspectRatio="[^"]*"/i, ' preserveAspectRatio="xMidYMid meet"');
+  } else {
+    cleaned = cleaned.replace(/<svg\b/i, '<svg preserveAspectRatio="xMidYMid meet"');
+  }
+
+  // 把规整后的开标签替换回原字串
+  return svg.replace(svgOpenMatch[0], cleaned);
+}
+
 /** 单个 mermaid 图的渲染组件。 */
 export function MermaidDiagram({ chart }: MermaidDiagramProps) {
   const { themeMode } = useTheme();
@@ -52,6 +119,11 @@ export function MermaidDiagram({ chart }: MermaidDiagramProps) {
         startOnLoad: false,
         theme: themeMode === 'dark' ? 'dark' : 'default',
         securityLevel: 'strict',
+        // 用 CSS 接管尺寸：让 mermaid 不再注入固定像素的 width/height，
+        // 改由 normalizeSvgForResponsive + .help-mermaid svg CSS 自适应容器。
+        flowchart: { useMaxWidth: false },
+        sequence: { useMaxWidth: false },
+        gantt: { useMaxWidth: false },
       });
       // 初始化后立即触发一次渲染，确保主题切换后图也更新
       renderChart(mermaid);
@@ -60,7 +132,7 @@ export function MermaidDiagram({ chart }: MermaidDiagramProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [themeMode]);
 
-  // chart 变更时重新渲染
+  // chart 号新时重新渲染
   useEffect(() => {
     let cancelled = false;
     loadMermaid().then(mermaid => {
@@ -72,22 +144,22 @@ export function MermaidDiagram({ chart }: MermaidDiagramProps) {
   }, [chart]);
 
   /**
-   * 用当前 mermaid 模块渲染 chart，成功后 setSvg。
+   * 用当前 mermaid 模块渲染 chart，成功后规整 svg 并 setSvg。
    *
    * @param mermaid 已加载的 mermaid 模块
    */
   function renderChart(mermaid: MermaidModule): void {
     const id = idRef.current;
     mermaid.default.render(id, chart)
-      .then(({ svg }) => setSvg(svg))
+      .then(({ svg }) => setSvg(normalizeSvgForResponsive(svg)))
       .catch(() => setSvg('')); // 语法错误等失败时显示空
   }
 
   return (
     <div
       className="help-mermaid"
-      // mermaid render 后注入的 svg 由 .help-mermaid svg 的 CSS 约束尺寸，
-      // 这里仅提供容器；dangerouslySetInnerHTML 的内容是 mermaid sanitize 过的 svg。
+      // mermaid render 后注入的 svg 由 .help-mermaid svg 的 CSS 接管尺寸自适应，
+      // 容器 overflow:auto 兜底，图过大时出现滚动条。
       dangerouslySetInnerHTML={{ __html: svg }}
     />
   );
