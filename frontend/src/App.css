@@ -5136,14 +5136,13 @@ code {
 }
 
 /*
- * Mermaid 图容器：自适应缩放。
+ * Mermaid 图容器：原始尺寸 + 滚动条兜底。
  *
- * 设计意图：
- * - 图按容器宽度等比缩放（width:100% height:auto 由 viewBox 保比例），
- *   容器变窄时图自动变小，不出现横向滚动条。
- * - 当图原始尺寸大于容器、或图过高（超过 maxHeight）时，overflow:auto 兜底，
- *   出现左右/上下滚动条，保证内容可访问不裁切。
- * - maxHeight 避免超高图（如纵向 classDiagram）把整页撑成几屏长。
+ * 设计意图（可读性优先，放弃自适应缩放）：
+ * - mermaid 的 SVG 等比缩放是整体缩小，横向 flowchart 被压扁时字跟着小到看不清。
+ * - 改为完全不限制图尺寸：图按 mermaid 渲染的原始像素尺寸显示，字始终可读。
+ * - 容器 overflow:auto 兜底，图比容器宽时出横向滚动条、高时出纵向滚动条。
+ * - 不设 max-height，避免纵向图被裁切；整页滚动由外层 contentStyle overflow:auto 接管。
  */
 .ntd-help-content .help-mermaid {
   margin: 20px 0;
@@ -5153,24 +5152,16 @@ code {
   border-radius: 8px;
   /* 双向滚动兜底：图过大时出现滚动条，不裁切 */
   overflow: auto;
-  /* 限高避免纵向图把整页撑长；超出后上下滚动条兜底 */
-  max-height: 70vh;
-  text-align: center;
+  text-align: left;
 }
 
 /*
- * Mermaid SVG 自适应接管（可读性优先）。
+ * Mermaid SVG：保持原始像素尺寸，不做任何 CSS 缩放。
  *
- * 配合 MermaidDiagram.tsx 的 normalizeSvgForResponsive：
- * - 移除了 mermaid 默认注入的固定像素 width/height，保留 viewBox 坐标空间。
- * - 关键策略：用 max-width 而非 width，让图保持原生可读尺寸，
- *   只有真溢出容器时才等比缩小，避免强压到字看不清。
- * - height:auto 由 viewBox 保比例自动跟随。
- * - 容器 overflow:auto 兜底，过大时出现滚动条而非裁切。
+ * mermaid useMaxWidth=false 渲染出的 svg 带固定 width/height 像素，
+ * 这里不覆盖，让图按原始尺寸显示。容器 overflow:auto 兜底溢出。
  */
 .ntd-help-content .help-mermaid svg {
-  max-width: 100%;
-  height: auto;
   display: inline-block;
 }
 
