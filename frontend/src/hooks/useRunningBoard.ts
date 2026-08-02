@@ -13,14 +13,6 @@ export interface RunningBoardState {
   setPage: (page: number) => void;
 }
 
-export interface ColumnData {
-  key: RunningBoardColumn;
-  label: string;
-  color: string;
-  records: ExecutionRecord[];
-  scheduledTodos: ScheduledTodo[];
-}
-
 export const RUNNING_BOARD_COLUMNS: { key: RunningBoardColumn; label: string; color: string }[] = [
   { key: 'scheduled', label: '待触发', color: '#8b5cf6' },
   { key: 'running', label: '运行中', color: '#f59e0b' },

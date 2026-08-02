@@ -1,13 +1,10 @@
 // 概念导航首页静态数据。
-// 6 个核心概念 + 关系图节点 + 快速开始 5 步。
+// 6 个核心概念 + 关系图节点。
 // 集中管理避免 ConceptRelationGraph/ConceptCardGrid/ConceptDetailSection 各写一套。
 
 import type { ReactNode } from 'react';
 import {
-  AppstoreOutlined,
   BuildOutlined,
-  CompassOutlined,
-  ForwardOutlined,
   MacCommandOutlined,
   RetweetOutlined,
   RocketOutlined,
@@ -303,40 +300,6 @@ export const GRAPH_EDGES: readonly GraphEdge[] = [
   { from: 'execution', to: 'blackboard', label: '持续分析' },
   { from: 'loop', to: 'blackboard', label: '环节结论' },
   { from: 'execution', to: 'kanban', label: '进度展示' },
-] as const;
-
-/**
- * 快速开始 4 步定义（044：触发器下线后从 5 步收敛为 4 步）。
- *
- * checkApi 字段决定步骤完成判断拉哪个 API：
- *   processes  → bundledApi.getProcesses() 非空
- *   tasks      → bundledApi.listTasks() 非空
- *   executions → db.getExecutionRecords() 非空
- *   artifacts  → 通过 loop_executions 的产物判断（简化：与 executions 同源）
- */
-export interface QuickStartStep {
-  /** 序号，1-4。 */
-  index: number;
-  /** 步骤标题。 */
-  title: string;
-  /** 跳转目标视图。 */
-  navTarget: View;
-  /** 完成判断数据源。 */
-  checkApi: 'processes' | 'tasks' | 'executions' | 'artifacts';
-}
-
-export const QUICK_START_STEPS: readonly QuickStartStep[] = [
-  { index: 1, title: '安装工艺', navTarget: 'processes', checkApi: 'processes' },
-  { index: 2, title: '创建任务', navTarget: 'tasks', checkApi: 'tasks' },
-  { index: 3, title: '监控执行', navTarget: 'memorial', checkApi: 'executions' },
-  { index: 4, title: '验收产物', navTarget: 'loops', checkApi: 'artifacts' },
-] as const;
-
-/** 顶部 sticky Tab 的三个 key，与 ConceptNavPage 的 section id 对齐。 */
-export const ONBOARDING_TABS: Array<{ key: string; label: string; icon: ReactNode }> = [
-  { key: 'relation', label: '关系图', icon: <CompassOutlined /> },
-  { key: 'concepts', label: '概念详解', icon: <AppstoreOutlined /> },
-  { key: 'quickstart', label: '快速开始', icon: <ForwardOutlined /> },
 ] as const;
 
 /** Hero 区一句话简介。 */

@@ -161,15 +161,6 @@ export const BREAKPOINTS = {
   mobile: 768,
 } as const;
 
-/** 侧边栏宽度 */
-export const SIDEBAR_WIDTH = {
-  /** 桌面端侧边栏宽度。350px 能容纳 TodoCard 的标题、状态、标签等元素，
-   *  且为右侧内容区留出足够空间（在 1440px 宽屏下内容区约 1090px）。 */
-  desktop: 350,
-  /** 移动端侧边栏占满宽度 */
-  mobile: '100%',
-} as const;
-
 /** 左侧主导航栏宽度（桌面端）。 */
 export const LEFT_RAIL_WIDTH = {
   collapsed: 72,

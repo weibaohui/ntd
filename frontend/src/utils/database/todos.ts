@@ -1,5 +1,5 @@
 import { api, unwrap } from './client';
-import type { Todo, Tag, TodoTemplate, CustomTemplateStatus, ComputedBucket, TodoCenterItem, TodoCenterPage, TodoBrief, TodoListPage, LoopRefSummary } from '@/types';
+import type { Todo, Tag, TodoTemplate, ComputedBucket, TodoCenterItem, TodoCenterPage, TodoBrief, TodoListPage, LoopRefSummary } from '@/types';
 
 // Todo APIs — 所有 todo 端点嵌套在 /api/v1/workspaces/{ws}/todos 下（后端 ADR-7 纯 workspace 隔离）。
 // workspaceId 从 query/body 提升到 URL 路径段，调用方必须显式传入。
@@ -231,28 +231,6 @@ export async function deleteTodoTemplate(id: number): Promise<void> {
 
 export async function copyTodoTemplate(id: number): Promise<TodoTemplate> {
   return unwrap(await api.post(`/api/v1/todo-templates/${id}/copy`, {}));
-}
-
-// Custom Template APIs (remote URL subscription)
-
-export async function getCustomTemplateStatus(): Promise<CustomTemplateStatus> {
-  return unwrap(await api.get('/api/v1/custom-templates/status'));
-}
-
-export async function subscribeCustomTemplate(url: string): Promise<CustomTemplateStatus> {
-  return unwrap(await api.post('/api/v1/custom-templates/subscribe', { url }));
-}
-
-export async function unsubscribeCustomTemplate(): Promise<void> {
-  await api.post('/api/v1/custom-templates/unsubscribe', {});
-}
-
-export async function syncCustomTemplate(): Promise<CustomTemplateStatus> {
-  return unwrap(await api.post('/api/v1/custom-templates/sync', {}));
-}
-
-export async function updateCustomTemplateAutoSync(enabled: boolean, cron: string): Promise<void> {
-  await api.put('/api/v1/custom-templates/auto-sync', { enabled, cron });
 }
 
 // Project Directory APIs
