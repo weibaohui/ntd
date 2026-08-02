@@ -115,13 +115,50 @@ export function MermaidDiagram({ chart }: MermaidDiagramProps) {
     loadMermaid().then(mermaid => {
       if (cancelled) return;
       // strict 模式禁止 mermaid 源码里嵌入 HTML/script，防止 XSS
+      // themeVariables 自定义美化：节点圆角、主色边、字体、间距，避免默认白底黑框的丑陋外观
       mermaid.default.initialize({
         startOnLoad: false,
-        theme: themeMode === 'dark' ? 'dark' : 'default',
+        theme: themeMode === 'dark' ? 'dark' : 'base',
+        themeVariables: themeMode === 'dark' ? {
+          // 深色：节点深灰底 + 浅字 + 主色边
+          primaryColor: '#1e293b',
+          primaryTextColor: '#e2e8f0',
+          primaryBorderColor: '#3b82f6',
+          lineColor: '#64748b',
+          secondaryColor: '#334155',
+          tertiaryColor: '#0f172a',
+          background: '#0f172a',
+          mainBkg: '#1e293b',
+          secondBkg: '#334155',
+          textColor: '#e2e8f0',
+          fontSize: '14px',
+          fontFamily: 'system-ui, -apple-system, sans-serif',
+        } : {
+          // 浅色：节点白底 + 深字 + 主色边
+          primaryColor: '#ffffff',
+          primaryTextColor: '#1e293b',
+          primaryBorderColor: '#3b82f6',
+          lineColor: '#64748b',
+          secondaryColor: '#f1f5f9',
+          tertiaryColor: '#f8fafc',
+          background: '#ffffff',
+          mainBkg: '#ffffff',
+          secondBkg: '#f1f5f9',
+          textColor: '#1e293b',
+          fontSize: '14px',
+          fontFamily: 'system-ui, -apple-system, sans-serif',
+        },
         securityLevel: 'strict',
         // 用 CSS 接管尺寸：让 mermaid 不再注入固定像素的 width/height，
         // 改由 normalizeSvgForResponsive + .help-mermaid svg CSS 自适应容器。
-        flowchart: { useMaxWidth: false },
+        flowchart: {
+          useMaxWidth: false,
+          // 节点圆角 + 间距美化
+          curve: 'basis',
+          padding: 12,
+          nodeSpacing: 40,
+          rankSpacing: 40,
+        },
         sequence: { useMaxWidth: false },
         gantt: { useMaxWidth: false },
       });

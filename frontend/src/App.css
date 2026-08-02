@@ -5159,18 +5159,18 @@ code {
 }
 
 /*
- * Mermaid SVG 自适应接管。
+ * Mermaid SVG 自适应接管（可读性优先）。
  *
  * 配合 MermaidDiagram.tsx 的 normalizeSvgForResponsive：
  * - 移除了 mermaid 默认注入的固定像素 width/height，保留 viewBox 坐标空间。
- * - width:100% 让 svg 按容器宽度撑满，height:auto 由 viewBox 保比例自动跟随。
- * - 图原始位图大于容器时，因容器 overflow:auto 会出现滚动条。
- * - min-width 兜底：防止极窄容器把图压到看不清，最小 320px，超出走横向滚动条。
+ * - 关键策略：用 max-width 而非 width，让图保持原生可读尺寸，
+ *   只有真溢出容器时才等比缩小，避免强压到字看不清。
+ * - height:auto 由 viewBox 保比例自动跟随。
+ * - 容器 overflow:auto 兜底，过大时出现滚动条而非裁切。
  */
 .ntd-help-content .help-mermaid svg {
-  width: 100%;
+  max-width: 100%;
   height: auto;
-  min-width: 320px;
   display: inline-block;
 }
 
