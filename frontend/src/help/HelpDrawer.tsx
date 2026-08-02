@@ -11,6 +11,7 @@ import { Drawer, Tree, Empty } from 'antd';
 import type { TreeDataNode } from 'antd';
 import { HELP_PAGES } from './index';
 import { findHelpPage, loadHelpDoc, useDefaultPageId } from './useHelpContent';
+import { decideTreeSelect } from './helpTreeSelect';
 import { HelpContentRenderer } from './HelpContentRenderer';
 import type { View } from '@/hooks/useViewState';
 
@@ -98,10 +99,19 @@ export function HelpDrawer({ open, onClose, activeView, hasDetail, isMobile }: H
   const docFile = useMemo(() => resolveDocFile(selectedKey), [selectedKey]);
   const docSource = useMemo(() => loadHelpDoc(docFile), [docFile]);
 
-  // 树节点选中回调
+  // 树节点选中回调。
+  // 决策逻辑抽在 helpTreeSelect.decideTreeSelect（纯函数，便于单测）：
+  // 选中页面节点（'p:' 前缀）且未展开时同步展开，实现「点标题即展开子菜单」（NTD-011）。
+  // 收起动作仍交给 switcher 箭头承担，避免「点已选中节点标题」与「收起」产生冲突。
   function handleSelect(keys: React.Key[]) {
-    if (keys.length > 0) {
-      setSelectedKey(String(keys[0]));
+    const { selectedKey: nextKey, expandKey } = decideTreeSelect(keys, expandedKeys);
+    // null 表示反选手势（点已选中节点），帮助树要求始终有选中节点，忽略
+    if (nextKey === null) return;
+    setSelectedKey(nextKey);
+    if (expandKey !== null) {
+      // 函数式更新：基于 setter 回调中的最新数组去重后追加，
+      // 避免与 onExpand 同批触发时读到旧闭包、覆盖较新的展开状态（PR #978 评审）
+      setExpandedKeys(current => (current.includes(expandKey) ? current : [...current, expandKey]));
     }
   }
 
