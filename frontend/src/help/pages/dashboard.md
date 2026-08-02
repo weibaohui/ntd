@@ -1,37 +1,53 @@
 # 仪表盘
 
-> 页面级总览。本页各功能点的 4 图 + 开发指导在子文档中维护。
+仪表盘是全局运营视图，不依赖当前选中的工作空间。它把运营数据按语义拆成 7 个 Tab，让你从不同维度观察系统运转情况。
 
-## 页面简介
+## 在这里做什么
 
-仪表盘是全局运营视图，不依赖当前选中的工作空间。它把此前塞进单个 Masonry 的 24 张卡片按语义拆成 7 个 Tab：总览、任务、执行、成本与模型、自动化、资源与运维、工艺。顶部全局时间范围（Segmented + 自定义 RangePicker）对所有 Tab 共享，切换 Tab 不丢失筛选上下文。
+- 看全局执行量、成功率、成本趋势
+- 按时间范围（今天 / 7 天 / 30 天 / 自定义）筛选所有 Tab 的数据
+- 在 7 个 Tab 间切换，分别看总览、任务、执行、成本与模型、自动化、资源与运维、工艺
 
-数据由 `/api/v1/stats/dashboard` 全库聚合返回 `DashboardStats`（含 todo 分布、执行统计、token/费用、模型分布、近期执行、排行榜等），并有 30 秒 TTL 缓存。飞书消息吞吐由 `/api/v1/feishu/message-stats` 单独拉取，失败时降级空态不弹错。工艺 Tab 由 `ProcessDashboard` 自取 `/api/v1/processes/stats`。
+## 怎么操作
 
-## 页面级数据流总图
+1. **选时间范围**：顶部 Segmented 控件选「今天 / 7 天 / 30 天 / 自定义」，所有 Tab 共享这个筛选。
+2. **切 Tab**：点顶部 7 个 Tab 卡片切换，切换不丢失时间范围上下文。
+3. **看具体指标**：每个 Tab 内部是若干卡片（KPI、趋势图、排行榜、图表等），按需下钻。
+
+## 操作后会发生什么
+
+- 切 Tab 会把当前 Tab 写入 URL hash（`#/dashboard?tab=xxx`），刷新/前进/后退保持当前 Tab。
+- 切时间范围会立即重拉所有 Tab 的数据，30 秒内的重复请求走缓存。
+- 移动端 Tab 标签自动用短文案（如「成本与模型」→「成本」），避免 6 个 Tab 在窄屏溢出。
+
+## 全局数据流
 
 ```mermaid
 flowchart LR
-  U[用户进入仪表盘] --> D["Dashboard 组件"]
-  D --"loadStats(hours) db.getDashboardStats"--> API1["/api/v1/stats/dashboard?hours="]
-  D --"loadMsgStats(hours) db.getFeishuMessageStats"--> API2["/api/v1/feishu/message-stats?hours="]
-  API1 --> H1["get_dashboard_stats handler"]
-  H1 --> SVC1["db.get_dashboard_stats"]
-  SVC1 --> DB1[(todos/loop_executions/executions 表 聚合)]
-  H1 --> CACHE["DASHBOARD_CACHE 30s TTL"]
-  API2 --> H2["get_message_stats handler"]
+  U[你打开仪表盘] --> D[Dashboard 组件]
+  D -->|拉全库聚合| API1[/api/v1/stats/dashboard/]
+  D -->|拉飞书消息吞吐| API2[/api/v1/feishu/message-stats/]
+  API1 --> H1[get_dashboard_stats handler]
+  H1 --> SVC1[db.get_dashboard_stats 聚合]
+  SVC1 --> DB1[(todos / loop_executions / executions 表)]
+  H1 --> CACHE[DASHBOARD_CACHE 30s TTL]
+  API2 --> H2[get_message_stats handler]
   H2 --> DB2[(feishu_history_messages 表)]
-  D --"TimeRangeSelector 全局共享"--> TR["时间范围 Segmented + RangePicker"]
-  D --"handleTabChange pushUrl"--> URL["URL hash tab 参数"]
-  D --"resolvedTab 校验"--> TAB["Tabs 7 个 Tab"]
-  TAB --> OT["OverviewTab stats/successRate/runningTasks"]
-  TAB --> TT["TasksTab stats/totalTodos"]
-  TAB --> ET["ExecutionsTab stats/tagsLength"]
-  TAB --> CT["CostTab stats + UsageStatsCard 自取"]
-  TAB --> AT["AutomationTab msgStats/hours"]
-  TAB --> RT["ResourcesTab stats"]
-  TAB --> PT["ProcessDashboard 自取 getProcessStats"]
+  D -->|顶部全局共享| TR[时间范围 Segmented + RangePicker]
+  D -->|切 Tab 写 URL| TAB[Tabs 7 个 Tab]
 ```
+
+## 7 个 Tab 一览
+
+| Tab | 看什么 |
+|-----|--------|
+| 总览 | 核心 KPI、运行中任务、执行趋势、贡献热力图、最近执行记录、分享卡 |
+| 任务 | 任务总数、状态分布、近期任务列表 |
+| 执行 | 执行成功率、标签维度统计、近期执行记录 |
+| 成本与模型 | Token / 费用趋势、模型分布、用量统计 |
+| 自动化 | 飞书消息吞吐、自动化触发频次、消息配置入口 |
+| 资源与运维 | 执行器资源占用、运维告警、系统健康度 |
+| 工艺 | 工艺统计数据，由 ProcessDashboard 自取 `/api/v1/processes/stats` |
 
 ## 功能点索引
 

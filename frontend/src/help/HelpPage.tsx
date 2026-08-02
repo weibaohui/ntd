@@ -1,19 +1,17 @@
 // 帮助页面：独立全屏窗口，左菜单 + 右内容（PageCard 包裹）。
 //
-// 设计要点：
-// 1. 取代旧的 HelpDrawer（窄抽屉），改为占满主内容区的「新窗口」形态，
-//    与项目其他 PageCard 页面保持一致的交互与视觉风格。
-// 2. 左侧 Antd Tree 展示「页面 → 功能点」两级，自动选中当前页面总览；
-//    右侧用 PageCard 包裹 HelpContentRenderer，标题展示当前选中节点名。
-// 3. 树形数据从 HELP_PAGES 派生，节点 key 编码：
+// 设计要点（基于 UI/UX 设计系统 Minimalism 风格）：
+// 1. 取代旧 HelpDrawer（窄抽屉），改为占满主内容区的「新窗口」形态。
+// 2. 左侧菜单分 4 组（概览/工作/观察/配置），每组带标题；
+//    菜单项 hover 主色浅底、选中态左侧主色高亮条 + 浅蓝底。
+// 3. 右侧 PageCard：header 主色图标徽章 + 标题，右上角关闭按钮；
+//    内容区限宽 760px 居中，行高 1.75，标题字号梯度。
+// 4. 树形数据从 HELP_PAGES 派生，节点 key 编码：
 //    页面='p:<pageId>', 功能点='f:<pageId>/<featureId>'。
-// 4. 顶部右上角放「关闭」按钮，关闭后回到原视图。
 
 import { useMemo, useState, useEffect } from 'react';
-import { Tree, Empty, Button } from 'antd';
+import { Empty, Button } from 'antd';
 import { CloseOutlined } from '@ant-design/icons';
-import type { TreeDataNode } from 'antd';
-import { HELP_PAGES } from './index';
 import { findHelpPage, loadHelpDoc, useDefaultPageId } from './useHelpContent';
 import { decideTreeSelect } from './helpTreeSelect';
 import { HelpContentRenderer } from './HelpContentRenderer';
@@ -33,27 +31,26 @@ interface HelpPageProps {
   isMobile?: boolean;
 }
 
-/**
- * 从 HELP_PAGES 派生 Antd Tree 数据。
- *
- * 页面节点 key: 'p:<pageId>'
- * 功能点节点 key: 'f:<pageId>/<featureId>'
- *
- * @returns Antd Tree 数据
- */
-function useHelpTreeData(): TreeDataNode[] {
-  return useMemo(() => {
-    return HELP_PAGES.map(page => ({
-      key: `p:${page.pageId}`,
-      title: page.title,
-      children: page.features.map(feature => ({
-        key: `f:${page.pageId}/${feature.id}`,
-        title: feature.title,
-        isLeaf: true,
-      })),
-    }));
-  }, []);
+/** 菜单分组定义：每组对应 HELP_PAGES 的一段连续区间。 */
+interface MenuGroup {
+  /** 分组标题。 */
+  title: string;
+  /** 该组包含的页面 pageId 列表。 */
+  pageIds: string[];
 }
+
+/**
+ * 帮助菜单分组配置。
+ *
+ * 与 LeftRail 的分组一致：概览 / 工作 / 观察 / 配置。
+ * 顺序即展示顺序。
+ */
+const MENU_GROUPS: MenuGroup[] = [
+  { title: '概览', pageIds: ['_overview', 'dashboard', 'onboarding'] },
+  { title: '工作', pageIds: ['tasks-list', 'tasks-detail', 'todos-list', 'todos-detail', 'loops-list', 'loops-detail', 'processes'] },
+  { title: '观察', pageIds: ['messages', 'blackboard', 'memorial'] },
+  { title: '配置', pageIds: ['settings-skills', 'settings-experts', 'settings-executors', 'settings-bots', 'settings-pd', 'settings-more'] },
+];
 
 /**
  * 根据选中节点 key 解析出要渲染的 md 文件名。
@@ -64,8 +61,7 @@ function useHelpTreeData(): TreeDataNode[] {
 function resolveDocFile(selectedKey: string): string {
   // 页面节点：'p:<pageId>'
   if (selectedKey.startsWith('p:')) {
-    const pageId = selectedKey.slice(2);
-    const page = findHelpPage(pageId);
+    const page = findHelpPage(selectedKey.slice(2));
     return page ? page.overviewDoc : '';
   }
   // 功能点节点：'f:<pageId>/<featureId>'
@@ -73,11 +69,9 @@ function resolveDocFile(selectedKey: string): string {
     const rest = selectedKey.slice(2);
     const slashIdx = rest.indexOf('/');
     if (slashIdx < 0) return '';
-    const pageId = rest.slice(0, slashIdx);
-    const featureId = rest.slice(slashIdx + 1);
-    const page = findHelpPage(pageId);
+    const page = findHelpPage(rest.slice(0, slashIdx));
     if (!page) return '';
-    const feature = page.features.find(f => f.id === featureId);
+    const feature = page.features.find(f => f.id === rest.slice(slashIdx + 1));
     return feature ? feature.docFile : '';
   }
   return '';
@@ -90,12 +84,10 @@ function resolveDocFile(selectedKey: string): string {
  * @returns 标题文本
  */
 function resolveTitle(selectedKey: string): string {
-  // 页面节点：取页面标题
   if (selectedKey.startsWith('p:')) {
     const page = findHelpPage(selectedKey.slice(2));
     return page ? page.title : '帮助';
   }
-  // 功能点节点：取所属页面 + 功能点标题
   if (selectedKey.startsWith('f:')) {
     const rest = selectedKey.slice(2);
     const slashIdx = rest.indexOf('/');
@@ -109,12 +101,11 @@ function resolveTitle(selectedKey: string): string {
 
 /** 帮助页面容器：左菜单 + 右 PageCard 内容。 */
 export function HelpPage({ open, onClose, activeView, hasDetail, isMobile }: HelpPageProps) {
-  const treeData = useHelpTreeData();
   // 默认选中当前页面总览
   const defaultPageId = useDefaultPageId(activeView, hasDetail);
   const defaultSelectedKey = `p:${defaultPageId}`;
   const [selectedKey, setSelectedKey] = useState(defaultSelectedKey);
-  // 展开的节点：默认展开当前页面
+  // 展开的节点：默认展开当前页面所属分组下的当前页面
   const [expandedKeys, setExpandedKeys] = useState<string[]>([defaultSelectedKey]);
 
   // 视图切换时，重新选中当前页面总览并展开
@@ -130,73 +121,101 @@ export function HelpPage({ open, onClose, activeView, hasDetail, isMobile }: Hel
   const pageTitle = useMemo(() => resolveTitle(selectedKey), [selectedKey]);
 
   // 树节点选中回调。
-  // 决策逻辑抽在 helpTreeSelect.decideTreeSelect（纯函数，便于单测）：
-  // 选中页面节点（'p:' 前缀）且未展开时同步展开，实现「点标题即展开子菜单」（NTD-011）。
-  // 收起动作仍交给 switcher 箭头承担，避免「点已选中节点标题」与「收起」产生冲突。
-  function handleSelect(keys: React.Key[]) {
-    const { selectedKey: nextKey, expandKey } = decideTreeSelect(keys, expandedKeys);
-    // null 表示反选手势（点已选中节点），帮助树要求始终有选中节点，忽略
+  // 决策逻辑抽在 helpTreeSelect.decideTreeSelect（纯函数，便于单测）。
+  function handleSelect(key: string) {
+    // 用 antd Tree 的单选语义模拟：构造单元素数组
+    const { selectedKey: nextKey, expandKey } = decideTreeSelect([key], expandedKeys);
     if (nextKey === null) return;
     setSelectedKey(nextKey);
     if (expandKey !== null) {
-      // 函数式更新：基于 setter 回调中的最新数组去重后追加，
-      // 避免与 onExpand 同批触发时读到旧闭包、覆盖较新的展开状态（PR #978 评审）
       setExpandedKeys(current => (current.includes(expandKey) ? current : [...current, expandKey]));
     }
-  }
-
-  // 树节点展开回调
-  function handleExpand(keys: React.Key[]) {
-    setExpandedKeys(keys.map(String));
   }
 
   // open=false 时不渲染，由父组件控制挂载
   if (!open) return null;
 
-  // 左菜单宽度：桌面 220px，移动端全宽
-  const menuWidth = isMobile ? '100%' : 220;
-
   return (
     <div
+      className="ntd-help-page"
       style={{
-        // 占满父容器（App Content 区域），作为「新窗口」覆盖原视图
         position: 'absolute',
         inset: 0,
-        background: 'var(--color-bg-base, #fff)',
         zIndex: 100,
         display: 'flex',
         flexDirection: isMobile ? 'column' : 'row',
-        gap: isMobile ? 0 : 12,
-        padding: isMobile ? 0 : 12,
+        background: 'var(--color-bg-base, #f8fafc)',
       }}
     >
-      {/* 左侧菜单（移动端在上） */}
-      <div
+      {/* 左侧菜单 */}
+      <aside
+        className="ntd-help-sidebar"
         style={{
-          width: menuWidth,
+          width: isMobile ? '100%' : 248,
           flexShrink: 0,
-          maxHeight: isMobile ? 240 : undefined,
+          maxHeight: isMobile ? 260 : undefined,
           overflow: 'auto',
+          borderRight: isMobile ? undefined : '1px solid var(--color-border-light, #e2e8f0)',
+          borderBottom: isMobile ? '1px solid var(--color-border-light, #e2e8f0)' : undefined,
           background: 'var(--color-bg-elevated, #fff)',
-          borderRadius: 'var(--radius-lg, 12px)',
-          boxShadow: 'var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.06))',
-          padding: '8px 0',
         }}
       >
-        <Tree
-          treeData={treeData}
-          selectedKeys={[selectedKey]}
-          expandedKeys={expandedKeys}
-          onSelect={handleSelect}
-          onExpand={handleExpand}
-          blockNode
-        />
-      </div>
+        {/* 菜单头部标题 */}
+        <div className="ntd-help-sidebar-header">
+          <span className="ntd-help-sidebar-title">帮助文档</span>
+        </div>
 
-      {/* 右侧内容：PageCard 包裹，标题随选中节点变化 */}
-      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+        {/* 分组菜单 */}
+        <nav className="ntd-help-menu">
+          {MENU_GROUPS.map(group => (
+            <div key={group.title} className="ntd-help-menu-group">
+              <div className="ntd-help-menu-group-title">{group.title}</div>
+              {group.pageIds.map(pageId => {
+                const page = findHelpPage(pageId);
+                if (!page) return null;
+                const pageKey = `p:${pageId}`;
+                const isPageSelected = selectedKey === pageKey;
+                const isPageExpanded = expandedKeys.includes(pageKey);
+                return (
+                  <div key={pageId} className="ntd-help-menu-item-wrap">
+                    <button
+                      type="button"
+                      className={`ntd-help-menu-item ${isPageSelected ? 'is-selected' : ''}`}
+                      onClick={() => handleSelect(pageKey)}
+                    >
+                      <span className="ntd-help-menu-item-label">{page.title}</span>
+                    </button>
+                    {/* 功能点子菜单：展开时显示 */}
+                    {isPageExpanded && page.features.length > 0 && (
+                      <div className="ntd-help-menu-sub">
+                        {page.features.map(feature => {
+                          const featureKey = `f:${pageId}/${feature.id}`;
+                          const isFeatureSelected = selectedKey === featureKey;
+                          return (
+                            <button
+                              key={feature.id}
+                              type="button"
+                              className={`ntd-help-menu-sub-item ${isFeatureSelected ? 'is-selected' : ''}`}
+                              onClick={() => handleSelect(featureKey)}
+                            >
+                              {feature.title}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </nav>
+      </aside>
+
+      {/* 右侧内容：PageCard 包裹 */}
+      <main className="ntd-help-main" style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', padding: isMobile ? 0 : 16 }}>
         <PageCard
-          icon={<span style={{ fontSize: 15 }}>📖</span>}
+          icon={<span className="ntd-help-card-icon">📖</span>}
           title={pageTitle}
           extra={
             <Button
@@ -207,20 +226,19 @@ export function HelpPage({ open, onClose, activeView, hasDetail, isMobile }: Hel
               aria-label="关闭帮助"
             />
           }
-          contentStyle={{
-            // 内容区可滚动，承载较长 markdown
-            overflow: 'auto',
-            padding: '16px 20px',
-          }}
+          contentStyle={{ overflow: 'auto' }}
           style={{ flex: 1, minHeight: 0 }}
         >
-          {docSource ? (
-            <HelpContentRenderer source={docSource} />
-          ) : (
-            <Empty description="暂无帮助内容" />
-          )}
+          {/* 内容区限宽居中，保证可读性（line-length 65-75 字符） */}
+          <div className="ntd-help-content">
+            {docSource ? (
+              <HelpContentRenderer source={docSource} />
+            ) : (
+              <Empty description="暂无帮助内容" />
+            )}
+          </div>
         </PageCard>
-      </div>
+      </main>
     </div>
   );
 }

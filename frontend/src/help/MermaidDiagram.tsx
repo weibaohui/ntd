@@ -86,6 +86,8 @@ export function MermaidDiagram({ chart }: MermaidDiagramProps) {
   return (
     <div
       className="help-mermaid"
+      // mermaid render 后注入的 svg 由 .help-mermaid svg 的 CSS 约束尺寸，
+      // 这里仅提供容器；dangerouslySetInnerHTML 的内容是 mermaid sanitize 过的 svg。
       dangerouslySetInnerHTML={{ __html: svg }}
     />
   );

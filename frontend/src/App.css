@@ -4886,3 +4886,312 @@ code {
     transition: none !important;
   }
 }
+
+/* ---------- Help Page ---------- */
+/* 基于 Minimalism 设计系统：主色 #2563EB、充足留白、清晰层级。 */
+
+/* 左侧菜单容器 */
+.ntd-help-sidebar {
+  padding: 12px 0;
+}
+
+/* 菜单头部标题区 */
+.ntd-help-sidebar-header {
+  padding: 4px 20px 12px;
+  border-bottom: 1px solid var(--color-border-light, #e2e8f0);
+  margin-bottom: 8px;
+}
+
+.ntd-help-sidebar-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text, #1e293b);
+  letter-spacing: 0.02em;
+}
+
+/* 分组容器 */
+.ntd-help-menu-group {
+  margin-bottom: 4px;
+}
+
+/* 分组标题（概览/工作/观察/配置） */
+.ntd-help-menu-group-title {
+  padding: 8px 20px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-tertiary, #94a3b8);
+}
+
+/* 菜单项外层（页面级） */
+.ntd-help-menu-item-wrap {
+  position: relative;
+}
+
+/* 页面级菜单项按钮 */
+.ntd-help-menu-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 7px 20px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font-size: 13px;
+  color: var(--color-text-secondary, #475569);
+  transition: background 0.15s ease, color 0.15s ease;
+  line-height: 1.4;
+}
+
+.ntd-help-menu-item:hover {
+  background: var(--color-bg-hover, #f1f5f9);
+  color: var(--color-text, #1e293b);
+}
+
+/* 选中态：左侧主色高亮条 + 浅蓝底 */
+.ntd-help-menu-item.is-selected {
+  background: rgba(37, 99, 235, 0.08);
+  color: #2563eb;
+  font-weight: 600;
+}
+
+.ntd-help-menu-item.is-selected::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 2px;
+  bottom: 2px;
+  width: 3px;
+  background: #2563eb;
+  border-radius: 0 2px 2px 0;
+}
+
+.ntd-help-menu-item-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 功能点子菜单容器 */
+.ntd-help-menu-sub {
+  padding: 2px 0 4px;
+}
+
+/* 功能点级菜单项按钮 */
+.ntd-help-menu-sub-item {
+  display: block;
+  width: 100%;
+  padding: 5px 20px 5px 32px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font-size: 12px;
+  color: var(--color-text-tertiary, #64748b);
+  transition: background 0.15s ease, color 0.15s ease;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ntd-help-menu-sub-item:hover {
+  background: var(--color-bg-hover, #f1f5f9);
+  color: var(--color-text, #1e293b);
+}
+
+.ntd-help-menu-sub-item.is-selected {
+  color: #2563eb;
+  font-weight: 500;
+}
+
+/* 右侧内容区容器 */
+.ntd-help-content {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 24px 32px 48px;
+  font-size: 14px;
+  line-height: 1.75;
+  color: var(--color-text, #1e293b);
+}
+
+/* 内容区标题层级 */
+.ntd-help-content h1 {
+  font-size: 24px;
+  font-weight: 700;
+  margin: 0 0 16px;
+  color: var(--color-text, #0f172a);
+  line-height: 1.3;
+}
+
+.ntd-help-content h2 {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 28px 0 12px;
+  color: var(--color-text, #0f172a);
+  line-height: 1.4;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--color-border-light, #e2e8f0);
+}
+
+.ntd-help-content h3 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 20px 0 8px;
+  color: var(--color-text, #1e293b);
+  line-height: 1.5;
+}
+
+/* 段落与列表间距 */
+.ntd-help-content p {
+  margin: 0 0 12px;
+}
+
+.ntd-help-content ul,
+.ntd-help-content ol {
+  margin: 0 0 12px;
+  padding-left: 24px;
+}
+
+.ntd-help-content li {
+  margin-bottom: 4px;
+}
+
+/* 引用块：左侧主色边线 + 浅底 */
+.ntd-help-content blockquote {
+  margin: 16px 0;
+  padding: 8px 16px;
+  border-left: 3px solid #2563eb;
+  background: rgba(37, 99, 235, 0.04);
+  color: var(--color-text-secondary, #475569);
+  border-radius: 0 6px 6px 0;
+}
+
+.ntd-help-content blockquote p {
+  margin: 0;
+}
+
+/* 行内代码：浅灰底圆角 */
+.ntd-help-content :not(pre) > code {
+  padding: 2px 6px;
+  background: var(--color-bg-hover, #f1f5f9);
+  border-radius: 4px;
+  font-size: 13px;
+  font-family: 'SF Mono', Monaco, Consolas, 'Liberation Mono', monospace;
+  color: var(--color-text, #1e293b);
+}
+
+/* 代码块：深色底 + 横向滚动兜底 */
+.ntd-help-content pre {
+  margin: 16px 0;
+  padding: 14px 18px;
+  background: #1e293b;
+  color: #e2e8f0;
+  border-radius: 8px;
+  overflow-x: auto;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.ntd-help-content pre code {
+  background: none;
+  padding: 0;
+  color: inherit;
+}
+
+/* 表格：带边框、表头浅底 */
+.ntd-help-content table {
+  width: 100%;
+  margin: 16px 0;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.ntd-help-content th,
+.ntd-help-content td {
+  padding: 8px 12px;
+  border: 1px solid var(--color-border-light, #e2e8f0);
+  text-align: left;
+}
+
+.ntd-help-content th {
+  background: var(--color-bg-hover, #f1f5f9);
+  font-weight: 600;
+}
+
+/* 链接：主色 + 下划线 */
+.ntd-help-content a {
+  color: #2563eb;
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+
+.ntd-help-content a:hover {
+  color: #1d4ed8;
+  text-decoration: underline;
+}
+
+/* Mermaid 图容器：约束 SVG 尺寸，避免宽高比失控 */
+.ntd-help-content .help-mermaid {
+  margin: 20px 0;
+  padding: 20px;
+  background: var(--color-bg-elevated, #fff);
+  border: 1px solid var(--color-border-light, #e2e8f0);
+  border-radius: 8px;
+  overflow-x: auto;
+  text-align: center;
+}
+
+/* Mermaid SVG 尺寸约束：max-width 100% 防溢出，height auto 保比例 */
+.ntd-help-content .help-mermaid svg {
+  max-width: 100%;
+  height: auto;
+  display: inline-block;
+}
+
+/* PageCard 内帮助图标徽章：主色浅底圆角 */
+.ntd-help-card-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  background: rgba(37, 99, 235, 0.1);
+  color: #2563eb;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* ---------- Dark theme adjustments for Help Page ---------- */
+[data-theme="dark"] .ntd-help-menu-item.is-selected {
+  background: rgba(37, 99, 235, 0.16);
+  color: #60a5fa;
+}
+
+[data-theme="dark"] .ntd-help-menu-item.is-selected::before {
+  background: #60a5fa;
+}
+
+[data-theme="dark"] .ntd-help-menu-sub-item.is-selected {
+  color: #60a5fa;
+}
+
+[data-theme="dark"] .ntd-help-content blockquote {
+  background: rgba(37, 99, 235, 0.1);
+  color: var(--color-text-secondary, #cbd5e1);
+}
+
+[data-theme="dark"] .ntd-help-content .help-mermaid {
+  background: var(--color-bg-elevated, #1e293b);
+  border-color: var(--color-border, #334155);
+}
+
+[data-theme="dark"] .ntd-help-card-icon {
+  background: rgba(37, 99, 235, 0.2);
+  color: #60a5fa;
+}

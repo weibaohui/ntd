@@ -1,42 +1,28 @@
 # 概念关系图
 
-## 功能位置
+导航页 section 1 的概念关系图，用纯 SVG 手绘主链 4 节点 + 支线 6 节点 + hover 高亮 + 点击弹 Drawer。
 
-导航（概念首页） → section「概念关系图」 → `ConceptRelationGraph` SVG 图（主链 4 节点 + 支线 6 节点 + hover 高亮 + 点击弹 Drawer）
+## 在这里做什么
 
-## 数据流图（前端 → 后端）
+- 一眼看清 NTD 6 个核心概念之间的关系
+- hover 任一节点，关联节点高亮
+- 点节点弹 Drawer 看概念详解（字段定义表）
+- 支线节点 Drawer 带跳转按钮，可直达对应操作页
 
-```mermaid
-flowchart LR
-  U[用户进入导航页] --> CNP["ConceptNavPage"]
-  CNP --> CRG["ConceptRelationGraph"]
-  CRG --> GN["GRAPH_NODES 常量 10 节点"]
-  CRG --> GE["GRAPH_EDGES 常量 11 边"]
-  CRG --> SVG["纯 SVG 渲染 圆+线+箭头"]
-  U --"hover 节点"--> HL["高亮关联节点 highlights 列表"]
-  U --"点击节点"--> DR["Drawer 弹详情"]
-  DR --"conceptId 命中 CONCEPTS"--> CDS["ConceptNode fields 表"]
-  DR --"支线节点 navTarget"--> PUSH["pushUrl(navTarget, navMode)"]
-```
+## 怎么操作
 
-## 调用关系链路图
+1. 鼠标移入任一节点，该节点及关联节点高亮。
+2. 鼠标移出，高亮消失，回到静态图。
+3. 点主链节点（process/loop/todo/execution），弹 Drawer 看概念详解。
+4. 点支线节点（task/executor/expert/skill/model/blackboard/kanban），弹 Drawer 看定制 `drawerDesc` + 跳转按钮。
 
-```mermaid
-flowchart TD
-  CRG["ConceptRelationGraph"] --> GN["GRAPH_NODES: 主链 process/loop/todo/execution + 支线 task/executor/expert/skill/model/blackboard/kanban"]
-  CRG --> GE["GRAPH_EDGES: 主航线 3 边 + 支线 8 边"]
-  CRG --> EP["edgePath fromR/toR 边缘偏移"]
-  CRG --> NR["nodeRadius isMain ? 48 : 36"]
-  CRG --> E["Edge 组件 主航线带箭头加粗"]
-  CRG --> N["Node 组件 hover/onClick"]
-  N --> SS["useState selectedNode"]
-  N --> DR["Drawer open"]
-  DR --> FIND["CONCEPTS.find(id === conceptId)"]
-  FIND --> CDS["Descriptions fields 表"]
-  DR --> NAV["支线节点 navTarget → pushUrl"]
-```
+## 操作后会发生什么
 
-## 数据结构图
+- 关系图不引 reactflow 重依赖，节点固定 10 个手布局。
+- 尊重 `prefers-reduced-motion`，动画降级为静态高亮。
+- 跳转走 `pushUrl(navTarget, navMode)`，触发 ntd-nav-change 事件全站同步。
+
+## 数据结构
 
 ```mermaid
 classDiagram
@@ -70,7 +56,7 @@ classDiagram
   GraphEdge --> GraphNode: from/to 引用
 ```
 
-## 数据变更图
+## 节点交互状态
 
 ```mermaid
 stateDiagram-v2
@@ -83,9 +69,10 @@ stateDiagram-v2
   跳转态 --> [*]
 ```
 
-## 开发指导
+## 常见问题
 
-- **前端入口**：`frontend/src/components/onboarding/ConceptRelationGraph.tsx` 的 `ConceptRelationGraph` 组件；节点/边数据在 `frontend/src/components/onboarding/concepts.tsx` 的 `GRAPH_NODES` / `GRAPH_EDGES` 常量
-- **后端入口**：纯展示组件，不直接调后端；概念数量徽标由 `ConceptCardGrid` 调 `useConceptCounts` 拉取
-- **注意**：不引 reactflow 重依赖（节点固定 10 个手布局）；尊重 `prefers-reduced-motion` 动画降级为静态高亮；支线节点 Drawer 支定制 `drawerDesc` + 跳转按钮（黑板/看板）；跳转必须走 `pushUrl` 不能用 `location.hash` 蜂跳（否则不触发 ntd-nav-change 事件全站同步）
-- **扩展**：增支线节点时，在 `GRAPH_NODES` 加项（x/y/highlights/conceptId 或 drawerDesc/navTarget）、`GRAPH_EDGES` 加连线；新增有独立页的支线节点用 `navTarget` + `navMode` 三字段向后兼容
+**Q：为什么不用 reactflow？**
+A：节点固定 10 个手布局即可，reactflow 重依赖 YAGNI。
+
+**Q：新增支线节点怎么扩展？**
+A：在 `GRAPH_NODES` 加项（x/y/highlights/conceptId 或 drawerDesc/navTarget）、`GRAPH_EDGES` 加连线；新增有独立页的支线节点用 `navTarget` + `navMode` 三字段向后兼容。
