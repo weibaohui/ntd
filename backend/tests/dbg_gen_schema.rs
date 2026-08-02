@@ -5,6 +5,10 @@
 //!
 //! 运行方式：`cargo test --test dbg_gen_schema -- --ignored --nocapture`
 //! （默认 `#[ignore]`，避免常规测试误覆盖源码文件。）
+
+// 生成器脚本走简化写法，放宽 clippy（与其它测试文件一致）
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::print_stdout, clippy::print_stderr)]
+
 use std::fs;
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
