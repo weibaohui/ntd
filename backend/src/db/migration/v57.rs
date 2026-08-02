@@ -114,8 +114,15 @@ mod tests {
         let v47 = crate::db::migration::v47_v53::V47ConsolidatedBlackboardFeatures;
         v47.up(&db).await.expect("V47 migration must succeed");
 
-        // 插一条旧行（迁移前没有 wiki_timeout_secs 列，这里模拟迁移前的存量数据）
-        // workspace_id=1 对应的 project_directories 行可能不存在，但 SQLite 默认不强制外键
+        // 插一条旧行（迁移前没有 wiki_timeout_secs 列，这里模拟迁移前的存量数据）。
+        // blackboards.workspace_id 外键指向 project_directories(id)，应用强制 FK（PRAGMA
+        // foreign_keys=ON），必须先生成合法父行，否则 INSERT 直接报 FK 失败。
+        db.exec(
+            // 用 id=2：bootstrap/迁移会 seed /tmp 工作空间占 id=1，避免主键冲突
+            "INSERT INTO project_directories (id, path, name) VALUES (2, '/legacy', 'legacy')",
+        )
+        .await
+        .expect("insert project_directory parent");
         db.exec(
             r#"INSERT INTO blackboards (workspace_id, content) VALUES (1, 'legacy')"#,
         )
