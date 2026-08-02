@@ -1,6 +1,6 @@
 // 概念导航首页静态数据。
 // 6 个核心概念 + 关系图节点 + 快速开始 5 步。
-// 集中管理避免 ConceptRelationGraph/ConceptCardGrid/ConceptDetailSection/QuickStartFlow 各写一套。
+// 集中管理避免 ConceptRelationGraph/ConceptCardGrid/ConceptDetailSection 各写一套。
 
 import type { ReactNode } from 'react';
 import {

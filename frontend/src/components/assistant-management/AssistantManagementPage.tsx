@@ -77,7 +77,7 @@ export function AssistantManagementPage({}: AssistantManagementPageProps) {
     setConfigDrawerOpen(false);
   };
 
-  // 绑定飞书智能体逻辑（从 WorkspaceAgentPanel 复用）
+  // 绑定飞书智能体逻辑：发起绑定后通过 EventSource 监听扫码结果，超时自动关闭
   const handleStartBind = async () => {
     if (successTimerRef.current) clearTimeout(successTimerRef.current);
     if (feishuEventSource) feishuEventSource.close();
