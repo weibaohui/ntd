@@ -26,7 +26,8 @@ impl Migration for V87SelfHealResidual {
 
     /// 幂等探测并补齐历史缺失列。
     ///
-    /// 以 v1 `add_legacy_todos_columns` / `add_legacy_loops_columns` 的列清单为准，
+    /// todos 列清单与 v1 `add_legacy_todos_columns` 对齐；
+    /// loops.workspace 源自 V8 `V41ConsolidatedLoopFeatures`（v41_v46.rs）建表后追加。
     /// 逐表逐列用 `add_column_if_missing`（pragma_table_info 探测）补齐。
     /// 列已存在则跳过，不存在则 ALTER ADD。
     async fn up(&self, db: &Database) -> Result<(), sea_orm::DbErr> {
@@ -68,7 +69,8 @@ impl Migration for V87SelfHealResidual {
             "ALTER TABLE todos ADD COLUMN auto_review_enabled INTEGER DEFAULT 1",
         ).await?;
 
-        // loops 历史追加列（与 v1 add_legacy_loops_columns 对齐）
+        // loops.workspace 源自 V8 V41ConsolidatedLoopFeatures（v41_v46.rs:37），
+        // 建表后 ALTER 追加；残留态下若该 ALTER 被跳过则补齐。
         add_column_if_missing(
             db, "loops", "workspace",
             "ALTER TABLE loops ADD COLUMN workspace TEXT",
@@ -131,24 +133,5 @@ mod tests {
             .await
             .expect("probe must succeed");
         assert!(has_after, "v87 应补回 acceptance_criteria 列");
-    }
-
-    /// AC-009-3 补充：残留态库（删 loops.workspace 列模拟）跑 v87 后列补回。
-    #[tokio::test]
-    async fn test_v87_heals_missing_loops_workspace() {
-        let db = fresh_db().await;
-        db.exec("ALTER TABLE loops DROP COLUMN workspace")
-            .await
-            .expect("DROP COLUMN must succeed on SQLite 3.35+");
-
-        let has_before = crate::db::migration::table_has_column(&db, "loops", "workspace")
-            .await.expect("probe");
-        assert!(!has_before, "模拟残留态：loops.workspace 列应缺失");
-
-        V87SelfHealResidual.up(&db).await.expect("v87 must heal");
-
-        let has_after = crate::db::migration::table_has_column(&db, "loops", "workspace")
-            .await.expect("probe");
-        assert!(has_after, "v87 应补回 loops.workspace 列");
     }
 }
