@@ -32,10 +32,12 @@ test('NTD-011 帮助抽屉子菜单可点开且内容渲染', async ({ page }) =
   await expect(page.locator('.ant-drawer-open')).toBeVisible();
   await page.waitForTimeout(800);
 
-  // 验证点 1：默认选中页的总览 md 已渲染（有标题元素，非空白）
+  // 验证点 1：默认选中页的总览 md 已渲染（有标题元素，非空白）。
+  // readContentInfo 是一次性 DOM 读取、无自动重试，故先用 expect.poll 等待标题出现，
+  // 避免慢速 CI 上读到渲染前的空 DOM（PR #978 评审：关键读取点用状态驱动替代固定等待）。
+  await expect.poll(async () => (await readContentInfo(page)).headings.length).toBeGreaterThan(0);
   const initial = await readContentInfo(page);
   console.log('初始内容标题:', JSON.stringify(initial.headings));
-  expect(initial.headings.length).toBeGreaterThan(0);
 
   // 验证点 2：点击父节点「标题文字」，子菜单应展开（出现功能点子节点）
   await page.locator('.ant-drawer-open .ant-tree-title', { hasText: '仪表盘' }).first().click();
@@ -43,13 +45,13 @@ test('NTD-011 帮助抽屉子菜单可点开且内容渲染', async ({ page }) =
   const childTitle = page.locator('.ant-drawer-open .ant-tree-title', { hasText: 'Tab 切换' });
   await expect(childTitle.first()).toBeVisible();
 
-  // 验证点 3：点击功能点子节点，右侧内容切换为对应 md
+  // 验证点 3：点击功能点子节点，右侧内容切换为对应 md。
+  // expect.poll 等待内容区标题切换为目标文档，替代固定 500ms 等待。
   await childTitle.first().click();
-  await page.waitForTimeout(500);
+  await expect.poll(async () => (await readContentInfo(page)).text ?? '').toContain('Tab');
   const feature = await readContentInfo(page);
   console.log('子节点内容标题:', JSON.stringify(feature.headings));
   expect(feature.headings.length).toBeGreaterThan(0);
-  expect(feature.text).toContain('Tab');
 
   // 全程不应出现 X-Markdown 输入类型错误
   const xmdErrors = consoleErrors.filter(e => e.includes('X-Markdown'));

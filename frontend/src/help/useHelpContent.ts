@@ -12,14 +12,17 @@ import { HELP_PAGES } from './index';
 import type { HelpPage } from './types';
 
 // 构建时把所有 md 文件以 raw string 形式打进去。
-// query: '?raw' 让 Vite 以字符串形式导入；import: 'default' 取默认导出（即字符串）。
-// eager: true 必须显式传：glob 默认懒加载，值是 () => Promise<string> 加载函数而非字符串；
-// 漏传会导致 loadHelpDoc 返回函数，XMarkdown 拒绝渲染（NTD-011 根因）。
+// 设计意图：运行时无需 fetch 或依赖 server 返回 md（NTD-011）。
 const allDocs = import.meta.glob('./pages/*.md', {
-  query: '?raw',
-  import: 'default',
-  eager: true,
+  query: '?raw',                // Vite 返回原始 Markdown 文本字符串（不解析）。
+  import: 'default',            // 取模块默认导出——即 ?raw 注入的 raw string。
+  eager: true,                  // 构建时内联：默认懒加载会返回 () => Promise<string> 函数；
+                                // 漏传则 loadHelpDoc 返回函数，XMarkdown 拒绝渲染。
+                                // 代价：约 393KB 原始文本打入主 chunk（gzip ~100KB），
+                                // 属预期取舍——帮助文档无敏感信息且首次打开即用，避免懒加载闪烁。
 }) as unknown as Record<string, string>;
+// 文档 key 缺失时的边界行为：由 loadHelpDoc 的 allDocs[key] ?? '' 兜底，
+// 返回空串 → resolveDocFile 找不到文件 → HelpContentRenderer 走 Empty 分支（非崩溃）。
 
 /**
  * 根据 md 文件名取出内容，找不到返回空串。
