@@ -17,6 +17,24 @@ use crate::handlers::AppState;
 /// 用户工艺根目录名称（与系统层 `bundled/processes/` 区分）。
 const USER_PROCESSES_DIR_NAME: &str = "processes";
 
+/// 056：导入失败 warn 的进程内去重表（source_path → 已告警的错误首行）。
+/// 导入链路在每次工艺变更后全量重扫，不可修复的文件会每次触发同一条 warn；
+/// 记录「文件+错误」组合，只在该组合首次出现时告警。
+static IMPORT_WARNED: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<(String, String)>>> =
+    std::sync::OnceLock::new();
+
+/// 同一 (source_path, error) 组合进程内只 warn 一次（056 日志刷屏治理）。
+fn warn_once_per_file(source_path: &str, err: &str) {
+    let warned = IMPORT_WARNED.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+    // Mutex 中毒时取内部数据继续：告警去重不是关键路径，不值得 panic
+    let mut set = warned.lock().unwrap_or_else(|e| e.into_inner());
+    // 错误消息可能含动态细节，取首行做键，避免时间戳类噪声导致去重失效
+    let key = (source_path.to_string(), err.lines().next().unwrap_or("").to_string());
+    if set.insert(key) {
+        tracing::warn!("保存用户工艺模板 {} 失败: {}", source_path, err);
+    }
+}
+
 /// 用户工艺 `source_path` 前缀，与系统层 `bundled://` 区分。
 pub const USER_SOURCE_PREFIX: &str = "user://";
 
@@ -72,7 +90,10 @@ pub async fn import_user_process_templates(state: &AppState) -> Result<(), Strin
             // Ok(false)：guid 冲突跳过，已在内部 warn。
             Ok(false) => {}
             Err(e) => {
-                tracing::warn!("保存用户工艺模板 {} 失败: {}", source_path, e);
+                // 056：同一文件的同一错误进程内只 warn 一次——
+                // 该导入在每次 PUT /api/v1/processes 后都会全量重扫，
+                // 不可修复的文件（如 flow 风格 YAML）会产生日志刷屏。
+                warn_once_per_file(&source_path, &e);
             }
         }
     }
@@ -100,11 +121,15 @@ async fn upsert_user_process_yaml(
     // 040：缺 guid 的用户层文件生成并回写，之后按 guid 作为身份。
     if wrapper.process.guid.is_empty() {
         let guid = super::guid::new_guid();
-        let updated = super::guid::insert_guid_after_name(content, &guid)
+        // 056：行级插入失败时退化 serde 往返（flow 风格/非常规缩进文件）
+        let updated = super::guid::insert_guid_with_serde_fallback(content, &guid)
             .ok_or_else(|| format!("无法在 {source_path} 的 process 块内插入 guid 行"))?;
-        std::fs::write(path, &updated)
-            .map_err(|e| format!("回写 guid 到 {} 失败: {}", path.display(), e))?;
-        tracing::info!("为用户工艺 {} 生成并回写 guid: {}", source_path, guid);
+        // 幂等情况下内容未变（文件已有 guid 但 serde 模型读为空），跳过写盘
+        if updated != content {
+            std::fs::write(path, &updated)
+                .map_err(|e| format!("回写 guid 到 {} 失败: {}", path.display(), e))?;
+            tracing::info!("为用户工艺 {} 生成并回写 guid: {}", source_path, guid);
+        }
         wrapper.process.guid = guid;
     }
 

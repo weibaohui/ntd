@@ -40,50 +40,80 @@ function readInitialView(): 'card' | 'list' {
   }
 }
 
-/** 按搜索词过滤：标题或 prompt 命中关键字（不区分大小写）。 */
-function filterBySearchKeyword(items: TodoCenterItem[], keyword: string): TodoCenterItem[] {
-  const kw = keyword.trim().toLowerCase();
-  if (!kw) return items;
-  return items.filter(todo => {
-    const title = (todo.title || '').toLowerCase();
-    const prompt = (todo.prompt || '').toLowerCase();
-    return title.includes(kw) || prompt.includes(kw);
-  });
-}
+/** 056：搜索防抖毫秒数——输入停顿后再发请求，避免逐字符打服务端。 */
+const SEARCH_DEBOUNCE_MS = 300;
 
-/** 列表数据加载 hook：响应 workspace/视图切换 + 跨组件刷新事件。 */
-function useTodoListData(workspaceId: number | null, viewMode: 'card' | 'list') {
+/** 列表数据加载 hook（056 服务端分页版）：翻页/排序/搜索变化时重新拉取对应页。 */
+function useTodoListData(workspaceId: number | null, viewMode: 'card' | 'list', searchKeyword: string) {
   const [items, setItems] = useState<TodoCenterItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [total, setTotal] = useState(0);
+  const [sortBy, setSortBy] = useState<string | undefined>(undefined);
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc' | undefined>(undefined);
+  // 搜索词防抖：rawSearchKeyword 即时更新，debouncedSearch 停顿后才变
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+
+  // 搜索输入停顿 SEARCH_DEBOUNCE_MS 后才落盘到 debouncedSearch，并重回第 1 页
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchKeyword.trim());
+      setPage(1);
+    }, SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [searchKeyword]);
 
   // reload 用 useCallback 包裹，使 effect 依赖稳定
   const reload = useCallback(async () => {
-    if (workspaceId == null) { setItems([]); return; }
+    if (workspaceId == null) { setItems([]); setTotal(0); return; }
     setLoading(true);
     try {
-      const data = await db.getTodoCenter(workspaceId);
-      setItems(data);
+      const data = await db.getTodoCenter(workspaceId, {
+        page,
+        pageSize,
+        search: debouncedSearch || undefined,
+        sortBy,
+        sortOrder,
+      });
+      setItems(data.items);
+      setTotal(data.total);
     } catch (e) {
       message.error(`加载事项列表失败：${e instanceof Error ? e.message : String(e)}`);
       setItems([]);
     } finally {
       setLoading(false);
     }
-  }, [workspaceId]);
+  }, [workspaceId, page, pageSize, debouncedSearch, sortBy, sortOrder]);
 
-  // 列表形态挂载/工作空间变化时拉数据；卡片形态不触发（其内部自管）
+  // 列表形态挂载/工作空间变化/分页参数变化时拉数据；卡片形态不触发（其内部自管）
   useEffect(() => {
     if (viewMode === 'list') reload();
-  }, [workspaceId, viewMode, reload]);
+  }, [viewMode, reload]);
 
-  // 跨组件刷新：TodoDrawer 保存、QuickCapture 创建后通过 custom event 通知
+  // 跨组件刷新：TodoDrawer 保存、QuickCapture 创建、WS 执行事件后重拉当前页
   useEffect(() => {
     const handler = () => { if (viewMode === 'list') reload(); };
     window.addEventListener(TODO_LIST_REFRESH_EVENT, handler);
     return () => window.removeEventListener(TODO_LIST_REFRESH_EVENT, handler);
   }, [viewMode, reload]);
 
-  return { items, loading, reload };
+  // 翻页/排序变化处理器（由 TodoListView 的 Table onChange 驱动）
+  const handleServerChange = useCallback(
+    (nextPage: number, nextPageSize: number, nextSortBy?: string, nextSortOrder?: 'asc' | 'desc') => {
+      setPage(nextPageSize !== pageSize ? 1 : nextPage); // 改页大小回第 1 页
+      setPageSize(nextPageSize);
+      setSortBy(nextSortBy);
+      setSortOrder(nextSortOrder);
+    },
+    [pageSize],
+  );
+
+  return {
+    items, loading, reload,
+    pagination: { current: page, pageSize, total },
+    onServerChange: handleServerChange,
+  };
 }
 
 interface TodoListPageProps {
@@ -117,8 +147,9 @@ export function TodoListPage({
   const [searchKeyword, setSearchKeyword] = useState('');
   // 刷新信号：每次点击刷新按钮自增，传递给 TodoCenterCardView 触发重新加载
   const [refreshKey, setRefreshKey] = useState(0);
-  // 列表数据：抽到独立 hook 管理加载/刷新/事件监听
-  const { items, loading, reload } = useTodoListData(workspaceId, viewMode);
+  // 列表数据：056 服务端分页 hook（搜索词传入后内部防抖）
+  const { items, loading, reload, pagination, onServerChange } =
+    useTodoListData(workspaceId, viewMode, searchKeyword);
 
   // 行操作 + 带参执行 Modal（已拆到 TodoListPageParts）
   const rowActions = useTodoRowActions({ workspaceId, onReload: reload });
@@ -135,8 +166,7 @@ export function TodoListPage({
     setRefreshKey(k => k + 1);
   }, [viewMode, reload]);
 
-  // 根据 viewMode 渲染卡片/列表内容
-  const listItems = filterBySearchKeyword(items, searchKeyword);
+  // 根据 viewMode 渲染卡片/列表内容（056：搜索已下推服务端，不再页内过滤）
   const headerExtra = (
     <TodoListHeader
       isMobile={isMobile}
@@ -170,9 +200,11 @@ export function TodoListPage({
           contentStyle={{ padding: 0, display: 'flex', flexDirection: 'column', height: 'calc(100% - 43px)' }}
         >
           <TodoListView
-            items={listItems}
+            items={items}
             loading={loading}
             tags={state.tags}
+            pagination={pagination}
+            onServerChange={onServerChange}
             onSelectTodo={onSelectTodo}
             onEditTodo={onEditTodo}
             onDeleteTodo={rowActions.handleDeleteTodo}

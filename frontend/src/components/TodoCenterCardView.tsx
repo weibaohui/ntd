@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Empty, Segmented, Select, Spin, message } from 'antd';
+import { useCallback, useEffect, useState } from 'react';
+import { Empty, Pagination, Segmented, Select, Spin, message } from 'antd';
 import { AppstoreOutlined } from '@ant-design/icons';
 import { TODO_LIST_REFRESH_EVENT } from '@/constants';
 import { useApp } from '@/hooks/useApp';
@@ -60,10 +60,24 @@ export function TodoCenterCardView({
   // v1 纯 workspace-scoped：selectedWorkspace 必须有值才能拉 todos/center
   const workspaceId = state.selectedWorkspace ?? 0;
 
-  // 全量事项（后端已按 computed_bucket 分桶补算），前端再做筛选/分组
+  // 056：服务端分页——items 仅当前页；bucket_counts/action_types 由后端聚合返回
   const [items, setItems] = useState<TodoCenterItem[]>([]);
+  const [bucketCounts, setBucketCounts] = useState<Record<string, number>>({});
+  const [actionTypeOptions, setActionTypeOptions] = useState<string[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(24);
   // 加载态控制 Spin + 刷新按钮 loading
   const [loading, setLoading] = useState(false);
+  // 搜索词防抖（与列表页同口径：停顿 300ms 后再发请求）
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchKeyword.trim());
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchKeyword]);
   // 当前 Tab（五类驱动），默认手动触发；持久化到 localStorage 记住用户上次选择
   const [activeBucket, setActiveBucket] = useState<ComputedBucket>(() => {
     try {
@@ -77,23 +91,39 @@ export function TodoCenterCardView({
   // 动作类型筛选（设计文档工具栏「动作类型筛选」）：'all' 或具体 action_type
   const [actionTypeFilter, setActionTypeFilter] = useState<string>('all');
 
-  // 拉取事项中心列表。工作空间变化或手动刷新时触发；
+  // 拉取事项中心当前页（056：bucket/search/status/actionType/分页全部下推 SQL）。
+  // 工作空间变化、筛选变化、翻页或手动刷新时触发；
   // 卡片操作（归档/恢复/webhook/执行）完成后也会调它重拉，保持口径一致。
   const reload = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await db.getTodoCenter(workspaceId);
-      setItems(data);
+      const data = await db.getTodoCenter(workspaceId, {
+        bucket: activeBucket,
+        search: debouncedSearch || undefined,
+        status: statusFilter,
+        actionType: actionTypeFilter,
+        page,
+        pageSize,
+      });
+      setItems(data.items);
+      setTotal(data.total);
+      setBucketCounts(data.bucket_counts);
+      setActionTypeOptions(data.action_types);
     } catch (e) {
       message.error(`加载事项中心失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setLoading(false);
     }
-  }, [workspaceId]);
+  }, [workspaceId, activeBucket, debouncedSearch, statusFilter, actionTypeFilter, page, pageSize]);
 
   useEffect(() => {
     reload();
   }, [reload, refreshKey]);
+
+  // 筛选/分类变化时重回第 1 页（当前页在新过滤口径下可能越界）
+  useEffect(() => {
+    setPage(1);
+  }, [activeBucket, statusFilter, actionTypeFilter]);
 
   // activeBucket 变化时持久化到 localStorage
   useEffect(() => {
@@ -111,33 +141,11 @@ export function TodoCenterCardView({
     return () => window.removeEventListener(TODO_LIST_REFRESH_EVENT, handler);
   }, [reload]);
 
-  // 按 computed_bucket 分桶，用于 Tab 计数与卡片过滤
-  const bucketCount = useMemo(() => {
-    const counts: Record<ComputedBucket, number> = {
-      manual: 0, time_driven: 0, event_driven: 0, loop_driven: 0, archived: 0,
-    };
-    for (const it of items) counts[it.computed_bucket]++;
-    return counts;
-  }, [items]);
+  // 056：Tab 计数与卡片数据均来自服务端（bucket_counts 后端聚合），不再页内分桶
+  const bucketCount = (b: ComputedBucket): number => bucketCounts[b] ?? 0;
 
-  // 当前 Tab 的卡片：按分类 + 搜索 + 状态 + 动作类型过滤
-  const visibleItems = useMemo(() => {
-    const kw = searchKeyword.trim().toLowerCase();
-    return items.filter((it) => {
-      if (it.computed_bucket !== activeBucket) return false;
-      if (statusFilter !== 'all' && it.status !== statusFilter) return false;
-      if (actionTypeFilter !== 'all' && (it.action_type ?? 'none') !== actionTypeFilter) return false;
-      if (!kw) return true;
-      return it.title.toLowerCase().includes(kw) || it.prompt.toLowerCase().includes(kw);
-    });
-  }, [items, activeBucket, searchKeyword, statusFilter, actionTypeFilter]);
-
-  // 动作类型筛选项：从当前数据动态去重，避免硬编码漏掉新类型
-  const actionTypeOptions = useMemo(() => {
-    const set = new Set<string>();
-    for (const it of items) if (it.action_type) set.add(it.action_type);
-    return Array.from(set);
-  }, [items]);
+  // 当前 Tab 的卡片即服务端当前页（bucket/search/status/actionType 过滤已在 SQL 层完成）
+  const visibleItems = items;
 
   return (
     <PageCard
@@ -158,7 +166,7 @@ export function TodoCenterCardView({
             options={BUCKETS.map((b) => ({
               label: (
                 <span data-testid={`todo-center-tab-${b.value}`}>
-                  {b.label} <span className="todo-center-tab-count">{bucketCount[b.value]}</span>
+                  {b.label} <span className="todo-center-tab-count">{bucketCount(b.value)}</span>
                 </span>
               ),
               value: b.value,
@@ -197,17 +205,32 @@ export function TodoCenterCardView({
         {visibleItems.length === 0 ? (
           <Empty description={EMPTY_TEXT[activeBucket]} style={{ marginTop: 48 }} />
         ) : (
-          <div className="todo-center-grid">
-            {visibleItems.map((item) => (
-              <TodoCenterCard
-                key={item.id}
-                item={item}
-                onChanged={reload}
-                onSelectTodo={onSelectTodo}
-                onSelectLoop={onSelectLoop}
+          <>
+            <div className="todo-center-grid">
+              {visibleItems.map((item) => (
+                <TodoCenterCard
+                  key={item.id}
+                  item={item}
+                  onChanged={reload}
+                  onSelectTodo={onSelectTodo}
+                  onSelectLoop={onSelectLoop}
+                />
+              ))}
+            </div>
+            {/* 056：卡片墙服务端分页——翻页只影响当前 Tab 的卡片集 */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '12px 4px' }}>
+              <Pagination
+                current={page}
+                pageSize={pageSize}
+                total={total}
+                onChange={(p, ps) => { setPage(ps !== pageSize ? 1 : p); setPageSize(ps); }}
+                showSizeChanger
+                pageSizeOptions={['24', '48', '96']}
+                showTotal={(t) => `共 ${t} 项`}
+                size="small"
               />
-            ))}
-          </div>
+            </div>
+          </>
         )}
       </Spin>
     </PageCard>

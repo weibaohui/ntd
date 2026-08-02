@@ -416,10 +416,9 @@ export function BackupPanel() {
         return false;
       }
 
-      // v1 纯 workspace-scoped：getAllTodos 需逐空间拉取后合并，
-      // 用于备份导入去重时跨空间检查同名 todo
+      // 056：逐空间分批拉取后合并（备份导入去重需 title+prompt+workspace 判重，属 E 类全量）
       const allExisting = await Promise.all(
-        workspaces.map(ws => db.getAllTodos(ws.id).catch(() => []))
+        workspaces.map(ws => db.getAllTodosBatched(ws.id).catch(() => []))
       );
       const existingTodos = allExisting.flat();
       setExistingTodos(existingTodos.map((t) => ({ title: t.title, prompt: t.prompt, workspace_id: t.workspace_id ?? null })));

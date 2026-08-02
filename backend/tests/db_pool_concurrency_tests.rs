@@ -48,7 +48,11 @@ async fn test_concurrent_reads_all_succeed_under_pool_size() {
         handles.push(tokio::spawn(async move {
             // 在屏障处汇合，确保 8 个任务几乎同时发起 read。
             barrier.wait().await;
-            let todos = db.get_todos().await.expect("concurrent read should succeed");
+            let todos = db
+                .get_todos_page_by_workspace(None, None, 1, 200)
+                .await
+                .expect("concurrent read should succeed")
+                .0;
             // 新库应为 0 条；这个断言同时也是「读到了 init 后的表」的烟雾测试。
             assert_eq!(todos.len(), 0);
         }));
@@ -78,7 +82,11 @@ async fn test_wal_reads_not_blocked_by_single_writer() {
         handles.push(tokio::spawn(async move {
             // 32 次连续读，故意放大观察窗口；用 task_idx 让每次标题不同避免互相影响。
             for i in 0..32 {
-                let _todos = db.get_todos().await.expect("read should succeed");
+                let _todos = db
+                    .get_todos_page_by_workspace(None, None, 1, 200)
+                    .await
+                    .expect("read should succeed")
+                    .0;
                 // 至少有一条 seed 在；让该任务在循环里产生微小延迟，模拟真实业务节拍。
                 if i % 8 == 0 {
                     tokio::task::yield_now().await;

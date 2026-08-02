@@ -93,10 +93,29 @@ pub struct UpdateExecutionRecordRequest<'a> {
 pub struct ExecutionRecordQuery<'a> {
     pub todo_id: Option<i64>,
     pub step_id: Option<i64>,
+    /// 工作空间过滤：execution_records 无 workspace_id 列，经 todos 子查询间接关联。
+    /// 下推 SQL 而非内存过滤——内存过滤发生在 LIMIT/OFFSET 之后，会把本 ws 记录
+    /// 稀释到各页导致分页条数与 total 对不上（056 修复的正确性 bug）。
+    pub workspace_id: Option<i64>,
     pub limit: i64,
     pub offset: i64,
     pub status: Option<&'a str>,
     pub hours: Option<u32>,
+}
+
+/// 构造「本工作空间 todo」的子查询条件：todo_id IN (SELECT id FROM todos ...)。
+///
+/// 抽成独立函数是因为数据查询与 COUNT 查询必须共用完全相同的过滤条件，
+/// 任何一边漏加都会让分页元数据失真。
+fn workspace_todo_subquery(
+    workspace_id: i64,
+) -> sea_orm::sea_query::SelectStatement {
+    sea_orm::sea_query::Query::select()
+        .column(todos::Column::Id)
+        .from(todos::Entity)
+        .and_where(todos::Column::WorkspaceId.eq(workspace_id))
+        .and_where(todos::Column::DeletedAt.is_null())
+        .to_owned()
 }
 
 /// `get_execution_summary` 使用的固定 SQL 字面量。
@@ -195,6 +214,16 @@ impl Database {
         let filter = match query.status {
             Some("all") | None => base_filter,
             Some(s) => base_filter.and(execution_records::Column::Status.eq(s)),
+        };
+
+        // workspace 过滤以 AND 叠加：与 (todo_id, step_id) 组合分支兼容——
+        // 即使指定了 todo_id，也要求该 todo 属于本 ws（防 ?todo_id=<他人> 越权读）。
+        let filter = if let Some(wid) = query.workspace_id {
+            filter.and(execution_records::Column::TodoId.in_subquery(
+                workspace_todo_subquery(wid),
+            ))
+        } else {
+            filter
         };
 
         let filter = if let Some(h) = query.hours.filter(|&h| h > 0) {
@@ -834,9 +863,19 @@ impl Database {
     pub async fn get_execution_records_by_session(
         &self,
         session_id: &str,
+        workspace_id: Option<i64>,
     ) -> Result<Vec<ExecutionRecord>, sea_orm::DbErr> {
+        // V1 隔离：同一 session 可能含跨 ws 记录（todo 被移过空间），按子查询过滤只留本 ws
+        let filter = execution_records::Column::SessionId.eq(session_id);
+        let filter = if let Some(wid) = workspace_id {
+            filter.and(execution_records::Column::TodoId.in_subquery(
+                workspace_todo_subquery(wid),
+            ))
+        } else {
+            filter
+        };
         Ok(execution_records::Entity::find()
-            .filter(execution_records::Column::SessionId.eq(session_id))
+            .filter(filter)
             .order_by_asc(execution_records::Column::StartedAt)
             .all(&self.conn)
             .await?
@@ -1067,9 +1106,18 @@ impl Database {
     /// 查询所有 status='running' 的执行记录（包括僵尸记录）
     pub async fn get_running_execution_records(
         &self,
+        workspace_id: Option<i64>,
     ) -> Result<Vec<ExecutionRecord>, sea_orm::DbErr> {
+        let filter = execution_records::Column::Status.eq("running");
+        let filter = if let Some(wid) = workspace_id {
+            filter.and(execution_records::Column::TodoId.in_subquery(
+                workspace_todo_subquery(wid),
+            ))
+        } else {
+            filter
+        };
         let models = execution_records::Entity::find()
-            .filter(execution_records::Column::Status.eq("running"))
+            .filter(filter)
             .order_by_desc(execution_records::Column::StartedAt)
             .all(&self.conn)
             .await?;

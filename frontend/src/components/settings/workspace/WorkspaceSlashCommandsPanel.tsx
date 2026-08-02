@@ -4,7 +4,7 @@ import { PlusOutlined, DeleteOutlined, EditOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import * as db from '@/utils/database';
 import type { WorkspaceSlashCommand } from '@/utils/database';
-import type { Todo } from '@/types';
+import type { TodoBrief } from '@/types';
 import type { LoopListItem } from '@/types/loop';
 
 interface WorkspaceSlashCommandsPanelProps {
@@ -22,7 +22,7 @@ export function WorkspaceSlashCommandsPanel({
 }: WorkspaceSlashCommandsPanelProps) {
   const [commands, setCommands] = useState<WorkspaceSlashCommand[]>([]);
   const [loading, setLoading] = useState(false);
-  const [todos, setTodos] = useState<Todo[]>([]);
+  const [todos, setTodos] = useState<TodoBrief[]>([]);
   const [loops, setLoops] = useState<LoopListItem[]>([]);
 
   // Modal 状态
@@ -42,7 +42,7 @@ export function WorkspaceSlashCommandsPanel({
   };
 
   const loadTodos = () => {
-    db.getAllTodos(workspaceId).then(setTodos).catch(() => {});
+    db.getTodoBriefs(workspaceId).then(setTodos).catch(() => {});
   };
 
   const loadLoops = () => {

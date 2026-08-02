@@ -78,14 +78,8 @@ export function MemorialBoard() {
     return () => { cancelled = true; };
   }, [hours, boardMode, state.selectedWorkspace]);
 
-  // 切换工作空间后立即拉取该 workspace 的 todo，保证数据最新。
-  useEffect(() => {
-    const wid = state.selectedWorkspace;
-    if (wid == null) return;
-    db.getAllTodos(wid).then(todos => {
-      dispatch({ type: 'SET_TODOS_BY_WORKSPACE', workspaceId: wid, payload: todos });
-    });
-  }, [state.selectedWorkspace, dispatch]);
+  // 056：全局 todos 桶已删除，纪念板不再需要按工作空间预拉 todos——
+  // 项目名由 RecentCompletedTodo.workspace_id 直接反查 projectDirectories。
 
   // 加载项目目录列表，供项目维度过滤使用。
   // 与 KanbanBoard 逻辑一致：首次加载 + 监听 TodoDrawer 快速新增事件刷新。
@@ -207,7 +201,7 @@ export function MemorialBoard() {
       );
     }
     return result;
-  }, [items, searchText, state.todos]);
+  }, [items, searchText]);
 
   /* ─── Responsive column count ─── */
   const [columnCount, setColumnCount] = useState(() => {
@@ -252,9 +246,8 @@ export function MemorialBoard() {
     const isSuccess = item.execution_status === 'success';
     const expanded = expandedIds.has(item.todo_id);
     const resolvedTags = item.tag_ids.map(tid => state.tags.find(t => t.id === tid)).filter(Boolean) as Tag[];
-    // 获取项目名称（按 workspace_id 匹配）
-    const todo = state.todos.find(t => t.id === item.todo_id);
-    const projectDir = projectDirectories.find(d => d.id === todo?.workspace_id);
+    // 获取项目名称（056：item.workspace_id 直接反查，不再绕道全量 todos 桶）
+    const projectDir = projectDirectories.find(d => d.id === item.workspace_id);
     const projectName = projectDir?.name || null;
 
     // Run history: determine which run to display

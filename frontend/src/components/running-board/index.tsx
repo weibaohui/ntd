@@ -16,7 +16,7 @@ import {
   useAutoRefreshRunningBoard,
 } from '@/hooks/useRunningBoard';
 import { STATUS_COLORS } from '@/constants';
-import type { ExecutionRecord, RunningBoardColumn } from '@/types';
+import type { ExecutionRecord, RunningBoardColumn, TodoBrief } from '@/types';
 import { ScheduledTodoCard } from './ScheduledTodoCard';
 import { ExecutionRecordCard } from './ExecutionRecordCard';
 import { RunningBoardColumnView } from './RunningBoardColumnView';
@@ -37,15 +37,26 @@ export function RunningBoard({ searchText, hours }: RunningBoardProps = {}) {
   const { records, scheduledTodos, loading, refresh } = useRunningBoard(state.selectedWorkspace, hours);
   useAutoRefreshRunningBoard(refresh);
 
-  // 切换工作空间后立即拉取该 workspace 的 todo，保证数据最新。
-  const { dispatch } = useApp();
+  // 056：全局 todos 桶已删除。运行面板的 todo 标题按 id 集轻量反查——
+  // 记录/定时任务变化时，对其涉及的 todo_id 集合拉 brief 建映射。
+  const [briefMap, setBriefMap] = useState<Map<number, TodoBrief>>(new Map());
   useEffect(() => {
     const wid = state.selectedWorkspace;
-    if (wid == null) return;
-    db.getAllTodos(wid).then(todos => {
-      dispatch({ type: 'SET_TODOS_BY_WORKSPACE', workspaceId: wid, payload: todos });
-    });
-  }, [state.selectedWorkspace, dispatch]);
+    if (wid == null) { setBriefMap(new Map()); return; }
+    const ids = [...new Set([
+      ...records.map(r => r.todo_id),
+      ...scheduledTodos.map(t => t.id),
+    ])];
+    if (ids.length === 0) { setBriefMap(new Map()); return; }
+    let cancelled = false;
+    db.getTodoBriefs(wid, { ids })
+      .then(briefs => {
+        if (!cancelled) setBriefMap(new Map(briefs.map(b => [b.id, b])));
+      })
+      .catch(() => {});
+    // cancelled 防御快速切换：晚返回的响应若发现参数已变，直接丢弃
+    return () => { cancelled = true; };
+  }, [state.selectedWorkspace, records, scheduledTodos]);
 
   const handleCardClick = useCallback((record: ExecutionRecord) => {
     setDrawerRecord(record);
@@ -55,8 +66,8 @@ export function RunningBoard({ searchText, hours }: RunningBoardProps = {}) {
     setDrawerRecord(null);
   }, []);
 
-  // O(1) todo lookup map
-  const todoById = useMemo(() => new Map(state.todos.map(t => [t.id, t])), [state.todos]);
+  // O(1) todo lookup map（056：brief 映射，字段足够标题反查与搜索）
+  const todoById = briefMap;
 
   // Apply filters from toolbar
   const filteredRecords = useMemo(() => {
@@ -73,14 +84,13 @@ export function RunningBoard({ searchText, hours }: RunningBoardProps = {}) {
       });
     }
 
-    // Search filter
+    // Search filter（056：brief 无 prompt 字段，搜索范围收缩为标题/模型/执行器）
     if (searchText?.trim()) {
       const q = searchText.toLowerCase();
       result = result.filter(r => {
         const todo = todoById.get(r.todo_id);
         return (
           (todo?.title?.toLowerCase().includes(q)) ||
-          (todo?.prompt?.toLowerCase().includes(q)) ||
           (r.model?.toLowerCase().includes(q)) ||
           (r.executor?.toLowerCase().includes(q))
         );

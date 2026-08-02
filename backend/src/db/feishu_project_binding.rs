@@ -131,6 +131,7 @@ impl Database {
             .get_execution_records(ExecutionRecordQuery {
                 todo_id: Some(binding.todo_id),
                 step_id: None,
+                workspace_id: None,
                 limit,
                 offset: 0,
                 status: None,

@@ -53,10 +53,13 @@ export function useConceptCounts(workspaceId: number | null): UseConceptCountsRe
       // 并行拉取 6 个 API（Promise.all + 每个 promise 独立 catch），任一失败对应字段 null。
       // 不用串联 await：串行等待会放大首屏延迟（最慢 API × 6 → 最慢 API × 1）。
       // 每个 promise 自己 catch 为 null，Promise.all 因此永不 reject，无需 allSettled。
-      const [processes, loops, todos, tasks, executors, experts] = await Promise.all([
+      const [processes, loops, todoCount, todoIds, tasks, executors, experts] = await Promise.all([
         bundledApi.getProcesses().catch(() => null),
         dbLoops.listLoops(wsId).catch(() => null),
-        db.getAllTodos(wsId).catch(() => null),
+        // 056：计数走轻量 COUNT 接口，不再全表拉取取 length
+        db.getTodoCount(wsId).catch(() => null),
+        // 首个 todo id 用于快速开始第 3 步的存在性探测（id 轻量列表）
+        db.getTodoIds(wsId).catch(() => null),
         bundledApi.listTasks(wsId).catch(() => null),
         db.getExecutors().catch(() => null),
         db.getAllExperts().catch(() => null),
@@ -66,7 +69,7 @@ export function useConceptCounts(workspaceId: number | null): UseConceptCountsRe
       const nextCounts: ConceptCounts = {
         process: processes ? processes.length : null,
         loop: loops ? loops.length : null,
-        todo: todos ? todos.length : null,
+        todo: todoCount,
         task: tasks ? tasks.length : null,
         executor: executors ? executors.length : null,
         expert: experts ? experts.length : null,
@@ -77,7 +80,7 @@ export function useConceptCounts(workspaceId: number | null): UseConceptCountsRe
       const step1Done = processes ? processes.length > 0 : false;
       const step2Done = tasks ? tasks.length > 0 : false;
       // 简化：用首个 todo 查执行记录，避免 N+1。
-      const step3Done = await checkExecutionsExist(todos, wsId);
+      const step3Done = await checkExecutionsExist(todoIds, wsId);
       // 步骤 4：与步骤 3 同源判断（完整实现需扫审计 API，YAGNI 先简化）。
       const step4Done = step3Done;
 
@@ -106,12 +109,12 @@ export function useConceptCounts(workspaceId: number | null): UseConceptCountsRe
  * 简化：只查首个 todo 的执行记录分页 total。
  */
 async function checkExecutionsExist(
-  todos: Array<{ id: number }> | null,
+  todoIds: number[] | null,
   wsId: number,
 ): Promise<boolean> {
-  if (!todos || todos.length === 0) return false;
+  if (!todoIds || todoIds.length === 0) return false;
   try {
-    const page = await db.getExecutionRecords(todos[0].id, 1, 1, undefined, undefined, wsId);
+    const page = await db.getExecutionRecords(todoIds[0], 1, 1, undefined, undefined, wsId);
     return page.total > 0;
   } catch {
     return false;

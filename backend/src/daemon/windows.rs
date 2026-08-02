@@ -1,5 +1,9 @@
 //! Windows 平台的 daemon 实现：基于 Task Scheduler。
 //!
+//! #![allow(print_stdout/print_stderr)]：daemon 子命令的 stdout/stderr 即用户界面，
+//! 状态与提示必须直接打到用户终端，走 tracing 会错进日志文件。
+#![allow(clippy::print_stdout, clippy::print_stderr)]
+//!
 //! 设计要点：
 //! - 用 schtasks /create onlogon + /it 让 task 仅在用户登录态跑，
 //!   避免 service 在锁屏 / 注销状态下还要拉起的麻烦。
@@ -75,7 +79,11 @@ fn install(force: bool) {
             "/it",  // Run only when user is logged on (interactive)
         ])
         .output()
-        .expect("Failed to run schtasks");
+        // schtasks 不存在（精简版 Windows/容器）时优雅退出而非 panic
+        .unwrap_or_else(|e| {
+            eprintln!("Failed to run schtasks: {e}");
+            std::process::exit(1);
+        });
 
     if output.status.success() {
         println!();

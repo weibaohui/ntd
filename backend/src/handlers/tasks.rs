@@ -234,7 +234,9 @@ pub async fn get_artifact_content(
     State(state): State<AppState>, Path(aid): Path<i64>,
 ) -> Result<impl axum::response::IntoResponse, AppError> {
     let artifact = state.db.get_loop_step_artifact(aid).await?.ok_or(AppError::NotFound)?;
-    let ws_path = resolve_artifact_workspace(&state.db, &artifact).await.unwrap_or_default();
+    // 056：workspace 解析失败必须传播——空路径会继续走到 read_workspace_file
+    // 产生误导性错误（读到错误位置或报「文件不存在」），掩盖真实的 DB 故障。
+    let ws_path = resolve_artifact_workspace(&state.db, &artifact).await?;
     let content = if artifact.artifact_type == "file" {
         read_workspace_file(&ws_path, &artifact.locator).await
     } else {

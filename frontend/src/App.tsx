@@ -200,12 +200,8 @@ function AppContent() {
   }, [clearSelection, pushUrl]);
 
   const handleSmartCreateSubmitted = () => {
-    const wid = state.selectedWorkspace;
-    if (wid == null) return;
-    db.getAllTodos(wid).then(todos => {
-      dispatch({ type: 'SET_TODOS_BY_WORKSPACE', workspaceId: wid, payload: todos });
-      window.dispatchEvent(new Event(TODO_LIST_REFRESH_EVENT));
-    });
+    // 056：全局 todos 桶已删除，创建成功后只需通知列表页重拉当前页
+    window.dispatchEvent(new Event(TODO_LIST_REFRESH_EVENT));
   };
 
   const handleShowView = useCallback((view: View) => {
@@ -483,13 +479,8 @@ function AppContent() {
           setEditingTodo(null);
         }}
         onSaved={() => {
-          const wid = state.selectedWorkspace;
-          if (wid == null) return;
-          db.getAllTodos(wid).then(todos => {
-            dispatch({ type: 'SET_TODOS_BY_WORKSPACE', workspaceId: wid, payload: todos });
-            // 通知 TodoListPage 刷新列表（卡片/列表两种形态都监听此事件）
-            window.dispatchEvent(new Event(TODO_LIST_REFRESH_EVENT));
-          });
+          // 056：全局 todos 桶已删除，保存后通知列表页重拉当前页即可
+          window.dispatchEvent(new Event(TODO_LIST_REFRESH_EVENT));
         }}
         defaultWorkspaceId={state.selectedWorkspace}
       />
@@ -512,13 +503,8 @@ function AppContent() {
         isMobile={isMobile}
         defaultWorkspaceId={state.selectedWorkspace}
         onCreated={() => {
-          const wid = state.selectedWorkspace;
-          if (wid != null) {
-            db.getAllTodos(wid).then(todos => {
-              dispatch({ type: 'SET_TODOS_BY_WORKSPACE', workspaceId: wid, payload: todos });
-              window.dispatchEvent(new Event(TODO_LIST_REFRESH_EVENT));
-            });
-          }
+          // 056：全局 todos 桶已删除，创建后通知列表页重拉当前页
+          window.dispatchEvent(new Event(TODO_LIST_REFRESH_EVENT));
         }}
         onExecuted={() => {}}
       />

@@ -10,7 +10,7 @@ import { ProfilesPanel } from '@/components/settings/ProfilesPanel';
 import { InstallExecutorButton } from '@/components/settings/InstallExecutorButton';
 import { getExecutorInstallPrompt } from '@/components/settings/executorInstallPrompts';
 import * as db from '@/utils/database';
-import type { ExecutorConfig, ExecutionRecord } from '@/types';
+import type { ExecutorConfig, ExecutionRecord, TodoBrief } from '@/types';
 import { useApp } from '@/hooks/useApp';
 import { SessionManager } from '@/components/SessionManager';
 
@@ -95,7 +95,8 @@ export function ExecutorsPanel() {
 
   // 正在运行 tab 相关状态
   const { state } = useApp();
-  const { todos } = state;
+  // 056：运行记录的 todo 标题按 id 集轻量反查（替代原全局全量桶）
+  const [recordTodos, setRecordTodos] = useState<TodoBrief[]>([]);
   const [runningTab, setRunningTab] = useState<'executors' | 'running' | 'sessions'>('executors');
   const [selectedRecordIds, setSelectedRecordIds] = useState<number[]>([]);
   const [stoppingRecords, setStoppingRecords] = useState(false);
@@ -112,6 +113,14 @@ export function ExecutorsPanel() {
     try {
       const records = await db.getRunningExecutionRecords(state.selectedWorkspace ?? 0);
       setRunningRecords(records);
+      // 056：按记录的 todo_id 集合拉 brief 反查标题；失败时保留旧映射避免闪空
+      const todoIds = [...new Set(records.map(r => r.todo_id))];
+      if (todoIds.length > 0 && state.selectedWorkspace != null) {
+        const briefs = await db.getTodoBriefs(state.selectedWorkspace, { ids: todoIds }).catch(() => null);
+        if (briefs) setRecordTodos(briefs);
+      } else {
+        setRecordTodos([]);
+      }
     } catch (err) {
       console.error('加载运行中任务失败:', err);
     }
@@ -865,7 +874,7 @@ export function ExecutorsPanel() {
                     key: 'todo_title',
                     ellipsis: true,
                     render: (_: unknown, record: ExecutionRecord) => {
-                      const todo = todos.find(t => t.id === record.todo_id);
+                      const todo = recordTodos.find(t => t.id === record.todo_id);
                       return todo ? todo.title : `#${record.todo_id}`;
                     },
                   },

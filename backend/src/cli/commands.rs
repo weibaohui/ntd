@@ -795,46 +795,49 @@ async fn handle_todo(
             print_response(&resp, output, fields)?;
         }
         TodoAction::List { workspace_id, status, tag, running, search } => {
-            let mut query_params = Vec::new();
-
-            if let Some(s) = status {
-                query_params.push(format!("status={}", s));
-            }
-            if let Some(t) = tag {
-                query_params.push(format!("tag_id={}", t));
-            }
-            if *running {
-                query_params.push("running=true".to_string());
-            }
-
-            // v1: 列表也按 workspace 隔离，URL 前缀带 ws。
-            let path = if query_params.is_empty() {
-                format!("{}/todos", ws_prefix(*workspace_id))
-            } else {
-                format!("{}/todos?{}", ws_prefix(*workspace_id), query_params.join("&"))
-            };
-
-            let resp: ClientResponse<Vec<Todo>> = client.get(&path).await?;
-
-            // Client-side search filtering
-            let resp = if let Some(keyword) = search {
-                let keyword = keyword.to_lowercase();
-                match resp.data {
-                    Some(todos) => {
-                        let filtered: Vec<Todo> = todos.into_iter()
-                            .filter(|t| {
-                                t.title.to_lowercase().contains(&keyword)
-                                    || t.prompt.to_lowercase().contains(&keyword)
-                            })
-                            .collect();
-                        ClientResponse { code: resp.code, data: Some(filtered), message: resp.message }
-                    }
-                    None => resp,
+            // 056：GET /todos 响应改为分页结构 { items, total, page, page_size }。
+            // CLI 的 --status/--tag/--running/--search 均为客户端过滤（后端不认识这些参数），
+            // 因此需要拉齐所有页再过滤，否则只能看到第一页的过滤结果。
+            let mut all_todos: Vec<Todo> = Vec::new();
+            let mut page = 1i64;
+            loop {
+                let path = format!(
+                    "{}/todos?page={}&page_size=200",
+                    ws_prefix(*workspace_id),
+                    page
+                );
+                let resp: ClientResponse<crate::models::TodoListPage> = client.get(&path).await?;
+                let Some(page_data) = resp.data else { break };
+                let fetched = page_data.items.len() as i64;
+                all_todos.extend(page_data.items);
+                // 拿满一页说明可能还有下一页；不满则为最后一页
+                if fetched < 200 {
+                    break;
                 }
-            } else {
-                resp
-            };
+                page += 1;
+            }
 
+            // 客户端过滤：status/tag/running 后端本就不支持（原实现发出去但被忽略），
+            // 056 补齐为真正的客户端过滤，行为与参数文档一致。
+            let filtered: Vec<Todo> = all_todos
+                .into_iter()
+                .filter(|t| {
+                    status.as_deref().map_or(true, |s| t.status.as_str() == s)
+                })
+                .filter(|t| {
+                    tag.map_or(true, |tid| t.tag_ids.contains(&tid))
+                })
+                .filter(|t| !*running || t.status.as_str() == "running")
+                .filter(|t| {
+                    search.as_deref().map_or(true, |kw| {
+                        let kw = kw.to_lowercase();
+                        t.title.to_lowercase().contains(&kw)
+                            || t.prompt.to_lowercase().contains(&kw)
+                    })
+                })
+                .collect();
+
+            let resp = ClientResponse { code: 0, data: Some(filtered), message: String::new() };
             print_response(&resp, output, fields)?;
         }
         TodoAction::Get { workspace_id, id } => {
@@ -1282,7 +1285,7 @@ fn build_create_body(args: &ProcessCreateArgs<'_>) -> Result<Value> {
         // 有 --name 时 stdin 是 YAML 正文（方便 shell heredoc），无 --name 时是 JSON body
         if args.name.is_some() {
             let yaml = read_stdin_string()?;
-            return Ok(build_body_from_parts(args.name, Some(yaml), args)?);
+            return build_body_from_parts(args.name, Some(yaml), args);
         }
         return read_stdin_json();
     }
@@ -1290,7 +1293,7 @@ fn build_create_body(args: &ProcessCreateArgs<'_>) -> Result<Value> {
         .name
         .ok_or_else(|| anyhow::anyhow!("新建工艺需要 --name（或用 --stdin 传完整 body）"))?;
     let definition = read_definition_source(args.file)?;
-    Ok(build_body_from_parts(Some(name), Some(definition), args)?)
+    build_body_from_parts(Some(name), Some(definition), args)
 }
 
 /// 从 stdin 读取原始字符串。

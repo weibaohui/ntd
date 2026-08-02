@@ -25,7 +25,7 @@ import { useApp } from '@/hooks/useApp';
 import { useViewState } from '@/hooks/useViewState';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import * as db from '@/utils/database';
-import type { DashboardStats, FeishuMessageStats } from '@/types';
+import type { DashboardStats, FeishuMessageStats, TodoBrief } from '@/types';
 import { TimeRangeSelector } from './dashboard/SpecialCards';
 import { OverviewTab } from './dashboard/tabs/OverviewTab';
 import { TasksTab } from './dashboard/tabs/TasksTab';
@@ -45,13 +45,15 @@ type IconType = ComponentType<{ style?: CSSProperties }>;
 export function Dashboard() {
   const { state } = useApp();
   const { message } = App.useApp();
-  const { todos, tags, runningTasks } = state;
+  const { tags, runningTasks } = state;
   const { activeTab, pushUrl } = useViewState();
   // Dashboard 是全局运营视图，不依赖当前选中的 workspace；
   // 数据由 /api/v1/stats/dashboard 全库聚合返回。
   const isMobile = useIsMobile();
 
   const [stats, setStats] = useState<DashboardStats | null>(null);
+  // 056：最近执行记录的 todo 标题按 id 集轻量反查（替代原全局全量桶）
+  const [recentTodos, setRecentTodos] = useState<TodoBrief[]>([]);
   const [loading, setLoading] = useState(true);
   const [msgStats, setMsgStats] = useState<FeishuMessageStats | null>(null);
   const [msgStatsError, setMsgStatsError] = useState(false);
@@ -61,7 +63,8 @@ export function Dashboard() {
   const [usageStatsRange, setUsageStatsRange] = useState<{ since?: string; until?: string }>({});
 
   // 顶层派生量:多处 Tab 共用,在此算一次后通过 props 下发,避免各 Tab 重复计算。
-  const totalTodos = stats?.total_todos ?? todos.length;
+  // 056：全局桶删除后，total_todos 只信服务端聚合，无兜底本地计数
+  const totalTodos = stats?.total_todos ?? 0;
   const successRate =
     stats && stats.total_executions > 0 ? (stats.success_executions / stats.total_executions) * 100 : 0;
   const processingRate =
@@ -80,6 +83,14 @@ export function Dashboard() {
       // Dashboard 为概览，调用全局 stats 接口，不再传入 workspaceId
       const data = await db.getDashboardStats(hours);
       setStats(data);
+      // 056：按最近执行记录的 todo_id 集合拉 brief 反查标题（替代全量 todos）
+      const todoIds = [...new Set((data.recent_executions ?? []).map(r => r.todo_id))];
+      if (todoIds.length > 0 && state.selectedWorkspace != null) {
+        const briefs = await db.getTodoBriefs(state.selectedWorkspace, { ids: todoIds }).catch(() => []);
+        setRecentTodos(briefs);
+      } else {
+        setRecentTodos([]);
+      }
     } catch {
       message.error('加载统计数据失败');
     } finally {
@@ -172,7 +183,7 @@ export function Dashboard() {
           loading={loading}
           successRate={successRate}
           runningTasks={Object.values(runningTasks)}
-          todos={todos}
+          todos={recentTodos}
         />
       ),
     },

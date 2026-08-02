@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useApp } from './useApp';
 import type { LogEntry, TodoItem, ExecutionStats } from '@/types';
+import { TODO_LIST_REFRESH_EVENT } from '@/constants';
 
 // ─── 类型定义 ───────────────────────────────────────────────────
 
@@ -136,8 +137,8 @@ let sharedShouldReconnect = true;
  *  注意：存的是 ref 对象而非函数，因为 effect 只执行一次，但 onRefresh 函数的引用
  *  可能因 useCallback 依赖变化而改变。存 ref 对象后，触发时读 ref.current 总能拿到最新值。 */
 let sharedOnRefreshRefs: Array<React.MutableRefObject<(() => void) | undefined>> = [];
-/** 自动清除已结束任务的定时器集合 */
-let sharedRemoveTaskTimers = new Set<ReturnType<typeof setTimeout>>();
+/** 自动清除已结束任务的定时器：key=taskId（056 改为 Map，支持 Sync 时按任务撤销）。 */
+let sharedRemoveTaskTimers = new Map<string, ReturnType<typeof setTimeout>>();
 /** 全局 dispatch 函数（从第一个调用方的 useApp() 获取，后续复用） */
 let sharedDispatch: ReturnType<typeof useApp>['dispatch'] | null = null;
 /** 当前活跃的调用方数量（当计数归零时关闭 WS） */
@@ -183,14 +184,19 @@ function connectShared(dispatch: ReturnType<typeof useApp>['dispatch']) {
           data.tasks.forEach(task => {
             let parsedLogs: LogEntry[] = [];
             try { parsedLogs = JSON.parse(task.logs || '[]'); } catch {}
+            // 056（L6 修复）：Sync 把该任务重置为 running，撤销可能存在的自动移除定时器，
+            // 否则重连后旧定时器会把 Sync 恢复的任务再次移除（任务闪现/提前消失）。
+            cancelRemoveTimer(task.task_id);
             dispatch({ type: 'ADD_RUNNING_TASK', payload: { taskId: task.task_id, todoId: task.todo_id, todoTitle: task.todo_title, executor: task.executor || 'claudecode', logs: parsedLogs, status: 'running', startedAt: new Date().toISOString() } });
-            dispatch({ type: 'UPDATE_TODO_STATUS', payload: { id: task.todo_id, status: 'running' } });
           });
+          // 056：全局 todos 桶已删除，列表页改从服务端拉取——Sync 到达即通知列表刷新
+          window.dispatchEvent(new Event(TODO_LIST_REFRESH_EVENT));
           break;
         }
         case 'Started': {
           dispatch({ type: 'ADD_RUNNING_TASK', payload: { taskId: data.task_id, todoId: data.todo_id, todoTitle: data.todo_title, executor: data.executor || 'claudecode', logs: [], status: 'running', startedAt: new Date().toISOString() } });
-          dispatch({ type: 'UPDATE_TODO_STATUS', payload: { id: data.todo_id, status: 'running' } });
+          // 056：状态不再写全局桶，改为通知列表页刷新（服务端数据源为准）
+          window.dispatchEvent(new Event(TODO_LIST_REFRESH_EVENT));
           window.dispatchEvent(new CustomEvent('executionStarted', { detail: { todoId: data.todo_id } }));
           break;
         }
@@ -208,13 +214,15 @@ function connectShared(dispatch: ReturnType<typeof useApp>['dispatch']) {
         }
         case 'Finished': {
           dispatch({ type: 'FINISH_TASK', payload: { taskId: data.task_id, todoId: data.todo_id, success: data.success, result: data.result } });
-          dispatch({ type: 'UPDATE_TODO_STATUS', payload: { id: data.todo_id, status: data.success ? 'completed' : 'failed' } });
-          // 3 秒后自动从 runningTasks 中移除已结束的任务
+          // 3 秒后自动从 runningTasks 中移除已结束的任务；若期间 WS 重连收到 Sync，
+          // Sync 会撤销该定时器（任务被重置为 running），避免误移除。
           const timer = setTimeout(() => {
-            sharedRemoveTaskTimers.delete(timer);
+            sharedRemoveTaskTimers.delete(data.task_id);
             dispatch({ type: 'REMOVE_RUNNING_TASK', payload: data.task_id });
           }, 3000);
-          sharedRemoveTaskTimers.add(timer);
+          sharedRemoveTaskTimers.set(data.task_id, timer);
+          // 056：终态落定，通知列表页刷新（服务端数据源为准）
+          window.dispatchEvent(new Event(TODO_LIST_REFRESH_EVENT));
           window.dispatchEvent(new CustomEvent('executionFinished', { detail: { todoId: data.todo_id, success: data.success } }));
           break;
         }
@@ -276,6 +284,15 @@ function teardownShared() {
   if (sharedWs) {
     sharedWs.close();
     sharedWs = null;
+  }
+}
+
+/** 056：撤销指定任务的自动移除定时器（Sync 重置 running 集时调用）。 */
+function cancelRemoveTimer(taskId: string) {
+  const timer = sharedRemoveTaskTimers.get(taskId);
+  if (timer !== undefined) {
+    clearTimeout(timer);
+    sharedRemoveTaskTimers.delete(taskId);
   }
 }
 

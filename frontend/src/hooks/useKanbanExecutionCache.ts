@@ -6,11 +6,12 @@
  */
 
 import { useState, useCallback } from 'react';
-import type { Todo, ExecutionRecord } from '@/types';
+import type { ExecutionRecord } from '@/types';
 import * as db from '@/utils/database';
 
 interface UseKanbanExecutionCacheOptions {
-  todos: Todo[];
+  // 056：只需要 id 做执行记录查询，类型放宽以兼容 TodoBrief
+  todos: Array<{ id: number }>;
   /** executionRecords from global store, keyed by todoId */
   storeRecords: Record<number, ExecutionRecord[]>;
   /** 当前选中的 workspace_id，透传到 API */
@@ -25,7 +26,7 @@ interface UseKanbanExecutionCacheResult {
   loadingRunIndex: Record<number, number | null>;
 
   // Actions
-  toggleResult: (todo: Todo) => Promise<string | null>;
+  toggleResult: (todo: { id: number }) => Promise<string | null>;
   handleSelectRun: (todoId: number, runIndex: number) => Promise<void>;
 
   // Get the best available record for a todo (store > API)
@@ -42,7 +43,7 @@ export function useKanbanExecutionCache({
   const [loadingRunIndex, setLoadingRunIndex] = useState<Record<number, number | null>>({});
 
   // 点击展开时从 API 拉取最新执行结果（不做本地缓存）
-  const toggleResult = useCallback(async (todo: Todo): Promise<string | null> => {
+  const toggleResult = useCallback(async (todo: { id: number }): Promise<string | null> => {
     // 优先走 store 数据，不需要额外请求
     const storeRecord = storeRecords[todo.id]?.[0];
     if (storeRecord?.result) return storeRecord.result;

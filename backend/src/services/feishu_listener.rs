@@ -1850,10 +1850,12 @@ impl FeishuListener {
         let (recent_records, is_running) = Self::recent_records_and_running(db, wid).await;
         let todos = match wid {
             Some(id) => db
-                .get_todos_by_workspace_id(Some(id))
+                // 056：卡片只展示最近 20 条摘要（id+标题+状态图标），
+                // 用 brief 接口替代整行全量拉取；take(20) 截断保持卡片体积
+                .get_todo_briefs(Some(id), None, None)
                 .await
                 .ok()
-                .map(|ts| ts.into_iter().map(Self::todo_to_item).collect())
+                .map(|ts| ts.into_iter().take(20).map(Self::brief_to_item).collect())
                 .unwrap_or_default(),
             None => vec![],
         };
@@ -1931,7 +1933,8 @@ impl FeishuListener {
     }
 
     /// Todo → 事项页列表项。
-    fn todo_to_item(t: crate::models::Todo) -> TodoItem {
+    /// TodoBrief → 卡片「事项列表」项（056：摘要字段足够拼状态图标，无需整行 Todo）。
+    fn brief_to_item(t: crate::models::TodoBrief) -> TodoItem {
         use crate::models::TodoStatus;
         let status_icon = match t.status {
             TodoStatus::Completed => "✅",

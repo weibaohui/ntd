@@ -5,7 +5,7 @@ import { useExecutionHistory } from '@/hooks/useExecutionHistory';
 import { Button, Empty, App, Modal, Input, Skeleton } from 'antd';
 import { CheckCircleOutlined, ReloadOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { TodoDrawer } from './TodoDrawer';
-import { BREAKPOINTS } from '@/constants';
+import { BREAKPOINTS, TODO_LIST_REFRESH_EVENT } from '@/constants';
 import * as db from '@/utils/database';
 import { extractTitle } from '@/utils/titleExtractor';
 import type { ExecutionRecord, Todo } from '@/types';
@@ -277,9 +277,9 @@ export function TodoDetail({ hideTitleRow = false, onOpenPost, onActionsReady }:
     if (!selectedTodo) return;
     try {
       const updated = await db.updateTodo(selectedTodo.workspace_id!, selectedTodo.id, selectedTodo.title, selectedTodo.prompt || '', newStatus);
-      dispatch({ type: 'UPDATE_TODO', payload: updated });
-      // 同步更新 local state，避免详情页状态滞后
+      // 056：全局桶已删除——详情页本地 state 为准，列表页经刷新事件重拉
       setSelectedTodo(updated);
+      window.dispatchEvent(new Event(TODO_LIST_REFRESH_EVENT));
       message.success('状态已更新');
     } catch {
       // ignore: interceptor already shows error
@@ -307,9 +307,9 @@ export function TodoDetail({ hideTitleRow = false, onOpenPost, onActionsReady }:
       selectedTodo.acceptance_criteria,
       selectedTodo.auto_review_enabled,
     );
-    dispatch({ type: 'UPDATE_TODO', payload: updated });
-    // 同步更新 local state，避免详情页标题滞后
+    // 056：全局桶已删除——详情页本地 state 为准，列表页经刷新事件重拉
     setSelectedTodo(updated);
+    window.dispatchEvent(new Event(TODO_LIST_REFRESH_EVENT));
   }, [selectedTodo, dispatch]);
 
   // 升级/降级已移除：环节与 Todo 合一，无需 promote 流程
@@ -319,7 +319,8 @@ export function TodoDetail({ hideTitleRow = false, onOpenPost, onActionsReady }:
     if (!selectedTodo) return;
     try {
       await db.deleteTodo(selectedTodo.workspace_id!, selectedTodo.id);
-      dispatch({ type: 'DELETE_TODO', payload: selectedTodo.id });
+      // 056：全局桶已删除——通知列表页重拉
+      window.dispatchEvent(new Event(TODO_LIST_REFRESH_EVENT));
       dispatch({ type: 'SELECT_TODO', payload: null });
       message.success('删除成功');
     } catch {
@@ -491,13 +492,8 @@ export function TodoDetail({ hideTitleRow = false, onOpenPost, onActionsReady }:
           // 抽屉保存可能修改多个字段（标题/prompt/执行器/调度等），
           // 直接用 reloadSelectedTodo 拉取最新数据，避免 local state 滞后。
           reloadSelectedTodo();
-          // 同步刷新当前 workspace 桶，保持列表与详情一致
-          const wid = state.selectedWorkspace;
-          if (wid != null) {
-            db.getAllTodos(wid).then(todos => {
-              dispatch({ type: 'SET_TODOS_BY_WORKSPACE', workspaceId: wid, payload: todos });
-            });
-          }
+          // 056：全局桶已删除——通知列表页重拉当前页，保持列表与详情一致
+          window.dispatchEvent(new Event(TODO_LIST_REFRESH_EVENT));
           if (selectedTodoId) {
             loadExecutionRecords(1, historyLimit);
           }

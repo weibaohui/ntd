@@ -44,6 +44,9 @@ pub(crate) fn shell_quote_single(path: &str) -> String {
     format!("'{}'", path)
 }
 
+/// 仅 Windows 构建使用（watchdog 脚本目录）；Linux/macOS 无调用方。
+/// 不用 cfg(windows) 是因为本文件单测（见下）在所有平台运行并覆盖该函数。
+#[allow(dead_code)]
 pub(crate) fn ntd_dir() -> PathBuf {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
     home.join(".ntd")

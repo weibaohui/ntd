@@ -298,6 +298,8 @@ pub(crate) async fn handle_cancellation_branch(
         },
     );
     task_manager.remove(task_id).await;
+    // 056：终态落定后主动失效 dashboard 缓存，统计立刻可见
+    crate::handlers::execution::invalidate_dashboard_cache().await;
 }
 
 /// timeout 分支末段：写 DB（failed + 包含超时常量文案） + 发 Output/Finished 事件 + remove task。
@@ -363,6 +365,8 @@ pub(crate) async fn handle_timeout_branch(
         },
     );
     task_manager.remove(task_id).await;
+    // 056：终态落定后主动失效 dashboard 缓存
+    crate::handlers::execution::invalidate_dashboard_cache().await;
 }
 
 /// 正常完成末段：auto-review + finish_todo_execution + 末段事件 + remove task。
@@ -949,6 +953,8 @@ fn emit_completion_events(
             trigger_type,
         },
     );
+    // 056：正常终态落定后主动失效 dashboard 缓存（调用方为 async 上下文，直接 await）
+    tokio::spawn(crate::handlers::execution::invalidate_dashboard_cache());
 }
 
 /// 格式化超时秒数为人类可读字符串。

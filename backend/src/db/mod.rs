@@ -309,7 +309,7 @@ impl Database {
 pub mod blackboard;
 
 mod todo;
-pub use todo::{SchedulerUpdate, TODO_TYPE_ABNORMAL_HANDLER, TodoUpdate};
+pub use todo::{SchedulerUpdate, TODO_TYPE_ABNORMAL_HANDLER, TodoCenterPageQuery, TodoUpdate};
 pub mod execution;
 pub(super) mod dashboard;
 mod tag;
@@ -594,6 +594,7 @@ mod tests {
         let (records, _) = db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
             todo_id: Some(todo_id),
             step_id: None,
+            workspace_id: None,
             limit: 100,
             offset: 0,
             status: None,
@@ -632,6 +633,7 @@ mod tests {
         let (records, _) = db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
             todo_id: Some(todo_id),
             step_id: None,
+            workspace_id: None,
             limit: 100,
             offset: 0,
             status: None,
@@ -666,7 +668,7 @@ mod tests {
         let db = setup_db().await;
         let id = db.create_todo("Active", "Prompt").await.unwrap();
         db.delete_todo(id).await.unwrap();
-        let todos = db.get_todos().await.unwrap();
+        let (todos, _) = db.get_todos_page_by_workspace(None, None, 1, 200).await.unwrap();
         assert!(todos.iter().all(|t| t.id != id));
     }
 
@@ -676,7 +678,7 @@ mod tests {
         let id1 = db.create_todo("First", "Prompt").await.unwrap();
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         let id2 = db.create_todo("Second", "Prompt").await.unwrap();
-        let todos = db.get_todos().await.unwrap();
+        let (todos, _) = db.get_todos_page_by_workspace(None, None, 1, 200).await.unwrap();
         assert_eq!(todos[0].id, id2);
         assert_eq!(todos[1].id, id1);
     }
@@ -766,7 +768,7 @@ mod tests {
         let id = db.create_todo("Test", "Prompt").await.unwrap();
         db.delete_todo(id).await.unwrap();
         assert!(db.get_todo(id).await.unwrap().is_none());
-        let todos = db.get_todos().await.unwrap();
+        let (todos, _) = db.get_todos_page_by_workspace(None, None, 1, 200).await.unwrap();
         assert!(todos.iter().all(|t| t.id != id));
     }
 
@@ -928,6 +930,7 @@ mod tests {
         let (records, total) = db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
             todo_id: Some(todo_id),
             step_id: None,
+            workspace_id: None,
             limit: 100,
             offset: 0,
             status: None,
@@ -954,6 +957,7 @@ mod tests {
         let (records, total) = db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
             todo_id: Some(todo_id),
             step_id: None,
+            workspace_id: None,
             limit: 2,
             offset: 0,
             status: None,
@@ -963,6 +967,42 @@ mod tests {
         .unwrap();
         assert_eq!(total, 5);
         assert_eq!(records.len(), 2);
+    }
+
+    /// 056 回归：workspace 过滤必须在 SQL 层与分页同口径——
+    /// 修复前「先分页后内存过滤」导致本 ws 记录被稀释、total 是全库总数。
+    #[tokio::test]
+    async fn test_execution_records_workspace_filter_pagination() {
+        let db = setup_db().await;
+        // 两个 workspace：ws_a 1 个 todo，ws_b 1 个 todo
+        let ws_a = db.create_project_directory("/tmp/056-ws-a", Some("wa"), false, false).await.unwrap();
+        let ws_b = db.create_project_directory("/tmp/056-ws-b", Some("wb"), false, false).await.unwrap();
+        let todo_a = db.create_todo("A", "p").await.unwrap();
+        let todo_b = db.create_todo("B", "p").await.unwrap();
+        db.exec(&format!("UPDATE todos SET workspace_id = {ws_a} WHERE id = {todo_a}")).await.unwrap();
+        db.exec(&format!("UPDATE todos SET workspace_id = {ws_b} WHERE id = {todo_b}")).await.unwrap();
+        // ws_b 造 4 条（淹没第一页），ws_a 造 1 条
+        for i in 0..4 {
+            create_test_execution_record(&db, todo_b, &format!("b{}", i)).await;
+        }
+        create_test_execution_record(&db, todo_a, "a0").await;
+
+        let (records, total) = db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
+            todo_id: None,
+            step_id: None,
+            workspace_id: Some(ws_a),
+            limit: 2,
+            offset: 0,
+            status: None,
+            hours: None,
+        })
+        .await
+        .unwrap();
+        // 修复前：第一页被 ws_b 的 4 条占满，内存过滤后 0 条，total=5
+        // 修复后：SQL 过滤后只有 ws_a 的 1 条，total=1
+        assert_eq!(total, 1, "total 必须是过滤后的计数");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].todo_id, todo_a);
     }
 
     #[tokio::test]
@@ -975,6 +1015,7 @@ mod tests {
         let (records, total) = db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
             todo_id: Some(todo_id),
             step_id: None,
+            workspace_id: None,
             limit: 10,
             offset: 2,
             status: None,
@@ -1021,6 +1062,7 @@ mod tests {
             db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
                 todo_id: Some(todo_id),
             step_id: None,
+                workspace_id: None,
                 limit: 10,
                 offset: 0,
                 status: Some("running"),
@@ -1036,6 +1078,7 @@ mod tests {
             db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
                 todo_id: Some(todo_id),
             step_id: None,
+                workspace_id: None,
                 limit: 10,
                 offset: 0,
                 status: Some("success"),
@@ -1051,6 +1094,7 @@ mod tests {
             db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
                 todo_id: Some(todo_id),
             step_id: None,
+                workspace_id: None,
                 limit: 10,
                 offset: 0,
                 status: Some("failed"),
@@ -1065,6 +1109,7 @@ mod tests {
         let (all, total_all) = db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
             todo_id: Some(todo_id),
             step_id: None,
+            workspace_id: None,
             limit: 10,
             offset: 0,
             status: None,
@@ -1080,6 +1125,7 @@ mod tests {
             db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
                 todo_id: Some(todo_id),
             step_id: None,
+                workspace_id: None,
                 limit: 10,
                 offset: 0,
                 status: Some("all"),
@@ -1118,6 +1164,7 @@ mod tests {
         let (records, _) = db.get_execution_records(crate::db::execution::ExecutionRecordQuery {
             todo_id: Some(todo_id),
             step_id: None,
+            workspace_id: None,
             limit: 100,
             offset: 0,
             status: None,

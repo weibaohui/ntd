@@ -329,6 +329,8 @@ export interface RecentCompletedTodo {
   prompt: string | null;
   executor: string | null;
   tag_ids: number[];
+  /** 所属工作空间（056 补充：纪念板据此反查项目名，免去前端按 id 二次查询）。 */
+  workspace_id?: number | null;
   completed_at: string;
   result: string | null;
   model: string | null;

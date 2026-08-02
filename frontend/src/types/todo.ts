@@ -77,6 +77,39 @@ export interface TodoCenterItem extends Todo {
   bound_slash_command?: string | null;
 }
 
+/** 事项中心服务端分页响应（056）。bucket_counts 为各分类计数（应用 search/status/actionType 后、应用 bucket 前）。 */
+export interface TodoCenterPage {
+  items: TodoCenterItem[];
+  total: number;
+  page: number;
+  page_size: number;
+  bucket_counts: Record<string, number>;
+  /** 当前工作空间内出现过的 action_type 去重列表（来源筛选下拉数据源）。 */
+  action_types: string[];
+}
+
+/** 事项轻量摘要（056）：不含 prompt 大字段，看板/下拉/记录补标题用。 */
+export interface TodoBrief {
+  id: number;
+  title: string;
+  status: Todo['status'];
+  executor?: string | null;
+  updated_at: string;
+  archived_at?: string | null;
+  workspace_id?: number | null;
+  tag_ids: number[];
+  /** prompt 是否非空（看板「展开 prompt」的显示开关，内容按需另取）。 */
+  has_prompt: boolean;
+}
+
+/** 事项列表分页响应（056，旧全量接口改造后的结构）。 */
+export interface TodoListPage {
+  items: Todo[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
 /** 环节 — 从 todo 提升而来的独立实体，不再寄生在 Todo 上。 */
 export interface StepSummary {
   id: number;
