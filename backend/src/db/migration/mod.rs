@@ -10,6 +10,7 @@ use super::Database;
 
 mod v1;
 mod v2_v5;
+pub mod consolidated_schema;
 mod v41_v46;
 mod v47_v53;
 mod v54;

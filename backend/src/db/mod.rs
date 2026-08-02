@@ -84,9 +84,24 @@ impl Database {
 }
 
 impl Database {
-    /// Open database connection (async).
+    /// Open database connection (async) and run migrations to the latest schema.
     /// path: database file path or ":memory:".
     pub async fn new(path: &str) -> Result<Self, sea_orm::DbErr> {
+        let db = Self::connect(path).await?;
+        db.init_tables().await?;
+        Ok(db)
+    }
+
+    /// 仅建立连接（连接池 + WAL），不跑迁移。
+    /// 测试用它构造「未迁移」的库，以单独验证增量迁移路径 / 合并 schema 漂移。
+    #[cfg(test)]
+    pub(crate) async fn connect_without_migrations(path: &str) -> Result<Self, sea_orm::DbErr> {
+        Self::connect(path).await
+    }
+
+    /// 建立 SQLite 连接池并启用 WAL（不执行迁移）。
+    /// `new` = `connect` + `init_tables` 的组合，拆开是为了测试能拿到「未迁移」的库。
+    async fn connect(path: &str) -> Result<Self, sea_orm::DbErr> {
         let url = if path == ":memory:" {
             "sqlite::memory:".to_string()
         } else {
@@ -129,6 +144,7 @@ impl Database {
             })?;
         let conn = SqlxSqliteConnector::from_sqlx_sqlite_pool(pool);
         let db = Self { conn };
+        // 连接就绪后立即开启 WAL 并校验生效（迁移前先切 WAL，保证后续 DDL 在 WAL 下执行）
         // Enable WAL mode and verify it took effect
         match db.conn
             .query_one(Statement::from_string(DbBackend::Sqlite, "PRAGMA journal_mode = WAL".to_string()))
@@ -155,7 +171,6 @@ impl Database {
             }
         }
 
-        db.init_tables().await?;
         Ok(db)
     }
 
@@ -218,11 +233,30 @@ impl Database {
     /// 没有对应行,下次启动会重跑 `m.up`。对 V1-V4 现有迁移而言重跑是幂等的(都基于
     /// `CREATE ... IF NOT EXISTS` 或预检查),但新加迁移时需要在 `Migration::up` 内部
     /// 保证幂等性,否则需要重构 trait 接受 `DatabaseTransaction` 参数。
+    /// 迁移入口：默认跑到最新版本。
     async fn run_migrations(&self) -> Result<(), sea_orm::DbErr> {
+        self.run_migrations_with(i64::MAX).await
+    }
+
+    /// 迁移 runner：增量执行 [1, max_version] 的未应用迁移。
+    /// `max_version = i64::MAX`（生产路径）时，若库为全新（schema_version 为空 且
+    /// 无任何应用表），改用合并 schema 一次性建全部表 + 索引并 seed schema_version，
+    /// 跳过增量链。判定依据保证 v0.0.89 旧库（已有 v1-v67 记录）和残留态库（有表）
+    /// 都走增量路径。测试传具体版本号可验证「老版本库升级到最新」的路径。
+    async fn run_migrations_with(&self, max_version: i64) -> Result<(), sea_orm::DbErr> {
         self.ensure_schema_version_table().await?;
         let applied = migration::read_applied_versions(self).await?;
+        // 仅生产入口（max_version == i64::MAX）且库全新时才 bootstrap；
+        // 测试传具体版本号可强制走增量，以验证老库升级路径。
+        if max_version == i64::MAX && applied.is_empty() && !self.has_user_tables().await? {
+            tracing::info!("fresh DB: bootstrap with consolidated schema (v1..=latest)");
+            return self.bootstrap_consolidated().await;
+        }
         for m in migration::all_migrations() {
             let v = m.version();
+            if v > max_version {
+                break;
+            }
             if applied.contains(&v) {
                 tracing::debug!("migration v{} ({}) already applied", v, m.name());
                 continue;
@@ -232,6 +266,62 @@ impl Database {
             self.record_migration(v, m.name()).await?;
             tracing::info!("migration v{} ({}) applied", v, m.name());
         }
+        Ok(())
+    }
+
+    /// 库中是否已有业务表（排除 SQLite 内部表与 schema_version）。
+    /// bootstrap 判定用：全新库为空，旧库 / 残留态库有表。
+    async fn has_user_tables(&self) -> Result<bool, sea_orm::DbErr> {
+        let sql = "SELECT COUNT(*) FROM sqlite_master \
+                   WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name != 'schema_version'";
+        let row = self
+            .conn
+            .query_one(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
+            .await?;
+        Ok(row
+            .and_then(|r| r.try_get_by_index::<i64>(0).ok())
+            .unwrap_or(0)
+            > 0)
+    }
+
+    /// 全新库一次性建全部表 + 索引（合并 schema），并把所有注册迁移标记为已应用。
+    /// 全部包在单连接事务里：任一步失败整体回滚，不留半成品 schema（PR #539 教训）。
+    async fn bootstrap_consolidated(&self) -> Result<(), sea_orm::DbErr> {
+        use sea_orm::TransactionTrait;
+        let txn = self.conn.begin().await?;
+        for ddl in migration::consolidated_schema::CONSOLIDATED_SCHEMA {
+            txn.execute(Statement::from_string(DbBackend::Sqlite, ddl.to_string()))
+                .await?;
+        }
+        // 把当前注册的每个迁移都写入 schema_version，之后 run_migrations 对它们全部跳过
+        for m in migration::all_migrations() {
+            let applied_at = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+            let stmt = Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO schema_version (version, name, applied_at) VALUES ($1, $2, $3)",
+                [m.version().into(), m.name().into(), applied_at.into()],
+            );
+            txn.execute(stmt).await?;
+        }
+        txn.commit().await?;
+        // 补迁移期数据种子（bootstrap 只跑 DDL，须与增量迁移的种子写入保持一致）：
+        // 1. V15 默认评审模板 —— 复用与 V15 语义一致的运行时方法（幂等）
+        self.ensure_default_review_template().await?;
+        // 2. V42/V34 的 /tmp 临时工作空间（孤儿记录收容所）—— 同样的 INSERT OR IGNORE
+        self.exec(
+            "INSERT OR IGNORE INTO project_directories (path, name, created_at, updated_at)
+             SELECT '/tmp', '临时工作空间',
+                    strftime('%Y-%m-%dT%H:%M:%SZ','now','utc'),
+                    strftime('%Y-%m-%dT%H:%M:%SZ','now','utc')
+             WHERE NOT EXISTS (SELECT 1 FROM project_directories WHERE path = '/tmp')",
+        )
+        .await?;
+        let latest = migration::all_migrations()
+            .iter()
+            .map(|m| m.version())
+            .max()
+            .unwrap_or(0);
+        tracing::info!("fresh DB bootstrapped to schema v{latest}");
         Ok(())
     }
 
@@ -455,6 +545,117 @@ mod tests {
                 v, stored, registered_name
             );
         }
+    }
+
+    /// 导出库的 schema 签名（表/索引名 + DDL），用于对比 bootstrap 与增量两种建库路径。
+    async fn schema_signature(db: &Database) -> Vec<(String, String)> {
+        db.conn
+            .query_all(sea_orm::Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT name, sql FROM sqlite_master \
+                 WHERE type IN ('table','index') AND name NOT LIKE 'sqlite_%' \
+                 AND name != 'schema_version' ORDER BY name"
+                    .to_string(),
+            ))
+            .await
+            .expect("schema dump")
+            .iter()
+            .map(|r| {
+                (
+                    r.try_get_by::<String, _>("name").unwrap_or_default(),
+                    r.try_get_by::<String, _>("sql").unwrap_or_default(),
+                )
+            })
+            .collect()
+    }
+
+    /// 统计各表行数（>0 的表），用于对比两条建库路径的种子数据完整性。
+    async fn count_rows_per_table(db: &Database) -> Vec<(String, i64)> {
+        let tables: Vec<String> = db
+            .conn
+            .query_all(sea_orm::Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' \
+                 AND name != 'schema_version' ORDER BY name"
+                    .to_string(),
+            ))
+            .await
+            .expect("tables")
+            .iter()
+            .map(|r| r.try_get_by::<String, _>("name").unwrap_or_default())
+            .collect();
+        let mut out = Vec::new();
+        for t in tables {
+            let cnt: i64 = db
+                .conn
+                .query_one(sea_orm::Statement::from_string(
+                    DbBackend::Sqlite,
+                    format!("SELECT COUNT(*) FROM \"{t}\""),
+                ))
+                .await
+                .expect("count")
+                .and_then(|r| r.try_get_by_index::<i64>(0).ok())
+                .unwrap_or(0);
+            if cnt > 0 {
+                out.push((t, cnt));
+            }
+        }
+        out
+    }
+
+    /// 漂移守卫：合并 schema（bootstrap 建出的全新库）必须与增量迁移链跑出来的库
+    /// 在结构（DDL）与种子数据（各表行数）上都完全一致。新增迁移若忘记同步重生成
+    /// `consolidated_schema.rs` 或补充种子，此测试失败。
+    #[tokio::test]
+    async fn test_consolidated_schema_matches_incremental() {
+        let boot = setup_db().await; // bootstrap 路径（全新库）
+        let inc = Database::connect_without_migrations(":memory:").await.unwrap();
+        // 用「最新版本号」而非 i64::MAX 走增量路径（避免触发 bootstrap）
+        let latest = migration::all_migrations()
+            .iter()
+            .map(|m| m.version())
+            .max()
+            .unwrap();
+        inc.run_migrations_with(latest)
+            .await
+            .expect("incremental must succeed");
+        assert_eq!(
+            schema_signature(&boot).await,
+            schema_signature(&inc).await,
+            "合并 schema 与增量迁移结果不一致，需重新生成 consolidated_schema.rs"
+        );
+        assert_eq!(
+            count_rows_per_table(&boot).await,
+            count_rows_per_table(&inc).await,
+            "两条建库路径的种子数据行数不一致"
+        );
+    }
+
+    /// 用户约束（发版衔接）：v0.0.89 发版库（增量到 v67）必须能继续增量迁移到最新。
+    /// 先跑到 v67 再跑到最新，最终 schema 应等于合并 schema。
+    #[tokio::test]
+    async fn test_v0089_db_migrates_to_latest() {
+        let db = Database::connect_without_migrations(":memory:").await.unwrap();
+        // v0.0.89 发版时的最新迁移版本是 v67
+        db.run_migrations_with(67).await.expect("build v67 state");
+        assert_eq!(db.get_schema_version().await.unwrap(), Some(67));
+        // 当前代码从 v67 增量升级到最新
+        let latest = migration::all_migrations()
+            .iter()
+            .map(|m| m.version())
+            .max()
+            .unwrap();
+        db.run_migrations_with(latest)
+            .await
+            .expect("migrate v67 -> latest");
+        assert_eq!(db.get_schema_version().await.unwrap(), Some(latest));
+        // 升级结果必须与全新 bootstrap 库一致
+        let boot = setup_db().await;
+        assert_eq!(
+            schema_signature(&boot).await,
+            schema_signature(&db).await,
+            "v67 升级结果必须等于合并 schema"
+        );
     }
 
     async fn create_test_execution_record(db: &Database, todo_id: i64, command: &str) -> i64 {
