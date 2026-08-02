@@ -63,6 +63,20 @@ pub struct TodoCenterPageQuery<'a> {
     pub page_size: i64,
 }
 
+/// 事项中心分页结果（056）：`page` 是按 total 截断后的**有效页码**——
+/// db 层截断后必须把它传回给调用方，否则响应元数据里的 page 会是
+/// 未截断的请求值（评审 F2：page=100000 但内容是第 3 页的矛盾）。
+#[derive(Debug)]
+pub struct TodoCenterPageData {
+    pub items: Vec<TodoCenterItem>,
+    pub total: i64,
+    pub page: i64,
+    pub page_size: i64,
+    pub bucket_counts: std::collections::HashMap<String, i64>,
+    /// 当前工作空间内出现过的 action_type 去重列表（卡片墙「来源筛选」下拉数据源）
+    pub action_types: Vec<String>,
+}
+
 /// QueryResult 行 → TodoBrief（056 轻量摘要）。独立函数保持 get_todo_briefs 函数体合规。
 fn brief_from_row(row: &sea_orm::QueryResult) -> Result<crate::models::TodoBrief, sea_orm::DbErr> {
     Ok(crate::models::TodoBrief {
@@ -329,12 +343,12 @@ impl Database {
     /// 事项中心服务端分页（056 核心）：SQL 层完成分桶/搜索/排序/分页，
     /// 聚合字段只对当页 ids 批量补算（避免全表聚合）。
     ///
-    /// 返回 (items, total, bucket_counts)；total 与 bucket_counts 的过滤口径见
-    /// `center_page_where` 注释。
+    /// 返回 `TodoCenterPageData`；total/bucket_counts 过滤口径见 `center_page_where`，
+    /// `page` 为按 total 截断后的有效页码（响应元数据必须与截断一致，评审 F2）。
     pub async fn get_todo_center_page(
         &self,
         q: TodoCenterPageQuery<'_>,
-    ) -> Result<(Vec<TodoCenterItem>, i64, std::collections::HashMap<String, i64>, Vec<String>), sea_orm::DbErr> {
+    ) -> Result<TodoCenterPageData, sea_orm::DbErr> {
         let page_size = q.page_size.clamp(1, 200);
         // 先计数再钳页码（CodeRabbit#2）：page 无上界时大 OFFSET 是外部可触发的慢查询；
         // offset 超出 total 时截断到最后一页，而不是让 SQLite 逐行跳过几千万行。
@@ -366,7 +380,7 @@ impl Database {
         let bucket_counts = self.count_todo_center_buckets(&q).await?;
         let action_types = self.list_center_action_types(q.workspace_id).await?;
         let items = self.build_center_items_by_ids(&ids).await?;
-        Ok((items, total, bucket_counts, action_types))
+        Ok(TodoCenterPageData { items, total, page, page_size, bucket_counts, action_types })
     }
 
     /// 当前工作空间内出现过的 action_type 去重列表（卡片墙「来源筛选」下拉数据源，056）。
@@ -573,14 +587,15 @@ impl Database {
 
     /// 旧 /todos 接口的服务端分页版（056 决策 3b：直接强制分页）。
     /// 隐藏已归档（「日常视图」语义，与旧 get_todos_by_workspace_id 一致）；
-    /// hours 过滤从内存下推 SQL；返回 (items, total)。
+    /// hours 过滤从内存下推 SQL；返回 (items, total, 有效页码)——
+    /// 有效页码按 total 截断，调用方响应用它而非请求值（评审 F2）。
     pub async fn get_todos_page_by_workspace(
         &self,
         workspace_id: Option<i64>,
         hours: Option<u32>,
         page: i64,
         page_size: i64,
-    ) -> Result<(Vec<Todo>, i64), sea_orm::DbErr> {
+    ) -> Result<(Vec<Todo>, i64, i64), sea_orm::DbErr> {
         let page = page.max(1);
         let page_size = page_size.clamp(1, 200);
         let mut cond = todos::Column::DeletedAt.is_null()
@@ -620,6 +635,7 @@ impl Database {
                 })
                 .collect(),
             total,
+            page,
         ))
     }
 
@@ -2223,6 +2239,14 @@ mod todo_center_tests {
     use crate::db::Database;
     use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
+    /// 056 评审 F2 修复后：`get_todo_center_page` 返回 TodoCenterPageData struct。
+    /// 展开为五元组，保持既有测试的解构写法稳定，同时暴露有效页码供断言。
+    fn center_tuple(
+        d: crate::db::TodoCenterPageData,
+    ) -> (Vec<TodoCenterItem>, i64, i64, std::collections::HashMap<String, i64>, Vec<String>) {
+        (d.items, d.total, d.page, d.bucket_counts, d.action_types)
+    }
+
     async fn fresh_db() -> Database {
         Database::new(":memory:").await.expect("memory db must open")
     }
@@ -2253,11 +2277,11 @@ mod todo_center_tests {
     async fn test_get_todos_by_workspace_id_excludes_archived() {
         let db = fresh_db().await;
         let id = seed_todo(&db, "归档项").await;
-        let (before, _) = db.get_todos_page_by_workspace(None, None, 1, 200).await.unwrap();
+        let (before, _, _) = db.get_todos_page_by_workspace(None, None, 1, 200).await.unwrap();
         assert_eq!(before.len(), 1, "归档前应在日常视图可见");
 
         assert!(db.archive_todo(id).await.unwrap(), "archive 应命中一行");
-        let (after, _) = db.get_todos_page_by_workspace(None, None, 1, 200).await.unwrap();
+        let (after, _, _) = db.get_todos_page_by_workspace(None, None, 1, 200).await.unwrap();
         assert!(after.is_empty(), "归档后日常视图应隐藏该事项");
     }
 
@@ -2306,28 +2330,30 @@ mod todo_center_tests {
         db.archive_todo(archived_id).await.unwrap();
 
         // 不过滤：应同时含两类
-        let (all, _, _, _) = db.get_todo_center_page(crate::db::TodoCenterPageQuery {
+        let (all, _, _, _, _) = db.get_todo_center_page(crate::db::TodoCenterPageQuery {
                 workspace_id: None, bucket: None, search: None, status: None, action_type: None, sort_by: None, sort_desc: true, page: 1, page_size: 200,
-            }).await.unwrap();
+            }).await.map(center_tuple).unwrap();
         assert_eq!(all.len(), 2, "未过滤应返回全部非软删事项");
 
         // 手动桶
-        let (manual, _, _, _) = db
+        let (manual, _, _, _, _) = db
             .get_todo_center_page(crate::db::TodoCenterPageQuery {
                 workspace_id: None, bucket: Some(ComputedBucket::Manual), search: None, status: None, action_type: None, sort_by: None, sort_desc: true, page: 1, page_size: 200,
             })
             .await
+            .map(center_tuple)
             .unwrap();
         assert_eq!(manual.len(), 1);
         assert_eq!(manual[0].todo.id, manual_id);
         assert_eq!(manual[0].computed_bucket, ComputedBucket::Manual);
 
         // 已归档桶
-        let (archived, _, _, _) = db
+        let (archived, _, _, _, _) = db
             .get_todo_center_page(crate::db::TodoCenterPageQuery {
                 workspace_id: None, bucket: Some(ComputedBucket::Archived), search: None, status: None, action_type: None, sort_by: None, sort_desc: true, page: 1, page_size: 200,
             })
             .await
+            .map(center_tuple)
             .unwrap();
         assert_eq!(archived.len(), 1);
         assert_eq!(archived[0].todo.id, archived_id);
@@ -2351,9 +2377,9 @@ mod todo_center_tests {
         .await
         .expect("insert step");
 
-        let (items, _, _, _) = db.get_todo_center_page(crate::db::TodoCenterPageQuery {
+        let (items, _, _, _, _) = db.get_todo_center_page(crate::db::TodoCenterPageQuery {
                 workspace_id: None, bucket: None, search: None, status: None, action_type: None, sort_by: None, sort_desc: true, page: 1, page_size: 200,
-            }).await.unwrap();
+            }).await.map(center_tuple).unwrap();
         let item = items.iter().find(|i| i.todo.id == id).expect("todo present");
         assert_eq!(item.used_by_loop_step_count, 1, "应聚合到 1 次启用引用");
         assert_eq!(item.computed_bucket, ComputedBucket::LoopDriven);
@@ -2366,20 +2392,20 @@ mod todo_center_tests {
         seed_todo(&db, "修复登录").await;
         seed_todo(&db, "优化prompt").await;
         // 全量应含两条
-        let (all, _, _, _) = db.get_todo_center_page(crate::db::TodoCenterPageQuery {
+        let (all, _, _, _, _) = db.get_todo_center_page(crate::db::TodoCenterPageQuery {
                 workspace_id: None, bucket: None, search: None, status: None, action_type: None, sort_by: None, sort_desc: true, page: 1, page_size: 200,
-            }).await.unwrap();
+            }).await.map(center_tuple).unwrap();
         assert_eq!(all.len(), 2);
         // search="登录" 只命中第一条
-        let (hit, _, _, _) = db.get_todo_center_page(crate::db::TodoCenterPageQuery {
+        let (hit, _, _, _, _) = db.get_todo_center_page(crate::db::TodoCenterPageQuery {
                 workspace_id: None, bucket: None, search: Some("登录"), status: None, action_type: None, sort_by: None, sort_desc: true, page: 1, page_size: 200,
-            }).await.unwrap();
+            }).await.map(center_tuple).unwrap();
         assert_eq!(hit.len(), 1);
         assert_eq!(hit[0].todo.title, "修复登录");
         // 大小写不敏感：search="PROMPT" 命中 prompt 子串
-        let (hit2, _, _, _) = db.get_todo_center_page(crate::db::TodoCenterPageQuery {
+        let (hit2, _, _, _, _) = db.get_todo_center_page(crate::db::TodoCenterPageQuery {
                 workspace_id: None, bucket: None, search: Some("PROMPT"), status: None, action_type: None, sort_by: None, sort_desc: true, page: 1, page_size: 200,
-            }).await.unwrap();
+            }).await.map(center_tuple).unwrap();
         assert_eq!(hit2.len(), 1);
         assert_eq!(hit2[0].todo.title, "优化prompt");
     }
@@ -2601,7 +2627,7 @@ mod todo_center_tests {
         assert_eq!(counts.get("loop_driven"), Some(&1), "loop 计数");
 
         // Rust 侧：同一批数据经 build_center_item 推导（聚合来自 DB，同源）
-        let (items, total, _, _) = db
+        let (items, total, _, _, _) = db
             .get_todo_center_page(crate::db::TodoCenterPageQuery {
                 workspace_id: None,
                 bucket: None,
@@ -2612,6 +2638,7 @@ mod todo_center_tests {
                 page_size: 200,
             })
             .await
+            .map(center_tuple)
             .unwrap();
         assert_eq!(total, 5);
         let rust_bucket = |id: i64| {
@@ -2635,7 +2662,7 @@ mod todo_center_tests {
             seed_todo(&db, &format!("事项{i}")).await;
         }
         // page_size=2 时第 3 页只有 1 条，total=5
-        let (items, total, counts, _) = db
+        let (items, total, _, counts, _) = db
             .get_todo_center_page(crate::db::TodoCenterPageQuery {
                 workspace_id: None,
                 bucket: None,
@@ -2646,12 +2673,13 @@ mod todo_center_tests {
                 page_size: 2,
             })
             .await
+            .map(center_tuple)
             .unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(total, 5);
         assert_eq!(counts.get("manual"), Some(&5));
         // bucket 过滤后 total 收縮，counts 不受影响（Tab 角标语义）
-        let (items, total, counts, _) = db
+        let (items, total, _, counts, _) = db
             .get_todo_center_page(crate::db::TodoCenterPageQuery {
                 workspace_id: None,
                 bucket: Some(ComputedBucket::Archived),
@@ -2662,6 +2690,7 @@ mod todo_center_tests {
                 page_size: 20,
             })
             .await
+            .map(center_tuple)
             .unwrap();
         assert!(items.is_empty());
         assert_eq!(total, 0, "archived 桶为空，total=0");
@@ -2704,14 +2733,14 @@ mod todo_center_tests {
         ))
         .await
         .unwrap();
-        let (items, total) = db
+        let (items, total, _) = db
             .get_todos_page_by_workspace(None, Some(24), 1, 200)
             .await
             .unwrap();
         assert_eq!(total, 1, "hours=24 只留最近一条");
         assert_eq!(items[0].id, recent);
 
-        let (_, total_all) = db
+        let (_, total_all, _) = db
             .get_todos_page_by_workspace(None, None, 1, 200)
             .await
             .unwrap();
@@ -2780,7 +2809,7 @@ mod todo_center_tests {
         let archived_id = seed_todo(&db, "a").await;
         db.archive_todo(archived_id).await.unwrap();
 
-        let (items, _, _, _) = db
+        let (items, _, _, _, _) = db
             .get_todo_center_page(crate::db::TodoCenterPageQuery {
                 workspace_id: None,
                 bucket: None,
@@ -2793,6 +2822,7 @@ mod todo_center_tests {
                 page_size: 20,
             })
             .await
+            .map(center_tuple)
             .unwrap();
         let order: Vec<i64> = items.iter().map(|i| i.todo.id).collect();
         assert_eq!(
@@ -2809,7 +2839,7 @@ mod todo_center_tests {
         seed_todo(&db, "进度 50% 完成").await;
         seed_todo(&db, "进度 50x 完成").await;
         // 未转义时 "%50%" 中的 % 会同时命中两条；转义后只命中字面条目
-        let (items, total, _, _) = db
+        let (items, total, _, _, _) = db
             .get_todo_center_page(crate::db::TodoCenterPageQuery {
                 workspace_id: None,
                 bucket: None,
@@ -2822,11 +2852,12 @@ mod todo_center_tests {
                 page_size: 20,
             })
             .await
+            .map(center_tuple)
             .unwrap();
         assert_eq!(total, 1, "% 必须按字面匹配");
         assert_eq!(items[0].todo.title, "进度 50% 完成");
         // 下划线同样转义
-        let (_, total2, _, _) = db
+        let (_, total2, _, _, _) = db
             .get_todo_center_page(crate::db::TodoCenterPageQuery {
                 workspace_id: None,
                 bucket: None,
@@ -2839,6 +2870,7 @@ mod todo_center_tests {
                 page_size: 20,
             })
             .await
+            .map(center_tuple)
             .unwrap();
         assert_eq!(total2, 0, "_ 必须按字面匹配，不存在含 50_ 的标题");
     }
@@ -2868,43 +2900,47 @@ mod todo_center_tests {
             page: 1,
             page_size: 20,
         };
-        let (items, total, _, _) = db
+        let (items, total, _, _, _) = db
             .get_todo_center_page(crate::db::TodoCenterPageQuery {
                 status: Some("completed"),
                 ..base.clone()
             })
             .await
+            .map(center_tuple)
             .unwrap();
         assert_eq!(total, 1);
         assert_eq!(items[0].todo.id, done_id);
 
-        let (items, total, _, _) = db
+        let (items, total, _, _, _) = db
             .get_todo_center_page(crate::db::TodoCenterPageQuery {
                 action_type: Some("quick"),
                 ..base.clone()
             })
             .await
+            .map(center_tuple)
             .unwrap();
         assert_eq!(total, 1);
         assert_eq!(items[0].todo.id, act_id);
 
         // 组合过滤：completed + quick 应无交集（quick 是 pending）
-        let (_, total3, _, _) = db
+        let (_, total3, _, _, _) = db
             .get_todo_center_page(crate::db::TodoCenterPageQuery {
                 status: Some("completed"),
                 action_type: Some("quick"),
                 ..base.clone()
             })
             .await
+            .map(center_tuple)
             .unwrap();
         assert_eq!(total3, 0);
         // pending_id 只是防止 unused 警告，并验证 status=pending 能命中
-        let (_, total4, _, _) = db
+        let (_, total4, _, _, _) = db
             .get_todo_center_page(crate::db::TodoCenterPageQuery {
                 status: Some("pending"),
                 ..base.clone()
             })
             .await
+            .map(center_tuple)
             .unwrap();
         assert_eq!(total4, 2, "pending 应命中 待办+快捷（{pending_id}/{act_id}）");
     }
@@ -2920,6 +2956,7 @@ mod todo_center_tests {
     }
 
     /// CodeRabbit#2 回归：page 超界时按 total 截断到最后一页，不执行大 OFFSET。
+    /// 评审 F2 回归：返回值中的页码必须是截断后的有效页（响应元数据与内容一致）。
     #[tokio::test]
     async fn test_center_page_clamps_overflow_page() {
         let db = fresh_db().await;
@@ -2927,7 +2964,7 @@ mod todo_center_tests {
             seed_todo(&db, &format!("项{i}")).await;
         }
         // page=100000 应被截断到最后一页（total=5, page_size=2 → max_page=3）
-        let (items, total, _, _) = db
+        let (items, total, page, _, _) = db
             .get_todo_center_page(crate::db::TodoCenterPageQuery {
                 workspace_id: None,
                 bucket: None,
@@ -2940,16 +2977,19 @@ mod todo_center_tests {
                 page_size: 2,
             })
             .await
+            .map(center_tuple)
             .unwrap();
         assert_eq!(total, 5);
+        assert_eq!(page, 3, "返回的页码必须是截断后的有效页（评审 F2）");
         assert_eq!(items.len(), 1, "截断到最后一页只剩 1 条");
 
-        // 旧 /todos 分页同样截断
-        let (items2, _) = db
+        // 旧 /todos 分页同样截断且返回有效页码
+        let (items2, _, page2) = db
             .get_todos_page_by_workspace(None, None, 99999, 2)
             .await
             .unwrap();
         assert_eq!(items2.len(), 1);
+        assert_eq!(page2, 3, "旧 /todos 分页同样返回有效页码（评审 F2）");
     }
 }
 

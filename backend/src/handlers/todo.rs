@@ -694,14 +694,15 @@ pub async fn get_todos_v1(
 ) -> Result<ApiResponse<crate::models::TodoListPage>, AppError> {
     let page = params.page.unwrap_or(1).max(1);
     let page_size = params.page_size.unwrap_or(50).clamp(1, 200);
-    let (items, total) = state
+    // db 返回截断后的有效页码：响应元数据必须用它而非请求值（评审 F2）
+    let (items, total, effective_page) = state
         .db
         .get_todos_page_by_workspace(Some(ws_id), params.hours, page, page_size)
         .await?;
     Ok(ApiResponse::ok(crate::models::TodoListPage {
         items,
         total,
-        page,
+        page: effective_page,
         page_size,
     }))
 }
@@ -726,6 +727,11 @@ pub async fn get_todo_count_v1(
 
 /// V1: 事项轻量摘要（056）。ids 省略时返回该 ws 全部 brief（看板全量渲染用，
 /// 传输量约为整行 Todo 的 1/10）；指定 ids 时按给定集合返回。
+///
+/// **workspace 隔离例外声明（评审 F1）**：ids 非空（定点查询模式）时**不校验**
+/// id 是否属于路径中的 workspace——id 全局唯一，Dashboard 全局运营视图需要跨 ws
+/// 反查标题。这是 ADR-7 纯 ws 隔离的唯一例外，且仅暴露 title/status 等轻字段；
+/// ids 省略（看板模式）时仍严格按路径 ws 过滤。
 pub async fn get_todo_briefs_v1(
     State(state): State<AppState>,
     Path(ws_id): Path<i64>,
@@ -758,7 +764,7 @@ pub async fn get_todo_center_v1(
     let page_size = params.page_size.unwrap_or(20).clamp(1, 200);
     // 排序方向仅识别 asc，其余一律 desc（白名单，防注入）
     let sort_desc = !matches!(params.sort_order.as_deref(), Some("asc"));
-    let (items, total, bucket_counts, action_types) = state
+    let data = state
         .db
         .get_todo_center_page(crate::db::TodoCenterPageQuery {
             workspace_id: Some(ws_id),
@@ -772,13 +778,14 @@ pub async fn get_todo_center_v1(
             page_size,
         })
         .await?;
+    // data.page 是 db 按 total 截断后的有效页码，响应必须用它（评审 F2）
     Ok(ApiResponse::ok(crate::models::TodoCenterPage {
-        items,
-        total,
-        page,
-        page_size,
-        bucket_counts,
-        action_types,
+        items: data.items,
+        total: data.total,
+        page: data.page,
+        page_size: data.page_size,
+        bucket_counts: data.bucket_counts,
+        action_types: data.action_types,
     }))
 }
 
