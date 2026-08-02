@@ -98,7 +98,8 @@ async fn test_get_todos() {
 
     let body: serde_json::Value = read_json_body(response).await;
     assert_eq!(body["code"], 0);
-    let todos = body["data"].as_array().unwrap();
+    // 056：GET /todos 响应从全量数组改为分页结构 { items, total, page, page_size }
+    let todos = body["data"]["items"].as_array().unwrap();
     // Database::new 在 :memory: db 上会自动 seed 评审任务(todo_type=1)。
     // 这里只验证我们刚创建的 "Test" todo 出现在列表里,
     // 不去数总数(seed 数据是基础设施的一部分,不是用户数据)。
@@ -617,7 +618,7 @@ async fn test_todo_with_tags() {
         .unwrap();
     let get_resp = app.oneshot(get_req).await.unwrap();
     let get_body: serde_json::Value = read_json_body(get_resp).await;
-    let todos = get_body["data"].as_array().unwrap();
+    let todos = get_body["data"]["items"].as_array().unwrap();
     let todo = todos.iter().find(|t| t["id"].as_i64().unwrap() == todo_id).unwrap();
     assert_eq!(todo["tag_ids"], json!([tag2_id]));
 }

@@ -1,5 +1,9 @@
 //! Linux 专属的 detached redeploy 实现（升级流程用）。
 //!
+//! #![allow(print_stdout/print_stderr)]：redeploy 进度需直接打到用户终端，
+//! 走 tracing 会错进 daemon 日志文件。
+#![allow(clippy::print_stdout, clippy::print_stderr)]
+//!
 //! 设计动机：`ntd.service` 的 `KillMode=mixed` 在 `daemon stop` 触发时，
 //! 会按 cgroup 清理所有子进程。原实现 `sh -c "ntd daemon stop && ..."` 的
 //! 子 shell 仍属于 ntd.service 的 cgroup，会被 SIGKILL 一起带走，导致
@@ -129,7 +133,7 @@ pub fn build_redeploy_spec_nonblocking(
 /// - User 模式必须加 --user 才能连到用户的 systemd 实例；
 ///   System 模式和 Unknown 模式都不加，这样即使探测失败回退也能跑
 ///   （Unknown 时连不上 ntd.service 的实例，但 redeploy 脚本里用的是
-///    ntd 自己的 stop/uninstall/install 逻辑，会重新匹配实际模式）。
+///   ntd 自己的 stop/uninstall/install 逻辑，会重新匹配实际模式）。
 fn build_redeploy_spec_inner(
     mode: DaemonInstallMode,
     script: &str,

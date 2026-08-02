@@ -12,6 +12,7 @@ import XMarkdown from '@ant-design/x-markdown';
 import { ExecutorBadge } from '@/components/ExecutorBadge';
 import { useApp } from '@/hooks/useApp';
 import { useViewState } from '@/hooks/useViewState';
+import { useTodoById } from '@/hooks/useTodoById';
 import { formatLocalDateTime } from '@/utils/datetime';
 import { formatTokens, formatDuration, elapsedSeconds } from '@/utils/format';
 import { LOG_TYPE_COLORS, STATUS_COLORS, REVIEW_RESULT_COLORS } from '@/constants';
@@ -136,7 +137,8 @@ export function RunningRecordDrawer({ record, open, onClose, onRefresh }: Runnin
   const { selectTodo } = useViewState();
   const [stopping, setStopping] = useState(false);
 
-  const todo = record ? state.todos.find(t => t.id === record.todo_id) : null;
+  // 056：全局桶删除后按 id 定点查询（带共享缓存），记录为 null 时不发请求
+  const todo = useTodoById(state.selectedWorkspace, record?.todo_id ?? null);
   const isRunning = record?.status === 'running';
 
   const handleNavigateTodo = useCallback(() => {

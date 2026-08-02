@@ -1,19 +1,67 @@
 import { api, unwrap } from './client';
-import type { Todo, Tag, TodoTemplate, CustomTemplateStatus, ComputedBucket, TodoCenterItem, LoopRefSummary } from '@/types';
+import type { Todo, Tag, TodoTemplate, CustomTemplateStatus, ComputedBucket, TodoCenterItem, TodoCenterPage, TodoBrief, TodoListPage, LoopRefSummary } from '@/types';
 
 // Todo APIs — 所有 todo 端点嵌套在 /api/v1/workspaces/{ws}/todos 下（后端 ADR-7 纯 workspace 隔离）。
 // workspaceId 从 query/body 提升到 URL 路径段，调用方必须显式传入。
 
 /**
- * 列出指定工作空间下的 todos。
- * workspaceId 提升到路径段（v1 纯 workspace-scoped，不再支持跨空间列表）。
+ * 列出指定工作空间下的 todos（056：服务端强制分页）。
+ * 响应从全量数组改为分页结构；调用方若确实需要全量（如看板），
+ * 应改用不含大字段的 `getTodoBriefs`。
  */
-export async function getAllTodos(workspaceId: number, hours?: number): Promise<Todo[]> {
+export async function getTodosPage(
+  workspaceId: number,
+  options: { hours?: number; page?: number; pageSize?: number } = {},
+): Promise<TodoListPage> {
   const params: Record<string, number> = {};
-  if (hours !== undefined) {
-    params.hours = hours;
-  }
+  if (options.hours !== undefined) params.hours = options.hours;
+  if (options.page !== undefined) params.page = options.page;
+  if (options.pageSize !== undefined) params.page_size = options.pageSize;
   return unwrap(await api.get(`/api/v1/workspaces/${workspaceId}/todos`, { params }));
+}
+
+/** 056 轻量接口：工作空间内全部 todo id（日常视图，隐藏已归档）。 */
+export async function getTodoIds(workspaceId: number): Promise<number[]> {
+  return unwrap(await api.get(`/api/v1/workspaces/${workspaceId}/todos/ids`));
+}
+
+/**
+ * 056：E 类「确实需要全量」场景的分批拉取（备份导入去重需要 prompt 判重）。
+ * 翻页由响应的 total 驱动（CodeRabbit#14）：不以「本页条数 < 请求的 page_size」
+ * 判定末页——后端若调整 page_size 上限，该判定会提前终止造成静默截断。
+ */
+export async function getAllTodosBatched(workspaceId: number): Promise<Todo[]> {
+  const all: Todo[] = [];
+  let page = 1;
+  for (;;) {
+    const res = await getTodosPage(workspaceId, { page, pageSize: 200 });
+    all.push(...res.items);
+    // 已拿够总数或本页为空（防御后端忽略 page 参数导致死循环）时结束
+    if (all.length >= res.total || res.items.length === 0) break;
+    page += 1;
+  }
+  return all;
+}
+
+/** 056 轻量接口：工作空间内 todo 计数（COUNT(*)，不拉行）。 */
+export async function getTodoCount(workspaceId: number): Promise<number> {
+  const res = unwrap(await api.get(`/api/v1/workspaces/${workspaceId}/todos/count`));
+  return (res as { count: number }).count;
+}
+
+/**
+ * 056 轻量接口：事项摘要（不含 prompt 大字段）。
+ * ids 省略时返回该 ws 全部 brief（看板全量渲染用，隐藏已归档）；
+ * 指定 ids 时按给定集合返回（含已归档，详情/记录补标题用）。
+ */
+export async function getTodoBriefs(
+  workspaceId: number,
+  options: { ids?: number[]; hours?: number } = {},
+): Promise<TodoBrief[]> {
+  const params: Record<string, string | number> = {};
+  if (options.ids && options.ids.length > 0) params.ids = options.ids.join(',');
+  if (options.hours !== undefined) params.hours = options.hours;
+  return unwrap(await api.get(`/api/v1/workspaces/${workspaceId}/todos/brief`, { params }));
 }
 
 export async function createTodo(
@@ -71,6 +119,11 @@ export async function updateTodo(
 
 export async function deleteTodo(workspaceId: number, id: number): Promise<void> {
   await api.delete(`/api/v1/workspaces/${workspaceId}/todos/${id}`);
+}
+
+/** 单字段改状态（056：看板拖拽用）——后端 force-status 端点只改 status，无需携带 prompt 全量字段。 */
+export async function updateTodoStatus(workspaceId: number, id: number, status: string): Promise<Todo> {
+  return unwrap(await api.put(`/api/v1/workspaces/${workspaceId}/todos/${id}/force-status`, { status }));
 }
 
 export async function updateTodoTags(workspaceId: number, todoId: number, tagIds: number[]): Promise<void> {
@@ -273,18 +326,32 @@ export async function updateScheduler(
 // ─── 事项中心（Todo Center）API ─────────────────────────────
 
 /**
- * 拉取事项中心列表（带 computed_bucket / loop 引用计数 / 最近执行聚合）。
+ * 拉取事项中心列表（056：服务端分页）。
  *
- * workspaceId 提升到路径段（v1 纯 workspace-scoped）。
- * 不传 bucket 时后端返回全部分类，前端按 computed_bucket 自行分桶并展示各 Tab 数量；
- * 传入 bucket 则服务端按分类过滤（分页前完成分桶，保证数量正确）。
+ * 分桶/搜索/排序/分页全部下推 SQL；返回含 total 与 bucket_counts（Tab 角标用）。
  */
 export async function getTodoCenter(
   workspaceId: number,
-  bucket?: ComputedBucket,
-): Promise<TodoCenterItem[]> {
+  options: {
+    bucket?: ComputedBucket;
+    search?: string;
+    page?: number;
+    pageSize?: number;
+    sortBy?: string;
+    sortOrder?: 'asc' | 'desc';
+    status?: string;
+    actionType?: string;
+  } = {},
+): Promise<TodoCenterPage> {
   const params: Record<string, string | number> = {};
-  if (bucket !== undefined) params.bucket = bucket;
+  if (options.bucket !== undefined) params.bucket = options.bucket;
+  if (options.search) params.search = options.search;
+  if (options.page !== undefined) params.page = options.page;
+  if (options.pageSize !== undefined) params.page_size = options.pageSize;
+  if (options.sortBy) params.sort_by = options.sortBy;
+  if (options.sortOrder) params.sort_order = options.sortOrder;
+  if (options.status && options.status !== 'all') params.status = options.status;
+  if (options.actionType && options.actionType !== 'all') params.action_type = options.actionType;
   return unwrap(await api.get(`/api/v1/workspaces/${workspaceId}/todos/center`, { params }));
 }
 

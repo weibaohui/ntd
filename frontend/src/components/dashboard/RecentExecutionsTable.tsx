@@ -6,7 +6,7 @@
 import type { ColumnsType } from 'antd/es/table';
 import { Card, Table, Badge, Tag, Empty } from 'antd';
 import { ThunderboltOutlined } from '@ant-design/icons';
-import type { DashboardStats, Todo } from '@/types';
+import type { DashboardStats, TodoBrief } from '@/types';
 import { getExecutorOption } from '@/types';
 import { formatRelativeTime } from '@/utils/datetime';
 
@@ -15,12 +15,12 @@ type RecentExecution = DashboardStats['recent_executions'][number];
 
 interface RecentExecutionsTableProps {
   executions: RecentExecution[];
-  /** 全量 todo,用于把 todo_id 反查为标题;查不到时回退「任务 #id」。 */
-  todos: Todo[];
+  /** 056：todo 摘要（仅标题反查需要），查不到时回退「任务 #id」。 */
+  todos: TodoBrief[];
 }
 
 // 把 todo_id 渲染为可读标题:优先用 todo 标题,缺失才回退编号,避免空白单元格。
-function renderTodoTitle(todoId: number, todos: Todo[]) {
+function renderTodoTitle(todoId: number, todos: TodoBrief[]) {
   const todo = todos.find((t) => t.id === todoId);
   return <span style={{ fontWeight: 600 }}>{todo?.title ?? `任务 #${todoId}`}</span>;
 }
@@ -64,7 +64,7 @@ function renderTime(startedAt: string) {
 
 // 列定义抽成纯函数:依赖 todos(标题反查)。
 // 标注 ColumnsType<RecentExecution> 让 render 的 value 形参得到精确类型而非隐式 any。
-function buildColumns(todos: Todo[]): ColumnsType<RecentExecution> {
+function buildColumns(todos: TodoBrief[]): ColumnsType<RecentExecution> {
   return [
     { title: '任务', dataIndex: 'todo_id', key: 'todo_id', render: (v) => renderTodoTitle(v as number, todos) },
     { title: '执行器', dataIndex: 'executor', key: 'executor', width: 100, render: (v) => renderExecutor(v as string | null) },

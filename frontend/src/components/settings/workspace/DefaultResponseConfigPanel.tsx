@@ -4,7 +4,7 @@ import * as db from '@/utils/database';
 import { listLoops } from '@/utils/database/loops';
 import { EXECUTORS_FOR_PICKER } from '@/utils/executors';
 import { ExecutorPicker } from '@/components/todo-drawer/ExecutorPicker';
-import type { Todo } from '@/types';
+import type { TodoBrief } from '@/types';
 import type { LoopListItem } from '@/types/loop';
 import type { AgentBot } from '@/utils/database';
 import type { FeishuHistoryChat } from '@/types';
@@ -18,7 +18,7 @@ interface DefaultResponseConfigPanelProps {
 }
 
 export function DefaultResponseConfigPanel({ workspaceId, onChanged }: DefaultResponseConfigPanelProps) {
-  const [todos, setTodos] = useState<Todo[]>([]);
+  const [todos, setTodos] = useState<TodoBrief[]>([]);
   const [loops, setLoops] = useState<LoopListItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -36,7 +36,7 @@ export function DefaultResponseConfigPanel({ workspaceId, onChanged }: DefaultRe
     loadSettings();
     loadHistorySettings();
     // 按 workspace_id 过滤 Todo，使下拉列表仅显示当前工作空间内的事项
-    db.getAllTodos(workspaceId).then(setTodos).catch(() => {});
+    db.getTodoBriefs(workspaceId).then(setTodos).catch(() => {});
     // 加载当前工作空间的环路列表
     listLoops(workspaceId).then(setLoops).catch(() => {});
     // 加载当前工作空间的飞书 bot（一个工作空间一个 bot），用于历史拉取群配置

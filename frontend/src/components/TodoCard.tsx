@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { Tag, Badge, message } from 'antd';
+import { Tag, Badge, message, Spin } from 'antd';
 import {
   CheckCircleOutlined,
   CloseCircleOutlined,
@@ -23,6 +23,10 @@ export interface TodoCardProps {
   title: string;
   prompt: string | null;
   resultText: string | null;
+  /** 056：prompt 是否非空（看板 brief 模式不传 prompt 本体，仅据此显示区块入口） */
+  hasPrompt?: boolean;
+  /** 056：prompt 正按需加载中（展开时显示 Spin 而非内容） */
+  promptLoading?: boolean;
 
   /** Status display */
   isSuccess: boolean;
@@ -98,6 +102,8 @@ export const TodoCard = memo(function TodoCard({
   title,
   prompt,
   resultText,
+  hasPrompt,
+  promptLoading,
   isSuccess,
   showResultSection,
   executor,
@@ -175,8 +181,8 @@ export const TodoCard = memo(function TodoCard({
 
       {/* ── Card Body (Expandable Sections) ── */}
       <div className="kanban-card-body">
-        {/* Prompt Section */}
-        {prompt && (
+        {/* Prompt Section（056：hasPrompt 决定区块入口；内容按需加载） */}
+        {(prompt || hasPrompt) && (
           <div className="kanban-card-section">
             <div
               className="kanban-card-section-header kanban-section-prompt"
@@ -186,7 +192,7 @@ export const TodoCard = memo(function TodoCard({
               onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onTogglePrompt(); } }}
             >
               <span className="kanban-card-section-label"><EditOutlined /> Prompt</span>
-              {prompt && (
+              {prompt != null && prompt !== '' && (
                 <CopyButton
                   text={prompt}
                   type="text"
@@ -202,7 +208,15 @@ export const TodoCard = memo(function TodoCard({
             </div>
             {promptExpanded && (
               <div className="kanban-card-section-content">
-                <XMarkdown content={prompt} />
+                {promptLoading ? (
+                  <Spin size="small" />
+                ) : prompt != null ? (
+                  <XMarkdown content={prompt} />
+                ) : (
+                  // CodeRabbit#10：加载失败后 promptLoading=false 且 prompt 为 null，
+                  // 必须给出终态文案，否则永远停在加载动画
+                  <span style={{ color: 'var(--color-text-tertiary)', fontSize: 12 }}>加载失败，收起后重试</span>
+                )}
               </div>
             )}
           </div>

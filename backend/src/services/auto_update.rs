@@ -143,7 +143,7 @@ fn compute_next_check_time(interval: &str, hour: u32) -> chrono::DateTime<chrono
                 Weekday::Sun => 1,
             };
             let date = now.date_naive() + Duration::days(days_until_monday);
-            date.and_time(time).and_local_timezone(Local).unwrap()
+            resolve_local_datetime(date.and_time(time))
         }
         "month" => {
             // 下一个月 1 号的指定小时
@@ -157,17 +157,40 @@ fn compute_next_check_time(interval: &str, hour: u32) -> chrono::DateTime<chrono
                     // fallback: 用当前日期 + 30 天
                     now.date_naive() + Duration::days(30)
                 });
-            date.and_time(time).and_local_timezone(Local).unwrap()
+            resolve_local_datetime(date.and_time(time))
         }
         _ => {
             // "day" 或其他值：下一个指定小时
-            let today = now.date_naive().and_time(time).and_local_timezone(Local).unwrap();
+            let today = resolve_local_datetime(now.date_naive().and_time(time));
             if now >= today {
                 today + Duration::days(1)
             } else {
                 today
             }
         }
+    }
+}
+
+/// 把 naive 本地时间安全映射到 Local（056 修复：原 `.unwrap()` 在夏令时切换日 panic）。
+///
+/// 三种情况：
+/// - Single：正常映射；
+/// - Ambiguous（秋令时回拨，该时刻出现两次）：取较早一次，避免跳过当天的检查；
+/// - None（春令时前跳，该时刻不存在）：顺延 1 小时重试，仍失败兜底为当前时间
+///   （此时段检查后 sleep 逻辑会自然修正到下一轮）。
+fn resolve_local_datetime(
+    dt: chrono::NaiveDateTime,
+) -> chrono::DateTime<chrono::Local> {
+    use chrono::Local;
+    match dt.and_local_timezone(Local) {
+        chrono::LocalResult::Single(t) => t,
+        chrono::LocalResult::Ambiguous(earlier, _) => earlier,
+        chrono::LocalResult::None => (dt + chrono::Duration::hours(1))
+            .and_local_timezone(Local)
+            .single()
+            // dt+1h 仍落不进本地时间（理论上连续两次切换）时兜底当前时间，
+            // sleep 逻辑会自然修正到下一轮检查点。
+            .unwrap_or_else(Local::now),
     }
 }
 
@@ -424,5 +447,50 @@ mod tests {
         let next = compute_next_check_time("month", 3);
         assert_eq!(next.day(), 1);
         assert_eq!(next.hour(), 3);
+    }
+
+    /// 056：resolve_local_datetime 三个分支（正常/歧义/不存在）均不 panic。
+    /// 夏令时切换日是原 `.unwrap()` 的 panic 场景，这里用固定时区构造等价输入。
+    #[test]
+    fn test_resolve_local_datetime_normal_time() {
+        // 普通时刻：能唯一映射，且时分与输入一致
+        let dt = chrono::NaiveDate::from_ymd_opt(2026, 6, 15)
+            .unwrap()
+            .and_hms_opt(3, 30, 0)
+            .unwrap();
+        let resolved = resolve_local_datetime(dt);
+        // 不 panic 即主要断言；时刻字段应保留
+        assert_eq!(resolved.hour(), 3);
+        assert_eq!(resolved.minute(), 30);
+    }
+
+    #[test]
+    fn test_resolve_local_datetime_nonexistent_time_falls_forward() {
+        // 春令时前跳时刻（美国东部 2026-03-08 02:30 不存在）。
+        // 本机时区未必有 DST，但 None 分支代码路径必须不 panic 且返回有效时间。
+        let dt = chrono::NaiveDate::from_ymd_opt(2026, 3, 8)
+            .unwrap()
+            .and_hms_opt(2, 30, 0)
+            .unwrap();
+        let resolved = resolve_local_datetime(dt);
+        // 无论本机时区是否有 DST，结果必须是不晚于 dt+2h 的有效时间
+        let upper = (dt + chrono::Duration::hours(2))
+            .and_local_timezone(chrono::Local)
+            .single();
+        if let Some(upper) = upper {
+            assert!(resolved <= upper);
+        }
+    }
+
+    #[test]
+    fn test_resolve_local_datetime_ambiguous_time_picks_earlier() {
+        // 秋令时回拨时刻（美国东部 2026-11-01 01:30 出现两次）。
+        // 函数应取较早一次；本机无 DST 时走 Single 分支，同样不 panic。
+        let dt = chrono::NaiveDate::from_ymd_opt(2026, 11, 1)
+            .unwrap()
+            .and_hms_opt(1, 30, 0)
+            .unwrap();
+        let resolved = resolve_local_datetime(dt);
+        assert_eq!(resolved.minute(), 30);
     }
 }

@@ -285,12 +285,8 @@ async fn merge_cloud_todos_to_local(
     conflict_mode: &str,
 ) -> Result<i64, String> {
     let mut affected = 0i64;
-    let local_todos = db.get_todos().await.map_err(|e| e.to_string())?;
-    // 用 title 作为冲突判断键（小写比较避免大小写差异）
-    let local_by_title: HashMap<String, i64> = local_todos
-        .iter()
-        .map(|t| (t.title.trim().to_lowercase(), t.id))
-        .collect();
+    // 056：只取 id+title 两列建映射，替代整行全量拉取（合并冲突判断只需要 title→id）
+    let local_by_title = db.get_todo_title_id_map().await.map_err(|e| e.to_string())?;
 
     for item in cloud_todos {
         let title = item.title.trim();
@@ -497,10 +493,21 @@ pub async fn cloud_sync_push(
         (server_url, token, conflict_mode)
     };
 
-    // 获取本地 todos
-    let todos = state.db.get_todos().await.map_err(|e| {
-        AppError::Internal(format!("获取本地 todos 失败: {}", e))
-    })?;
+    // 获取本地 todos（056：id 游标分批拉取，每批 500，避免一次性全表载入）
+    let mut todos = Vec::new();
+    let mut after_id = 0i64;
+    loop {
+        let batch = state
+            .db
+            .get_todos_batch_after_id(after_id, 500)
+            .await
+            .map_err(|e| AppError::Internal(format!("获取本地 todos 失败: {}", e)))?;
+        if batch.is_empty() {
+            break;
+        }
+        after_id = batch.last().map(|t| t.id).unwrap_or(after_id);
+        todos.extend(batch);
+    }
 
     // 获取标签映射
     let tags = state.db.get_tags().await.map_err(|e| {

@@ -72,11 +72,9 @@ impl ExecutionMetadata {
             ExecutionEvent::SessionStart { session_id } => {
                 self.session_id = Some(session_id.clone());
             }
-            ExecutionEvent::SessionEnd { session_id } => {
-                // 如果之前没有设置 session_id，则设置
-                if self.session_id.is_none() {
-                    self.session_id = Some(session_id.clone());
-                }
+            ExecutionEvent::SessionEnd { session_id } if self.session_id.is_none() => {
+                // 仅在之前未设置 session_id 时才回填（SessionStart 优先）
+                self.session_id = Some(session_id.clone());
             }
             ExecutionEvent::ModelSwitch { model } => {
                 self.model = Some(model.clone());

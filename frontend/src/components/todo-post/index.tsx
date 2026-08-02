@@ -13,6 +13,7 @@ import {
   InfoCircleOutlined,
 } from "@ant-design/icons";
 import { useApp } from "@/hooks/useApp";
+import { useTodoById } from "@/hooks/useTodoById";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { PageCard } from "@/components/common/PageCard";
 import { LogDrawer } from './LogDrawer';
@@ -226,7 +227,8 @@ export function TodoPostPage({
     setLogDrawerOpen(true);
   };
 
-  const todo = state.todos.find((t) => t.id === todoId);
+  // 056：全局桶删除后按 id 定点查询（带共享缓存）
+  const todo = useTodoById(state.selectedWorkspace, todoId);
   const todoTitle = todo?.title || `事项 #${todoId}`;
 
   // 全局楼层号

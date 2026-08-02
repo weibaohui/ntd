@@ -1049,9 +1049,10 @@ async fn test_merge_backup_target_workspace_overrides_backup_value() {
     // 新建的 todo 应归属目标工作空间 B，而非备份中的 A；且 workspace_path 与 id 成对，
     // 指向 B 的当前库路径（不沿用备份里可能为空的 path），避免 id/path 错配。
     let todo = db
-        .get_todos_by_workspace_id(Some(dir_b))
+        .get_todos_page_by_workspace(Some(dir_b), None, 1, 200)
         .await
         .unwrap()
+        .0
         .into_iter()
         .next()
         .expect("应在工作空间 B 下找到导入的 todo");
@@ -1073,9 +1074,10 @@ async fn test_merge_backup_none_target_falls_back_to_backup_workspace() {
     assert_eq!(created, 1);
 
     let todo = db
-        .get_todos_by_workspace_id(Some(dir_a))
+        .get_todos_page_by_workspace(Some(dir_a), None, 1, 200)
         .await
         .unwrap()
+        .0
         .into_iter()
         .next()
         .expect("应在原工作空间 A 下找到导入的 todo");
@@ -1134,9 +1136,10 @@ async fn test_merge_backup_drops_dangling_backup_workspace_id() {
 
     // workspace_id 降级为未分配哨兵 0，workspace_path 为空
     let todo = db
-        .get_todos_by_workspace_id(Some(0))
+        .get_todos_page_by_workspace(Some(0), None, 1, 200)
         .await
         .unwrap()
+        .0
         .into_iter()
         .find(|t| t.title == "t1")
         .expect("应找到导入的 todo");

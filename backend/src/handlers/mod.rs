@@ -171,13 +171,30 @@ pub async fn events_handler(State(state): State<AppState>, ws: WebSocketUpgrade)
         // 批量获取执行记录，避免 N+1 查询
         let mut running_tasks = state.task_manager.get_all_task_infos().await;
         let task_ids: Vec<String> = running_tasks.iter().map(|t| t.task_id.clone()).collect();
-        let records = state.db.get_execution_records_by_task_ids(&task_ids).await.unwrap_or_default();
+        // 056：WS 升级已完成无法回 HTTP 错误，DB 失败时记 error 日志后降级为空
+        // （调用方至少能区分「无运行任务」与「日志缺失」——服务端日志可查）。
+        // 原 unwrap_or_default() 静默吞错，故障排查时无法定位。
+        let records = state
+            .db
+            .get_execution_records_by_task_ids(&task_ids)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::error!("[ws-events] 查询执行记录失败，Sync 降级为空记录: {e}");
+                Vec::new()
+            });
         let record_map: std::collections::HashMap<String, _> = records
             .into_iter()
             .filter_map(|r| r.task_id.clone().map(|tid| (tid, r)))
             .collect();
         let record_ids: Vec<i64> = record_map.values().map(|r| r.id).collect();
-        let logs_map = state.db.get_all_execution_logs_for_records(&record_ids).await.unwrap_or_default();
+        let logs_map = state
+            .db
+            .get_all_execution_logs_for_records(&record_ids)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::error!("[ws-events] 查询执行日志失败，Sync 降级为空日志: {e}");
+                std::collections::HashMap::new()
+            });
         for task in &mut running_tasks {
             if let Some(record) = record_map.get(&task.task_id) {
                 let logs = logs_map.get(&record.id).cloned().unwrap_or_default();

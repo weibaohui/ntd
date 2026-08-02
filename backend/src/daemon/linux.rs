@@ -1,5 +1,10 @@
 //! Linux 平台的 daemon 实现：基于 systemd (system / user instance)。
 //!
+//! #![allow(print_stdout/print_stderr)]：daemon 子命令（install/start/stop/status）
+//! 的 stdout/stderr 就是用户界面——systemctl 状态、unit 路径、下一步提示都必须
+//! 直接打到用户终端，走 tracing 会错进 daemon 日志文件而用户看不到。
+#![allow(clippy::print_stdout, clippy::print_stderr)]
+//!
 //! 设计要点：
 //! - 支持两套 scope：
 //!   - system (--system): /etc/systemd/system/ntd.service，需要 root
@@ -59,10 +64,15 @@ fn run_systemctl(system: bool, args: &[&str]) -> std::process::ExitStatus {
     let cmd = systemctl_cmd(system);
     let full_args: Vec<&str> = cmd.iter().copied().chain(args.iter().copied()).collect();
 
+    // systemctl 不存在（非 systemd 发行版/containers）时优雅退出而非 panic，
+    // 错误信息告诉用户缺什么，退出码与 daemon 其它失败路径一致。
     Command::new(full_args[0])
         .args(&full_args[1..])
         .status()
-        .expect("Failed to run systemctl. Is systemd installed?")
+        .unwrap_or_else(|e| {
+            eprintln!("Failed to run {}: {e}. Is systemd installed?", full_args[0]);
+            std::process::exit(1);
+        })
 }
 
 fn run_systemctl_output(system: bool, args: &[&str]) -> std::process::Output {
@@ -72,7 +82,10 @@ fn run_systemctl_output(system: bool, args: &[&str]) -> std::process::Output {
     Command::new(full_args[0])
         .args(&full_args[1..])
         .output()
-        .expect("Failed to run systemctl")
+        .unwrap_or_else(|e| {
+            eprintln!("Failed to run {}: {e}", full_args[0]);
+            std::process::exit(1);
+        })
 }
 
 /// 从 /etc/passwd 解析 username 对应的 home 目录。

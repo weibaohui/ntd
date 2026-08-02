@@ -7,8 +7,9 @@ import { useKanbanExecutionCache } from '@/hooks/useKanbanExecutionCache';
 import { TodoCard } from './TodoCard';
 import * as db from '@/utils/database';
 import { formatRelativeTime } from '@/utils/datetime';
-import type { Todo, ExecutionRecord, ProjectDirectory } from '@/types';
+import type { Todo, TodoBrief, ExecutionRecord, ProjectDirectory } from '@/types';
 import { TimeRangeSegmented } from '@/components/common/TimeRangeSegmented';
+import { TODO_LIST_REFRESH_EVENT } from '@/constants';
 import { COLUMNS } from './kanban/constants';
 import { getColumnForStatus } from './kanban/helpers';
 import type { ColumnDef } from './kanban/constants';
@@ -16,12 +17,15 @@ import type { ColumnDef } from './kanban/constants';
 /* ─── Component ─── */
 
 export function KanbanBoard({ searchText: externalSearch, hours: externalHours, onSearchChange, onHoursChange }: { searchText?: string; hours?: number; onSearchChange?: (v: string) => void; onHoursChange?: (h: number) => void } = {}) {
-  const { state, dispatch } = useApp();
+  const { state } = useApp();
   const { message } = App.useApp();
-  const { todos, tags, selectedTodoId } = state;
-  // 本地时间过滤后的 todo 列表：当 hours 有值时，按 API 过滤结果只保留最近 N 小时的 todo。
-  // 不与全局 store 共享，避免污染其他视图。
-  const [kanbanTodos, setKanbanTodos] = useState<Todo[] | null>(null);
+  const { tags, selectedTodoId } = state;
+  // 056：看板数据源改为 TodoBrief（决策 1a）——不含 prompt 大字段，
+  // 卡片 prompt 区块按 has_prompt 显示入口、展开时按需取全文。
+  const [briefs, setBriefs] = useState<TodoBrief[]>([]);
+  // 按需加载的 prompt 全文缓存（id → prompt），首次展开时拉取
+  const [promptCache, setPromptCache] = useState<Map<number, string>>(new Map());
+  const [promptLoadingIds, setPromptLoadingIds] = useState<Set<number>>(new Set());
   const [projectDirectories, setProjectDirectories] = useState<ProjectDirectory[]>([]);
   // selectedProject 使用 workspace_id（project_directories.id），不再用 path。
   const [selectedProject, setSelectedProject] = useState<number | null>(null);
@@ -39,30 +43,32 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
   const isMobile = useIsMobile();
   const [activeKey, setActiveKey] = useState<Todo['status']>('pending');
 
-  // 渲染用的 todo 列表：有本地过滤结果则用，否则用全局 store
-  const displayTodos = kanbanTodos ?? todos;
+  // 渲染用的列表即 briefs（hours 由请求参数下推服务端）
+  const displayTodos = briefs;
 
   /* ─── Execution record cache (delegated to hook) ─── */
   const cache = useKanbanExecutionCache({ todos: displayTodos, storeRecords: state.executionRecords, workspaceId: state.selectedWorkspace });
 
-  // 切换工作空间后立即拉取该 workspace 的 todo，保证数据最新。
-  // 先 dispatch 空数组占位清除旧数据，避免闪烁。
+  // 056（CodeRabbit#7）：合并为单一 effect——按当前 hours 拉取 brief 并监听刷新事件。
+  // 旧实现两个 effect 分别维护 briefs/kanbanTodos：刷新事件只更新不被渲染的 briefs，
+  // 看板在 hours 过滤下永不刷新；且挂载时并发两请求，全量那次结果不会被渲染。
   useEffect(() => {
     const wid = state.selectedWorkspace;
     if (wid == null) return;
-    dispatch({ type: 'SET_TODOS_BY_WORKSPACE', workspaceId: wid, payload: [] });
-    db.getAllTodos(wid).then(todos => {
-      dispatch({ type: 'SET_TODOS_BY_WORKSPACE', workspaceId: wid, payload: todos });
-    });
-  }, [state.selectedWorkspace, dispatch]);
-
-  // 时间分段按钮切换时，用 hours 参数重新拉取（只影响本地 kanbanTodos，不污染全局 store）。
-  useEffect(() => {
-    const wid = state.selectedWorkspace;
-    if (wid == null) return;
-    if (hours == null) { setKanbanTodos(null); return; }
-    db.getAllTodos(wid, hours).then(setKanbanTodos).catch(() => {});
-  }, [state.selectedWorkspace, hours, dispatch]);
+    let cancelled = false;
+    const load = () => {
+      // hours 为 null 表示「全部」不传参；为数值时下推服务端过滤
+      db.getTodoBriefs(wid, hours == null ? {} : { hours }).then(bs => {
+        if (!cancelled) setBriefs(bs);
+      }).catch((e) => console.error('看板 brief 列表加载失败:', e));
+    };
+    load();
+    window.addEventListener(TODO_LIST_REFRESH_EVENT, load);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(TODO_LIST_REFRESH_EVENT, load);
+    };
+  }, [state.selectedWorkspace, hours]);
 
   // 加载项目目录列表，供项目维度过滤使用。
   // 监听 'projectDirectoryAdded' 事件：当 TodoDrawer 中快速新增目录后，
@@ -89,11 +95,10 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
         const tUpdated = new Date(t.updated_at).getTime();
         if (isNaN(tUpdated) || tUpdated < cutoff) return false;
       }
-      // Search filter
+      // Search filter（056：brief 不含 prompt，搜索范围收缩为标题）
       if (searchText.trim()) {
         const q = searchText.toLowerCase();
-        return t.title.toLowerCase().includes(q) ||
-          (t.prompt && t.prompt.toLowerCase().includes(q));
+        return t.title.toLowerCase().includes(q);
       }
       return true;
     });
@@ -101,15 +106,16 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
 
   /* ─── Group by status ─── */
   const grouped = useMemo(() => {
-    const map: Record<Todo['status'], Todo[]> = {
+    const map: Record<Todo['status'], TodoBrief[]> = {
       pending: [],
       running: [],
       completed: [],
       failed: [],
     };
     for (const todo of filteredTodos) {
-      if (map[todo.status]) {
-        map[todo.status].push(todo);
+      const status = todo.status as Todo['status'];
+      if (map[status]) {
+        map[status].push(todo);
       } else {
         map.pending.push(todo);
       }
@@ -157,34 +163,50 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
     const todoId = parseInt(e.dataTransfer.getData('text/plain'), 10);
     if (isNaN(todoId)) return;
 
-    const todo = todos.find(t => t.id === todoId);
+    const todo = displayTodos.find(t => t.id === todoId);
     if (!todo || todo.status === targetStatus) return;
+    if (todo.workspace_id == null) {
+      // 无归属工作空间的事项无法定位更新路径，明确告知而非静默失败
+      message.warning('该事项缺少工作空间归属，无法移动');
+      return;
+    }
 
     try {
-      const updated = await db.updateTodo(
-        todo.workspace_id!,
-        todoId,
-        todo.title,
-        todo.prompt || '',
-        targetStatus,
-        todo.executor,
-      );
-      dispatch({ type: 'UPDATE_TODO', payload: updated });
+      // 056：force-status 单字段更新，无需携带 prompt 全量字段
+      await db.updateTodoStatus(todo.workspace_id, todoId, targetStatus);
+      // 本地就地更新 brief 状态（避免整列重拉闪烁）
+      setBriefs(prev => prev.map(b => b.id === todoId ? { ...b, status: targetStatus } : b));
       message.success(`已移动到「${getColumnForStatus(targetStatus).label}」`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : '更新状态失败';
       message.error(msg);
     }
-  }, [todos, dispatch, message]);
+  }, [displayTodos, message]);
 
-  /* ─── Toggle expand prompt ─── */
+  /* ─── Toggle expand prompt（056：首次展开时按需拉取 prompt 全文）─── */
   const togglePrompt = useCallback((todoId: number) => {
     setExpandedPromptIds(prev => {
       const next = new Set(prev);
       if (next.has(todoId)) next.delete(todoId); else next.add(todoId);
       return next;
     });
-  }, []);
+    // 未缓存且未在途时才发请求；展开动作幂等
+    const wid = state.selectedWorkspace;
+    if (wid == null || promptCache.has(todoId)) return;
+    setPromptLoadingIds(prev => new Set(prev).add(todoId));
+    db.getTodo(wid, todoId)
+      .then(full => {
+        setPromptCache(prev => new Map(prev).set(todoId, full.prompt || ''));
+      })
+      .catch((e) => console.error(`prompt 加载失败 (todo ${todoId}):`, e))
+      .finally(() => {
+        setPromptLoadingIds(prev => {
+          const next = new Set(prev);
+          next.delete(todoId);
+          return next;
+        });
+      });
+  }, [state.selectedWorkspace, promptCache]);
 
   /* ─── Toggle result card expansion ─────────────────────────────
    * Responsibilities are intentionally split:
@@ -192,7 +214,7 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
    *   - cache.toggleResult handles lazy-fetch of result text
    * Splitting avoids duplicating UI state into the hook and keeps
    * the hook purely about data fetching. ─── */
-  const handleToggleResult = useCallback(async (todo: Todo) => {
+  const handleToggleResult = useCallback(async (todo: TodoBrief) => {
     // Update local UI expansion state
     setExpandedResultIds(prev => {
       const next = new Set(prev);
@@ -204,7 +226,7 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
   }, [cache]);
 
   /* ─── Render Card ─── */
-  const renderCard = (todo: Todo) => {
+  const renderCard = (todo: TodoBrief) => {
     const column = getColumnForStatus(todo.status);
     const todoTags = tags.filter(t => todo.tag_ids?.includes(t.id));
     const projectDir = projectDirectories.find(d => d.id === todo.workspace_id);
@@ -267,7 +289,9 @@ export function KanbanBoard({ searchText: externalSearch, hours: externalHours, 
         <TodoCard
           id={todo.id}
           title={todo.title}
-          prompt={todo.prompt}
+          prompt={promptCache.get(todo.id) ?? null}
+          hasPrompt={todo.has_prompt}
+          promptLoading={promptLoadingIds.has(todo.id)}
           resultText={resultText}
           isSuccess={isSuccess}
           showResultSection={isFinished}

@@ -79,6 +79,32 @@ pub fn new_guid() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
+/// 插入 guid 的增强版（056）：先行级插入（保格式），失败后退化 serde 往返。
+///
+/// 背景：行级插入只认 block 风格 `process:` + 2 空格缩进，遇到 flow 风格
+/// （`process: {name: x}`）或非常规缩进时永远失败，且调用方每次导入都重试，
+/// 造成「同一条 warn 反复刷屏」。serde 往返会丢注释并标准化格式，
+/// 但对这些本就非标准的文件而言，「能修复」比「格式原样」更重要。
+///
+/// 已有 guid 时返回原文（幂等）；YAML 无法解析或没有 process 映射时返回 None。
+pub fn insert_guid_with_serde_fallback(yaml: &str, guid: &str) -> Option<String> {
+    if let Some(out) = insert_guid_after_name(yaml, guid) {
+        return Some(out);
+    }
+    let mut value: serde_yaml::Value = serde_yaml::from_str(yaml).ok()?;
+    let mapping = value.get_mut("process")?.as_mapping_mut()?;
+    let guid_key = serde_yaml::Value::String("guid".to_string());
+    // 已有非空 guid：幂等，返回原文避免无谓写盘；
+    // `guid: ""` 空值视为缺失，覆盖写入新 guid（否则每次扫描都会重复生成）。
+    if let Some(existing) = mapping.get(&guid_key) {
+        if existing.as_str().is_some_and(|s| !s.is_empty()) {
+            return Some(yaml.to_string());
+        }
+    }
+    mapping.insert(guid_key, serde_yaml::Value::String(guid.to_string()));
+    serde_yaml::to_string(&value).ok()
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -125,5 +151,54 @@ mod tests {
         let g = new_guid();
         assert_eq!(g.len(), 36, "UUID v4 字符串应为 36 字符");
         assert_ne!(new_guid(), new_guid(), "两次生成不应相同");
+    }
+
+    /// 056：flow 风格 `process: {name: x}` 行级插入失败，serde fallback 应修复。
+    /// 这是生产日志刷屏的根因用例（~/.ntd/processes/repro-stdin.yaml）。
+    #[test]
+    fn test_fallback_handles_flow_style_process() {
+        let yaml = "process: {name: x}\n";
+        let out = insert_guid_with_serde_fallback(yaml, "g-flow").unwrap();
+        // serde 往返后为 block 风格且带 guid
+        let value: serde_yaml::Value = serde_yaml::from_str(&out).unwrap();
+        assert_eq!(
+            value["process"]["guid"].as_str(),
+            Some("g-flow"),
+            "guid 应被写入: {out}"
+        );
+        assert_eq!(value["process"]["name"].as_str(), Some("x"), "原字段不丢");
+    }
+
+    /// 056：block 风格优先走行级插入（保注释与格式），不走 serde。
+    #[test]
+    fn test_fallback_prefers_line_based_insert() {
+        let yaml = "# 顶部注释\nprocess:\n  name: demo\n";
+        let out = insert_guid_with_serde_fallback(yaml, "g-line").unwrap();
+        assert!(out.contains("# 顶部注释"), "行级插入应保住注释");
+        assert!(out.contains("  name: demo\n  guid: g-line\n"));
+    }
+
+    /// 056：已有非空 guid 时幂等返回原文（不覆盖、不写盘）。
+    #[test]
+    fn test_fallback_idempotent_with_existing_guid() {
+        let yaml = "process: {name: x, guid: old-g}\n";
+        let out = insert_guid_with_serde_fallback(yaml, "new-g").unwrap();
+        assert_eq!(out, yaml, "已有 guid 应原样返回");
+    }
+
+    /// 056：`guid: ""` 空值视为缺失，覆盖写入新 guid。
+    #[test]
+    fn test_fallback_overwrites_empty_guid() {
+        let yaml = "process: {name: x, guid: ''}\n";
+        let out = insert_guid_with_serde_fallback(yaml, "g-new").unwrap();
+        let value: serde_yaml::Value = serde_yaml::from_str(&out).unwrap();
+        assert_eq!(value["process"]["guid"].as_str(), Some("g-new"));
+    }
+
+    /// 056：无 process 映射的非法输入返回 None（调用方报错）。
+    #[test]
+    fn test_fallback_returns_none_for_invalid() {
+        assert!(insert_guid_with_serde_fallback("foo: bar\n", "g").is_none());
+        assert!(insert_guid_with_serde_fallback("process: 42\n", "g").is_none());
     }
 }

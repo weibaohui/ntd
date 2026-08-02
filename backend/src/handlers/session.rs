@@ -798,10 +798,8 @@ fn parse_pi_line(line: &str) -> Option<(String, serde_json::Value)> {
 fn apply_pi_event(summary: &mut PiSessionSummary, event_type: &str, v: &serde_json::Value) {
     match event_type {
         "session" => apply_pi_session_event(summary, v),
-        "model_change" => {
-            if summary.model.is_none() {
-                summary.model = pi_model_from_change_event(v);
-            }
+        "model_change" if summary.model.is_none() => {
+            summary.model = pi_model_from_change_event(v);
         }
         "message" => {
             // 跳过缺 message 字段的行(防御性,与原 match Some(m) 行为一致)

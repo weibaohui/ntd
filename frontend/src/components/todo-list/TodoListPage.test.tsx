@@ -21,7 +21,10 @@ vi.mock('@/constants', () => ({
 }));
 
 vi.mock('@/utils/database', () => ({
-  getTodoCenter: vi.fn().mockResolvedValue([]),
+  // 056：getTodoCenter 响应为分页结构 { items, total, page, page_size, bucket_counts, action_types }
+  getTodoCenter: vi.fn().mockResolvedValue({
+    items: [], total: 0, page: 1, page_size: 20, bucket_counts: {}, action_types: [],
+  }),
   deleteTodo: vi.fn().mockResolvedValue(undefined),
   executeTodo: vi.fn().mockResolvedValue(undefined),
 }));

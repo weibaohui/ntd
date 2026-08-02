@@ -46,34 +46,25 @@ pub async fn get_execution_records(
                 .map_err(AppError::BadRequest)?
         ),
     };
+    // 056：workspace 过滤下推 SQL（子查询），修复「先分页后内存过滤」导致的
+    // 条数稀释/total 失真。todo_id/step_id 已指定时 ws 隐含，无需再过滤。
+    let ws_filter = if query.todo_id.is_none() && query.step_id.is_none() {
+        query.workspace_id
+    } else {
+        None
+    };
     let (records, total) = state
         .db
         .get_execution_records(crate::db::execution::ExecutionRecordQuery {
             todo_id: query.todo_id,
             step_id: query.step_id,
+            workspace_id: ws_filter,
             limit,
             offset,
             status,
             hours: query.hours,
         })
         .await?;
-
-    // 当提供了 todo_id 或 step_id 时，workspace_id 是隐含的（由 todo 决定）。
-    // 仅在 todo_id/step_id 都为空且 workspace_id 有值时过滤——目前没有调用方
-    // 走这个分支，但保持接口一致性，传了就能用。
-    let records = if let Some(wid) = query.workspace_id {
-        if query.todo_id.is_none() && query.step_id.is_none() {
-            // ? 传播 DbErr：旧实现 unwrap_or_default() 会把 DB 读失败静默当成空 Vec，
-            // 下游 filter 把所有 record 过滤掉、返回 200+0 条，调用方无法区分真空还是 DB 挂了。
-            let ws_todos = state.db.get_todos_by_workspace_id(Some(wid)).await?;
-            let ws_todo_ids: std::collections::HashSet<i64> = ws_todos.iter().map(|t| t.id).collect();
-            records.into_iter().filter(|r| ws_todo_ids.contains(&r.todo_id)).collect()
-        } else {
-            records
-        }
-    } else {
-        records
-    };
 
     Ok(ApiResponse::ok(ExecutionRecordsPage {
         records,
@@ -182,18 +173,11 @@ pub async fn get_execution_records_by_session(
     State(state): State<AppState>,
     Path((ws_id, session_id)): Path<(i64, String)>,
 ) -> Result<ApiResponse<Vec<crate::models::ExecutionRecord>>, AppError> {
+    // 056：workspace 过滤下推 SQL（V1 隔离：同一 session 可能含跨 ws 记录，只留本 ws）
     let records = state
         .db
-        .get_execution_records_by_session(&session_id)
+        .get_execution_records_by_session(&session_id, Some(ws_id))
         .await?;
-    // V1 隔离：同一 session 可能含跨 ws 的记录，按 workspace 过滤只保留本 ws 的
-    let ws_todos = state.db.get_todos_by_workspace_id(Some(ws_id)).await?;
-    let ws_todo_ids: std::collections::HashSet<i64> =
-        ws_todos.iter().map(|t| t.id).collect();
-    let records: Vec<_> = records
-        .into_iter()
-        .filter(|r| ws_todo_ids.contains(&r.todo_id))
-        .collect();
     Ok(ApiResponse::ok(records))
 }
 
@@ -358,14 +342,8 @@ pub async fn get_running_execution_records_handler(
     State(state): State<AppState>,
     Path(ws_id): Path<i64>,
 ) -> Result<ApiResponse<Vec<crate::models::ExecutionRecord>>, AppError> {
-    // V1 隔离：按 workspace 过滤正在运行的执行记录（经 todo 间接关联）
-    let records = state.db.get_running_execution_records().await?;
-    let ws_todos = state.db.get_todos_by_workspace_id(Some(ws_id)).await?;
-    let ws_todo_ids: std::collections::HashSet<i64> = ws_todos.iter().map(|t| t.id).collect();
-    let records: Vec<_> = records
-        .into_iter()
-        .filter(|r| ws_todo_ids.contains(&r.todo_id))
-        .collect();
+    // 056：workspace 过滤下推 SQL（V1 隔离：经 todo 子查询关联）
+    let records = state.db.get_running_execution_records(Some(ws_id)).await?;
     Ok(ApiResponse::ok(records))
 }
 
@@ -393,31 +371,19 @@ pub async fn get_running_board(
     let limit = query.limit.unwrap_or(50).clamp(1, 200);
     let offset = (page - 1) * limit;
 
+    // 056：workspace 过滤下推 SQL，total 与过滤后数据同源，分页元数据不再失真
     let (records, total) = state
         .db
         .get_execution_records(crate::db::execution::ExecutionRecordQuery {
             todo_id: None,
             step_id: None,
+            workspace_id: query.workspace_id,
             limit,
             offset,
             status: None,
             hours: query.hours,
         })
         .await?;
-
-    // 按 workspace_id 过滤 execution records（表本身无 workspace_id，
-    // 需通过 todos 表关联过滤）。一次查出该 workspace 下所有 todo_ids，
-    // 构建 Hashset 后在内存中过滤。
-    let records = if let Some(wid) = query.workspace_id {
-        // 用 ? 传播 DbErr：旧实现 unwrap_or_default() 会把 DB 读失败（SQLite locked/IO）
-        // 静默当成「空工作空间」，下游 filter 把所有 record 过滤掉、返回 200+0 条，
-        // 调用方无法区分真空还是 DB 挂了。改为传播错误让请求返回 5xx。
-        let ws_todos = state.db.get_todos_by_workspace_id(Some(wid)).await?;
-        let ws_todo_ids: std::collections::HashSet<i64> = ws_todos.iter().map(|t| t.id).collect();
-        records.into_iter().filter(|r| ws_todo_ids.contains(&r.todo_id)).collect()
-    } else {
-        records
-    };
 
     let scheduled_todos = state.db.get_scheduler_todos(query.workspace_id).await?;
 
@@ -461,6 +427,8 @@ pub async fn force_fail_execution_handler(
         .force_fail_execution_record(record_id)
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
+    // 056：强制失败也是终态落定，主动失效 dashboard 缓存
+    invalidate_dashboard_cache().await;
     Ok(ApiResponse::ok(()))
 }
 
@@ -618,6 +586,10 @@ struct DashboardCacheEntry {
 static DASHBOARD_CACHE: LazyLock<RwLock<HashMap<(i64, u32), DashboardCacheEntry>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
 
+/// 056：单飞锁——并发过期刷新只放行一个，其余等锁后走双重检查命中。
+static DASHBOARD_REFRESH_LOCK: LazyLock<tokio::sync::Mutex<()>> =
+    LazyLock::new(|| tokio::sync::Mutex::new(()));
+
 pub async fn get_dashboard_stats(
     State(state): State<AppState>,
     // Dashboard 为全局运营视图，路由注册在 /api/v1/stats/dashboard（无 workspace 路径参数），
@@ -628,27 +600,62 @@ pub async fn get_dashboard_stats(
     // Dashboard 为全局运营视图，缓存键仅按时间窗口区分
     let cache_key = (0i64, hours_key);
 
-    {
-        let cache = DASHBOARD_CACHE.read().await;
-        if let Some(entry) = cache.get(&cache_key) {
-            if entry.expires_at > StdInstant::now() {
-                return Ok(ApiResponse::ok(entry.stats.clone()));
+    // 快路径：未过期直接命中
+    if let Some(stats) = dashboard_cache_get_fresh(cache_key).await {
+        return Ok(ApiResponse::ok(stats));
+    }
+
+    // 056：过期/miss 走单飞刷新——并发请求只放行一个去算全量聚合，
+    // 其余在锁上等结果（双重检查），避免 N 个请求同时打 20 条全表聚合 SQL。
+    let _permit = DASHBOARD_REFRESH_LOCK.lock().await;
+
+    // 双重检查：等锁期间可能已有并发请求完成刷新
+    if let Some(stats) = dashboard_cache_get_fresh(cache_key).await {
+        return Ok(ApiResponse::ok(stats));
+    }
+    // 取旧值备用：刷新失败时 stale-while-revalidate，返旧值比 5xx 更有用
+    let stale = DASHBOARD_CACHE.read().await.get(&cache_key).map(|e| e.stats.clone());
+
+    // Dashboard 聚合全库数据，作为全局运营视图；不再按 workspace 隔离。
+    match state.db.get_dashboard_stats(params.hours).await {
+        Ok(stats) => {
+            DASHBOARD_CACHE.write().await.insert(cache_key, DashboardCacheEntry {
+                stats: stats.clone(),
+                expires_at: StdInstant::now() + Duration::from_secs(30),
+            });
+            Ok(ApiResponse::ok(stats))
+        }
+        Err(e) => {
+            if let Some(stale) = stale {
+                // 返旧值并续短 TTL：DB 抖动期间防止每个请求都穿透重试
+                tracing::warn!("dashboard 聚合失败，返回过期缓存: {e}");
+                DASHBOARD_CACHE.write().await.insert(cache_key, DashboardCacheEntry {
+                    stats: stale.clone(),
+                    expires_at: StdInstant::now() + Duration::from_secs(5),
+                });
+                Ok(ApiResponse::ok(stale))
+            } else {
+                Err(AppError::from_db_err(e))
             }
         }
     }
+}
 
-    // Dashboard 聚合全库数据，作为全局运营视图；不再按 workspace 隔离。
-    let stats = state.db.get_dashboard_stats(params.hours).await?;
-
-    {
-        let mut cache = DASHBOARD_CACHE.write().await;
-        cache.insert(cache_key, DashboardCacheEntry {
-            stats: stats.clone(),
-            expires_at: StdInstant::now() + Duration::from_secs(30),
-        });
+/// 读取未过期的缓存项（快路径抽函数，保持 handler 与单飞段都 <30 行）。
+async fn dashboard_cache_get_fresh(key: (i64, u32)) -> Option<DashboardStats> {
+    let cache = DASHBOARD_CACHE.read().await;
+    let entry = cache.get(&key)?;
+    if entry.expires_at > StdInstant::now() {
+        Some(entry.stats.clone())
+    } else {
+        None
     }
+}
 
-    Ok(ApiResponse::ok(stats))
+/// 056：执行状态落定（成功/失败/取消/强制失败）时主动失效 dashboard 缓存，
+/// 用户跑完任务立刻看到最新统计，不必等 30s TTL。
+pub(crate) async fn invalidate_dashboard_cache() {
+    DASHBOARD_CACHE.write().await.clear();
 }
 
 #[derive(Deserialize)]
@@ -818,29 +825,22 @@ pub async fn v1_get_execution_records(
                 .map_err(AppError::BadRequest)?
         ),
     };
+    // 056：workspace 过滤下推 SQL；todo_id 显式传入时仍先校验归属（403 语义）
+    if let Some(todo_id) = query.todo_id {
+        workspace_guard::verify_todo_belongs_to_ws(&state.db, todo_id, ws_id).await?;
+    }
     let (records, total) = state
         .db
         .get_execution_records(crate::db::execution::ExecutionRecordQuery {
             todo_id: query.todo_id,
             step_id: query.step_id,
+            workspace_id: Some(ws_id),
             limit,
             offset,
             status,
             hours: query.hours,
         })
         .await?;
-
-    // V1 隔离：workspace_id 来自 URL Path。即使带 todo_id 也要校验其归属本 ws，
-    // 否则 ?todo_id=<他人 todo> 可越权读他人执行记录。返回结果一律按 ws 过滤。
-    if let Some(todo_id) = query.todo_id {
-        workspace_guard::verify_todo_belongs_to_ws(&state.db, todo_id, ws_id).await?;
-    }
-    let ws_todos = state.db.get_todos_by_workspace_id(Some(ws_id)).await?;
-    let ws_todo_ids: std::collections::HashSet<i64> = ws_todos.iter().map(|t| t.id).collect();
-    let records: Vec<_> = records
-        .into_iter()
-        .filter(|r| ws_todo_ids.contains(&r.todo_id))
-        .collect();
 
     Ok(ApiResponse::ok(ExecutionRecordsPage {
         records,
@@ -860,22 +860,19 @@ pub async fn v1_get_running_board(
     let limit = query.limit.unwrap_or(50).clamp(1, 200);
     let offset = (page - 1) * limit;
 
+    // 056：workspace 过滤下推 SQL（v1 路径 ws 来自 Path，强制过滤）
     let (records, total) = state
         .db
         .get_execution_records(crate::db::execution::ExecutionRecordQuery {
             todo_id: None,
             step_id: None,
+            workspace_id: Some(ws_id),
             limit,
             offset,
             status: None,
             hours: query.hours,
         })
         .await?;
-
-    // v1 路径下 workspace_id 始终来自 Path，强制按工作空间过滤
-    let ws_todos = state.db.get_todos_by_workspace_id(Some(ws_id)).await?;
-    let ws_todo_ids: std::collections::HashSet<i64> = ws_todos.iter().map(|t| t.id).collect();
-    let records = records.into_iter().filter(|r| ws_todo_ids.contains(&r.todo_id)).collect();
 
     // v1 路径下使用 Path 中的 workspace_id 查询定时任务
     let scheduled_todos = state.db.get_scheduler_todos(Some(ws_id)).await?;

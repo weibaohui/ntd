@@ -628,16 +628,49 @@ pub struct TodoListQueryV1 {
     /// 按最近 N 小时过滤（对 updated_at 生效）；不传或 0 表示不过滤
     #[serde(default)]
     pub hours: Option<u32>,
+    /// 页码（1 起）。056 起本接口强制服务端分页，默认 1
+    #[serde(default)]
+    pub page: Option<i64>,
+    /// 每页条数（1-200，越界截断）。默认 50
+    #[serde(default)]
+    pub page_size: Option<i64>,
 }
 
 /// V1 事项中心查询参数（workspace_id 来自路径而非查询参数）。
 /// bucket 为空或非法时返回全部分类；search 为标题/prompt 子串过滤。
+/// 056 起支持服务端分页与排序；不传 page 时默认第 1 页。
 #[derive(Debug, serde::Deserialize)]
 pub struct TodoCenterQueryV1 {
     #[serde(default)]
     pub bucket: Option<String>,
     #[serde(default)]
     pub search: Option<String>,
+    #[serde(default)]
+    pub page: Option<i64>,
+    #[serde(default)]
+    pub page_size: Option<i64>,
+    /// 排序字段白名单：id(默认)/updated_at/title/status/computed_bucket
+    #[serde(default)]
+    pub sort_by: Option<String>,
+    /// asc / desc（默认 desc）
+    #[serde(default)]
+    pub sort_order: Option<String>,
+    /// 状态精确过滤（卡片墙「状态筛选」下拉；缺省=全部）
+    #[serde(default)]
+    pub status: Option<String>,
+    /// 动作类型精确过滤（卡片墙「来源筛选」下拉；缺省=全部）
+    #[serde(default)]
+    pub action_type: Option<String>,
+}
+
+/// V1 事项 brief 查询参数：ids 逗号分隔；省略时返回该 ws 全部 brief（看板用）。
+#[derive(Debug, serde::Deserialize)]
+pub struct TodoBriefQueryV1 {
+    #[serde(default)]
+    pub ids: Option<String>,
+    /// 按最近 N 小时过滤（对 updated_at 生效）；不传或 0 表示不过滤
+    #[serde(default)]
+    pub hours: Option<u32>,
 }
 
 /// V1 最近已完成事项查询参数（workspace_id 来自路径而非查询参数）
@@ -652,38 +685,101 @@ pub struct RecentCompletedParamsV1 {
 // ======================================================================
 
 /// V1: 从路径参数获取 workspace_id 后查询事项列表。
-/// 与 `get_todos` 的区别在于 workspace_id 来自 Path 而非 Query。
+/// 056（决策 3b）：响应从全量 Vec<Todo> 改为强制分页 TodoListPage，
+/// hours 过滤同时从内存下推 SQL——CLI 已同步适配该结构。
 pub async fn get_todos_v1(
     State(state): State<AppState>,
     Path(ws_id): Path<i64>,
     axum::extract::Query(params): axum::extract::Query<TodoListQueryV1>,
-) -> Result<ApiResponse<Vec<Todo>>, AppError> {
-    // 工作空间由路径参数确定，无需再从查询参数中提取
-    let todos = state.db.get_todos_by_workspace_id(Some(ws_id)).await?;
-    // 按 hours 过滤：只保留在最近 N 小时内更新过的 todo
-    let todos = if let Some(h) = params.hours.filter(|&h| h > 0) {
-        let cutoff = chrono::Utc::now() - chrono::Duration::hours(h as i64);
-        let cutoff_str = cutoff.format("%Y-%m-%dT%H:%M:%S").to_string();
-        todos.into_iter().filter(|t| t.updated_at >= cutoff_str).collect()
-    } else {
-        todos
-    };
-    Ok(ApiResponse::ok(todos))
+) -> Result<ApiResponse<crate::models::TodoListPage>, AppError> {
+    let page = params.page.unwrap_or(1).max(1);
+    let page_size = params.page_size.unwrap_or(50).clamp(1, 200);
+    let (items, total) = state
+        .db
+        .get_todos_page_by_workspace(Some(ws_id), params.hours, page, page_size)
+        .await?;
+    Ok(ApiResponse::ok(crate::models::TodoListPage {
+        items,
+        total,
+        page,
+        page_size,
+    }))
+}
+
+/// V1: 工作空间内全部 todo id（056 轻量接口，替代「全表拉取取 id」）。
+pub async fn get_todo_ids_v1(
+    State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
+) -> Result<ApiResponse<Vec<i64>>, AppError> {
+    let ids = state.db.get_todo_ids_by_workspace(ws_id).await?;
+    Ok(ApiResponse::ok(ids))
+}
+
+/// V1: 工作空间内 todo 计数（056 轻量接口，替代「全表拉取取 length」）。
+pub async fn get_todo_count_v1(
+    State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
+) -> Result<ApiResponse<serde_json::Value>, AppError> {
+    let count = state.db.count_todos_by_workspace(ws_id).await?;
+    Ok(ApiResponse::ok(serde_json::json!({ "count": count })))
+}
+
+/// V1: 事项轻量摘要（056）。ids 省略时返回该 ws 全部 brief（看板全量渲染用，
+/// 传输量约为整行 Todo 的 1/10）；指定 ids 时按给定集合返回。
+pub async fn get_todo_briefs_v1(
+    State(state): State<AppState>,
+    Path(ws_id): Path<i64>,
+    axum::extract::Query(params): axum::extract::Query<TodoBriefQueryV1>,
+) -> Result<ApiResponse<Vec<crate::models::TodoBrief>>, AppError> {
+    // ids 逗号分隔解析：非法段直接丢弃（宽容策略，与 bucket 非法=不过滤一致）
+    let ids: Option<Vec<i64>> = params.ids.as_deref().map(|s| {
+        s.split(',')
+            .filter_map(|seg| seg.trim().parse::<i64>().ok())
+            .collect()
+    });
+    let briefs = state
+        .db
+        .get_todo_briefs(Some(ws_id), ids.as_deref(), params.hours)
+        .await?;
+    Ok(ApiResponse::ok(briefs))
 }
 
 /// V1: 从路径参数获取 workspace_id 后查询事项中心。
-/// 与 `get_todo_center` 的区别在于 workspace_id 来自 Path 而非 Query。
+/// 056：分桶/搜索/排序/分页全部下推 SQL，响应带 total 与 bucket_counts。
 pub async fn get_todo_center_v1(
     State(state): State<AppState>,
     Path(ws_id): Path<i64>,
     axum::extract::Query(params): axum::extract::Query<TodoCenterQueryV1>,
-) -> Result<ApiResponse<Vec<TodoCenterItem>>, AppError> {
+) -> Result<ApiResponse<crate::models::TodoCenterPage>, AppError> {
     // 解析 bucket 串为枚举；空/非法 → None = 不过滤
     let bucket = params.bucket.as_deref().and_then(ComputedBucket::parse_query);
     let search = params.search.as_deref().map(str::trim).filter(|s| !s.is_empty());
-    // 工作空间由路径参数提供，替代原来的 params.workspace_id
-    let items = state.db.get_todo_center(Some(ws_id), bucket, search).await?;
-    Ok(ApiResponse::ok(items))
+    let page = params.page.unwrap_or(1).max(1);
+    let page_size = params.page_size.unwrap_or(20).clamp(1, 200);
+    // 排序方向仅识别 asc，其余一律 desc（白名单，防注入）
+    let sort_desc = !matches!(params.sort_order.as_deref(), Some("asc"));
+    let (items, total, bucket_counts, action_types) = state
+        .db
+        .get_todo_center_page(crate::db::TodoCenterPageQuery {
+            workspace_id: Some(ws_id),
+            bucket,
+            search,
+            status: params.status.as_deref(),
+            action_type: params.action_type.as_deref(),
+            sort_by: params.sort_by.as_deref(),
+            sort_desc,
+            page,
+            page_size,
+        })
+        .await?;
+    Ok(ApiResponse::ok(crate::models::TodoCenterPage {
+        items,
+        total,
+        page,
+        page_size,
+        bucket_counts,
+        action_types,
+    }))
 }
 
 /// V1: 从路径参数获取 workspace_id 后创建事项。
@@ -808,6 +904,10 @@ pub fn v1_routes() -> Router<AppState> {
         .route("/smart", post(super::execution::v1_smart_create_handler))
         // 事项中心（驱动视图五分类）
         .route("/center", get(get_todo_center_v1))
+        // 056 轻量接口：ids / count / brief（静态段，axum 优先于 /{id} 匹配）
+        .route("/ids", get(get_todo_ids_v1))
+        .route("/count", get(get_todo_count_v1))
+        .route("/brief", get(get_todo_briefs_v1))
         // 最近已完成事项
         .route("/recent-completed", get(get_recent_completed_todos_v1))
         // 按 id 的子路由（必须在 /{id} 之前注册，避免 axum 把子路径如 "archive" 当作 id 捕获）

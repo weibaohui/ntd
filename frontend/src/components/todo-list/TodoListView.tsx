@@ -24,7 +24,7 @@ import {
   ThunderboltOutlined,
 } from '@ant-design/icons';
 import { useApp } from '@/hooks/useApp';
-import { useResizableColumns, makeSorter } from '@/hooks/useResizableColumns';
+import { useResizableColumns } from '@/hooks/useResizableColumns';
 import { useBatchActions } from './useBatchActions'; // .tsx 含 JSX（批量 Modal）
 import { ExecutorBadge } from '@/components/ExecutorBadge';
 import { ExpertBadge } from '@/components/ExpertBadge';
@@ -197,8 +197,8 @@ function buildTodoColumns(
       dataIndex: 'id',
       width: 70,
       fixed: 'left',
-      // 054：可排序列（ID 数值排序）
-      sorter: makeSorter<TodoCenterItem>('id'),
+      // 056：服务端排序（sorter: true 仅展示排序指示，数据由后端排好返回）
+      sorter: true,
       render: (id: number) => (
         <span style={{ fontFamily: 'monospace', color: 'var(--color-text-tertiary)' }}>
           #{id}
@@ -225,8 +225,8 @@ function buildTodoColumns(
       // scroll.x 时会被压成 0 宽（整列「消失」，用户曾因此报标题列丢失）
       width: 220,
       ellipsis: true,
-      // 054：可排序列（标题字符串排序）
-      sorter: makeSorter<TodoCenterItem>('title'),
+      // 056：服务端排序
+      sorter: true,
       render: (title: string, record) => (
         <a
           onClick={(e) => { e.stopPropagation(); callbacks.onSelectTodo(record.id); }}
@@ -240,8 +240,8 @@ function buildTodoColumns(
       title: '状态',
       dataIndex: 'status',
       width: 100,
-      // 054：可排序列（状态枚举字符串排序）
-      sorter: makeSorter<TodoCenterItem>('status'),
+      // 056：服务端排序
+      sorter: true,
       render: renderStatusTag,
     },
     {
@@ -294,16 +294,16 @@ function buildTodoColumns(
       title: '执行时间',
       dataIndex: 'last_execution_at',
       width: 130,
-      // 054：可排序列（ISO 时间字符串排序）
-      sorter: makeSorter<TodoCenterItem>('last_execution_at'),
+      // 056：聚合字段不支持服务端排序（该值由最近执行记录推导，不在 todos 表），
+      // 页内排序会误导为全局排序，故移除 sorter。
       render: (t?: string | null) => (t ? formatRelativeTime(t) : '-'),
     },
     {
       title: '更新时间',
       dataIndex: 'updated_at',
       width: 130,
-      // 054：可排序列（ISO 时间字符串排序）
-      sorter: makeSorter<TodoCenterItem>('updated_at'),
+      // 056：服务端排序
+      sorter: true,
       render: (t: string) => formatRelativeTime(t),
     },
     {
@@ -325,12 +325,16 @@ function handleRowClick(onSelectTodo: (id: number) => void, record: TodoCenterIt
 }
 
 interface TodoListViewProps {
-  /** 已经过滤后的列表数据（搜索/标签筛选由父组件完成）。 */
+  /** 当前页数据（服务端分页/搜索/排序均在后端完成）。 */
   items: TodoCenterItem[];
   /** 加载态：传入 true 时 table 显示 loading 蒙层。 */
   loading: boolean;
   /** 全量标签集（渲染 Tag 列用）。 */
   tags: TagType[];
+  /** 服务端分页元数据。 */
+  pagination: { current: number; pageSize: number; total: number };
+  /** 翻页/改页大小/排序变化回调（父组件据此重新拉取对应页）。 */
+  onServerChange: (page: number, pageSize: number, sortBy?: string, sortOrder?: 'asc' | 'desc') => void;
   /** 当前行点击跳转：由父组件 pushUrl('todos', { id })。 */
   onSelectTodo: (id: number) => void;
   /** 编辑事项入口（单行菜单「编辑」触发）。 */
@@ -371,6 +375,8 @@ export function TodoListView({
   items,
   loading,
   tags,
+  pagination,
+  onServerChange,
   onSelectTodo,
   onEditTodo,
   onDeleteTodo,
@@ -422,8 +428,23 @@ export function TodoListView({
           size="small"
           // 054：scroll.x 由 hook 动态计算（列宽求和），替代原硬编码 1720
           {...tableProps}
+          // 056：服务端分页/排序——onChange 把翻页与排序翻译给父组件重新拉取；
+          // tableProps.onChange（排序偏好持久化）先执行，保持 localStorage 口径。
+          onChange={(pag, filters, sorter, extra) => {
+            tableProps.onChange?.(pag, filters, sorter, extra);
+            const s = Array.isArray(sorter) ? sorter[0] : sorter;
+            const sortOrder = s?.order === 'ascend' ? 'asc' : s?.order === 'descend' ? 'desc' : undefined;
+            onServerChange(
+              pag.current ?? 1,
+              pag.pageSize ?? 20,
+              s?.field ? String(s.field) : undefined,
+              sortOrder,
+            );
+          }}
           pagination={{
-            pageSize: 20,
+            current: pagination.current,
+            pageSize: pagination.pageSize,
+            total: pagination.total,
             showSizeChanger: true,
             pageSizeOptions: ['20', '50', '100'],
             showTotal: (total) => `共 ${total} 项`,

@@ -1,6 +1,6 @@
 use sea_orm::{
-    ActiveModelTrait, ActiveValue, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter,
-    QueryOrder, Statement,
+    ActiveModelTrait, ActiveValue, ColumnTrait, ConnectionTrait, EntityTrait, PaginatorTrait,
+    QueryFilter, QueryOrder, QuerySelect, Statement,
 };
 
 use crate::db::entity::project_directories;
@@ -12,6 +12,80 @@ use crate::models::{ComputedBucket, Todo, TodoBackup, TodoCenterItem, TodoStatus
 /// todo_type 取值：异常处理载体 Todo（工艺安装时按 abnormal_handler.prompt 创建）。
 /// 模式与 todo_type=2 评审实例对称；事项列表以「异常处理」标签区分。需求 035。
 pub const TODO_TYPE_ABNORMAL_HANDLER: i32 = 3;
+
+/// 056：computed_bucket 的 SQL 表达式，优先级与 `models::compute_bucket` 严格一致
+/// （已归档 > Loop 驱动 > 时间驱动 > 事件驱动 > 手动）。
+/// 两侧实现由测试对拍防漂移（见本文件测试 `test_center_bucket_sql_matches_rust`）。
+const TODO_CENTER_BUCKET_EXPR: &str = "CASE \
+    WHEN t.archived_at IS NOT NULL THEN 'archived' \
+    WHEN (SELECT COUNT(*) FROM loop_steps ls WHERE ls.todo_id = t.id AND ls.enabled = 1) > 0 THEN 'loop_driven' \
+    WHEN t.scheduler_config IS NOT NULL THEN 'time_driven' \
+    WHEN t.webhook_enabled = 1 THEN 'event_driven' \
+    ELSE 'manual' END";
+
+/// ComputedBucket → SQL 表达式输出字符串（与 serde snake_case 保持一致）。
+fn center_bucket_str(b: ComputedBucket) -> &'static str {
+    match b {
+        ComputedBucket::Archived => "archived",
+        ComputedBucket::LoopDriven => "loop_driven",
+        ComputedBucket::TimeDriven => "time_driven",
+        ComputedBucket::EventDriven => "event_driven",
+        ComputedBucket::Manual => "manual",
+    }
+}
+
+/// 排序字段白名单：拒绝白名单外输入，退化为默认 id——
+/// 排序列名要拼进 SQL 字符串（参数绑定不能绑标识符），白名单是唯一安全途径。
+fn center_sort_column(sort_by: Option<&str>) -> &'static str {
+    match sort_by {
+        Some("updated_at") => "t.updated_at",
+        Some("title") => "t.title COLLATE NOCASE",
+        Some("status") => "t.status",
+        Some("computed_bucket") => TODO_CENTER_BUCKET_EXPR,
+        _ => "t.id",
+    }
+}
+
+/// 事项中心分页查询参数（056）：打包传参避免 too_many_arguments。
+/// `search=None` 表示不搜索；排序方向由 `sort_desc` 显式给出（handler 默认 true）。
+#[derive(Debug, Clone)]
+pub struct TodoCenterPageQuery<'a> {
+    pub workspace_id: Option<i64>,
+    pub bucket: Option<ComputedBucket>,
+    pub search: Option<&'a str>,
+    /// 状态精确过滤（卡片墙「状态筛选」下拉；None=全部）
+    pub status: Option<&'a str>,
+    /// 动作类型精确过滤（卡片墙「来源筛选」下拉；None=全部）
+    pub action_type: Option<&'a str>,
+    pub sort_by: Option<&'a str>,
+    pub sort_desc: bool,
+    pub page: i64,
+    pub page_size: i64,
+}
+
+/// QueryResult 行 → TodoBrief（056 轻量摘要）。独立函数保持 get_todo_briefs 函数体合规。
+fn brief_from_row(row: &sea_orm::QueryResult) -> Result<crate::models::TodoBrief, sea_orm::DbErr> {
+    Ok(crate::models::TodoBrief {
+        id: row.try_get_by("id")?,
+        // title 在 schema 上 NOT NULL：读不出来是数据损坏信号，传播错误而非静默置空
+        title: row.try_get_by("title")?,
+        status: row
+            .try_get_by::<Option<String>, _>("status")?
+            .as_deref()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(TodoStatus::Pending),
+        executor: row.try_get_by("executor")?,
+        updated_at: row
+            .try_get_by::<Option<String>, _>("updated_at")?
+            .unwrap_or_default(),
+        archived_at: row.try_get_by("archived_at")?,
+        workspace_id: row.try_get_by("workspace_id")?,
+        // tag_ids 由调用方批量补算（见 get_todo_briefs），此处占位
+        tag_ids: Vec::new(),
+        // SQLite 布尔表达式以 0/1 返回
+        has_prompt: row.try_get_by::<i64, _>("has_prompt")? != 0,
+    })
+}
 
 pub struct TodoUpdate<'a> {
     pub id: i64,
@@ -146,103 +220,12 @@ impl Database {
             }))
     }
 
-    pub async fn get_todos(&self) -> Result<Vec<Todo>, sea_orm::DbErr> {
-        let models = todos::Entity::find()
-            .filter(todos::Column::DeletedAt.is_null())
-            .order_by_desc(todos::Column::UpdatedAt)
-            .all(&self.conn)
-            .await?;
-
-        let ids: Vec<i64> = models.iter().map(|m| m.id).collect();
-        let tag_map = self.fetch_tag_ids_for_many(&ids).await?;
-
-        Ok(models
-            .into_iter()
-            .map(|m| {
-                let tag_ids = tag_map.get(&m.id).cloned().unwrap_or_default();
-                Self::model_to_todo(m, tag_ids)
-            })
-            .collect())
-    }
-
-    /// 按工作空间 ID 过滤 Todo（日常视图）。
-    ///
-    /// 额外过滤 `archived_at IS NULL`：已归档事项从日常视图隐藏，
-    /// 仅在事项中心「已归档」分类可见（见 `get_todo_center`）。
-    pub async fn get_todos_by_workspace_id(&self, workspace_id: Option<i64>) -> Result<Vec<Todo>, sea_orm::DbErr> {
-        let mut query = todos::Entity::find()
-            .filter(todos::Column::DeletedAt.is_null())
-            .filter(todos::Column::ArchivedAt.is_null())
-            .order_by_desc(todos::Column::UpdatedAt);
-
-        if let Some(id) = workspace_id {
-            query = query.filter(todos::Column::WorkspaceId.eq(id));
-        }
-
-        let models = query.all(&self.conn).await?;
-
-        let ids: Vec<i64> = models.iter().map(|m| m.id).collect();
-        let tag_map = self.fetch_tag_ids_for_many(&ids).await?;
-
-        Ok(models
-            .into_iter()
-            .map(|m| {
-                let tag_ids = tag_map.get(&m.id).cloned().unwrap_or_default();
-                Self::model_to_todo(m, tag_ids)
-            })
-            .collect())
-    }
-
-    /// 事项中心列表：按工作空间返回带运行时推导字段的 TodoCenterItem 集合。
-    ///
-    /// 与日常视图不同，这里**不**过滤 `archived_at`——已归档事项也需在
-    /// 「已归档」分类可见。可选 `bucket` 在内存中按 `computed_bucket` 过滤
-    /// （分页前完成分桶，避免数量/分页错乱，见设计文档风险二）。
-    /// 第一版数据量有限，采用「全量载入 + 批量聚合 + 内存过滤」的简单正确实现；
-    /// 真正的分页与 SQL 层分桶留待后续按性能需要再加。
-    pub async fn get_todo_center(
-        &self,
-        workspace_id: Option<i64>,
-        bucket: Option<ComputedBucket>,
-        search: Option<&str>,
-    ) -> Result<Vec<TodoCenterItem>, sea_orm::DbErr> {
-        // 不过滤 archived_at：已归档事项也要在「已归档」分类出现；
-        // 054 起统一按 id DESC（列表默认排序），与用户点击排序的默认列保持一致。
-        let mut query = todos::Entity::find()
-            .filter(todos::Column::DeletedAt.is_null())
-            .order_by_desc(todos::Column::Id);
-        if let Some(id) = workspace_id {
-            query = query.filter(todos::Column::WorkspaceId.eq(id));
-        }
-        let models = query.all(&self.conn).await?;
-
-        // 一次性批量补算 loop 引用计数/引用 Loop 摘要与执行相关聚合，避免逐 todo N+1
-        let ids: Vec<i64> = models.iter().map(|m| m.id).collect();
-        let tag_map = self.fetch_tag_ids_for_many(&ids).await?;
-        let aggs = self.build_center_aggregates(&ids).await?;
-
-        // 组装 TodoCenterItem，按 bucket + search 过滤（分页前完成，保证 Tab 数量正确）
-        let kw = search.map(str::to_ascii_lowercase);
-        let mut items = Vec::with_capacity(models.len());
-        for m in models {
-            let tag_ids = tag_map.get(&m.id).cloned().unwrap_or_default();
-            let todo = Self::model_to_todo(m, tag_ids);
-            // search 在组装前按 title/prompt 子串过滤（大小写不敏感）
-            if let Some(ref k) = kw {
-                if !todo.title.to_ascii_lowercase().contains(k)
-                    && !todo.prompt.to_ascii_lowercase().contains(k)
-                {
-                    continue;
-                }
-            }
-            let item = Self::build_center_item(todo, &aggs);
-            // 用 map_or 而非 is_none_or：后者稳定于 1.82，当前 MSRV 1.81 不支持
-            if bucket.map_or(true, |b| b == item.computed_bucket) {
-                items.push(item);
-            }
-        }
-        Ok(items)
-    }
+    // 056：`get_todos` / `get_todos_by_workspace_id` / `get_todo_center` 三个全量
+    // 查询已删除，由以下接口替代：
+    // - get_todos_page_by_workspace（日常视图，强制分页）
+    // - get_todo_center_page（事项中心，SQL 分桶 + 分页）
+    // - get_todo_briefs / get_todo_ids_by_workspace / count_todos_by_workspace（轻量）
+    // - get_todos_batch_after_id（云同步游标分批）
 
     /// 批量构造 TodoCenterAggregates（列表与单条路径共用，避免两处重复构造）。
     async fn build_center_aggregates(
@@ -297,6 +280,397 @@ impl Database {
             last_webhook_trigger_at,
             bound_slash_command,
         }
+    }
+
+    // ==================== 056：服务端分页与轻量查询 ====================
+    //
+    // computed_bucket 的 SQL 表达式。优先级与 `models::compute_bucket` 严格一致：
+    // 已归档 > Loop 驱动 > 时间驱动 > 事件驱动 > 手动。
+    // 两侧实现由集成测试对拍，防止语义漂移（见 todo.rs 测试模块）。
+
+    /// bucket 过滤/计数共用的 WHERE 组装：返回 (sql_fragment, values)。
+    /// bucket 条件由 `q.bucket` 决定——bucket_counts 统计时调用方传
+    /// `bucket=None` 的克隆，即「应用 search/status/action_type 但不应用 bucket」，
+    /// 保证 Tab 角标不随当前选中分类塌缩。
+    fn center_page_where(
+        q: &TodoCenterPageQuery<'_>,
+    ) -> (String, Vec<sea_orm::Value>) {
+        let mut sql = String::from("t.deleted_at IS NULL");
+        let mut values: Vec<sea_orm::Value> = Vec::new();
+        if let Some(wid) = q.workspace_id {
+            sql.push_str(" AND t.workspace_id = ?");
+            values.push(wid.into());
+        }
+        if let Some(status) = q.status.map(str::trim).filter(|s| !s.is_empty()) {
+            sql.push_str(" AND t.status = ?");
+            values.push(status.into());
+        }
+        if let Some(at) = q.action_type.map(str::trim).filter(|s| !s.is_empty()) {
+            sql.push_str(" AND t.action_type = ?");
+            values.push(at.into());
+        }
+        if let Some(kw) = q.search.map(str::trim).filter(|s| !s.is_empty()) {
+            // LIKE 通配符先转义再包 %，避免用户输入 %/_ 被当通配符；ESCAPE 用反斜杠
+            let escaped = kw.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+            let pattern = format!("%{}%", escaped.to_lowercase());
+            sql.push_str(" AND (LOWER(t.title) LIKE ? ESCAPE '\\' OR LOWER(t.prompt) LIKE ? ESCAPE '\\')");
+            values.push(pattern.clone().into());
+            values.push(pattern.into());
+        }
+        if let Some(b) = q.bucket {
+            sql.push_str(" AND ");
+            sql.push_str(TODO_CENTER_BUCKET_EXPR);
+            sql.push_str(" = ?");
+            values.push(center_bucket_str(b).into());
+        }
+        (sql, values)
+    }
+
+    /// 事项中心服务端分页（056 核心）：SQL 层完成分桶/搜索/排序/分页，
+    /// 聚合字段只对当页 ids 批量补算（避免全表聚合）。
+    ///
+    /// 返回 (items, total, bucket_counts)；total 与 bucket_counts 的过滤口径见
+    /// `center_page_where` 注释。
+    pub async fn get_todo_center_page(
+        &self,
+        q: TodoCenterPageQuery<'_>,
+    ) -> Result<(Vec<TodoCenterItem>, i64, std::collections::HashMap<String, i64>, Vec<String>), sea_orm::DbErr> {
+        let page_size = q.page_size.clamp(1, 200);
+        // 先计数再钳页码（CodeRabbit#2）：page 无上界时大 OFFSET 是外部可触发的慢查询；
+        // offset 超出 total 时截断到最后一页，而不是让 SQLite 逐行跳过几千万行。
+        let total = self.count_todo_center(&q).await?;
+        let max_page = if total == 0 { 1 } else { (total + page_size - 1) / page_size };
+        let page = q.page.max(1).min(max_page.max(1));
+        let (where_sql, values) = Self::center_page_where(&q);
+        let order = if q.sort_desc { "DESC" } else { "ASC" };
+        let sql = format!(
+            "SELECT t.id FROM todos t WHERE {where_sql} ORDER BY {} {order} LIMIT ? OFFSET ?",
+            center_sort_column(q.sort_by),
+        );
+        let mut vals = values.clone();
+        vals.push(page_size.into());
+        vals.push(((page - 1) * page_size).into());
+        let rows = self
+            .conn
+            .query_all(sea_orm::Statement::from_sql_and_values(
+                sea_orm::DbBackend::Sqlite,
+                sql,
+                vals,
+            ))
+            .await?;
+        let ids: Vec<i64> = rows
+            .iter()
+            .filter_map(|r| r.try_get_by::<i64, _>("id").ok())
+            .collect();
+
+        let bucket_counts = self.count_todo_center_buckets(&q).await?;
+        let action_types = self.list_center_action_types(q.workspace_id).await?;
+        let items = self.build_center_items_by_ids(&ids).await?;
+        Ok((items, total, bucket_counts, action_types))
+    }
+
+    /// 当前工作空间内出现过的 action_type 去重列表（卡片墙「来源筛选」下拉数据源，056）。
+    /// 口径：未删除事项 + 同 ws；不受 search/status 等过滤影响（下拉项应稳定）。
+    async fn list_center_action_types(
+        &self,
+        workspace_id: Option<i64>,
+    ) -> Result<Vec<String>, sea_orm::DbErr> {
+        let mut sql = String::from(
+            "SELECT DISTINCT action_type FROM todos WHERE deleted_at IS NULL AND action_type IS NOT NULL AND action_type != ''",
+        );
+        let mut values: Vec<sea_orm::Value> = Vec::new();
+        if let Some(wid) = workspace_id {
+            sql.push_str(" AND workspace_id = ?");
+            values.push(wid.into());
+        }
+        sql.push_str(" ORDER BY action_type");
+        let rows = self
+            .conn
+            .query_all(sea_orm::Statement::from_sql_and_values(
+                sea_orm::DbBackend::Sqlite,
+                sql,
+                values,
+            ))
+            .await?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| r.try_get_by::<String, _>("action_type").ok())
+            .collect())
+    }
+
+    /// 事项中心总数（与分页查询同一过滤口径，含 bucket）。
+    async fn count_todo_center(
+        &self,
+        q: &TodoCenterPageQuery<'_>,
+    ) -> Result<i64, sea_orm::DbErr> {
+        let (where_sql, values) = Self::center_page_where(q);
+        let sql = format!("SELECT COUNT(*) AS cnt FROM todos t WHERE {where_sql}");
+        let row = self
+            .conn
+            .query_one(sea_orm::Statement::from_sql_and_values(
+                sea_orm::DbBackend::Sqlite,
+                sql,
+                values,
+            ))
+            .await?;
+        Ok(row
+            .and_then(|r| r.try_get_by::<i64, _>("cnt").ok())
+            .unwrap_or(0))
+    }
+
+    /// 各 bucket 计数（应用 search、不应用 bucket 过滤——Tab 角标语义）。
+    async fn count_todo_center_buckets(
+        &self,
+        q: &TodoCenterPageQuery<'_>,
+    ) -> Result<std::collections::HashMap<String, i64>, sea_orm::DbErr> {
+        // bucket 角标口径：应用 search/status/action_type，但不应用 bucket 过滤
+        let mut count_q = q.clone();
+        count_q.bucket = None;
+        let (where_sql, values) = Self::center_page_where(&count_q);
+        let sql = format!(
+            "SELECT {TODO_CENTER_BUCKET_EXPR} AS bucket, COUNT(*) AS cnt FROM todos t WHERE {where_sql} GROUP BY bucket"
+        );
+        let rows = self
+            .conn
+            .query_all(sea_orm::Statement::from_sql_and_values(
+                sea_orm::DbBackend::Sqlite,
+                sql,
+                values,
+            ))
+            .await?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                Some((
+                    r.try_get_by::<String, _>("bucket").ok()?,
+                    r.try_get_by::<i64, _>("cnt").ok()?,
+                ))
+            })
+            .collect())
+    }
+
+    /// 按 id 列表加载 TodoCenterItem（保序），tag/聚合批量补算——分页路径的组装段。
+    async fn build_center_items_by_ids(
+        &self,
+        ids: &[i64],
+    ) -> Result<Vec<TodoCenterItem>, sea_orm::DbErr> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let models = todos::Entity::find()
+            .filter(todos::Column::Id.is_in(ids.iter().copied()))
+            .all(&self.conn)
+            .await?;
+        // is_in 不保证返回顺序，按传入 ids 重排，保持与 ORDER BY 一致的分页语义
+        let mut by_id: std::collections::HashMap<i64, todos::Model> =
+            models.into_iter().map(|m| (m.id, m)).collect();
+        let tag_map = self.fetch_tag_ids_for_many(ids).await?;
+        let aggs = self.build_center_aggregates(ids).await?;
+        let mut items = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Some(m) = by_id.remove(id) {
+                let tag_ids = tag_map.get(id).cloned().unwrap_or_default();
+                items.push(Self::build_center_item(Self::model_to_todo(m, tag_ids), &aggs));
+            }
+        }
+        Ok(items)
+    }
+
+    /// 轻量摘要列表（056）：只取展示字段，不读 prompt 大文本。
+    /// `ids=None` 返回该 ws 全部 brief（看板全量渲染用），此模式隐藏已归档事项
+    /// （与旧「日常视图」语义一致）；`ids=Some` 为按 id 定点查询，不过滤归档
+    /// （已归档事项也需要能解析出标题）。`hours` 过滤 updated_at。
+    ///
+    /// 实现说明：用原生 SQL 而非 select_only()——SeaORM 的 Model 映射要求全列，
+    /// 部分列查询走 into_model 需额外派生类型，原生 SQL + try_get_by 更直白。
+    pub async fn get_todo_briefs(
+        &self,
+        workspace_id: Option<i64>,
+        ids: Option<&[i64]>,
+        hours: Option<u32>,
+    ) -> Result<Vec<crate::models::TodoBrief>, sea_orm::DbErr> {
+        let mut sql = String::from(
+            "SELECT id, title, status, executor, updated_at, archived_at, workspace_id, \
+             (prompt IS NOT NULL AND prompt != '') AS has_prompt FROM todos WHERE deleted_at IS NULL",
+        );
+        let mut values: Vec<sea_orm::Value> = Vec::new();
+        match ids {
+            Some(ids) if !ids.is_empty() => {
+                // 定点模式（CodeRabbit#6）：id 全局唯一，不再叠加 workspace_id 条件——
+                // Dashboard 全局运营视图的跨 ws 标题反查、运行记录抽屉补标题都依赖这一点。
+                let (ph, vals) = Database::in_clause(ids);
+                sql.push_str(&format!(" AND id IN ({ph})"));
+                values.extend(vals);
+            }
+            Some(_) => return Ok(Vec::new()), // 空 id 集 = 空结果，避免 IN () 非法 SQL
+            None => {
+                // 看板模式：按 ws 过滤且隐藏已归档（与旧 getAllTodos 数据源语义一致）
+                if let Some(wid) = workspace_id {
+                    sql.push_str(" AND workspace_id = ?");
+                    values.push(wid.into());
+                }
+                sql.push_str(" AND archived_at IS NULL");
+            }
+        }
+        if let Some(h) = hours.filter(|&h| h > 0) {
+            // hours 已验证 > 0 的 u32，format! 是构建 SQL 时间表达式的唯一途径
+            sql.push_str(&format!(
+                " AND REPLACE(REPLACE(updated_at, 'T', ' '), 'Z', '') >= datetime('now', '-{h} hours')"
+            ));
+        }
+        sql.push_str(" ORDER BY updated_at DESC");
+        let rows = self
+            .conn
+            .query_all(sea_orm::Statement::from_sql_and_values(
+                sea_orm::DbBackend::Sqlite,
+                sql,
+                values,
+            ))
+            .await?;
+        // tag_ids 批量补算：一次 IN 查询建立 id→tags 映射，不逐行 N+1
+        let mut briefs: Vec<crate::models::TodoBrief> =
+            rows.iter().map(brief_from_row).collect::<Result<_, _>>()?;
+        let ids: Vec<i64> = briefs.iter().map(|b| b.id).collect();
+        let tag_map = self.fetch_tag_ids_for_many(&ids).await?;
+        for b in &mut briefs {
+            b.tag_ids = tag_map.get(&b.id).cloned().unwrap_or_default();
+        }
+        Ok(briefs)
+    }
+
+    /// 工作空间内全部 todo id（056 轻量接口）：只取 id 列，隐藏已归档（日常视图片语义）。
+    pub async fn get_todo_ids_by_workspace(
+        &self,
+        workspace_id: i64,
+    ) -> Result<Vec<i64>, sea_orm::DbErr> {
+        let rows = self
+            .conn
+            .query_all(sea_orm::Statement::from_sql_and_values(
+                sea_orm::DbBackend::Sqlite,
+                "SELECT id FROM todos WHERE deleted_at IS NULL AND archived_at IS NULL AND workspace_id = ? ORDER BY id DESC",
+                vec![workspace_id.into()],
+            ))
+            .await?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| r.try_get_by::<i64, _>("id").ok())
+            .collect())
+    }
+
+    /// 工作空间内未删除且未归档 todo 计数（056 轻量接口）：COUNT(*)，不拉行。
+    pub async fn count_todos_by_workspace(
+        &self,
+        workspace_id: i64,
+    ) -> Result<i64, sea_orm::DbErr> {
+        let count = todos::Entity::find()
+            .filter(todos::Column::DeletedAt.is_null())
+            .filter(todos::Column::ArchivedAt.is_null())
+            .filter(todos::Column::WorkspaceId.eq(workspace_id))
+            .count(&self.conn)
+            .await?;
+        Ok(count.try_into().unwrap_or(i64::MAX))
+    }
+
+    /// 旧 /todos 接口的服务端分页版（056 决策 3b：直接强制分页）。
+    /// 隐藏已归档（「日常视图」语义，与旧 get_todos_by_workspace_id 一致）；
+    /// hours 过滤从内存下推 SQL；返回 (items, total)。
+    pub async fn get_todos_page_by_workspace(
+        &self,
+        workspace_id: Option<i64>,
+        hours: Option<u32>,
+        page: i64,
+        page_size: i64,
+    ) -> Result<(Vec<Todo>, i64), sea_orm::DbErr> {
+        let page = page.max(1);
+        let page_size = page_size.clamp(1, 200);
+        let mut cond = todos::Column::DeletedAt.is_null()
+            .and(todos::Column::ArchivedAt.is_null());
+        if let Some(wid) = workspace_id {
+            cond = cond.and(todos::Column::WorkspaceId.eq(wid));
+        }
+        if let Some(h) = hours.filter(|&h| h > 0) {
+            cond = cond.and(sea_orm::sea_query::Expr::cust(format!(
+                "REPLACE(REPLACE(updated_at, 'T', ' '), 'Z', '') >= datetime('now', '-{h} hours')"
+            )));
+        }
+        // 先计数再钳页码（CodeRabbit#2）：大 OFFSET 是外部可触发的慢查询
+        let total: i64 = todos::Entity::find()
+            .filter(cond.clone())
+            .count(&self.conn)
+            .await?
+            .try_into()
+            .unwrap_or(i64::MAX);
+        let max_page = if total == 0 { 1 } else { (total + page_size - 1) / page_size };
+        let page = page.min(max_page.max(1));
+        let models = todos::Entity::find()
+            .filter(cond)
+            .order_by_desc(todos::Column::UpdatedAt)
+            .limit(page_size as u64)
+            .offset(((page - 1) * page_size) as u64)
+            .all(&self.conn)
+            .await?;
+        let ids: Vec<i64> = models.iter().map(|m| m.id).collect();
+        let tag_map = self.fetch_tag_ids_for_many(&ids).await?;
+        Ok((
+            models
+                .into_iter()
+                .map(|m| {
+                    let tag_ids = tag_map.get(&m.id).cloned().unwrap_or_default();
+                    Self::model_to_todo(m, tag_ids)
+                })
+                .collect(),
+            total,
+        ))
+    }
+
+    /// 云同步合并用（056）：只取 id+title 两列建 title→id 映射，替代整行全量拉取。
+    ///
+    /// 实现说明：用原生 SQL 而非 select_only()——SeaORM 的 Model 反序列化要求全列
+    /// （CodeRabbit#1 复核确认缺列会在运行时 ColumnNotFound），两列投影必须走原生 SQL。
+    pub async fn get_todo_title_id_map(
+        &self,
+    ) -> Result<std::collections::HashMap<String, i64>, sea_orm::DbErr> {
+        let rows = self
+            .conn
+            .query_all(sea_orm::Statement::from_string(
+                sea_orm::DbBackend::Sqlite,
+                "SELECT id, title FROM todos WHERE deleted_at IS NULL".to_string(),
+            ))
+            .await?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                Some((
+                    r.try_get_by::<String, _>("title").ok()?.trim().to_lowercase(),
+                    r.try_get_by::<i64, _>("id").ok()?,
+                ))
+            })
+            .collect())
+    }
+
+    /// 云同步上传用（056）：id 游标分批拉取，避免一次性全表载入。
+    /// 传入 `after_id`（上一批最后一个 id，首批传 0），按 id ASC 取 limit 条。
+    pub async fn get_todos_batch_after_id(
+        &self,
+        after_id: i64,
+        limit: i64,
+    ) -> Result<Vec<Todo>, sea_orm::DbErr> {
+        let models = todos::Entity::find()
+            .filter(todos::Column::DeletedAt.is_null())
+            .filter(todos::Column::Id.gt(after_id))
+            .order_by_asc(todos::Column::Id)
+            .limit(limit.max(1) as u64)
+            .all(&self.conn)
+            .await?;
+        let ids: Vec<i64> = models.iter().map(|m| m.id).collect();
+        let tag_map = self.fetch_tag_ids_for_many(&ids).await?;
+        Ok(models
+            .into_iter()
+            .map(|m| {
+                let tag_ids = tag_map.get(&m.id).cloned().unwrap_or_default();
+                Self::model_to_todo(m, tag_ids)
+            })
+            .collect())
     }
 
     /// 取单个 todo 的 TodoCenterItem（archive/restore/webhook 后回传用）。
@@ -1622,7 +1996,7 @@ impl Database {
 
         let where_clause = conditions.join(" AND ");
         let sql = format!(
-            "SELECT t.id as todo_id, t.title, t.prompt, t.executor, \
+            "SELECT t.id as todo_id, t.title, t.prompt, t.executor, t.workspace_id, \
              er.status as execution_status, er.finished_at, er.result, er.model, er.usage, \
              er.trigger_type, er.id as record_id, er.rating \
              FROM todos t \
@@ -1674,6 +2048,7 @@ impl Database {
                     prompt,
                     executor,
                     tag_ids: tag_map.get(&todo_id).cloned().unwrap_or_default(),
+                    workspace_id: row.try_get_by("workspace_id").ok().flatten(),
                     completed_at,
                     result,
                     model,
@@ -1872,17 +2247,17 @@ mod todo_center_tests {
         row.try_get_by_index::<i64>(0).expect("id readable")
     }
 
-    /// 日常视图（get_todos_by_workspace_id）不返回已归档事项。
+    /// 日常视图（get_todos_page_by_workspace）不返回已归档事项。
     /// 这是归档「从日常视图隐藏」语义的落地点。
     #[tokio::test]
     async fn test_get_todos_by_workspace_id_excludes_archived() {
         let db = fresh_db().await;
         let id = seed_todo(&db, "归档项").await;
-        let before = db.get_todos_by_workspace_id(None).await.unwrap();
+        let (before, _) = db.get_todos_page_by_workspace(None, None, 1, 200).await.unwrap();
         assert_eq!(before.len(), 1, "归档前应在日常视图可见");
 
         assert!(db.archive_todo(id).await.unwrap(), "archive 应命中一行");
-        let after = db.get_todos_by_workspace_id(None).await.unwrap();
+        let (after, _) = db.get_todos_page_by_workspace(None, None, 1, 200).await.unwrap();
         assert!(after.is_empty(), "归档后日常视图应隐藏该事项");
     }
 
@@ -1931,12 +2306,16 @@ mod todo_center_tests {
         db.archive_todo(archived_id).await.unwrap();
 
         // 不过滤：应同时含两类
-        let all = db.get_todo_center(None, None, None).await.unwrap();
+        let (all, _, _, _) = db.get_todo_center_page(crate::db::TodoCenterPageQuery {
+                workspace_id: None, bucket: None, search: None, status: None, action_type: None, sort_by: None, sort_desc: true, page: 1, page_size: 200,
+            }).await.unwrap();
         assert_eq!(all.len(), 2, "未过滤应返回全部非软删事项");
 
         // 手动桶
-        let manual = db
-            .get_todo_center(None, Some(ComputedBucket::Manual), None)
+        let (manual, _, _, _) = db
+            .get_todo_center_page(crate::db::TodoCenterPageQuery {
+                workspace_id: None, bucket: Some(ComputedBucket::Manual), search: None, status: None, action_type: None, sort_by: None, sort_desc: true, page: 1, page_size: 200,
+            })
             .await
             .unwrap();
         assert_eq!(manual.len(), 1);
@@ -1944,8 +2323,10 @@ mod todo_center_tests {
         assert_eq!(manual[0].computed_bucket, ComputedBucket::Manual);
 
         // 已归档桶
-        let archived = db
-            .get_todo_center(None, Some(ComputedBucket::Archived), None)
+        let (archived, _, _, _) = db
+            .get_todo_center_page(crate::db::TodoCenterPageQuery {
+                workspace_id: None, bucket: Some(ComputedBucket::Archived), search: None, status: None, action_type: None, sort_by: None, sort_desc: true, page: 1, page_size: 200,
+            })
             .await
             .unwrap();
         assert_eq!(archived.len(), 1);
@@ -1970,7 +2351,9 @@ mod todo_center_tests {
         .await
         .expect("insert step");
 
-        let items = db.get_todo_center(None, None, None).await.unwrap();
+        let (items, _, _, _) = db.get_todo_center_page(crate::db::TodoCenterPageQuery {
+                workspace_id: None, bucket: None, search: None, status: None, action_type: None, sort_by: None, sort_desc: true, page: 1, page_size: 200,
+            }).await.unwrap();
         let item = items.iter().find(|i| i.todo.id == id).expect("todo present");
         assert_eq!(item.used_by_loop_step_count, 1, "应聚合到 1 次启用引用");
         assert_eq!(item.computed_bucket, ComputedBucket::LoopDriven);
@@ -1983,14 +2366,20 @@ mod todo_center_tests {
         seed_todo(&db, "修复登录").await;
         seed_todo(&db, "优化prompt").await;
         // 全量应含两条
-        let all = db.get_todo_center(None, None, None).await.unwrap();
+        let (all, _, _, _) = db.get_todo_center_page(crate::db::TodoCenterPageQuery {
+                workspace_id: None, bucket: None, search: None, status: None, action_type: None, sort_by: None, sort_desc: true, page: 1, page_size: 200,
+            }).await.unwrap();
         assert_eq!(all.len(), 2);
         // search="登录" 只命中第一条
-        let hit = db.get_todo_center(None, None, Some("登录")).await.unwrap();
+        let (hit, _, _, _) = db.get_todo_center_page(crate::db::TodoCenterPageQuery {
+                workspace_id: None, bucket: None, search: Some("登录"), status: None, action_type: None, sort_by: None, sort_desc: true, page: 1, page_size: 200,
+            }).await.unwrap();
         assert_eq!(hit.len(), 1);
         assert_eq!(hit[0].todo.title, "修复登录");
         // 大小写不敏感：search="PROMPT" 命中 prompt 子串
-        let hit2 = db.get_todo_center(None, None, Some("PROMPT")).await.unwrap();
+        let (hit2, _, _, _) = db.get_todo_center_page(crate::db::TodoCenterPageQuery {
+                workspace_id: None, bucket: None, search: Some("PROMPT"), status: None, action_type: None, sort_by: None, sort_desc: true, page: 1, page_size: 200,
+            }).await.unwrap();
         assert_eq!(hit2.len(), 1);
         assert_eq!(hit2[0].todo.title, "优化prompt");
     }
@@ -2164,6 +2553,403 @@ mod todo_center_tests {
             // 需求 055 新增字段；build_center_item 用例不关心技能，给空数组即可
             skills: vec![],
         }
+    }
+
+    // ==================== 056：服务端分页与轻量查询测试 ====================
+
+    /// 056 核心防漂移测试：SQL bucket 表达式与 Rust `compute_bucket` 逐条对拍。
+    /// 四种事实字段组合（手动/时间/事件/归档）+ Loop 引用，两侧分类必须一致。
+    #[tokio::test]
+    async fn test_center_bucket_sql_matches_rust() {
+        let db = fresh_db().await;
+        // 手动：无任何标记
+        let manual_id = seed_todo(&db, "纯手动").await;
+        // 时间驱动：scheduler_config 非空
+        let time_id = seed_todo(&db, "时间").await;
+        db.exec(&format!(
+            "UPDATE todos SET scheduler_config = '0 0 9 * * *' WHERE id = {time_id}"
+        ))
+        .await
+        .unwrap();
+        // 事件驱动：webhook_enabled=1
+        let event_id = seed_todo(&db, "事件").await;
+        db.update_todo_webhook(event_id, true).await.unwrap();
+        // 已归档
+        let archived_id = seed_todo(&db, "归档").await;
+        db.archive_todo(archived_id).await.unwrap();
+        // Loop 驱动：启用 loop_step 引用
+        let loop_id = seed_todo(&db, "被环引用").await;
+        db.exec("INSERT INTO loops (name) VALUES ('Lx')").await.unwrap();
+        db.exec(&format!(
+            "INSERT INTO loop_steps (loop_id, name, todo_id, enabled) VALUES (1, 's', {loop_id}, 1)"
+        ))
+        .await
+        .unwrap();
+
+        // SQL 侧：bucket_counts 是 SQL 表达式的直接输出
+        let counts = db
+            .count_todo_center_buckets(&crate::db::TodoCenterPageQuery {
+                workspace_id: None, bucket: None, search: None, status: None, action_type: None,
+                sort_by: None, sort_desc: true, page: 1, page_size: 200,
+            })
+            .await
+            .unwrap();
+        assert_eq!(counts.get("manual"), Some(&1), "manual 计数");
+        assert_eq!(counts.get("time_driven"), Some(&1), "time 计数");
+        assert_eq!(counts.get("event_driven"), Some(&1), "event 计数");
+        assert_eq!(counts.get("archived"), Some(&1), "archived 计数");
+        assert_eq!(counts.get("loop_driven"), Some(&1), "loop 计数");
+
+        // Rust 侧：同一批数据经 build_center_item 推导（聚合来自 DB，同源）
+        let (items, total, _, _) = db
+            .get_todo_center_page(crate::db::TodoCenterPageQuery {
+                workspace_id: None,
+                bucket: None,
+                search: None,
+                status: None, action_type: None, sort_by: None,
+                sort_desc: true,
+                page: 1,
+                page_size: 200,
+            })
+            .await
+            .unwrap();
+        assert_eq!(total, 5);
+        let rust_bucket = |id: i64| {
+            items
+                .iter()
+                .find(|i| i.todo.id == id)
+                .map(|i| format!("{:?}", i.computed_bucket))
+        };
+        assert_eq!(rust_bucket(manual_id).as_deref(), Some("Manual"));
+        assert_eq!(rust_bucket(time_id).as_deref(), Some("TimeDriven"));
+        assert_eq!(rust_bucket(event_id).as_deref(), Some("EventDriven"));
+        assert_eq!(rust_bucket(archived_id).as_deref(), Some("Archived"));
+        assert_eq!(rust_bucket(loop_id).as_deref(), Some("LoopDriven"));
+    }
+
+    /// 056：分页元数据——page 越界截断、total 与 bucket 过滤一致、counts 不含 bucket 过滤。
+    #[tokio::test]
+    async fn test_center_page_pagination_metadata() {
+        let db = fresh_db().await;
+        for i in 0..5 {
+            seed_todo(&db, &format!("事项{i}")).await;
+        }
+        // page_size=2 时第 3 页只有 1 条，total=5
+        let (items, total, counts, _) = db
+            .get_todo_center_page(crate::db::TodoCenterPageQuery {
+                workspace_id: None,
+                bucket: None,
+                search: None,
+                status: None, action_type: None, sort_by: None,
+                sort_desc: true,
+                page: 3,
+                page_size: 2,
+            })
+            .await
+            .unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(total, 5);
+        assert_eq!(counts.get("manual"), Some(&5));
+        // bucket 过滤后 total 收縮，counts 不受影响（Tab 角标语义）
+        let (items, total, counts, _) = db
+            .get_todo_center_page(crate::db::TodoCenterPageQuery {
+                workspace_id: None,
+                bucket: Some(ComputedBucket::Archived),
+                search: None,
+                status: None, action_type: None, sort_by: None,
+                sort_desc: true,
+                page: 1,
+                page_size: 20,
+            })
+            .await
+            .unwrap();
+        assert!(items.is_empty());
+        assert_eq!(total, 0, "archived 桶为空，total=0");
+        assert_eq!(counts.get("manual"), Some(&5), "counts 不随 bucket 过滤塌缩");
+    }
+
+    /// 056：brief 语义——看板模式（ids=None）隐藏已归档；定点模式（ids=Some）包含已归档。
+    #[tokio::test]
+    async fn test_todo_briefs_archived_semantics() {
+        let db = fresh_db().await;
+        let keep = seed_todo(&db, "保留").await;
+        let gone = seed_todo(&db, "归档").await;
+        db.archive_todo(gone).await.unwrap();
+
+        let kanban = db.get_todo_briefs(None, None, None).await.unwrap();
+        assert!(kanban.iter().any(|b| b.id == keep));
+        assert!(!kanban.iter().any(|b| b.id == gone), "看板模式隐藏已归档");
+
+        let lookup = db.get_todo_briefs(None, Some(&[gone]), None).await.unwrap();
+        assert_eq!(lookup.len(), 1, "定点模式能查到已归档事项的标题");
+        assert_eq!(lookup[0].title, "归档");
+        assert!(lookup[0].archived_at.is_some());
+    }
+
+    /// 056：旧 /todos 分页版——hours 过滤下推 SQL、未归档隐藏、total 正确。
+    #[tokio::test]
+    async fn test_todos_page_by_workspace_hours_and_total() {
+        let db = fresh_db().await;
+        let recent = seed_todo(&db, "最近").await;
+        let old = seed_todo(&db, "老旧").await;
+        // seed_todo 最小列集不带 updated_at（生产由触发器写入），测试显式赋值
+        db.exec(&format!(
+            "UPDATE todos SET updated_at = datetime('now') WHERE id = {recent}"
+        ))
+        .await
+        .unwrap();
+        // 把 old 的 updated_at 改到 10 天前
+        db.exec(&format!(
+            "UPDATE todos SET updated_at = datetime('now', '-240 hours') WHERE id = {old}"
+        ))
+        .await
+        .unwrap();
+        let (items, total) = db
+            .get_todos_page_by_workspace(None, Some(24), 1, 200)
+            .await
+            .unwrap();
+        assert_eq!(total, 1, "hours=24 只留最近一条");
+        assert_eq!(items[0].id, recent);
+
+        let (_, total_all) = db
+            .get_todos_page_by_workspace(None, None, 1, 200)
+            .await
+            .unwrap();
+        assert_eq!(total_all, 2);
+    }
+
+    /// 056：云同步游标分批——批间不漏不重，末批为空终止。
+    #[tokio::test]
+    async fn test_todos_batch_after_id_cursor() {
+        let db = fresh_db().await;
+        let mut seeded = Vec::new();
+        for i in 0..5 {
+            seeded.push(seed_todo(&db, &format!("批{i}")).await);
+        }
+        seeded.sort_unstable();
+        let mut collected = Vec::new();
+        let mut after = 0i64;
+        loop {
+            let batch = db.get_todos_batch_after_id(after, 2).await.unwrap();
+            if batch.is_empty() {
+                break;
+            }
+            after = batch.last().map(|t| t.id).unwrap_or(after);
+            collected.extend(batch.into_iter().map(|t| t.id));
+        }
+        assert_eq!(collected, seeded, "游标分批应不重不漏收齐全部");
+    }
+
+    /// 056：ids/count 轻量接口——不拉行，且隐藏已归档（日常视图片语义）。
+    #[tokio::test]
+    async fn test_todo_ids_and_count_exclude_archived() {
+        let db = fresh_db().await;
+        // ids/count 接口按 ws 过滤，需要一个真实 workspace
+        let ws = db
+            .create_project_directory("/tmp/056-ids", Some("w056"), false, false)
+            .await
+            .unwrap();
+        let keep = seed_todo(&db, "ws内").await;
+        db.exec(&format!("UPDATE todos SET workspace_id = {ws} WHERE id = {keep}"))
+            .await
+            .unwrap();
+        let gone = seed_todo(&db, "ws归档").await;
+        db.exec(&format!("UPDATE todos SET workspace_id = {ws} WHERE id = {gone}"))
+            .await
+            .unwrap();
+        db.archive_todo(gone).await.unwrap();
+        seed_todo(&db, "ws外").await; // 不属于该 ws
+
+        let ids = db.get_todo_ids_by_workspace(ws).await.unwrap();
+        assert_eq!(ids, vec![keep]);
+        assert_eq!(db.count_todos_by_workspace(ws).await.unwrap(), 1);
+    }
+
+    /// 056 评审补测：sort_by=computed_bucket 的 SQL 表达式排序。
+    /// 按 CASE 输出串字典序：archived < event_driven < loop_driven < manual < time_driven。
+    #[tokio::test]
+    async fn test_center_page_sort_by_computed_bucket() {
+        let db = fresh_db().await;
+        let manual_id = seed_todo(&db, "m").await;
+        let time_id = seed_todo(&db, "t").await;
+        db.exec(&format!(
+            "UPDATE todos SET scheduler_config = '0 0 9 * * *' WHERE id = {time_id}"
+        ))
+        .await
+        .unwrap();
+        let archived_id = seed_todo(&db, "a").await;
+        db.archive_todo(archived_id).await.unwrap();
+
+        let (items, _, _, _) = db
+            .get_todo_center_page(crate::db::TodoCenterPageQuery {
+                workspace_id: None,
+                bucket: None,
+                search: None,
+                status: None,
+                action_type: None,
+                sort_by: Some("computed_bucket"),
+                sort_desc: false, // ASC
+                page: 1,
+                page_size: 20,
+            })
+            .await
+            .unwrap();
+        let order: Vec<i64> = items.iter().map(|i| i.todo.id).collect();
+        assert_eq!(
+            order,
+            vec![archived_id, manual_id, time_id],
+            "ASC 应按 bucket 名字典序 archived < manual < time_driven"
+        );
+    }
+
+    /// 056 评审补测：搜索词含 LIKE 通配符（%/_）时被转义，不作为通配符匹配。
+    #[tokio::test]
+    async fn test_center_page_search_escapes_like_wildcards() {
+        let db = fresh_db().await;
+        seed_todo(&db, "进度 50% 完成").await;
+        seed_todo(&db, "进度 50x 完成").await;
+        // 未转义时 "%50%" 中的 % 会同时命中两条；转义后只命中字面条目
+        let (items, total, _, _) = db
+            .get_todo_center_page(crate::db::TodoCenterPageQuery {
+                workspace_id: None,
+                bucket: None,
+                search: Some("50%"),
+                status: None,
+                action_type: None,
+                sort_by: None,
+                sort_desc: true,
+                page: 1,
+                page_size: 20,
+            })
+            .await
+            .unwrap();
+        assert_eq!(total, 1, "% 必须按字面匹配");
+        assert_eq!(items[0].todo.title, "进度 50% 完成");
+        // 下划线同样转义
+        let (_, total2, _, _) = db
+            .get_todo_center_page(crate::db::TodoCenterPageQuery {
+                workspace_id: None,
+                bucket: None,
+                search: Some("50_"),
+                status: None,
+                action_type: None,
+                sort_by: None,
+                sort_desc: true,
+                page: 1,
+                page_size: 20,
+            })
+            .await
+            .unwrap();
+        assert_eq!(total2, 0, "_ 必须按字面匹配，不存在含 50_ 的标题");
+    }
+
+    /// 056 评审补测：status / action_type 精确过滤下推 SQL。
+    #[tokio::test]
+    async fn test_center_page_status_and_action_type_filters() {
+        let db = fresh_db().await;
+        let pending_id = seed_todo(&db, "待办").await;
+        let done_id = seed_todo(&db, "完成").await;
+        db.exec(&format!("UPDATE todos SET status = 'completed' WHERE id = {done_id}"))
+            .await
+            .unwrap();
+        let act_id = seed_todo(&db, "快捷").await;
+        db.exec(&format!("UPDATE todos SET action_type = 'quick' WHERE id = {act_id}"))
+            .await
+            .unwrap();
+
+        let base = crate::db::TodoCenterPageQuery {
+            workspace_id: None,
+            bucket: None,
+            search: None,
+            status: None,
+            action_type: None,
+            sort_by: None,
+            sort_desc: true,
+            page: 1,
+            page_size: 20,
+        };
+        let (items, total, _, _) = db
+            .get_todo_center_page(crate::db::TodoCenterPageQuery {
+                status: Some("completed"),
+                ..base.clone()
+            })
+            .await
+            .unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(items[0].todo.id, done_id);
+
+        let (items, total, _, _) = db
+            .get_todo_center_page(crate::db::TodoCenterPageQuery {
+                action_type: Some("quick"),
+                ..base.clone()
+            })
+            .await
+            .unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(items[0].todo.id, act_id);
+
+        // 组合过滤：completed + quick 应无交集（quick 是 pending）
+        let (_, total3, _, _) = db
+            .get_todo_center_page(crate::db::TodoCenterPageQuery {
+                status: Some("completed"),
+                action_type: Some("quick"),
+                ..base.clone()
+            })
+            .await
+            .unwrap();
+        assert_eq!(total3, 0);
+        // pending_id 只是防止 unused 警告，并验证 status=pending 能命中
+        let (_, total4, _, _) = db
+            .get_todo_center_page(crate::db::TodoCenterPageQuery {
+                status: Some("pending"),
+                ..base.clone()
+            })
+            .await
+            .unwrap();
+        assert_eq!(total4, 2, "pending 应命中 待办+快捷（{pending_id}/{act_id}）");
+    }
+
+    /// CodeRabbit#1 回归：两列投影必须走原生 SQL（select_only + 部分列 + Model 反序列化
+    /// 会在运行时 ColumnNotFound）。验证映射键为小写 title、值为 id。
+    #[tokio::test]
+    async fn test_todo_title_id_map_two_column_projection() {
+        let db = fresh_db().await;
+        let id = seed_todo(&db, "MyTask").await;
+        let map = db.get_todo_title_id_map().await.unwrap();
+        assert_eq!(map.get("mytask"), Some(&id), "键为小写化 title");
+    }
+
+    /// CodeRabbit#2 回归：page 超界时按 total 截断到最后一页，不执行大 OFFSET。
+    #[tokio::test]
+    async fn test_center_page_clamps_overflow_page() {
+        let db = fresh_db().await;
+        for i in 0..5 {
+            seed_todo(&db, &format!("项{i}")).await;
+        }
+        // page=100000 应被截断到最后一页（total=5, page_size=2 → max_page=3）
+        let (items, total, _, _) = db
+            .get_todo_center_page(crate::db::TodoCenterPageQuery {
+                workspace_id: None,
+                bucket: None,
+                search: None,
+                status: None,
+                action_type: None,
+                sort_by: None,
+                sort_desc: true,
+                page: 100000,
+                page_size: 2,
+            })
+            .await
+            .unwrap();
+        assert_eq!(total, 5);
+        assert_eq!(items.len(), 1, "截断到最后一页只剩 1 条");
+
+        // 旧 /todos 分页同样截断
+        let (items2, _) = db
+            .get_todos_page_by_workspace(None, None, 99999, 2)
+            .await
+            .unwrap();
+        assert_eq!(items2.len(), 1);
     }
 }
 

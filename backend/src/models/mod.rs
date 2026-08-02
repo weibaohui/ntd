@@ -264,6 +264,56 @@ pub struct TodoCenterItem {
     pub bound_slash_command: Option<String>,
 }
 
+/// 事项中心服务端分页响应（056）。
+///
+/// `bucket_counts` 供前端分类 Tab 角标：统计口径=应用 search 后、应用 bucket 过滤前，
+/// 与「分页前完成分桶」的旧内存实现语义一致。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TodoCenterPage {
+    pub items: Vec<TodoCenterItem>,
+    pub total: i64,
+    pub page: i64,
+    pub page_size: i64,
+    pub bucket_counts: std::collections::HashMap<String, i64>,
+    /// 当前工作空间内出现过的 action_type 去重列表（卡片墙「来源筛选」下拉数据源）
+    #[serde(default)]
+    pub action_types: Vec<String>,
+}
+
+/// 事项轻量摘要（056）：不含 prompt/acceptance_criteria 大文本字段。
+///
+/// 供看板全量渲染、下拉选择、记录详情补标题等「只需要展示字段」的场景，
+/// 替代过去「整行 Todo 全量拉取」的做法。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TodoBrief {
+    pub id: i64,
+    pub title: String,
+    pub status: TodoStatus,
+    #[serde(default)]
+    pub executor: Option<String>,
+    pub updated_at: String,
+    #[serde(default)]
+    pub archived_at: Option<String>,
+    /// 所属工作空间（拖拽/归属展示用，小字段）
+    #[serde(default)]
+    pub workspace_id: Option<i64>,
+    /// 标签 id 列表（看板标签徽章用；批量查询补算，不逐行 N+1）
+    #[serde(default)]
+    pub tag_ids: Vec<i64>,
+    /// prompt 是否非空（看板「展开 prompt」区块的显示开关，不必传输 prompt 本体）
+    #[serde(default)]
+    pub has_prompt: bool,
+}
+
+/// 事项列表分页响应（056，旧全量接口改造后的统一结构）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TodoListPage {
+    pub items: Vec<Todo>,
+    pub total: i64,
+    pub page: i64,
+    pub page_size: i64,
+}
+
 /// Loop 引用摘要：事项中心展示「所属环路」与「工艺」两列共用。
 /// - loop_id/loop_name：引用该事项的环路实例。
 /// - process_template_*：该环路所基于的工艺模板（loops.process_template_id → process_templates），
@@ -832,6 +882,9 @@ pub struct RecentCompletedTodo {
     pub prompt: Option<String>,
     pub executor: Option<String>,
     pub tag_ids: Vec<i64>,
+    /// 所属工作空间（056 补充：纪念板据此反查项目名，免去前端按 id 二次查询）
+    #[serde(default)]
+    pub workspace_id: Option<i64>,
     pub completed_at: String,
     pub result: Option<String>,
     pub model: Option<String>,

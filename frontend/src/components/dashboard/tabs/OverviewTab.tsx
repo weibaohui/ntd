@@ -3,7 +3,7 @@
 // 设计目标:一屏看完系统健康度,不放细节卡片(细节下沉到其他 Tab)。
 // 包含:核心 KPI、运行中任务、执行趋势、贡献热力图、活跃/连续打卡、最近执行记录表,
 // 末尾放分享卡(安装引导)——看完核心数据后的自然推广位。
-import type { DashboardStats, RunningTask, Todo } from '@/types';
+import type { DashboardStats, RunningTask, TodoBrief } from '@/types';
 import { KeyMetricsCard, OverviewCard } from '@/components/dashboard/StatsGridCards';
 import { ActiveTasksCard, ShareCardPanel } from '@/components/dashboard/SpecialCards';
 import { TrendChartCard, ContributionHeatmapCard } from '@/components/dashboard/ChartCards';
@@ -15,7 +15,8 @@ interface OverviewTabProps {
   loading: boolean;
   successRate: number;
   runningTasks: RunningTask[];
-  todos: Todo[];
+  /** 056：只传最近执行记录涉及的 todo 摘要（按 id 集反查），不再是全量列表 */
+  todos: TodoBrief[];
 }
 
 export function OverviewTab({ stats, loading, successRate, runningTasks, todos }: OverviewTabProps) {
