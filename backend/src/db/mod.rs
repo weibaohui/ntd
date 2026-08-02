@@ -309,7 +309,7 @@ impl Database {
 pub mod blackboard;
 
 mod todo;
-pub use todo::{SchedulerUpdate, TODO_TYPE_ABNORMAL_HANDLER, TodoCenterPageQuery, TodoUpdate};
+pub use todo::{SchedulerUpdate, TODO_TYPE_ABNORMAL_HANDLER, TodoCenterPageData, TodoCenterPageQuery, TodoUpdate};
 pub mod execution;
 pub(super) mod dashboard;
 mod tag;
@@ -668,7 +668,7 @@ mod tests {
         let db = setup_db().await;
         let id = db.create_todo("Active", "Prompt").await.unwrap();
         db.delete_todo(id).await.unwrap();
-        let (todos, _) = db.get_todos_page_by_workspace(None, None, 1, 200).await.unwrap();
+        let (todos, _, _) = db.get_todos_page_by_workspace(None, None, 1, 200).await.unwrap();
         assert!(todos.iter().all(|t| t.id != id));
     }
 
@@ -678,7 +678,7 @@ mod tests {
         let id1 = db.create_todo("First", "Prompt").await.unwrap();
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         let id2 = db.create_todo("Second", "Prompt").await.unwrap();
-        let (todos, _) = db.get_todos_page_by_workspace(None, None, 1, 200).await.unwrap();
+        let (todos, _, _) = db.get_todos_page_by_workspace(None, None, 1, 200).await.unwrap();
         assert_eq!(todos[0].id, id2);
         assert_eq!(todos[1].id, id1);
     }
@@ -768,7 +768,7 @@ mod tests {
         let id = db.create_todo("Test", "Prompt").await.unwrap();
         db.delete_todo(id).await.unwrap();
         assert!(db.get_todo(id).await.unwrap().is_none());
-        let (todos, _) = db.get_todos_page_by_workspace(None, None, 1, 200).await.unwrap();
+        let (todos, _, _) = db.get_todos_page_by_workspace(None, None, 1, 200).await.unwrap();
         assert!(todos.iter().all(|t| t.id != id));
     }
 
