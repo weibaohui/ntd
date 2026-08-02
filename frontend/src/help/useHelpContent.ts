@@ -13,9 +13,12 @@ import type { HelpPage } from './types';
 
 // 构建时把所有 md 文件以 raw string 形式打进去。
 // query: '?raw' 让 Vite 以字符串形式导入；import: 'default' 取默认导出（即字符串）。
+// eager: true 必须显式传：glob 默认懒加载，值是 () => Promise<string> 加载函数而非字符串；
+// 漏传会导致 loadHelpDoc 返回函数，XMarkdown 拒绝渲染（NTD-011 根因）。
 const allDocs = import.meta.glob('./pages/*.md', {
   query: '?raw',
   import: 'default',
+  eager: true,
 }) as unknown as Record<string, string>;
 
 /**

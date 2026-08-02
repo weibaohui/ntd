@@ -98,10 +98,16 @@ export function HelpDrawer({ open, onClose, activeView, hasDetail, isMobile }: H
   const docFile = useMemo(() => resolveDocFile(selectedKey), [selectedKey]);
   const docSource = useMemo(() => loadHelpDoc(docFile), [docFile]);
 
-  // 树节点选中回调
+  // 树节点选中回调。
+  // 选中页面节点（'p:' 前缀）时同步将其并入 expandedKeys：antd Tree 默认只有点 switcher
+  // 小箭头才展开子节点，但帮助树是菜单语义，用户习惯点标题文字展开子菜单（NTD-011）。
+  // 收起动作仍交给 switcher 箭头承担，避免「点已选中节点标题」与「收起」产生冲突。
   function handleSelect(keys: React.Key[]) {
-    if (keys.length > 0) {
-      setSelectedKey(String(keys[0]));
+    if (keys.length === 0) return;
+    const key = String(keys[0]);
+    setSelectedKey(key);
+    if (key.startsWith('p:') && !expandedKeys.includes(key)) {
+      setExpandedKeys([...expandedKeys, key]);
     }
   }
 
