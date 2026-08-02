@@ -45,6 +45,7 @@ mod v83;
 mod v84;
 mod v85;
 mod v86;
+mod v87;
 
 pub use v2_v5::read_applied_versions;
 pub use v2_v5::drop_column_if_exists;
@@ -159,6 +160,9 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         // V86 在 V85 之后：process_template_versions 版本快照表（BUG-005）——
         // 保存工艺时记录版本快照，versions/diff 从快照读取
         Box::new(v86::V86ProcessTemplateVersions),
+        // V87 在 V86 之后：残留态 DB 自愈（BUG-009 / Issue #973）——
+        // 幂等探测并补齐历史残留态缺失的关键列，让中断/回退过的库能自愈启动
+        Box::new(v87::V87SelfHealResidual),
     ]
 }
 
