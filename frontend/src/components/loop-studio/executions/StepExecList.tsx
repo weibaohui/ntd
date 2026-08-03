@@ -40,7 +40,7 @@ export function StepExecList({ stepExecs, loopId, workspaceId, executionId, onAp
 
   // 人工审批状态：记录正在提交审批的环节 id，避免重复点击；
   // 044 起改门禁制（通过/拒绝二选一），不再需要评分滑块；
-  // 也不带「审批意见」——与 ProcessExecutionBoard 的审批操作对齐为纯通过/拒绝，两处功能一致。
+  // 也不带「审批意见」——审批操作纯通过/拒绝二选一，与后端 approveGate 接口口径一致。
   const [approvingId, setApprovingId] = useState<number | null>(null);
 
   const handleCardClick = useCallback(async (s: any) => {
@@ -74,7 +74,7 @@ export function StepExecList({ stepExecs, loopId, workspaceId, executionId, onAp
 
   // 门禁制人工审批：通过/拒绝二选一，调门禁审批接口。
   // gateId 由后端在 step execution 的 pending_gate_id 字段注入（仅 pending_approval 时有值）。
-  // 不带审批意见，与 ProcessExecutionBoard 的通过/拒绝保持功能一致（同一后端接口 approveGate）。
+  // 不带审批意见，通过/拒绝二选一（后端接口 approveGate 不接收审批意见字段）。
   const handleApprove = useCallback(async (stepExecutionId: number, gateId: number | null, approved: boolean) => {
     if (gateId == null) {
       message.error('未找到待审批门禁');

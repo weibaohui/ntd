@@ -774,26 +774,6 @@ impl Database {
         }))
     }
 
-    /// 按 action_type + action_key 查找 todo。
-    /// 用于 ActionButton 组件的 action 模板查找。
-    pub async fn get_todo_by_action_type_and_key(
-        &self,
-        action_type: &str,
-        action_key: &str,
-    ) -> Result<Option<Todo>, sea_orm::DbErr> {
-        let model = todos::Entity::find()
-            .filter(todos::Column::ActionType.eq(action_type))
-            .filter(todos::Column::ActionKey.eq(action_key))
-            .filter(todos::Column::DeletedAt.is_null())
-            .one(&self.conn)
-            .await?;
-
-        Ok(model.map(|m| {
-            let tag_ids = vec![]; // action template 不需要 tags
-            Self::model_to_todo(m, tag_ids)
-        }))
-    }
-
     pub async fn create_todo(&self, title: &str, prompt: &str) -> Result<i64, sea_orm::DbErr> {
         // 从数据库读取默认执行器，不再使用硬编码常量；
         // 若数据库未配置默认执行器，get_default_executor_name 内部会回退到 claudecode。
@@ -846,52 +826,6 @@ impl Database {
             todo_type: ActiveValue::Set(Some(0)),
             workspace_id: ActiveValue::Set(Some(workspace_id)),
             workspace_path: ActiveValue::Set(Some(workspace_path.to_string())),
-            ..Default::default()
-        };
-        let inserted = am.insert(&self.conn).await?;
-        Ok(inserted.id)
-    }
-
-    /// 从环路导入时创建 Todo，支持完整字段（status/scheduler_enabled/auto_review_enabled/review_template_id/kind）。
-    /// 参数数量由导入时需要覆盖的可选字段决定
-    #[allow(clippy::too_many_arguments)]
-    pub async fn create_todo_for_import(
-        &self,
-        title: &str,
-        prompt: &str,
-        executor: Option<&str>,
-        acceptance_criteria: Option<&str>,
-        webhook_enabled: bool,
-        workspace_id: i64,
-        workspace_path: &str,
-        status: Option<&str>,
-        scheduler_enabled: Option<bool>,
-        auto_review_enabled: Option<bool>,
-        review_template_id: Option<i64>,
-        kind: Option<i32>,
-    ) -> Result<i64, sea_orm::DbErr> {
-        let now = crate::models::utc_timestamp();
-        // 先尝试使用调用方传入的 executor；为空则从数据库读取默认执行器。
-        // get_default_executor_name 内部会回退到 DEFAULT_EXECUTOR 常量，确保不会为空。
-        let executor_str = match executor.map(str::trim).filter(|s| !s.is_empty()) {
-            Some(s) => s.to_string(),
-            None => self.get_default_executor_name().await?,
-        };
-        let am = todos::ActiveModel {
-            title: ActiveValue::Set(title.to_string()),
-            prompt: ActiveValue::Set(Some(prompt.to_string())),
-            status: ActiveValue::Set(Some(status.unwrap_or("pending").to_string())),
-            created_at: ActiveValue::Set(Some(now.clone())),
-            updated_at: ActiveValue::Set(Some(now)),
-            executor: ActiveValue::Set(Some(executor_str)),
-            acceptance_criteria: ActiveValue::Set(acceptance_criteria.map(|s| s.to_string())),
-            webhook_enabled: ActiveValue::Set(Some(webhook_enabled)),
-            auto_review_enabled: ActiveValue::Set(auto_review_enabled),
-            todo_type: ActiveValue::Set(kind.or(Some(0))),
-            scheduler_enabled: ActiveValue::Set(scheduler_enabled),
-            workspace_id: ActiveValue::Set(Some(workspace_id)),
-            workspace_path: ActiveValue::Set(Some(workspace_path.to_string())),
-            review_template_id: ActiveValue::Set(review_template_id),
             ..Default::default()
         };
         let inserted = am.insert(&self.conn).await?;
@@ -1237,61 +1171,6 @@ impl Database {
         self.exec_update(am).await
     }
 
-    /// 按 title + prompt + workspace_id 精确查找未软删的 todo，用于环路导入合并时判断是否真正重复。
-    pub async fn get_todo_by_identity(
-        &self,
-        title: &str,
-        prompt: &str,
-        workspace_id: i64,
-    ) -> Result<Option<Todo>, sea_orm::DbErr> {
-        let mut query = todos::Entity::find()
-            .filter(todos::Column::Title.eq(title))
-            .filter(todos::Column::Prompt.eq(prompt))
-            .filter(todos::Column::DeletedAt.is_null());
-        query = query.filter(todos::Column::WorkspaceId.eq(workspace_id));
-        let model = query.one(&self.conn).await?;
-        let Some(m) = model else { return Ok(None) };
-        let tag_ids = todo_tags::Entity::find()
-            .filter(todo_tags::Column::TodoId.eq(m.id))
-            .all(&self.conn)
-            .await?
-            .into_iter()
-            .map(|t| t.tag_id)
-            .collect();
-        Ok(Some(Self::model_to_todo(m, tag_ids)))
-    }
-
-    /// 按 title 精确查找 todo (仅未软删的). 用于评审任务 todo 的探测.
-    pub async fn get_todo_by_title(&self, title: &str) -> Result<Option<Todo>, sea_orm::DbErr> {
-        let model = todos::Entity::find()
-            .filter(todos::Column::Title.eq(title))
-            .filter(todos::Column::DeletedAt.is_null())
-            .one(&self.conn)
-            .await?;
-        let Some(m) = model else { return Ok(None) };
-        let tag_ids = todo_tags::Entity::find()
-            .filter(todo_tags::Column::TodoId.eq(m.id))
-            .all(&self.conn)
-            .await?
-            .into_iter()
-            .map(|t| t.tag_id)
-            .collect();
-        Ok(Some(Self::model_to_todo(m, tag_ids)))
-    }
-
-    /// 设置 todo_type. 主要用于将刚 create_todo_with_extras 出来的 todo 标记为
-    /// 评审任务 (1) 或 评审实例 (2). 不在公共 API 暴露.
-    pub async fn set_todo_type(&self, id: i64, todo_type: i32) -> Result<(), sea_orm::DbErr> {
-        let now = crate::models::utc_timestamp();
-        let am = todos::ActiveModel {
-            id: ActiveValue::Unchanged(id),
-            todo_type: ActiveValue::Set(Some(todo_type)),
-            updated_at: ActiveValue::Set(Some(now)),
-            ..Default::default()
-        };
-        self.exec_update(am).await
-    }
-
     /// 创建一个"评审实例" todo (todo_type=2)。
     /// 设计原因: V15 之后 review_template 是独立表 (不再挂 todo_type=1),
     /// 评审模板不再有 executor 字段。执行评审时需要新建一条 todo:
@@ -1490,14 +1369,6 @@ impl Database {
         Ok(Some(Self::model_to_todo(model, tag_ids)))
     }
 
-    /// 获取 Todo 实体模型（包含 kind 等完整字段），用于导出等需要访问所有字段的场景
-    pub async fn get_todo_entity(&self, id: i64) -> Result<Option<todos::Model>, sea_orm::DbErr> {
-        todos::Entity::find_by_id(id)
-            .filter(todos::Column::DeletedAt.is_null())
-            .one(&self.conn)
-            .await
-    }
-
     pub async fn get_scheduler_todos(&self, workspace_id: Option<i64>) -> Result<Vec<Todo>, sea_orm::DbErr> {
         let mut find = todos::Entity::find()
             .filter(todos::Column::DeletedAt.is_null())
@@ -1604,22 +1475,6 @@ impl Database {
             ..Default::default()
         };
         self.exec_update(am).await
-    }
-
-    /// 根据task_id查找对应的todo
-    pub async fn get_todo_by_task_id(&self, task_id: &str) -> Result<Option<Todo>, sea_orm::DbErr> {
-        let model = match todos::Entity::find()
-            .filter(todos::Column::TaskId.eq(task_id))
-            .filter(todos::Column::DeletedAt.is_null())
-            .one(&self.conn)
-            .await?
-        {
-            Some(m) => m,
-            None => return Ok(None),
-        };
-        let tag_map = self.fetch_tag_ids_for_many(&[model.id]).await?;
-        let tag_ids = tag_map.get(&model.id).cloned().unwrap_or_default();
-        Ok(Some(Self::model_to_todo(model, tag_ids)))
     }
 
     /// 获取所有 todo 的备份数据（非软删除），包含标签名称

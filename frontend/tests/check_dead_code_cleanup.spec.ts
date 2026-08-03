@@ -75,7 +75,7 @@ test('Loop Studio detail：验证 triggers/executions barrel 拆除', async ({ p
   // 等列表数据加载
   await page.waitForTimeout(1500);
 
-  // loop 列表项：LoopStudioListPanel 渲染的行
+  // loop 列表项：环路列表渲染的行（选择器为通用 antd class，不绑定具体组件）
   const loopRow = page.locator('.ant-list-item, .ntd-loop-list-item').first();
   const hasLoop = await loopRow.isVisible().catch(() => false);
   if (!hasLoop) {

@@ -125,23 +125,6 @@ impl ExecutionMetadata {
         self.input_tokens.saturating_add(self.output_tokens)
     }
 
-    /// 获取总缓存 token 数量
-    pub fn total_cache_tokens(&self) -> u64 {
-        self.cache_read_tokens.saturating_add(self.cache_write_tokens)
-    }
-
-    /// 转换为数据库存储的 ExecutionUsage 格式
-    pub fn to_usage(&self) -> crate::models::ExecutionUsage {
-        crate::models::ExecutionUsage {
-            input_tokens: self.input_tokens,
-            output_tokens: self.output_tokens,
-            cache_read_input_tokens: Some(self.cache_read_tokens),
-            cache_creation_input_tokens: Some(self.cache_write_tokens),
-            total_cost_usd: Some(self.cost_usd),
-            duration_ms: Some(self.duration_ms),
-        }
-    }
-
     /// 获取摘要信息
     pub fn summary(&self) -> String {
         let mut parts = Vec::new();

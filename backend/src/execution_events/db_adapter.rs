@@ -217,21 +217,6 @@ impl DbLogEntry {
         }
     }
 
-    /// 转换为用于插入数据库的 JSON 字符串
-    pub fn to_json(&self) -> String {
-        let metadata = serde_json::json!({
-            "tool_name": self.tool_name,
-            "tool_input_json": self.tool_input_json,
-        });
-        serde_json::json!({
-            "timestamp": self.timestamp,
-            "type": self.log_type,
-            "content": self.content,
-            "metadata": metadata,
-        })
-        .to_string()
-    }
-
     /// 转换为 ParsedLogEntry（保持与现有系统的兼容性）
     ///
     /// DbLogEntry 和 ParsedLogEntry 结构几乎相同，可以直接转换。

@@ -1,6 +1,6 @@
 // 评审模板类型定义。
 //
-// 与 backend/src/models/mod.rs 的 ReviewTemplate / ReviewTemplateOption
+// 与 backend/src/models/mod.rs 的 ReviewTemplate
 // / CreateReviewTemplateRequest / UpdateReviewTemplateRequest 一一对应。
 //
 // 概念说明：V15 之后评审模板是独立表 review_templates（不再寄生在 todos
@@ -17,15 +17,6 @@ export interface ReviewTemplate {
   workspace_id: number | null;
   created_at: string | null;
   updated_at: string | null;
-}
-
-/** 评审模板轻量选项（loop 选择器用,不含 prompt）。 */
-export interface ReviewTemplateOption {
-  id: number;
-  name: string;
-  description: string | null;
-  /** 所属工作空间 ID（project_directories.id）。null=全局模板。 */
-  workspace_id: number | null;
 }
 
 /** 创建评审模板请求体。 */

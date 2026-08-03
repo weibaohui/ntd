@@ -166,11 +166,6 @@ impl EventPipeline {
         self.extractor.metadata()
     }
 
-    /// 获取提取器（可变）
-    pub fn extractor_mut(&mut self) -> &mut Box<dyn EventExtractor> {
-        &mut self.extractor
-    }
-
     /// 直接推入一个事件（用于测试或特殊场景）
     ///
     /// 注意：此方法会同时更新元数据
@@ -210,11 +205,6 @@ impl EventPipeline {
     /// 获取所有工具调用事件
     pub fn tool_call_events(&self) -> Vec<&ExecutionEvent> {
         self.filter_events(|e| matches!(e, ExecutionEvent::ToolCall { .. }))
-    }
-
-    /// 获取所有工具结果事件
-    pub fn tool_result_events(&self) -> Vec<&ExecutionEvent> {
-        self.filter_events(|e| matches!(e, ExecutionEvent::ToolResult { .. }))
     }
 
     /// 获取最终结果（如果有）

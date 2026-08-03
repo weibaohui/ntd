@@ -1,6 +1,6 @@
 // 历史消息拉取群卡片：填写需要定期拉取历史消息的群 chat_id，增删管理。
 // 受控组件：state/handler 由父组件持有，本组件只负责展示与事件回调。
-// 被智能体配置抽屉（AssistantConfigDrawer）与详情页（AssistantDetailPage）共用。
+// 被智能体配置抽屉（AssistantConfigDrawer）使用。
 
 import { Card, Input, Button, Popconfirm } from 'antd';
 import type { FeishuHistoryChat } from '@/types';

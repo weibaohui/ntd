@@ -98,10 +98,6 @@ impl WebSocketStateMachine {
         }
     }
 
-    pub fn current_state(&self) -> &ConnectionState {
-        &self.state
-    }
-
     #[allow(clippy::needless_pass_by_value)]
     pub fn handle_event(&mut self, event: StateMachineEvent) -> Result<(), String> {
         use ConnectionState::*;
@@ -131,16 +127,6 @@ impl WebSocketStateMachine {
         matches!(self.state, ConnectionState::Connected)
     }
 
-    pub fn is_connected(&self) -> bool {
-        matches!(self.state, ConnectionState::Connected)
-    }
-
-    pub fn is_disconnected(&self) -> bool {
-        matches!(
-            self.state,
-            ConnectionState::Disconnected { .. } | ConnectionState::Error { .. }
-        )
-    }
 }
 
 impl Default for WebSocketStateMachine {
