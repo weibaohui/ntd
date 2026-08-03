@@ -68,6 +68,9 @@ function AppContent() {
   const [editingTodo, setEditingTodo] = useState<import('@/types').Todo | null>(null);
   const [smartCreateOpen, setSmartCreateOpen] = useState(false);
   const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
+  // 帮助弹窗开关 + 初始选中 pageId：由 LeftRail 帮助按钮触发，关闭即全部关闭
+  const [helpModalOpen, setHelpModalOpen] = useState(false);
+  const [helpInitialPageId, setHelpInitialPageId] = useState<string | undefined>(undefined);
   const [wikiChatMode, setWikiChatMode] = useState<WikiChatMode>(() => {
     try {
       const saved = localStorage.getItem('wiki_chat_mode') as WikiChatMode | null;
@@ -249,12 +252,6 @@ function AppContent() {
     if (key === 'settings_bots') { showStandaloneSettingsPanel('bots'); return; }
   }, [handleShowView, showListSection, showSettings, showStandaloneSettingsPanel]);
 
-  // 帮助路由：URL 为 #/help 时渲染独立帮助页面，不走主应用 Layout
-  // window.open('#/help') 打开的新窗口会命中此分支
-  if (activeView === ('help' as View)) {
-    return <HelpPage />;
-  }
-
   return (
     <Layout style={{ height: '100vh', flexDirection: isMobile ? 'column' : 'row' }}>
       {/* Mobile Header */}
@@ -298,11 +295,11 @@ function AppContent() {
             themeMode={themeMode}
             toggleTheme={toggleTheme}
             onOpenHelp={() => {
-              // 帮助以独立页面打开（target=_blank 语义），直接跳到当前视图对应的具体帮助页
-              // 而非每次都落帮助首页；找不到对应页时回退到 #/help 首页
+              // 内嵌大弹窗打开帮助，直接跳到当前视图对应的具体帮助页
+              // 而非每次都落帮助首页；找不到对应页时回退到概览首页
               const pageId = viewToPageId(activeView, todoDetailId != null || loopDetailId != null || taskDetailId != null);
-              const target = findHelpPage(pageId) ? `#/help/${pageId}` : '#/help';
-              window.open(target, '_blank', 'noopener');
+              setHelpInitialPageId(findHelpPage(pageId) ? pageId : '_overview');
+              setHelpModalOpen(true);
             }}
           />
         </div>
@@ -544,6 +541,13 @@ function AppContent() {
       <WikiChatFloatingWindow
         forceMode={wikiChatMode}
         onClose={() => setWikiChatMode('minimized')}
+      />
+
+      {/* 帮助大弹窗：内嵌左菜单 + 右 PageCard，关闭即全部关闭 */}
+      <HelpPage
+        open={helpModalOpen}
+        onClose={() => setHelpModalOpen(false)}
+        initialPageId={helpInitialPageId}
       />
     </Layout>
   );

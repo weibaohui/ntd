@@ -60,8 +60,7 @@ export type View =
   | 'wiki'
   | 'messages'
   | 'bots'
-  | 'onboarding'
-  | 'help';          // 帮助命名空间（#/help/<pageId>/<featureId>），独立页面渲染
+  | 'onboarding';
 
 // 028 之前用 'items' + ?panel=detail|post 区分详情；现已统一到 'todos' + path 段，Panel 类型不再需要。
 // 保留 'list' | 'detail' 字面量仅用于 MobileHeader 派生状态，避免大范围改动移动端组件签名。
@@ -75,7 +74,7 @@ const ALL_VIEWS: View[] = [
   'todos', 'loops', 'tasks',
   'dashboard', 'settings', 'memorial',
   'runtime', 'skills', 'projectDirectories', 'sessions', 'executors', 'experts',
-  'blackboard', 'wiki', 'messages', 'bots', 'processes', 'onboarding', 'help',
+  'blackboard', 'wiki', 'messages', 'bots', 'processes', 'onboarding',
 ];
 
 // 看板视图四种模式白名单：getInitialBoardMode/syncFromHash 用它过滤 query 的 mode 值，
@@ -313,7 +312,6 @@ const VIEW_TO_NAV_KEY: Record<View, string> = {
   messages: 'messages',
   bots: 'settings_bots',
   onboarding: 'onboarding',
-  help: 'help',          // 帮助独立页面，无对应左导航项
 };
 
 export function viewToNavKey(view: View): string {

@@ -1,22 +1,33 @@
-// 帮助页面：独立页面（window.open 打开的新窗口），左菜单 + 右内容（PageCard 包裹）。
+// 帮助页面：内嵌大弹窗（antd Modal），左菜单 + 右内容（PageCard 包裹）。
 //
 // 设计要点（基于 UI/UX 设计系统 Minimalism 风格）：
-// 1. 以独立浏览器页面打开（target=_blank 语义），不再是主应用内的覆盖层。
-// 2. URL #/help/<pageId>/<featureId> 驱动选中态；刷新可恢复、可分享、可直达。
-// 3. 左侧菜单分 4 组（概览/工作/观察/配置），每组带标题；
+// 1. 以 antd Modal 大弹窗形态打开（width 80vw / top 5vh），不再新开浏览器窗口。
+// 2. 关闭即全部关闭：内部导航的多个帮助页都在同一弹窗内，关 Modal 一并关闭。
+// 3. 选中态由 React state 驱动，不走 URL 路由——弹窗关闭后历史不留 help 路由污染。
+// 4. 左侧菜单分 4 组（概览/工作/观察/配置），每组带标题；
 //    菜单项 hover 主色浅底、选中态左侧主色高亮条 + 浅蓝底。
-// 4. 右侧 PageCard：header 主色图标徽章 + 标题；
-//    内容区行高 1.75，标题字号梯度。无关闭按钮（正常浏览器页面）。
-// 5. 树形数据从 HELP_PAGES 派生，节点 key 编码：
+// 5. 右侧 PageCard：header 主色图标徽章 + 标题，右上角关闭按钮；
+//    内容区行高 1.75，标题字号梯度。
+// 6. 暗色主题：Modal body 背景用 var(--color-bg-base)，消除右侧白边刺眼问题。
+// 7. 树形数据从 HELP_PAGES 派生，节点 key 编码：
 //    页面='p:<pageId>', 功能点='f:<pageId>/<featureId>'。
 
-import { useMemo, useState, useEffect, useCallback, useRef } from 'react';
-import { Empty } from 'antd';
+import { useMemo, useState, useCallback } from 'react';
+import { Empty, Modal } from 'antd';
 import { findHelpPage, loadHelpDoc } from './useHelpContent';
 import { decideTreeSelect } from './helpTreeSelect';
 import { HelpContentRenderer } from './HelpContentRenderer';
 import { PageCard } from '@/components/common/PageCard';
-import { useTheme } from '@/hooks/useTheme';
+import { useIsMobile } from '@/hooks/useIsMobile';
+
+interface HelpPageProps {
+  /** 是否展示帮助弹窗。 */
+  open: boolean;
+  /** 关闭帮助弹窗的回调。 */
+  onClose: () => void;
+  /** 初始选中的 pageId，打开时直接跳到该页；未传或找不到时回退概览首页。 */
+  initialPageId?: string;
+}
 
 /** 菜单分组定义：每组对应 HELP_PAGES 的一段连续区间。 */
 interface MenuGroup {
@@ -87,92 +98,38 @@ function resolveTitle(selectedKey: string): string {
 }
 
 /**
- * 把选中节点 key 转成帮助路由 URL。
+ * 校验 pageId 是否已注册在 HELP_PAGES。
  *
- * 规则：
- * - 页面节点 'p:<pageId>' → #/help/<pageId>
- * - 功能点节点 'f:<pageId>/<featureId>' → #/help/<pageId>/<featureId>
- * - 其他 → #/help
- *
- * @param selectedKey 树节点 key
- * @returns 帮助路由 hash URL
+ * @param pageId 页面 id
+ * @returns 已注册返回 true
  */
-function keyToHelpUrl(selectedKey: string): string {
-  // 页面节点：'p:<pageId>' → #/help/<pageId>
-  if (selectedKey.startsWith('p:')) {
-    const pageId = selectedKey.slice(2);
-    return `#/help/${pageId}`;
-  }
-  // 功能点节点：'f:<pageId>/<featureId>' → #/help/<pageId>/<featureId>
-  if (selectedKey.startsWith('f:')) {
-    const rest = selectedKey.slice(2);
-    const slashIdx = rest.indexOf('/');
-    if (slashIdx < 0) return '#/help';
-    const pageId = rest.slice(0, slashIdx);
-    const featureId = rest.slice(slashIdx + 1);
-    return `#/help/${pageId}/${featureId}`;
-  }
-  return '#/help';
+function isValidPageId(pageId: string | undefined): boolean {
+  if (!pageId) return false;
+  return findHelpPage(pageId) != null;
 }
 
-/**
- * 从当前 URL hash 解析出帮助选中节点 key。
- *
- * 解析规则（与 keyToHelpUrl 互逆）：
- * - #/help 或 #/help/ 或无 help 段 → 'p:_overview'（帮助首页）
- * - #/help/<pageId> → 'p:<pageId>'
- * - #/help/<pageId>/<featureId> → 'f:<pageId>/<featureId>'
- *
- * @returns 选中节点 key，未命中帮助路由返回 'p:_overview'
- */
-function helpKeyFromHash(): string {
-  const hash = window.location.hash || '';
-  // 去掉前导 #，切出 path 段
-  const hashWithoutHash = hash.startsWith('#') ? hash.slice(1) : hash;
-  const [path] = hashWithoutHash.split('?', 2);
-  const segments = (path || '').split('/').filter(Boolean);
-  // 第一段必须是 'help'
-  if (segments[0] !== 'help') return 'p:_overview';
-  // #/help 无后续段 → 默认帮助首页
-  if (segments.length < 2 || !segments[1]) return 'p:_overview';
-  const pageId = segments[1];
-  // 有第三段则是功能点
-  if (segments.length >= 3 && segments[2]) {
-    return `f:${pageId}/${segments[2]}`;
+/** 帮助弹窗：antd Modal 大窗，内嵌左菜单 + 右 PageCard 内容。 */
+export function HelpPage({ open, onClose, initialPageId }: HelpPageProps) {
+  const isMobile = useIsMobile();
+  // 初始选中：传入的 initialPageId 合法则用其页面 key，否则回退概览首页
+  const defaultPageKey = isValidPageId(initialPageId) ? `p:${initialPageId}` : 'p:_overview';
+  const [selectedKey, setSelectedKey] = useState(defaultPageKey);
+  // 展开的节点：默认展开初始选中节点
+  const [expandedKeys, setExpandedKeys] = useState<string[]>([defaultPageKey]);
+
+  // open 变化时（弹窗打开）重置选中态到 initialPageId
+  // 用 useMemo 派生 defaultPageKey 已在首次渲染定型；这里在 open 由 false→true 时重置
+  // 避免在同一弹窗生命周期内重复打开残留上次选中态
+  const [lastOpen, setLastOpen] = useState(open);
+  if (open && !lastOpen) {
+    // 弹窗刚被打开：重置选中态到 initialPageId
+    const key = isValidPageId(initialPageId) ? `p:${initialPageId}` : 'p:_overview';
+    setSelectedKey(key);
+    setExpandedKeys([key]);
+    setLastOpen(true);
+  } else if (!open && lastOpen) {
+    setLastOpen(false);
   }
-  return `p:${pageId}`;
-}
-
-/** 帮助页面容器：独立页面，左菜单 + 右 PageCard 内容。 */
-export function HelpPage() {
-  // 主题：帮助独立页面需要自己的主题上下文（主应用不在同页面）
-  const { themeMode } = useTheme();
-  // 从 URL 恢复初始选中态
-  const initialKey = helpKeyFromHash();
-  const [selectedKey, setSelectedKey] = useState(initialKey);
-  // 展开的节点：默认展开当前选中节点所属分组下的当前页面
-  const [expandedKeys, setExpandedKeys] = useState<string[]>([initialKey]);
-
-  // 标志：是否由 URL 驱动的选中，避免 handleSelect 回写 URL 时循环
-  const fromUrlRef = useRef(false);
-
-  // 监听 popstate（浏览器后退/前进）与 hashchange 同步 selectedKey
-  useEffect(() => {
-    function onNavChange() {
-      const key = helpKeyFromHash();
-      if (key) {
-        fromUrlRef.current = true;
-        setSelectedKey(key);
-        setExpandedKeys([key]);
-      }
-    }
-    window.addEventListener('popstate', onNavChange);
-    window.addEventListener('hashchange', onNavChange);
-    return () => {
-      window.removeEventListener('popstate', onNavChange);
-      window.removeEventListener('hashchange', onNavChange);
-    };
-  }, []);
 
   // 解析当前选中节点对应的 md 文件名与标题
   const docFile = useMemo(() => resolveDocFile(selectedKey), [selectedKey]);
@@ -188,109 +145,138 @@ export function HelpPage() {
     if (expandKey !== null) {
       setExpandedKeys(current => (current.includes(expandKey) ? current : [...current, expandKey]));
     }
-    // 同步 URL：pushState 到对应的帮助路由
-    const helpUrl = keyToHelpUrl(nextKey);
-    window.history.pushState(null, '', helpUrl);
   }, [expandedKeys]);
 
-  // 判断移动端：窗口宽度小于 768px 时菜单与内容上下排列
-  const isMobile = window.innerWidth < 768;
+  // Modal 尺寸：桌面端 80vw 宽、顶部 5vh 留白；移动端全屏
+  const modalWidth = isMobile ? '100vw' : '80vw';
+  const modalStyle: React.CSSProperties = {
+    top: isMobile ? 0 : '5vh',
+    maxWidth: '100vw',
+    paddingBottom: 0,
+  };
+  // Modal body 内 padding 归零，让左菜单+右内容占满；
+  // 背景 header/body 统一用主题底色，消除暗色下右侧白边刺眼问题
+  const modalStyles = {
+    header: {
+      background: 'var(--color-bg-elevated, #fff)',
+      borderBottom: '1px solid var(--color-border-light, #e2e8f0)',
+      padding: '12px 20px',
+      margin: 0,
+    } as React.CSSProperties,
+    body: {
+      padding: 0,
+      background: 'var(--color-bg-base, #f8fafc)',
+      height: isMobile ? 'calc(100vh - 55px)' : 'calc(85vh - 55px)',
+      overflow: 'hidden',
+    } as React.CSSProperties,
+  };
 
   return (
-    <div
-      className="ntd-help-page"
-      data-theme={themeMode}
-      style={{
-        width: '100vw',
-        height: '100vh',
-        display: 'flex',
-        flexDirection: isMobile ? 'column' : 'row',
-        background: 'var(--color-bg-base, #f8fafc)',
-      }}
+    <Modal
+      open={open}
+      onCancel={onClose}
+      footer={null}
+      title="帮助文档"
+      width={modalWidth}
+      style={modalStyle}
+      styles={modalStyles}
+      destroyOnClose
+      maskClosable
+      keyboard
     >
-      {/* 左侧菜单 */}
-      <aside
-        className="ntd-help-sidebar"
+      <div
+        className="ntd-help-page"
         style={{
-          width: isMobile ? '100%' : 248,
-          flexShrink: 0,
-          maxHeight: isMobile ? 260 : undefined,
-          overflow: 'auto',
-          borderRight: isMobile ? undefined : '1px solid var(--color-border-light, #e2e8f0)',
-          borderBottom: isMobile ? '1px solid var(--color-border-light, #e2e8f0)' : undefined,
-          background: 'var(--color-bg-elevated, #fff)',
+          display: 'flex',
+          flexDirection: isMobile ? 'column' : 'row',
+          width: '100%',
+          height: '100%',
         }}
       >
-        {/* 菜单头部标题 */}
-        <div className="ntd-help-sidebar-header">
-          <span className="ntd-help-sidebar-title">帮助文档</span>
-        </div>
-
-        {/* 分组菜单 */}
-        <nav className="ntd-help-menu">
-          {MENU_GROUPS.map(group => (
-            <div key={group.title} className="ntd-help-menu-group">
-              <div className="ntd-help-menu-group-title">{group.title}</div>
-              {group.pageIds.map(pageId => {
-                const page = findHelpPage(pageId);
-                if (!page) return null;
-                const pageKey = `p:${pageId}`;
-                const isPageSelected = selectedKey === pageKey || selectedKey.startsWith(`f:${pageId}/`);
-                const isPageExpanded = expandedKeys.includes(pageKey);
-                return (
-                  <div key={pageId} className="ntd-help-menu-item-wrap">
-                    <button
-                      type="button"
-                      className={`ntd-help-menu-item ${isPageSelected ? 'is-selected' : ''}`}
-                      onClick={() => handleSelect(pageKey)}
-                    >
-                      <span className="ntd-help-menu-item-label">{page.title}</span>
-                    </button>
-                    {/* 功能点子菜单：展开时显示 */}
-                    {isPageExpanded && page.features.length > 0 && (
-                      <div className="ntd-help-menu-sub">
-                        {page.features.map(feature => {
-                          const featureKey = `f:${pageId}/${feature.id}`;
-                          const isFeatureSelected = selectedKey === featureKey;
-                          return (
-                            <button
-                              key={feature.id}
-                              type="button"
-                              className={`ntd-help-menu-sub-item ${isFeatureSelected ? 'is-selected' : ''}`}
-                              onClick={() => handleSelect(featureKey)}
-                            >
-                              {feature.title}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          ))}
-        </nav>
-      </aside>
-
-      {/* 右侧内容：PageCard 包裹 */}
-      <main className="ntd-help-main" style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', padding: isMobile ? 0 : 16 }}>
-        <PageCard
-          icon={<span className="ntd-help-card-icon">📖</span>}
-          title={pageTitle}
-          contentStyle={{ overflow: 'auto' }}
-          style={{ flex: 1, minHeight: 0 }}
+        {/* 左侧菜单 */}
+        <aside
+          className="ntd-help-sidebar"
+          style={{
+            width: isMobile ? '100%' : 248,
+            flexShrink: 0,
+            maxHeight: isMobile ? 260 : undefined,
+            overflow: 'auto',
+            borderRight: isMobile ? undefined : '1px solid var(--color-border-light, #e2e8f0)',
+            borderBottom: isMobile ? '1px solid var(--color-border-light, #e2e8f0)' : undefined,
+            background: 'var(--color-bg-elevated, #fff)',
+          }}
         >
-          {/* 内容区：撑满 PageCard 宽度，行高 1.75 保证可读性 */}
-          <div className="ntd-help-content">
-            {docSource ? (
-              <HelpContentRenderer source={docSource} />
-            ) : (
-              <Empty description="暂无帮助内容" />
-            )}
+          {/* 菜单头部标题 */}
+          <div className="ntd-help-sidebar-header">
+            <span className="ntd-help-sidebar-title">帮助文档</span>
           </div>
-        </PageCard>
-      </main>
-    </div>
+
+          {/* 分组菜单 */}
+          <nav className="ntd-help-menu">
+            {MENU_GROUPS.map(group => (
+              <div key={group.title} className="ntd-help-menu-group">
+                <div className="ntd-help-menu-group-title">{group.title}</div>
+                {group.pageIds.map(pageId => {
+                  const page = findHelpPage(pageId);
+                  if (!page) return null;
+                  const pageKey = `p:${pageId}`;
+                  const isPageSelected = selectedKey === pageKey || selectedKey.startsWith(`f:${pageId}/`);
+                  const isPageExpanded = expandedKeys.includes(pageKey);
+                  return (
+                    <div key={pageId} className="ntd-help-menu-item-wrap">
+                      <button
+                        type="button"
+                        className={`ntd-help-menu-item ${isPageSelected ? 'is-selected' : ''}`}
+                        onClick={() => handleSelect(pageKey)}
+                      >
+                        <span className="ntd-help-menu-item-label">{page.title}</span>
+                      </button>
+                      {/* 功能点子菜单：展开时显示 */}
+                      {isPageExpanded && page.features.length > 0 && (
+                        <div className="ntd-help-menu-sub">
+                          {page.features.map(feature => {
+                            const featureKey = `f:${pageId}/${feature.id}`;
+                            const isFeatureSelected = selectedKey === featureKey;
+                            return (
+                              <button
+                                key={feature.id}
+                                type="button"
+                                className={`ntd-help-menu-sub-item ${isFeatureSelected ? 'is-selected' : ''}`}
+                                onClick={() => handleSelect(featureKey)}
+                              >
+                                {feature.title}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </nav>
+        </aside>
+
+        {/* 右侧内容：PageCard 包裹 */}
+        <main className="ntd-help-main" style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', padding: isMobile ? 0 : 16 }}>
+          <PageCard
+            icon={<span className="ntd-help-card-icon">📖</span>}
+            title={pageTitle}
+            contentStyle={{ overflow: 'auto' }}
+            style={{ flex: 1, minHeight: 0 }}
+          >
+            {/* 内容区：撑满 PageCard 宽度，行高 1.75 保证可读性 */}
+            <div className="ntd-help-content">
+              {docSource ? (
+                <HelpContentRenderer source={docSource} />
+              ) : (
+                <Empty description="暂无帮助内容" />
+              )}
+            </div>
+          </PageCard>
+        </main>
+      </div>
+    </Modal>
   );
 }
