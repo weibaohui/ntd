@@ -538,3 +538,17 @@ export function extractCommandsByExecutor(
   }
 }
 
+/** 提取器在 Playwright 单元测试（frontend/tests/issue-648-command-extractor.spec.ts）中用于验证 */
+export const __test__ = {
+  extractClaudeCommands,
+  extractAgentCommands,
+  extractKimiCommands,
+  extractCodeWhaleCommands,
+  extractCodexCommands,
+  extractPiCommands,
+  extractAtomcodeCommands,
+  // hermes 走「不支持」分支（返回 []），挂出便于测试兜底契约不被误改
+  extractHermesCommands,
+  parseDuration,
+};
+
