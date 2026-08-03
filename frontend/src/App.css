@@ -5136,13 +5136,13 @@ code {
 }
 
 /*
- * Mermaid 图容器：原始尺寸 + 滚动条兜底。
+ * Mermaid 图容器（基于 merslim 渲染）。
  *
  * 设计意图（可读性优先，放弃自适应缩放）：
- * - mermaid 的 SVG 等比缩放是整体缩小，横向 flowchart 被压扁时字跟着小到看不清。
- * - 改为完全不限制图尺寸：图按 mermaid 渲染的原始像素尺寸显示，字始终可读。
+ * - merslim 渲染出的 SVG 带固定 width/height 像素，字始终可读。
  * - 容器 overflow:auto 兜底，图比容器宽时出横向滚动条、高时出纵向滚动条。
  * - 不设 max-height，避免纵向图被裁切；整页滚动由外层 contentStyle overflow:auto 接管。
+ * - text-align:left 让图左对齐，避免大图居中后右侧空白突兀。
  */
 .ntd-help-content .help-mermaid {
   margin: 20px 0;
@@ -5158,11 +5158,12 @@ code {
 /*
  * Mermaid SVG：保持原始像素尺寸，不做任何 CSS 缩放。
  *
- * mermaid useMaxWidth=false 渲染出的 svg 带固定 width/height 像素，
+ * merslim 渲染出的 svg 带固定 width/height 像素，
  * 这里不覆盖，让图按原始尺寸显示。容器 overflow:auto 兜底溢出。
  */
 .ntd-help-content .help-mermaid svg {
   display: inline-block;
+  max-width: none;
 }
 
 /* PageCard 内帮助图标徽章：主色浅底圆角 */
