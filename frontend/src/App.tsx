@@ -39,6 +39,7 @@ import { FloatingActionButton } from '@/components/shell/FloatingActionButton';
 import { WikiChatFloatingWindow, type WikiChatMode } from '@/components/WikiChatFloatingWindow';
 import { WikiViewPage } from '@/components/WikiViewPage';
 import { HelpPage } from '@/help/HelpPage';
+import { viewToPageId, findHelpPage } from '@/help/useHelpContent';
 
 import { EXECUTION_PANEL, LEFT_RAIL_WIDTH } from './constants';
 import * as db from './utils/database';
@@ -297,8 +298,11 @@ function AppContent() {
             themeMode={themeMode}
             toggleTheme={toggleTheme}
             onOpenHelp={() => {
-              // 帮助以独立页面打开（target=_blank 语义），内部所有帮助链接在同一新页面内导航
-              window.open('#/help', '_blank', 'noopener');
+              // 帮助以独立页面打开（target=_blank 语义），直接跳到当前视图对应的具体帮助页
+              // 而非每次都落帮助首页；找不到对应页时回退到 #/help 首页
+              const pageId = viewToPageId(activeView, todoDetailId != null || loopDetailId != null || taskDetailId != null);
+              const target = findHelpPage(pageId) ? `#/help/${pageId}` : '#/help';
+              window.open(target, '_blank', 'noopener');
             }}
           />
         </div>
