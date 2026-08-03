@@ -15,7 +15,6 @@ import {
   bootstrapDiagramRenderers,
   type RendererHandle,
 } from 'merslim';
-import { useTheme } from '@/hooks/useTheme';
 
 // 全局注册一次：merslim 的渲染器按图表类型懒加载，
 // bootstrapDiagramRenderers 注册全部 14 种原生渲染器。
@@ -25,6 +24,18 @@ function ensureBootstrap(): void {
   if (bootstrapped) return;
   bootstrapDiagramRenderers();
   bootstrapped = true;
+}
+
+/**
+ * 从 document.documentElement 的 data-theme 属性读当前主题。
+ *
+ * 不用 useTheme 的 themeMode：Modal 弹窗在某些场景下可能拿不到
+ * 正确的 ThemeContext（如独立渲染分支），直接读 DOM 属性最可靠。
+ *
+ * @returns true 表示当前为暗色模式
+ */
+function readIsDarkFromDom(): boolean {
+  return document.documentElement.getAttribute('data-theme') === 'dark';
 }
 
 interface MermaidDiagramProps {
@@ -41,15 +52,22 @@ interface MermaidDiagramProps {
  * @param chart mermaid 源码
  */
 export function MermaidDiagram({ chart }: MermaidDiagramProps) {
-  const { themeMode } = useTheme();
   // 渲染错误信息，空串表示无错误
   const [error, setError] = useState('');
   // RendererHandle ref，供 merslim 内部导出 SVG 用
   const handleRef = useRef<RendererHandle | null>(null);
+  // 从 DOM 读主题，避免 useTheme 在 Modal 内拿不到正确值
+  const [isDark, setIsDark] = useState(readIsDarkFromDom);
 
-  // 首次挂载时注册 merslim 渲染器
+  // 首次挂载时注册 merslim 渲染器，并监听 data-theme 属性变化
   useEffect(() => {
     ensureBootstrap();
+    // 监听 documentElement 的 data-theme 属性变化，同步 isDark
+    const observer = new MutationObserver(() => {
+      setIsDark(readIsDarkFromDom());
+    });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    return () => observer.disconnect();
   }, []);
 
   // chart 变更时清空错误状态，触发重新渲染
@@ -66,11 +84,8 @@ export function MermaidDiagram({ chart }: MermaidDiagramProps) {
     );
   }
 
-  // dark prop：themeMode 为 dark 时传 true，merslim 内部切换深色配色
-  const isDark = themeMode === 'dark';
-
   return (
-    <div className="help-mermaid" data-theme={themeMode}>
+    <div className="help-mermaid">
       <DiagramRenderer
         source={chart}
         dark={isDark}
