@@ -5,11 +5,14 @@
 // 2. 左侧菜单分 4 组（概览/工作/观察/配置），每组带标题；
 //    菜单项 hover 主色浅底、选中态左侧主色高亮条 + 浅蓝底。
 // 3. 右侧 PageCard：header 主色图标徽章 + 标题，右上角关闭按钮；
-//    内容区限宽 760px 居中，行高 1.75，标题字号梯度。
-// 4. 树形数据从 HELP_PAGES 派生，节点 key 编码：
+//    内容区行高 1.75，标题字号梯度。
+// 4. 路由：URL 形如 #/help/<pageId> 或 #/help/<pageId>/<featureId>，
+//    HelpPage 监听 popstate 同步 selectedKey；
+//    点击菜单项 pushState 更新 URL，可直达、可分享、刷新可恢复。
+// 5. 树形数据从 HELP_PAGES 派生，节点 key 编码：
 //    页面='p:<pageId>', 功能点='f:<pageId>/<featureId>'。
 
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect, useCallback, useRef } from 'react';
 import { Empty, Button } from 'antd';
 import { CloseOutlined } from '@ant-design/icons';
 import { findHelpPage, loadHelpDoc, useDefaultPageId } from './useHelpContent';
@@ -99,6 +102,76 @@ function resolveTitle(selectedKey: string): string {
   return '帮助';
 }
 
+/**
+ * 把选中节点 key 转成帮助路由 URL。
+ *
+ * 规则：
+ * - 页面节点 'p:<pageId>' → #/help/<pageId>
+ * - 功能点节点 'f:<pageId>/<featureId>' → #/help/<pageId>/<featureId>
+ * - 其他 → #/help
+ *
+ * @param selectedKey 树节点 key
+ * @returns 帮助路由 hash URL
+ */
+function keyToHelpUrl(selectedKey: string): string {
+  // 页面节点：'p:<pageId>' → #/help/<pageId>
+  if (selectedKey.startsWith('p:')) {
+    const pageId = selectedKey.slice(2);
+    return `#/help/${pageId}`;
+  }
+  // 功能点节点：'f:<pageId>/<featureId>' → #/help/<pageId>/<featureId>
+  if (selectedKey.startsWith('f:')) {
+    const rest = selectedKey.slice(2);
+    const slashIdx = rest.indexOf('/');
+    if (slashIdx < 0) return '#/help';
+    const pageId = rest.slice(0, slashIdx);
+    const featureId = rest.slice(slashIdx + 1);
+    return `#/help/${pageId}/${featureId}`;
+  }
+  return '#/help';
+}
+
+/**
+ * 从当前 URL hash 解析出帮助选中节点 key。
+ *
+ * 解析规则（与 keyToHelpUrl 互逆）：
+ * - #/help 或 #/help/ 或无 help 段 → ''（空串表示未命中帮助路由）
+ * - #/help/<pageId> → 'p:<pageId>'
+ * - #/help/<pageId>/<featureId> → 'f:<pageId>/<featureId>'
+ *
+ * @returns 选中节点 key，未命中帮助路由返回 ''
+ */
+function helpKeyFromHash(): string {
+  const hash = window.location.hash || '';
+  // 去掉前导 #，切出 path 段
+  const hashWithoutHash = hash.startsWith('#') ? hash.slice(1) : hash;
+  const [path] = hashWithoutHash.split('?', 2);
+  const segments = (path || '').split('/').filter(Boolean);
+  // 第一段必须是 'help'
+  if (segments[0] !== 'help') return '';
+  // #/help 无后续段 → 默认帮助首页
+  if (segments.length < 2 || !segments[1]) return 'p:_overview';
+  const pageId = segments[1];
+  // 有第三段则是功能点
+  if (segments.length >= 3 && segments[2]) {
+    return `f:${pageId}/${segments[2]}`;
+  }
+  return `p:${pageId}`;
+}
+
+/**
+ * 判断当前 URL 是否为帮助路由。
+ *
+ * @returns 是帮助路由返回 true
+ */
+function isHelpRoute(): boolean {
+  const hash = window.location.hash || '';
+  const hashWithoutHash = hash.startsWith('#') ? hash.slice(1) : hash;
+  const [path] = hashWithoutHash.split('?', 2);
+  const segments = (path || '').split('/').filter(Boolean);
+  return segments[0] === 'help';
+}
+
 /** 帮助页面容器：左菜单 + 右 PageCard 内容。 */
 export function HelpPage({ open, onClose, activeView, hasDetail, isMobile }: HelpPageProps) {
   // 默认选中当前页面总览
@@ -107,13 +180,56 @@ export function HelpPage({ open, onClose, activeView, hasDetail, isMobile }: Hel
   const [selectedKey, setSelectedKey] = useState(defaultSelectedKey);
   // 展开的节点：默认展开当前页面所属分组下的当前页面
   const [expandedKeys, setExpandedKeys] = useState<string[]>([defaultSelectedKey]);
+  // 标志：是否由 URL 驱动的选中，避免 handleSelect 回写 URL 时循环
+  const fromUrlRef = useRef(false);
 
-  // 视图切换时，重新选中当前页面总览并展开
+  // open 变化时（帮助被打开），若 URL 不是帮助路由，则 pushState 到帮助首页
   useEffect(() => {
+    if (!open) return;
+    if (!isHelpRoute()) {
+      // 首次打开帮助：URL 跳到 #/help，用当前视图对应的 pageId
+      const initialKey = `p:${defaultPageId}`;
+      const helpUrl = keyToHelpUrl(initialKey);
+      window.history.pushState(null, '', helpUrl);
+      setSelectedKey(initialKey);
+      setExpandedKeys([initialKey]);
+    } else {
+      // 刷新或直达：从 URL 恢复 selectedKey
+      const key = helpKeyFromHash();
+      if (key) {
+        setSelectedKey(key);
+        setExpandedKeys([key]);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // 监听 popstate（浏览器后退/前进）与外部 pushState 改 URL
+  useEffect(() => {
+    function onPopState() {
+      if (!isHelpRoute()) {
+        // URL 已离开帮助路由，触发关闭
+        onClose();
+        return;
+      }
+      const key = helpKeyFromHash();
+      if (key) {
+        fromUrlRef.current = true;
+        setSelectedKey(key);
+        setExpandedKeys([key]);
+      }
+    }
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, [onClose]);
+
+  // 视图切换时（帮助未打开），重新选中当前页面总览并展开
+  useEffect(() => {
+    if (open) return; // 打开态下不改，由 URL 驱动
     const newKey = `p:${defaultPageId}`;
     setSelectedKey(newKey);
     setExpandedKeys([newKey]);
-  }, [defaultPageId]);
+  }, [defaultPageId, open]);
 
   // 解析当前选中节点对应的 md 文件名与标题
   const docFile = useMemo(() => resolveDocFile(selectedKey), [selectedKey]);
@@ -122,15 +238,27 @@ export function HelpPage({ open, onClose, activeView, hasDetail, isMobile }: Hel
 
   // 树节点选中回调。
   // 决策逻辑抽在 helpTreeSelect.decideTreeSelect（纯函数，便于单测）。
-  function handleSelect(key: string) {
-    // 用 antd Tree 的单选语义模拟：构造单元素数组
+  const handleSelect = useCallback((key: string) => {
     const { selectedKey: nextKey, expandKey } = decideTreeSelect([key], expandedKeys);
     if (nextKey === null) return;
     setSelectedKey(nextKey);
     if (expandKey !== null) {
       setExpandedKeys(current => (current.includes(expandKey) ? current : [...current, expandKey]));
     }
-  }
+    // 同步 URL：pushState 到对应的帮助路由
+    const helpUrl = keyToHelpUrl(nextKey);
+    window.history.pushState(null, '', helpUrl);
+  }, [expandedKeys]);
+
+  // 关闭帮助：history.back 回原视图，由 popstate 监听器同步 helpDrawerOpen
+  const handleClose = useCallback(() => {
+    // 若当前已在帮助路由，回退一步；否则直接触发 onClose
+    if (isHelpRoute()) {
+      window.history.back();
+    } else {
+      onClose();
+    }
+  }, [onClose]);
 
   // open=false 时不渲染，由父组件控制挂载
   if (!open) return null;
@@ -174,7 +302,7 @@ export function HelpPage({ open, onClose, activeView, hasDetail, isMobile }: Hel
                 const page = findHelpPage(pageId);
                 if (!page) return null;
                 const pageKey = `p:${pageId}`;
-                const isPageSelected = selectedKey === pageKey;
+                const isPageSelected = selectedKey === pageKey || selectedKey.startsWith(`f:${pageId}/`);
                 const isPageExpanded = expandedKeys.includes(pageKey);
                 return (
                   <div key={pageId} className="ntd-help-menu-item-wrap">
@@ -222,14 +350,14 @@ export function HelpPage({ open, onClose, activeView, hasDetail, isMobile }: Hel
               type="text"
               size="small"
               icon={<CloseOutlined />}
-              onClick={onClose}
+              onClick={handleClose}
               aria-label="关闭帮助"
             />
           }
           contentStyle={{ overflow: 'auto' }}
           style={{ flex: 1, minHeight: 0 }}
         >
-          {/* 内容区限宽居中，保证可读性（line-length 65-75 字符） */}
+          {/* 内容区：撑满 PageCard 宽度，行高 1.75 保证可读性 */}
           <div className="ntd-help-content">
             {docSource ? (
               <HelpContentRenderer source={docSource} />

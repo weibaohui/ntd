@@ -67,8 +67,15 @@ function AppContent() {
   const [editingTodo, setEditingTodo] = useState<import('@/types').Todo | null>(null);
   const [smartCreateOpen, setSmartCreateOpen] = useState(false);
   const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
-  // 帮助抽屉开关：由 LeftRail 底部「帮助」按钮触发
-  const [helpDrawerOpen, setHelpDrawerOpen] = useState(false);
+  // 帮助页面开关：由 URL #/help 驱动，LeftRail 帮助按钮 pushState 到 #/help
+  const [helpDrawerOpen, setHelpDrawerOpen] = useState(() => {
+    // 初始化时检查 URL 是否为帮助路由
+    const hash = window.location.hash || '';
+    const hashWithoutHash = hash.startsWith('#') ? hash.slice(1) : hash;
+    const [path] = hashWithoutHash.split('?', 2);
+    const segments = (path || '').split('/').filter(Boolean);
+    return segments[0] === 'help';
+  });
   const [wikiChatMode, setWikiChatMode] = useState<WikiChatMode>(() => {
     try {
       const saved = localStorage.getItem('wiki_chat_mode') as WikiChatMode | null;
@@ -158,6 +165,20 @@ function AppContent() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  // 帮助路由同步：监听 popstate，URL 离开 #/help 时关闭帮助页面
+  useEffect(() => {
+    function onPopState() {
+      const hash = window.location.hash || '';
+      const hashWithoutHash = hash.startsWith('#') ? hash.slice(1) : hash;
+      const [path] = hashWithoutHash.split('?', 2);
+      const segments = (path || '').split('/').filter(Boolean);
+      const isHelp = segments[0] === 'help';
+      setHelpDrawerOpen(isHelp);
+    }
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
   }, []);
 
   // URL → React state 恢复：todos 视图需要让 selectedTodoId 与 URL 中的 todoDetailId 保持一致。
@@ -292,7 +313,11 @@ function AppContent() {
             }}
             themeMode={themeMode}
             toggleTheme={toggleTheme}
-            onOpenHelp={() => setHelpDrawerOpen(true)}
+            onOpenHelp={() => {
+              // pushState 到 #/help，由 HelpPage 监听 URL 打开
+              window.history.pushState(null, '', '#/help');
+              setHelpDrawerOpen(true);
+            }}
           />
         </div>
       )}
