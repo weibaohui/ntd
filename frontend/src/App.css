@@ -5086,8 +5086,16 @@ code {
   color: var(--color-text, #1e293b);
 }
 
-/* 代码块：深色底 + 横向滚动兜底 */
-.ntd-help-content pre {
+/*
+ * 代码块：深色底 + 横向滚动兜底。
+ *
+ * 用 :not(:has(.help-mermaid)) 把 mermaid 图容器排除在外：
+ * XMarkdown 把 ```mermaid 代码块也渲染成 <pre><code>，但 merslim
+ * 自己有暗/亮主题，套上 .ntd-help-content pre 的硬编码暗底会导致
+ * 亮色主题下 mermaid 图四周冒出突兀的暗色边框（#1e293b）。
+ * 排除后：真正的代码块保留暗底，mermaid 图交给 .help-mermaid 自身配色。
+ */
+.ntd-help-content pre:not(:has(.help-mermaid)) {
   margin: 16px 0;
   padding: 14px 18px;
   background: #1e293b;
