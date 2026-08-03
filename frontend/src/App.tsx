@@ -38,7 +38,8 @@ import { MobileHeader } from './components/shell/MobileHeader';
 import { FloatingActionButton } from '@/components/shell/FloatingActionButton';
 import { WikiChatFloatingWindow, type WikiChatMode } from '@/components/WikiChatFloatingWindow';
 import { WikiViewPage } from '@/components/WikiViewPage';
-import { HelpDrawer } from '@/help/HelpDrawer';
+import { HelpPage } from '@/help/HelpPage';
+import { viewToPageId, findHelpPage } from '@/help/useHelpContent';
 
 import { EXECUTION_PANEL, LEFT_RAIL_WIDTH } from './constants';
 import * as db from './utils/database';
@@ -67,8 +68,9 @@ function AppContent() {
   const [editingTodo, setEditingTodo] = useState<import('@/types').Todo | null>(null);
   const [smartCreateOpen, setSmartCreateOpen] = useState(false);
   const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
-  // 帮助抽屉开关：由 LeftRail 底部「帮助」按钮触发
-  const [helpDrawerOpen, setHelpDrawerOpen] = useState(false);
+  // 帮助弹窗开关 + 初始选中 pageId：由 LeftRail 帮助按钮触发，关闭即全部关闭
+  const [helpModalOpen, setHelpModalOpen] = useState(false);
+  const [helpInitialPageId, setHelpInitialPageId] = useState<string | undefined>(undefined);
   const [wikiChatMode, setWikiChatMode] = useState<WikiChatMode>(() => {
     try {
       const saved = localStorage.getItem('wiki_chat_mode') as WikiChatMode | null;
@@ -292,7 +294,13 @@ function AppContent() {
             }}
             themeMode={themeMode}
             toggleTheme={toggleTheme}
-            onOpenHelp={() => setHelpDrawerOpen(true)}
+            onOpenHelp={() => {
+              // 内嵌大弹窗打开帮助，直接跳到当前视图对应的具体帮助页
+              // 而非每次都落帮助首页；找不到对应页时回退到概览首页
+              const pageId = viewToPageId(activeView, todoDetailId != null || loopDetailId != null || taskDetailId != null);
+              setHelpInitialPageId(findHelpPage(pageId) ? pageId : '_overview');
+              setHelpModalOpen(true);
+            }}
           />
         </div>
       )}
@@ -302,6 +310,7 @@ function AppContent() {
         style={{
           flex: 1,
           minWidth: 0,
+          position: 'relative',
         }}
       >
         <Content
@@ -534,13 +543,11 @@ function AppContent() {
         onClose={() => setWikiChatMode('minimized')}
       />
 
-      {/* 帮助抽屉：左树右内容，按页面→功能点两级组织 */}
-      <HelpDrawer
-        open={helpDrawerOpen}
-        onClose={() => setHelpDrawerOpen(false)}
-        activeView={activeView}
-        hasDetail={todoDetailId != null || loopDetailId != null || taskDetailId != null}
-        isMobile={isMobile}
+      {/* 帮助大弹窗：内嵌左菜单 + 右 PageCard，关闭即全部关闭 */}
+      <HelpPage
+        open={helpModalOpen}
+        onClose={() => setHelpModalOpen(false)}
+        initialPageId={helpInitialPageId}
       />
     </Layout>
   );

@@ -32,12 +32,3 @@ flowchart LR
   LLP --> CFG[useLoopConfig 打开 WorkspaceLoopConfigPage]
   LLP --> UP[监听 loopUpdateCount 触发 reload]
 ```
-
-## 功能点索引
-
-- [搜索环路](loop-list-search)
-- [刷新列表](loop-list-refresh)
-- [打开工作空间环路配置页](loop-list-open-config)
-- [删除环路](loop-list-delete)
-- [启停切换](loop-list-toggle-status)
-- [跳转环路详情](loop-list-select)

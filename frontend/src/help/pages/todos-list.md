@@ -22,12 +22,3 @@ flowchart LR
   ITEM --> Filter["filterBySearchKeyword (前端二次过滤 title/prompt)"]
   Filter --> UI["TodoListView (Table) 或 TodoCenterCardView"]
 ```
-
-## 功能点索引
-
-- [新建事项](todo-list-create)
-- [卡片/列表视图切换](todo-list-view-switch)
-- [搜索过滤](todo-list-search)
-- [刷新列表](todo-list-refresh)
-- [单行操作（删除/执行/带参执行）](todo-list-row-actions)
-- [带参执行 Modal](todo-list-execute-with-args)

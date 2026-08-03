@@ -24,11 +24,3 @@ flowchart LR
   Hist --> ER[(execution_records 表)]
   Detail --> Forum["ForumPostList → onOpenPost → 帖子页 /#/todos/:id/posts/:rid"]
 ```
-
-## 功能点索引
-
-- [返回列表](todo-detail-back)
-- [自动优化标题](todo-detail-title-optimize)
-- [编辑事项](todo-detail-edit)
-- [删除事项](todo-detail-delete)
-- [打开帖子/执行记录](todo-detail-open-post)

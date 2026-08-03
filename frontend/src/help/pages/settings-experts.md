@@ -23,12 +23,3 @@ flowchart LR
   ExpertsPanel -->|"handleDelete<br>db.deleteExpert"| API9["DELETE /api/v1/experts/{name}"]
   ExpertsPanel --> ExpertCreateModal["ExpertCreateModal<br>AI 创建"]
 ```
-
-## 功能点索引
-
-- [experts-import](experts-import.md) — 导入专家（zip / WorkBuddy / 本地目录）
-- [experts-reload](experts-reload.md) — 重新扫描专家目录
-- [experts-search](experts-search.md) — 搜索专家
-- [experts-create](experts-create.md) — AI 创建专家
-- [experts-detail](experts-detail.md) — 专家详情 Modal（查看/导出/删除）
-- [experts-tabs](experts-tabs.md) — 专家 / 专家团队分区切换

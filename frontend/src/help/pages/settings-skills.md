@@ -22,10 +22,3 @@ flowchart LR
   SkillVersionUpdate -->|"db.getSkillsComparison"| API6["GET /api/v1/skills/compare"]
   SkillVersionUpdate -->|"db.syncSkill"| API2
 ```
-
-## 功能点索引
-
-- [skills-view-switch](skills-view-switch.md) — 总览/市场/版本更新子视图切换
-- [skills-overview](skills-overview.md) — 已安装技能总览（搜索、执行器筛选、卡片/列表视图、导入导出）
-- [skills-marketplace](skills-marketplace.md) — 技能市场（来源浏览、全部技能、安装到执行器）
-- [skills-version-update](skills-version-update.md) — 版本更新检测与一键同步

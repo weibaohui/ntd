@@ -37,12 +37,3 @@ flowchart LR
   Page -->|"handleSelectTask(id)"| hash["useViewState.pushUrl<br/>/#/tasks?id=<id>"]
   hash -->|"popstate 监听<br/>setSelectedTaskId"| Page
 ```
-
-## 功能点索引
-
-- [新建任务](tasks-create)
-- [视图切换（列表/看板/卡片）](tasks-view-switch)
-- [搜索任务](tasks-search)
-- [时间窗过滤](tasks-time-filter)
-- [批量删除任务](tasks-batch-delete)
-- [刷新](tasks-refresh)

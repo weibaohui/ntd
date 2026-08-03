@@ -32,12 +32,3 @@ flowchart LR
   API4 --> STATS[统计标签]
   STATS --> HDR[MessageHeader]
 ```
-
-## 功能点索引
-
-- [刷新消息列表](messages-refresh)
-- [打开消息配置抽屉](messages-config)
-- [按 Bot 筛选](messages-bot-filter)
-- [查看消息详情](messages-view-detail)
-- [查看执行记录](messages-view-execution)
-- [查看环路执行详情](messages-view-loop-execution)
