@@ -12,7 +12,6 @@ import { api, unwrap } from './client';
 import type {
   CreateReviewTemplateRequest,
   ReviewTemplate,
-  ReviewTemplateOption,
   UpdateReviewTemplateRequest,
 } from '@/types/reviewTemplate';
 
@@ -20,12 +19,6 @@ import type {
 export async function listReviewTemplates(workspaceId?: number): Promise<ReviewTemplate[]> {
   const params = workspaceId !== undefined ? { workspace_id: workspaceId } : undefined;
   return unwrap(await api.get('/api/v1/review-templates', { params }));
-}
-
-/** 列出评审模板的轻量选项（不含 prompt）。loop 编辑器选择器用。可选按 workspace_id 过滤。 */
-export async function listReviewTemplateOptions(workspaceId?: number): Promise<ReviewTemplateOption[]> {
-  const params = workspaceId !== undefined ? { workspace_id: workspaceId } : undefined;
-  return unwrap(await api.get('/api/v1/review-templates/options', { params }));
 }
 
 /** 取系统内置默认评审 prompt（常量真源）。供「使用默认值」按钮一键填入。 */

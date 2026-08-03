@@ -4886,3 +4886,335 @@ code {
     transition: none !important;
   }
 }
+
+/* ---------- Help Page ---------- */
+/* 基于 Minimalism 设计系统：主色 #2563EB、充足留白、清晰层级。 */
+
+/* 左侧菜单容器 */
+.ntd-help-sidebar {
+  padding: 12px 0;
+}
+
+/* 菜单头部标题区 */
+.ntd-help-sidebar-header {
+  padding: 4px 20px 12px;
+  border-bottom: 1px solid var(--color-border-light, #e2e8f0);
+  margin-bottom: 8px;
+}
+
+.ntd-help-sidebar-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text, #1e293b);
+  letter-spacing: 0.02em;
+}
+
+/* 分组容器 */
+.ntd-help-menu-group {
+  margin-bottom: 4px;
+}
+
+/* 分组标题（概览/工作/观察/配置） */
+.ntd-help-menu-group-title {
+  padding: 8px 20px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-tertiary, #94a3b8);
+}
+
+/* 菜单项外层（页面级） */
+.ntd-help-menu-item-wrap {
+  position: relative;
+}
+
+/* 页面级菜单项按钮 */
+.ntd-help-menu-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 7px 20px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font-size: 13px;
+  color: var(--color-text-secondary, #475569);
+  transition: background 0.15s ease, color 0.15s ease;
+  line-height: 1.4;
+}
+
+.ntd-help-menu-item:hover {
+  background: var(--color-bg-hover, #f1f5f9);
+  color: var(--color-text, #1e293b);
+}
+
+/* 选中态：左侧主色高亮条 + 浅蓝底 */
+.ntd-help-menu-item.is-selected {
+  background: rgba(37, 99, 235, 0.08);
+  color: #2563eb;
+  font-weight: 600;
+}
+
+.ntd-help-menu-item.is-selected::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 2px;
+  bottom: 2px;
+  width: 3px;
+  background: #2563eb;
+  border-radius: 0 2px 2px 0;
+}
+
+.ntd-help-menu-item-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 功能点子菜单容器 */
+.ntd-help-menu-sub {
+  padding: 2px 0 4px;
+}
+
+/* 功能点级菜单项按钮 */
+.ntd-help-menu-sub-item {
+  display: block;
+  width: 100%;
+  padding: 5px 20px 5px 32px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font-size: 12px;
+  color: var(--color-text-tertiary, #64748b);
+  transition: background 0.15s ease, color 0.15s ease;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ntd-help-menu-sub-item:hover {
+  background: var(--color-bg-hover, #f1f5f9);
+  color: var(--color-text, #1e293b);
+}
+
+.ntd-help-menu-sub-item.is-selected {
+  color: #2563eb;
+  font-weight: 500;
+}
+
+/* 右侧内容区容器：宽度 100% 撑满 PageCard 内容区 */
+.ntd-help-content {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 24px 32px 48px;
+  font-size: 14px;
+  line-height: 1.75;
+  color: var(--color-text, #1e293b);
+}
+
+/* 内容区标题层级 */
+.ntd-help-content h1 {
+  font-size: 24px;
+  font-weight: 700;
+  margin: 0 0 16px;
+  color: var(--color-text, #0f172a);
+  line-height: 1.3;
+}
+
+.ntd-help-content h2 {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 28px 0 12px;
+  color: var(--color-text, #0f172a);
+  line-height: 1.4;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--color-border-light, #e2e8f0);
+}
+
+.ntd-help-content h3 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 20px 0 8px;
+  color: var(--color-text, #1e293b);
+  line-height: 1.5;
+}
+
+/* 段落与列表间距 */
+.ntd-help-content p {
+  margin: 0 0 12px;
+}
+
+.ntd-help-content ul,
+.ntd-help-content ol {
+  margin: 0 0 12px;
+  padding-left: 24px;
+}
+
+.ntd-help-content li {
+  margin-bottom: 4px;
+}
+
+/* 引用块：左侧主色边线 + 浅底 */
+.ntd-help-content blockquote {
+  margin: 16px 0;
+  padding: 8px 16px;
+  border-left: 3px solid #2563eb;
+  background: rgba(37, 99, 235, 0.04);
+  color: var(--color-text-secondary, #475569);
+  border-radius: 0 6px 6px 0;
+}
+
+.ntd-help-content blockquote p {
+  margin: 0;
+}
+
+/* 行内代码：浅灰底圆角 */
+.ntd-help-content :not(pre) > code {
+  padding: 2px 6px;
+  background: var(--color-bg-hover, #f1f5f9);
+  border-radius: 4px;
+  font-size: 13px;
+  font-family: 'SF Mono', Monaco, Consolas, 'Liberation Mono', monospace;
+  color: var(--color-text, #1e293b);
+}
+
+/*
+ * 代码块：深色底 + 横向滚动兜底。
+ *
+ * 用 :not(:has(.help-mermaid)) 把 mermaid 图容器排除在外：
+ * XMarkdown 把 ```mermaid 代码块也渲染成 <pre><code>，但 merslim
+ * 自己有暗/亮主题，套上 .ntd-help-content pre 的硬编码暗底会导致
+ * 亮色主题下 mermaid 图四周冒出突兀的暗色边框（#1e293b）。
+ * 排除后：真正的代码块保留暗底，mermaid 图交给 .help-mermaid 自身配色。
+ */
+.ntd-help-content pre:not(:has(.help-mermaid)) {
+  margin: 16px 0;
+  padding: 14px 18px;
+  background: #1e293b;
+  color: #e2e8f0;
+  border-radius: 8px;
+  overflow-x: auto;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.ntd-help-content pre code {
+  background: none;
+  padding: 0;
+  color: inherit;
+}
+
+/* 表格：带边框、表头浅底 */
+.ntd-help-content table {
+  width: 100%;
+  margin: 16px 0;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.ntd-help-content th,
+.ntd-help-content td {
+  padding: 8px 12px;
+  border: 1px solid var(--color-border-light, #e2e8f0);
+  text-align: left;
+}
+
+.ntd-help-content th {
+  background: var(--color-bg-hover, #f1f5f9);
+  font-weight: 600;
+}
+
+/* 链接：主色 + 下划线 */
+.ntd-help-content a {
+  color: #2563eb;
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+
+.ntd-help-content a:hover {
+  color: #1d4ed8;
+  text-decoration: underline;
+}
+
+/*
+ * Mermaid 图容器（基于 merslim 渲染）。
+ *
+ * 设计意图（可读性优先，放弃自适应缩放）：
+ * - merslim 渲染出的 SVG 带固定 width/height 像素，字始终可读。
+ * - 容器 overflow:auto 兜底，图比容器宽时出横向滚动条、高时出纵向滚动条。
+ * - 不设 max-height，避免纵向图被裁切；整页滚动由外层 contentStyle overflow:auto 接管。
+ * - text-align:left 让图左对齐，避免大图居中后右侧空白突兀。
+ */
+.ntd-help-content .help-mermaid {
+  margin: 20px 0;
+  padding: 20px 0;
+  /* 透明背景融入 PageCard 内容区，避免亮色下白底套白底+边框看起来像粗暗色边 */
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  /* 双向滚动兜底：图过大时出现滚动条，不裁切 */
+  overflow: auto;
+  text-align: left;
+}
+
+/*
+ * Mermaid SVG：保持原始像素尺寸，不做任何 CSS 缩放。
+ *
+ * merslim 渲染出的 svg 带固定 width/height 像素，
+ * 这里不覆盖，让图按原始尺寸显示。容器 overflow:auto 兜底溢出。
+ */
+.ntd-help-content .help-mermaid svg {
+  display: inline-block;
+  max-width: none;
+}
+
+/* PageCard 内帮助图标徽章：主色浅底圆角 */
+.ntd-help-card-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  background: rgba(37, 99, 235, 0.1);
+  color: #2563eb;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* ---------- Dark theme adjustments for Help Page ---------- */
+[data-theme="dark"] .ntd-help-menu-item.is-selected {
+  background: rgba(37, 99, 235, 0.16);
+  color: #60a5fa;
+}
+
+[data-theme="dark"] .ntd-help-menu-item.is-selected::before {
+  background: #60a5fa;
+}
+
+[data-theme="dark"] .ntd-help-menu-sub-item.is-selected {
+  color: #60a5fa;
+}
+
+[data-theme="dark"] .ntd-help-content blockquote {
+  background: rgba(37, 99, 235, 0.1);
+  color: var(--color-text-secondary, #cbd5e1);
+}
+
+[data-theme="dark"] .ntd-help-content .help-mermaid {
+  background: transparent;
+  border: none;
+}
+
+[data-theme="dark"] .ntd-help-card-icon {
+  background: rgba(37, 99, 235, 0.2);
+  color: #60a5fa;
+}

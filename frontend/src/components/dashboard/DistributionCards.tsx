@@ -1,7 +1,6 @@
 import { Card, Empty } from 'antd';
-import { BarChartOutlined, ThunderboltOutlined, TagOutlined, ClockCircleOutlined, CheckCircleOutlined } from '@ant-design/icons';
+import { BarChartOutlined, ThunderboltOutlined, TagOutlined } from '@ant-design/icons';
 import { CompactRow } from './CompactRow';
-import { MetricCard } from './EnhancedCards';
 import { MODEL_COLORS } from './constants';
 import { getExecutorOption } from '@/types';
 import type { DashboardStats } from '@/types';
@@ -244,83 +243,6 @@ export function ModelCacheCard({ stats }: BaseCardProps) {
         })
       ) : (
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无缓存数据" />
-      )}
-    </Card>
-  );
-}
-
-interface SkillsStatsCardProps {
-  stats: DashboardStats | null;
-  loading: boolean;
-}
-
-export function SkillsStatsCard({ stats, loading }: SkillsStatsCardProps) {
-  const skillsStats = stats?.skills_stats;
-  const skillsSuccessRate = skillsStats && skillsStats.total_invocations > 0
-    ? (skillsStats.success_invocations / skillsStats.total_invocations * 100)
-    : 0;
-
-  return (
-    <Card
-      title={<div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><ThunderboltOutlined /><span>Skills 调用统计</span></div>}
-      extra={<ClockCircleOutlined style={{ color: 'var(--color-text-tertiary)' }} />}
-      className="dashboard-card" style={{ borderRadius: 12 }}
-      styles={{ body: { padding: '16px 20px' } }}
-    >
-      {skillsStats ? (
-        <div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 16 }}>
-            <MetricCard
-              title="总调用"
-              value={skillsStats.total_invocations}
-              prefix={<ThunderboltOutlined />}
-              color="#6366f1"
-              loading={loading}
-              chineseFormat
-            />
-            <MetricCard
-              title="今日调用"
-              value={skillsStats.invocations_today}
-              prefix={<ThunderboltOutlined />}
-              color="#22c55e"
-              loading={loading}
-            />
-            <MetricCard
-              title="成功率"
-              value={skillsSuccessRate}
-              suffix="%"
-              prefix={<CheckCircleOutlined />}
-              color="#3b82f6"
-              loading={loading}
-              decimals={1}
-            />
-            <MetricCard
-              title="平均耗时"
-              value={skillsStats.avg_duration_ms}
-              suffix="ms"
-              prefix={<BarChartOutlined />}
-              color="#f59e0b"
-              loading={loading}
-            />
-          </div>
-          {skillsStats.top_skills && skillsStats.top_skills.length > 0 && (
-            <div>
-              <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginBottom: 8 }}>Top Skills</div>
-              {skillsStats.top_skills.slice(0, 5).map((skill) => (
-                <CompactRow
-                  key={skill.skill_name}
-                  name={skill.skill_name}
-                  value={skill.count}
-                  sub={`成功率 ${skill.success_rate.toFixed(1)}%`}
-                  color="#6366f1"
-                  barPct={(skill.count / (skillsStats.top_skills[0]?.count || 1)) * 100}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-      ) : (
-        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无 Skills 调用数据" />
       )}
     </Card>
   );

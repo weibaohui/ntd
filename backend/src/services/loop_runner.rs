@@ -113,12 +113,6 @@ impl LoopRunner {
         Self { ctx, tx }
     }
 
-    /// 暴露 LoopRunnerCtx 供 LoopScheduler / 测试 / 上层使用。
-    /// 只读引用。
-    pub fn ctx_ref(&self) -> &LoopRunnerCtx {
-        &self.ctx
-    }
-
     /// 暴露 tx 供 LoopScheduler 构造 ServiceContext。
     pub fn tx(&self) -> &broadcast::Sender<crate::executor_service::ExecEvent> {
         &self.tx

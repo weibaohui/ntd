@@ -25,6 +25,7 @@
     "dagre": "^0.8.5",
     "dayjs": "^1.11.21",
     "js-yaml": "^4.1.1",
+    "merslim": "^0.2.3",
     "monaco-editor": "^0.50.0",
     "qrcode": "^1.5.4",
     "react": "^19.2.0",

@@ -15,8 +15,6 @@ pub const DEFAULT_PORT: u16 = 8088;
 pub const DEFAULT_DEV_PORT: u16 = 18088;
 /// Default host.
 pub const DEFAULT_HOST: &str = "0.0.0.0";
-/// Default executor paths (binary names).
-pub const DEFAULT_EXECUTOR_PATH: &str = ""; // use binary name directly
 /// 执行超时「开关打开时」使用的默认时长（秒）。
 ///
 /// 这是推荐/启用态的默认时长：180 分钟 = 10800 秒。

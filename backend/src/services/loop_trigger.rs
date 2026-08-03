@@ -23,15 +23,6 @@ impl LoopTriggerDispatcher {
         Self { runner, db }
     }
 
-    /// 手动触发：trigger_id 为 None（044 后无 trigger 表）,所有 loop 都允许。
-    pub async fn dispatch_manual(
-        &self,
-        loop_id: i64,
-    ) -> Option<i64> {
-        let meta = serde_json::json!({ "source": "manual" });
-        self.dispatch_manual_with_meta(loop_id, meta).await
-    }
-
     /// 手动触发（带自定义 meta）：trigger_id 为 None，支持传入 params 等元数据。
     /// 任务创建路径调用本方法启动 loop 执行。
     pub async fn dispatch_manual_with_meta(

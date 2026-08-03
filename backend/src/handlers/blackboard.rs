@@ -7,7 +7,7 @@
 //! - `PATCH /api/workspaces/{workspace_id}/blackboard/config`：更新配置
 
 use axum::extract::{Path, State};
-use axum::routing::{get, post};
+use axum::routing::get;
 use axum::Router;
 
 use crate::db::blackboard::BlackboardConfig;
@@ -327,31 +327,6 @@ pub async fn chat_with_wiki(
     )
     .await?;
     Ok(ApiResponse::ok(resp))
-}
-
-/// 黑板 API 路由。
-pub fn blackboard_routes() -> Router<AppState> {
-    Router::new()
-        .route(
-            "/api/workspaces/{workspace_id}/blackboard",
-            get(get_blackboard).patch(update_blackboard_config),
-        )
-        .route(
-            "/api/workspaces/{workspace_id}/blackboard/config",
-            get(get_blackboard_config),
-        )
-        .route(
-            "/api/workspaces/{workspace_id}/wiki/files",
-            get(list_wiki_files),
-        )
-        .route(
-            "/api/workspaces/{workspace_id}/wiki/files/{slug}",
-            get(get_wiki_file).delete(delete_wiki_file),
-        )
-        .route(
-            "/api/workspaces/{workspace_id}/wiki/chat",
-            post(chat_with_wiki),
-        )
 }
 
 /// V1 黑板 API 路由（相对路径版本）。

@@ -158,13 +158,6 @@ export interface ExecutionLogsPage {
   per_page: number;
 }
 
-export interface ExecuteResult {
-  success: boolean;
-  stdout: string;
-  stderr: string;
-  logs: LogEntry[];
-}
-
 export interface RunningTask {
   taskId: string;
   todoId: number;

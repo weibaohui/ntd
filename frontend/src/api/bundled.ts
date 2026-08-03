@@ -173,16 +173,6 @@ export interface BundledSkillContentResponse {
 }
 
 /**
- * 安装技能请求
- */
-export interface InstallSkillRequest {
-  /** 技能完整路径名 */
-  skill_name: string;
-  /** 目标执行器 */
-  executor: string;
-}
-
-/**
  * 安装技能响应
  */
 export interface InstallSkillResponse {
@@ -215,13 +205,6 @@ export interface ProcessTemplate {
  */
 export interface ProcessTemplateDetail extends ProcessTemplate {
   definition: string;
-}
-
-/**
- * 安装工艺模板请求
- */
-export interface InstallProcessRequest {
-  workspace_id: number;
 }
 
 /**

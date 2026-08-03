@@ -108,18 +108,6 @@ async fn run_git_command(args: &[&str], cwd: Option<&Path>) -> Result<(String, S
     Ok((stdout, stderr))
 }
 
-/// 获取本地仓库的当前分支
-///
-/// # 参数
-/// - `repo_path`: 仓库路径
-///
-/// # 返回
-/// 当前分支名称
-pub async fn get_current_branch(repo_path: &Path) -> Result<String, GitSyncError> {
-    let (stdout, _) = run_git_command(&["branch", "--show-current"], Some(repo_path)).await?;
-    Ok(stdout.trim().to_string())
-}
-
 /// 获取本地仓库的当前提交哈希
 ///
 /// # 参数
@@ -151,18 +139,6 @@ pub async fn get_remote_commit(repo_path: &Path, remote: &str, branch: &str) -> 
         return Err(GitSyncError::CommandFailed("无法获取远程提交".to_string()));
     }
     Ok(parts[0].to_string())
-}
-
-/// 检查是否存在未提交的本地修改
-///
-/// # 参数
-/// - `repo_path`: 仓库路径
-///
-/// # 返回
-/// 是否有未提交的修改
-pub async fn has_local_changes(repo_path: &Path) -> Result<bool, GitSyncError> {
-    let (stdout, _) = run_git_command(&["status", "--porcelain"], Some(repo_path)).await?;
-    Ok(!stdout.is_empty())
 }
 
 /// 克隆远程仓库
@@ -266,26 +242,6 @@ pub async fn sync_repo(
 /// 绝对路径，如果无法获取 home 目录则返回 None
 pub fn bundled_dir(local_path: &str) -> Option<PathBuf> {
     dirs::home_dir().map(|home| home.join(".ntd").join(local_path))
-}
-
-/// 检查是否需要同步（首次或有更新）
-///
-/// # 参数
-/// - `repo_path`: 仓库路径
-/// - `remote`: 远程名称
-/// - `branch`: 分支名称
-///
-/// # 返回
-/// 是否需要同步
-pub async fn needs_sync(repo_path: &Path, remote: &str, branch: &str) -> Result<bool, GitSyncError> {
-    if !repo_path.exists() {
-        return Ok(true);
-    }
-
-    let local_commit = get_current_commit(repo_path).await?;
-    let remote_commit = get_remote_commit(repo_path, remote, branch).await?;
-
-    Ok(local_commit != remote_commit)
 }
 
 #[cfg(test)]
