@@ -77,7 +77,9 @@ export function AssistantManagementPage({}: AssistantManagementPageProps) {
     setConfigDrawerOpen(false);
   };
 
-  // 绑定飞书智能体逻辑：发起绑定后通过 EventSource 监听扫码结果，超时自动关闭
+  // 绑定飞书智能体逻辑：feishuBegin 取二维码，EventSource 轮询扫码结果。
+  // 成功：提示后 2s 自动关弹窗；失败（拒绝/过期/超时）：仅展示错误文案，弹窗保持打开由用户决定重试或取消。
+  // SSE 连接统一在弹窗关闭时由下方 useEffect 清理，覆盖成功/失败/用户中途取消三种路径。
   const handleStartBind = async () => {
     if (successTimerRef.current) clearTimeout(successTimerRef.current);
     if (feishuEventSource) feishuEventSource.close();
