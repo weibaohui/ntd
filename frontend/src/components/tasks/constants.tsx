@@ -5,7 +5,7 @@ import type { ReactNode } from 'react';
 
 /**
  * 任务状态色板。
- * 与 ProcessExecutionBoard 的 statusColor 保持一致：
+ * 与后端执行状态口径保持一致：
  *   pending  → default（灰，未启动）
  *   running  → blue    （蓝，运行中）
  *   success  → green   （绿，完成）

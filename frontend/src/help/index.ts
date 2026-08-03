@@ -40,7 +40,6 @@ export const HELP_PAGES: HelpPage[] = [
     overviewDoc: 'onboarding.md',
     features: [
       { id: 'onboarding-concept-graph', title: '概念关系图', docFile: 'onboarding-concept-graph.md' },
-      { id: 'onboarding-quick-start', title: '快速开始 5 步', docFile: 'onboarding-quick-start.md' },
     ],
   },
 

@@ -170,13 +170,6 @@ export interface UpdateFeishuPushParams {
   groupDebounceSecs?: number;
 }
 
-export interface FeishuSenderItem {
-  sender_open_id: string;
-  sender_type: string | null;
-  sender_nickname: string | null;
-  count: number;
-}
-
 export interface WhitelistEntry {
   id: number;
   bot_id: number;
@@ -303,10 +296,6 @@ export async function getFeishuMessageStats(workspaceId?: number, hours?: number
   if (workspaceId !== undefined) params.workspace_id = workspaceId;
   if (hours !== undefined) params.hours = hours;
   return unwrap(await api.get('/api/v1/feishu/message-stats', { params }));
-}
-
-export async function getFeishuSenders(): Promise<FeishuSenderItem[]> {
-  return unwrap(await api.get('/api/v1/feishu/senders'));
 }
 
 export async function getFeishuHistoryChats(botId?: number): Promise<import('@/types').FeishuHistoryChat[]> {

@@ -944,18 +944,6 @@ pub fn build_info_card(title: &str, content: &str) -> Card {
     CardMessageBuilder::new(CardMessageStatus::Info, title, content).build()
 }
 
-/// 构建加载中消息卡片
-pub fn build_loading_card(title: &str, content: &str) -> Card {
-    CardMessageBuilder::new(CardMessageStatus::Loading, title, content).build()
-}
-
-/// 构建带操作的消息卡片
-pub fn build_action_card(title: &str, content: &str, action_text: &str, action: &str) -> Card {
-    CardMessageBuilder::new(CardMessageStatus::Info, title, content)
-        .add_primary_action(action_text, action)
-        .build()
-}
-
 // ============================================================================
 // 富文本卡片 (Rich Card) - 参考 cc-connect 的实现
 // ============================================================================

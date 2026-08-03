@@ -33,11 +33,6 @@ pub fn topics_dir(workspace_id: i64) -> io::Result<PathBuf> {
     Ok(wiki_dir(workspace_id)?.join("topics"))
 }
 
-/// 获取 index.md 文件路径。
-pub fn index_file(workspace_id: i64) -> io::Result<PathBuf> {
-    Ok(wiki_dir(workspace_id)?.join("index.md"))
-}
-
 /// 获取 log.md 文件路径。
 pub fn log_file(workspace_id: i64) -> io::Result<PathBuf> {
     Ok(wiki_dir(workspace_id)?.join("log.md"))
@@ -157,26 +152,6 @@ pub fn delete_topic(workspace_id: i64, slug: &str) -> io::Result<bool> {
     Ok(true)
 }
 
-/// 读取 index.md 内容。
-pub fn read_index(workspace_id: i64) -> io::Result<Option<String>> {
-    let path = index_file(workspace_id)?;
-
-    if !path.exists() {
-        return Ok(None);
-    }
-
-    let content = fs::read_to_string(path)?;
-    Ok(Some(content))
-}
-
-/// 写入 index.md（覆盖）。
-pub fn write_index(workspace_id: i64, content: &str) -> io::Result<()> {
-    init_wiki_dir(workspace_id)?;
-    let path = index_file(workspace_id)?;
-    fs::write(path, content)?;
-    Ok(())
-}
-
 /// 读取 log.md 内容。
 pub fn read_log(workspace_id: i64) -> io::Result<Option<String>> {
     let path = log_file(workspace_id)?;
@@ -187,23 +162,6 @@ pub fn read_log(workspace_id: i64) -> io::Result<Option<String>> {
 
     let content = fs::read_to_string(path)?;
     Ok(Some(content))
-}
-
-/// 追加内容到 log.md。
-///
-/// 使用 `.append(true).create(true)` 原子性追加，避免 TOCTOU 竞争。
-pub fn append_log(workspace_id: i64, entry: &str) -> io::Result<()> {
-    init_wiki_dir(workspace_id)?;
-    let path = log_file(workspace_id)?;
-
-    let mut file = fs::OpenOptions::new()
-        .append(true)
-        .create(true)
-        .open(path)?;
-
-    use std::io::Write;
-    file.write_all(entry.as_bytes())?;
-    Ok(())
 }
 
 /// 覆盖写入 log.md。

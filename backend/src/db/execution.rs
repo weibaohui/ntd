@@ -313,18 +313,6 @@ impl Database {
         Ok(m.map(Into::into))
     }
 
-    /// 根据 task_id 获取执行记录
-    pub async fn get_execution_record_by_task_id(
-        &self,
-        task_id: &str,
-    ) -> Result<Option<ExecutionRecord>, sea_orm::DbErr> {
-        let m = execution_records::Entity::find()
-            .filter(execution_records::Column::TaskId.eq(task_id))
-            .one(&self.conn)
-            .await?;
-        Ok(m.map(Into::into))
-    }
-
     /// 获取指定 todo 的最新一条执行记录（按 id 降序）。
     ///
     /// 用于黑板 debouncer：从 pending 队列取出 todo_id 后查其最新执行结论。

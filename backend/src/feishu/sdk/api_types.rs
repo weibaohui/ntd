@@ -66,16 +66,6 @@ impl<T> BaseResponse<T> {
     }
 }
 
-pub trait ApiResponseTrait: for<'a> Deserialize<'a> + Send + Sync + 'static + Debug {
-    fn data_format() -> ResponseFormat;
-}
-
-#[derive(Debug, PartialEq)]
-pub enum ResponseFormat {
-    Data,
-    Flatten,
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct RawResponse {
     pub code: i32,

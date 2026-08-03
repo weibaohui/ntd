@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::time::Duration;
 
 use super::config::{AppType, Config, ConfigBuilder};
 
@@ -25,15 +24,6 @@ impl LarkClientBuilder {
 
     pub fn with_enable_token_cache(mut self, enable: bool) -> Self {
         self.config_builder = self.config_builder.enable_token_cache(enable);
-        self
-    }
-
-    pub fn with_req_timeout(mut self, timeout: Option<f32>) -> Self {
-        if let Some(timeout) = timeout {
-            self.config_builder = self
-                .config_builder
-                .req_timeout(Duration::from_secs_f32(timeout));
-        }
         self
     }
 

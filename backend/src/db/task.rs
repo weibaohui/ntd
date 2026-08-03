@@ -57,17 +57,6 @@ impl Database {
         Ok(())
     }
 
-    pub async fn update_task_loop_id(&self, id: i64, loop_id: i64) -> Result<(), sea_orm::DbErr> {
-        let existing = tasks::Entity::find_by_id(id).one(&self.conn).await?;
-        if let Some(c) = existing {
-            let mut am: tasks::ActiveModel = c.into();
-            am.loop_id = ActiveValue::Set(Some(loop_id));
-            am.updated_at = ActiveValue::Set(Some(utc_timestamp()));
-            am.update(&self.conn).await?;
-        }
-        Ok(())
-    }
-
     /// 硬删除单个任务。
     pub async fn delete_task(&self, id: i64) -> Result<(), sea_orm::DbErr> {
         tasks::Entity::delete_by_id(id).exec(&self.conn).await?;

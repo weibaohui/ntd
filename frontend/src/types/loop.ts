@@ -11,8 +11,6 @@
 
 export type LoopStatus = 'enabled' | 'paused';
 
-export type LoopExecutionStatus = 'running' | 'success' | 'partial' | 'failed' | 'cancelled' | 'capped_step' | 'capped_token';
-
 export interface LoopDto {
   id: number;
   name: string;

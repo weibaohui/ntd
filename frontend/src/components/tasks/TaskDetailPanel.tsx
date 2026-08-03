@@ -3,7 +3,6 @@
 // - Tab 1 概览：任务描述 + 环路基本信息（工作空间/待审批）+ 全局限制 + 最新执行进度
 // - Tab 2 执行环路：来源工艺面包屑 + SVG DAG 流程图（复用 LoopFlowGraph）
 // - Tab 3 执行历史：分页执行列表 + TokenSummaryBar + StepExecList + BlackboardDrawer
-// - Tab 4 执行看板：ProcessExecutionBoard（条件渲染）
 //
 // 子组件（Tab 内容）拆分至 TaskDetailTabs.tsx 以控制文件大小。
 
