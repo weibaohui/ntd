@@ -37,9 +37,9 @@ flowchart LR
 
 ## 功能点索引
 
-- [刷新黑板](blackboard-refresh)
-- [打开黑板设置](blackboard-settings)
-- [查看待处理队列](blackboard-queue)
-- [主题级操作（生成建议/删除）](blackboard-topic-toolbar)
-- [防抖双进度条](blackboard-debounce-bar)
-- [Wiki 布区切换](blackboard-wiki-layout)
+- [刷新黑板](#/help/blackboard/blackboard-refresh)
+- [打开黑板设置](#/help/blackboard/blackboard-settings)
+- [查看待处理队列](#/help/blackboard/blackboard-queue)
+- [主题级操作（生成建议/删除）](#/help/blackboard/blackboard-topic-toolbar)
+- [防抖双进度条](#/help/blackboard/blackboard-debounce-bar)
+- [Wiki 布区切换](#/help/blackboard/blackboard-wiki-layout)

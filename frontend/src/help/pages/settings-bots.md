@@ -26,8 +26,8 @@ flowchart LR
 
 ## 功能点索引
 
-- [assistant-refresh](assistant-refresh.md) — 刷新智能助手列表
-- [assistant-bind](assistant-bind.md) — 绑定飞书智能助手（二维码 + SSE 轮询）
-- [assistant-open-config](assistant-open-config.md) — 打开配置抽屉（推送/白名单/接收策略）
-- [assistant-toggle-enabled](assistant-toggle-enabled.md) — 启用/停用智能助手
-- [assistant-delete](assistant-delete.md) — 删除智能助手
+- [assistant-refresh](#/help/settings-bots/assistant-refresh) — 刷新智能助手列表
+- [assistant-bind](#/help/settings-bots/assistant-bind) — 绑定飞书智能助手（二维码 + SSE 轮询）
+- [assistant-open-config](#/help/settings-bots/assistant-open-config) — 打开配置抽屉（推送/白名单/接收策略）
+- [assistant-toggle-enabled](#/help/settings-bots/assistant-toggle-enabled) — 启用/停用智能助手
+- [assistant-delete](#/help/settings-bots/assistant-delete) — 删除智能助手

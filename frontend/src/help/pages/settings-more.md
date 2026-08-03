@@ -24,9 +24,9 @@ flowchart LR
 
 ## 功能点索引
 
-- [settings-tab-system](settings-tab-system.md) — 系统设置 Tab（端口/地址/数据库/日志/时区）
-- [settings-tab-interface](settings-tab-interface.md) — 界面显示 Tab（底部执行日志面板开关）
-- [settings-tab-tags](settings-tab-tags.md) — 标签管理 Tab（创建/删除标签）
-- [settings-tab-templates](settings-tab-templates.md) — 模板管理 Tab（专家/事项/技能/工艺模板同步）
-- [settings-tab-backup](settings-tab-backup.md) — 备份与恢复 Tab（数据库/事项/技能备份 + 导入导出）
-- [settings-tab-cloud-sync](settings-tab-cloud-sync.md) — 云端同步 Tab（bundled 仓库配置 + push/pull）
+- [settings-tab-system](#/help/settings-more/settings-tab-system) — 系统设置 Tab（端口/地址/数据库/日志/时区）
+- [settings-tab-interface](#/help/settings-more/settings-tab-interface) — 界面显示 Tab（底部执行日志面板开关）
+- [settings-tab-tags](#/help/settings-more/settings-tab-tags) — 标签管理 Tab（创建/删除标签）
+- [settings-tab-templates](#/help/settings-more/settings-tab-templates) — 模板管理 Tab（专家/事项/技能/工艺模板同步）
+- [settings-tab-backup](#/help/settings-more/settings-tab-backup) — 备份与恢复 Tab（数据库/事项/技能备份 + 导入导出）
+- [settings-tab-cloud-sync](#/help/settings-more/settings-tab-cloud-sync) — 云端同步 Tab（bundled 仓库配置 + push/pull）

@@ -41,7 +41,7 @@ flowchart LR
 
 ## 功能点索引
 
-- [返回列表](task-detail-back)
-- [动态详情标题](task-detail-title)
-- [查看任务 DAG / 执行历史](task-detail-dag)
-- [DAG 节点跳转事项](task-detail-open-todo)
+- [返回列表](#/help/tasks-detail/task-detail-back)
+- [动态详情标题](#/help/tasks-detail/task-detail-title)
+- [查看任务 DAG / 执行历史](#/help/tasks-detail/task-detail-dag)
+- [DAG 节点跳转事项](#/help/tasks-detail/task-detail-open-todo)

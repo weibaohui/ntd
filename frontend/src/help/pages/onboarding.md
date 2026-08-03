@@ -45,5 +45,5 @@ flowchart LR
 
 ## 功能点索引
 
-- [概念关系图](onboarding-concept-graph)
-- [快速开始 5 步](onboarding-quick-start)
+- [概念关系图](#/help/onboarding/onboarding-concept-graph)
+- [快速开始 5 步](#/help/onboarding/onboarding-quick-start)

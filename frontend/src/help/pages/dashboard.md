@@ -51,9 +51,9 @@ flowchart LR
 
 ## 功能点索引
 
-- [Tab 切换（7 个语义域）](dashboard-tab-switch)
-- [全局时间范围选择](dashboard-time-range)
-- [总览 Tab](dashboard-overview)
-- [成本与模型 Tab](dashboard-cost)
-- [自动化 Tab](dashboard-automation)
-- [工艺 Tab](dashboard-process)
+- [Tab 切换（7 个语义域）](#/help/dashboard/dashboard-tab-switch)
+- [全局时间范围选择](#/help/dashboard/dashboard-time-range)
+- [总览 Tab](#/help/dashboard/dashboard-overview)
+- [成本与模型 Tab](#/help/dashboard/dashboard-cost)
+- [自动化 Tab](#/help/dashboard/dashboard-automation)
+- [工艺 Tab](#/help/dashboard/dashboard-process)

@@ -28,9 +28,9 @@ flowchart LR
 
 ## 功能点索引
 
-- [executors-tabs](executors-tabs.md) — 执行器 / API Key / 正在运行 / 会话 子页签切换
-- [executors-batch-detect](executors-batch-detect.md) — 批量检测所有执行器二进制可用性
-- [executors-row-actions](executors-row-actions.md) — 行操作（设为默认 / 检测 / 修复 / 安装 / 测试）
-- [executors-toggle-enabled](executors-toggle-enabled.md) — 启用/停用执行器开关
-- [executors-running-stop](executors-running-stop.md) — 正在运行 Tab 批量/单个停止任务
-- [executors-usage-stats](executors-usage-stats.md) — AI 使用统计开关与 cron 配置
+- [executors-tabs](#/help/settings-executors/executors-tabs) — 执行器 / API Key / 正在运行 / 会话 子页签切换
+- [executors-batch-detect](#/help/settings-executors/executors-batch-detect) — 批量检测所有执行器二进制可用性
+- [executors-row-actions](#/help/settings-executors/executors-row-actions) — 行操作（设为默认 / 检测 / 修复 / 安装 / 测试）
+- [executors-toggle-enabled](#/help/settings-executors/executors-toggle-enabled) — 启用/停用执行器开关
+- [executors-running-stop](#/help/settings-executors/executors-running-stop) — 正在运行 Tab 批量/单个停止任务
+- [executors-usage-stats](#/help/settings-executors/executors-usage-stats) — AI 使用统计开关与 cron 配置

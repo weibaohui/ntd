@@ -25,9 +25,9 @@ flowchart LR
 
 ## 功能点索引
 
-- [新建事项](todo-list-create)
-- [卡片/列表视图切换](todo-list-view-switch)
-- [搜索过滤](todo-list-search)
-- [刷新列表](todo-list-refresh)
-- [单行操作（删除/执行/带参执行）](todo-list-row-actions)
-- [带参执行 Modal](todo-list-execute-with-args)
+- [新建事项](#/help/todos-list/todo-list-create)
+- [卡片/列表视图切换](#/help/todos-list/todo-list-view-switch)
+- [搜索过滤](#/help/todos-list/todo-list-search)
+- [刷新列表](#/help/todos-list/todo-list-refresh)
+- [单行操作（删除/执行/带参执行）](#/help/todos-list/todo-list-row-actions)
+- [带参执行 Modal](#/help/todos-list/todo-list-execute-with-args)

@@ -25,7 +25,7 @@ flowchart LR
 
 ## 功能点索引
 
-- [skills-view-switch](skills-view-switch.md) — 总览/市场/版本更新子视图切换
-- [skills-overview](skills-overview.md) — 已安装技能总览（搜索、执行器筛选、卡片/列表视图、导入导出）
-- [skills-marketplace](skills-marketplace.md) — 技能市场（来源浏览、全部技能、安装到执行器）
-- [skills-version-update](skills-version-update.md) — 版本更新检测与一键同步
+- [skills-view-switch](#/help/settings-skills/skills-view-switch) — 总览/市场/版本更新子视图切换
+- [skills-overview](#/help/settings-skills/skills-overview) — 已安装技能总览（搜索、执行器筛选、卡片/列表视图、导入导出）
+- [skills-marketplace](#/help/settings-skills/skills-marketplace) — 技能市场（来源浏览、全部技能、安装到执行器）
+- [skills-version-update](#/help/settings-skills/skills-version-update) — 版本更新检测与一键同步

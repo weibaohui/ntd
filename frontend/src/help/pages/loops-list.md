@@ -35,9 +35,9 @@ flowchart LR
 
 ## 功能点索引
 
-- [搜索环路](loop-list-search)
-- [刷新列表](loop-list-refresh)
-- [打开工作空间环路配置页](loop-list-open-config)
-- [删除环路](loop-list-delete)
-- [启停切换](loop-list-toggle-status)
-- [跳转环路详情](loop-list-select)
+- [搜索环路](#/help/loops-list/loop-list-search)
+- [刷新列表](#/help/loops-list/loop-list-refresh)
+- [打开工作空间环路配置页](#/help/loops-list/loop-list-open-config)
+- [删除环路](#/help/loops-list/loop-list-delete)
+- [启停切换](#/help/loops-list/loop-list-toggle-status)
+- [跳转环路详情](#/help/loops-list/loop-list-select)

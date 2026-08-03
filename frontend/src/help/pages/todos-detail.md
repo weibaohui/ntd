@@ -27,8 +27,8 @@ flowchart LR
 
 ## 功能点索引
 
-- [返回列表](todo-detail-back)
-- [自动优化标题](todo-detail-title-optimize)
-- [编辑事项](todo-detail-edit)
-- [删除事项](todo-detail-delete)
-- [打开帖子/执行记录](todo-detail-open-post)
+- [返回列表](#/help/todos-detail/todo-detail-back)
+- [自动优化标题](#/help/todos-detail/todo-detail-title-optimize)
+- [编辑事项](#/help/todos-detail/todo-detail-edit)
+- [删除事项](#/help/todos-detail/todo-detail-delete)
+- [打开帖子/执行记录](#/help/todos-detail/todo-detail-open-post)
