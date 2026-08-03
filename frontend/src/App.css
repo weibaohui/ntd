@@ -5147,10 +5147,11 @@ code {
  */
 .ntd-help-content .help-mermaid {
   margin: 20px 0;
-  padding: 20px;
-  background: var(--color-bg-elevated, #fff);
-  border: 1px solid var(--color-border-light, #e2e8f0);
-  border-radius: 8px;
+  padding: 20px 0;
+  /* 透明背景融入 PageCard 内容区，避免亮色下白底套白底+边框看起来像粗暗色边 */
+  background: transparent;
+  border: none;
+  border-radius: 0;
   /* 双向滚动兜底：图过大时出现滚动条，不裁切 */
   overflow: auto;
   text-align: left;
@@ -5201,8 +5202,8 @@ code {
 }
 
 [data-theme="dark"] .ntd-help-content .help-mermaid {
-  background: var(--color-bg-elevated, #1e293b);
-  border-color: var(--color-border, #334155);
+  background: transparent;
+  border: none;
 }
 
 [data-theme="dark"] .ntd-help-card-icon {
