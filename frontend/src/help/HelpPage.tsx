@@ -13,7 +13,8 @@
 //    页面='p:<pageId>', 功能点='f:<pageId>/<featureId>'。
 
 import { useMemo, useState, useCallback } from 'react';
-import { Empty, Modal } from 'antd';
+import { Empty, Modal, Button } from 'antd';
+import { ExpandOutlined, CompressOutlined } from '@ant-design/icons';
 import { findHelpPage, loadHelpDoc } from './useHelpContent';
 import { decideTreeSelect } from './helpTreeSelect';
 import { HelpContentRenderer } from './HelpContentRenderer';
@@ -111,6 +112,8 @@ function isValidPageId(pageId: string | undefined): boolean {
 /** 帮助弹窗：antd Modal 大窗，内嵌左菜单 + 右 PageCard 内容。 */
 export function HelpPage({ open, onClose, initialPageId }: HelpPageProps) {
   const isMobile = useIsMobile();
+  // 全屏切换：true 时占满整个视窗，false 时桌面端 80vw / 5vh 顶部留白
+  const [isFullscreen, setIsFullscreen] = useState(false);
   // 初始选中：传入的 initialPageId 合法则用其页面 key，否则回退概览首页
   const defaultPageKey = isValidPageId(initialPageId) ? `p:${initialPageId}` : 'p:_overview';
   const [selectedKey, setSelectedKey] = useState(defaultPageKey);
@@ -147,12 +150,13 @@ export function HelpPage({ open, onClose, initialPageId }: HelpPageProps) {
     }
   }, [expandedKeys]);
 
-  // Modal 尺寸：桌面端 80vw 宽、顶部 5vh 留白；移动端全屏
-  const modalWidth = isMobile ? '100vw' : '80vw';
+  // Modal 尺寸：全屏时占满视窗；桌面端 80vw / 5vh 顶部留白；移动端全屏
+  const modalWidth = isFullscreen || isMobile ? '100vw' : '80vw';
   const modalStyle: React.CSSProperties = {
-    top: isMobile ? 0 : '5vh',
+    top: isFullscreen || isMobile ? 0 : '5vh',
     maxWidth: '100vw',
     paddingBottom: 0,
+    transition: 'top 0.2s ease',
   };
   // Modal body 内 padding 归零，让左菜单+右内容占满；
   // 背景 header/body 统一用主题底色，消除暗色下右侧白边刺眼问题
@@ -166,17 +170,37 @@ export function HelpPage({ open, onClose, initialPageId }: HelpPageProps) {
     body: {
       padding: 0,
       background: 'var(--color-bg-base, #f8fafc)',
-      height: isMobile ? 'calc(100vh - 55px)' : 'calc(85vh - 55px)',
+      height: isFullscreen
+        ? 'calc(100vh - 55px)'
+        : isMobile
+          ? 'calc(100vh - 55px)'
+          : 'calc(85vh - 55px)',
       overflow: 'hidden',
     } as React.CSSProperties,
   };
+  // 全屏按钮：放在 Modal title 旁，切换全屏/弹窗态
+  const fullscreenBtn = (
+    <Button
+      type="text"
+      size="small"
+      icon={isFullscreen ? <CompressOutlined /> : <ExpandOutlined />}
+      onClick={() => setIsFullscreen(prev => !prev)}
+      aria-label={isFullscreen ? '退出全屏' : '全屏'}
+      style={{ position: 'absolute', right: 40, top: 12 }}
+    />
+  );
 
   return (
     <Modal
       open={open}
       onCancel={onClose}
       footer={null}
-      title="帮助文档"
+      title={(
+        <>
+          帮助文档
+          {fullscreenBtn}
+        </>
+      )}
       width={modalWidth}
       style={modalStyle}
       styles={modalStyles}
@@ -206,11 +230,6 @@ export function HelpPage({ open, onClose, initialPageId }: HelpPageProps) {
             background: 'var(--color-bg-elevated, #fff)',
           }}
         >
-          {/* 菜单头部标题 */}
-          <div className="ntd-help-sidebar-header">
-            <span className="ntd-help-sidebar-title">帮助文档</span>
-          </div>
-
           {/* 分组菜单 */}
           <nav className="ntd-help-menu">
             {MENU_GROUPS.map(group => (
@@ -259,12 +278,13 @@ export function HelpPage({ open, onClose, initialPageId }: HelpPageProps) {
         </aside>
 
         {/* 右侧内容：PageCard 包裹 */}
-        <main className="ntd-help-main" style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', padding: isMobile ? 0 : 16 }}>
+        {/* padding 取 0：让 PageCard 撑满右侧，避免亮色下浅灰底色露出像暗色边框 */}
+        <main className="ntd-help-main" style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', padding: 0 }}>
           <PageCard
             icon={<span className="ntd-help-card-icon">📖</span>}
             title={pageTitle}
             contentStyle={{ overflow: 'auto' }}
-            style={{ flex: 1, minHeight: 0 }}
+            style={{ flex: 1, minHeight: 0, boxShadow: 'none', borderRadius: 0 }}
           >
             {/* 内容区：撑满 PageCard 宽度，行高 1.75 保证可读性 */}
             <div className="ntd-help-content">
