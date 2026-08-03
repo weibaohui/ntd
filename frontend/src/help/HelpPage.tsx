@@ -1,38 +1,22 @@
-// 帮助页面：独立全屏窗口，左菜单 + 右内容（PageCard 包裹）。
+// 帮助页面：独立页面（window.open 打开的新窗口），左菜单 + 右内容（PageCard 包裹）。
 //
 // 设计要点（基于 UI/UX 设计系统 Minimalism 风格）：
-// 1. 取代旧 HelpDrawer（窄抽屉），改为占满主内容区的「新窗口」形态。
-// 2. 左侧菜单分 4 组（概览/工作/观察/配置），每组带标题；
+// 1. 以独立浏览器页面打开（target=_blank 语义），不再是主应用内的覆盖层。
+// 2. URL #/help/<pageId>/<featureId> 驱动选中态；刷新可恢复、可分享、可直达。
+// 3. 左侧菜单分 4 组（概览/工作/观察/配置），每组带标题；
 //    菜单项 hover 主色浅底、选中态左侧主色高亮条 + 浅蓝底。
-// 3. 右侧 PageCard：header 主色图标徽章 + 标题，右上角关闭按钮；
-//    内容区行高 1.75，标题字号梯度。
-// 4. 路由：URL 形如 #/help/<pageId> 或 #/help/<pageId>/<featureId>，
-//    HelpPage 监听 popstate 同步 selectedKey；
-//    点击菜单项 pushState 更新 URL，可直达、可分享、刷新可恢复。
+// 4. 右侧 PageCard：header 主色图标徽章 + 标题；
+//    内容区行高 1.75，标题字号梯度。无关闭按钮（正常浏览器页面）。
 // 5. 树形数据从 HELP_PAGES 派生，节点 key 编码：
 //    页面='p:<pageId>', 功能点='f:<pageId>/<featureId>'。
 
 import { useMemo, useState, useEffect, useCallback, useRef } from 'react';
-import { Empty, Button } from 'antd';
-import { CloseOutlined } from '@ant-design/icons';
-import { findHelpPage, loadHelpDoc, useDefaultPageId } from './useHelpContent';
+import { Empty } from 'antd';
+import { findHelpPage, loadHelpDoc } from './useHelpContent';
 import { decideTreeSelect } from './helpTreeSelect';
 import { HelpContentRenderer } from './HelpContentRenderer';
 import { PageCard } from '@/components/common/PageCard';
-import type { View } from '@/hooks/useViewState';
-
-interface HelpPageProps {
-  /** 是否展示帮助页面。 */
-  open: boolean;
-  /** 关闭帮助页面的回调。 */
-  onClose: () => void;
-  /** 当前所在视图，用于树形默认选中。 */
-  activeView: View;
-  /** 是否处于详情形态（todoDetailId/loopDetailId/taskDetailId != null）。 */
-  hasDetail: boolean;
-  /** 是否移动端：移动端菜单与内容上下排列。 */
-  isMobile?: boolean;
-}
+import { useTheme } from '@/hooks/useTheme';
 
 /** 菜单分组定义：每组对应 HELP_PAGES 的一段连续区间。 */
 interface MenuGroup {
@@ -135,11 +119,11 @@ function keyToHelpUrl(selectedKey: string): string {
  * 从当前 URL hash 解析出帮助选中节点 key。
  *
  * 解析规则（与 keyToHelpUrl 互逆）：
- * - #/help 或 #/help/ 或无 help 段 → ''（空串表示未命中帮助路由）
+ * - #/help 或 #/help/ 或无 help 段 → 'p:_overview'（帮助首页）
  * - #/help/<pageId> → 'p:<pageId>'
  * - #/help/<pageId>/<featureId> → 'f:<pageId>/<featureId>'
  *
- * @returns 选中节点 key，未命中帮助路由返回 ''
+ * @returns 选中节点 key，未命中帮助路由返回 'p:_overview'
  */
 function helpKeyFromHash(): string {
   const hash = window.location.hash || '';
@@ -148,7 +132,7 @@ function helpKeyFromHash(): string {
   const [path] = hashWithoutHash.split('?', 2);
   const segments = (path || '').split('/').filter(Boolean);
   // 第一段必须是 'help'
-  if (segments[0] !== 'help') return '';
+  if (segments[0] !== 'help') return 'p:_overview';
   // #/help 无后续段 → 默认帮助首页
   if (segments.length < 2 || !segments[1]) return 'p:_overview';
   const pageId = segments[1];
@@ -159,59 +143,22 @@ function helpKeyFromHash(): string {
   return `p:${pageId}`;
 }
 
-/**
- * 判断当前 URL 是否为帮助路由。
- *
- * @returns 是帮助路由返回 true
- */
-function isHelpRoute(): boolean {
-  const hash = window.location.hash || '';
-  const hashWithoutHash = hash.startsWith('#') ? hash.slice(1) : hash;
-  const [path] = hashWithoutHash.split('?', 2);
-  const segments = (path || '').split('/').filter(Boolean);
-  return segments[0] === 'help';
-}
+/** 帮助页面容器：独立页面，左菜单 + 右 PageCard 内容。 */
+export function HelpPage() {
+  // 主题：帮助独立页面需要自己的主题上下文（主应用不在同页面）
+  const { themeMode } = useTheme();
+  // 从 URL 恢复初始选中态
+  const initialKey = helpKeyFromHash();
+  const [selectedKey, setSelectedKey] = useState(initialKey);
+  // 展开的节点：默认展开当前选中节点所属分组下的当前页面
+  const [expandedKeys, setExpandedKeys] = useState<string[]>([initialKey]);
 
-/** 帮助页面容器：左菜单 + 右 PageCard 内容。 */
-export function HelpPage({ open, onClose, activeView, hasDetail, isMobile }: HelpPageProps) {
-  // 默认选中当前页面总览
-  const defaultPageId = useDefaultPageId(activeView, hasDetail);
-  const defaultSelectedKey = `p:${defaultPageId}`;
-  const [selectedKey, setSelectedKey] = useState(defaultSelectedKey);
-  // 展开的节点：默认展开当前页面所属分组下的当前页面
-  const [expandedKeys, setExpandedKeys] = useState<string[]>([defaultSelectedKey]);
   // 标志：是否由 URL 驱动的选中，避免 handleSelect 回写 URL 时循环
   const fromUrlRef = useRef(false);
 
-  // open 变化时（帮助被打开），若 URL 不是帮助路由，则 pushState 到帮助首页
+  // 监听 popstate（浏览器后退/前进）与 hashchange 同步 selectedKey
   useEffect(() => {
-    if (!open) return;
-    if (!isHelpRoute()) {
-      // 首次打开帮助：URL 跳到 #/help，用当前视图对应的 pageId
-      const initialKey = `p:${defaultPageId}`;
-      const helpUrl = keyToHelpUrl(initialKey);
-      window.history.pushState(null, '', helpUrl);
-      setSelectedKey(initialKey);
-      setExpandedKeys([initialKey]);
-    } else {
-      // 刷新或直达：从 URL 恢复 selectedKey
-      const key = helpKeyFromHash();
-      if (key) {
-        setSelectedKey(key);
-        setExpandedKeys([key]);
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
-
-  // 监听 popstate（浏览器后退/前进）与外部 pushState 改 URL
-  useEffect(() => {
-    function onPopState() {
-      if (!isHelpRoute()) {
-        // URL 已离开帮助路由，触发关闭
-        onClose();
-        return;
-      }
+    function onNavChange() {
       const key = helpKeyFromHash();
       if (key) {
         fromUrlRef.current = true;
@@ -219,17 +166,13 @@ export function HelpPage({ open, onClose, activeView, hasDetail, isMobile }: Hel
         setExpandedKeys([key]);
       }
     }
-    window.addEventListener('popstate', onPopState);
-    return () => window.removeEventListener('popstate', onPopState);
-  }, [onClose]);
-
-  // 视图切换时（帮助未打开），重新选中当前页面总览并展开
-  useEffect(() => {
-    if (open) return; // 打开态下不改，由 URL 驱动
-    const newKey = `p:${defaultPageId}`;
-    setSelectedKey(newKey);
-    setExpandedKeys([newKey]);
-  }, [defaultPageId, open]);
+    window.addEventListener('popstate', onNavChange);
+    window.addEventListener('hashchange', onNavChange);
+    return () => {
+      window.removeEventListener('popstate', onNavChange);
+      window.removeEventListener('hashchange', onNavChange);
+    };
+  }, []);
 
   // 解析当前选中节点对应的 md 文件名与标题
   const docFile = useMemo(() => resolveDocFile(selectedKey), [selectedKey]);
@@ -250,26 +193,16 @@ export function HelpPage({ open, onClose, activeView, hasDetail, isMobile }: Hel
     window.history.pushState(null, '', helpUrl);
   }, [expandedKeys]);
 
-  // 关闭帮助：history.back 回原视图，由 popstate 监听器同步 helpDrawerOpen
-  const handleClose = useCallback(() => {
-    // 若当前已在帮助路由，回退一步；否则直接触发 onClose
-    if (isHelpRoute()) {
-      window.history.back();
-    } else {
-      onClose();
-    }
-  }, [onClose]);
-
-  // open=false 时不渲染，由父组件控制挂载
-  if (!open) return null;
+  // 判断移动端：窗口宽度小于 768px 时菜单与内容上下排列
+  const isMobile = window.innerWidth < 768;
 
   return (
     <div
       className="ntd-help-page"
+      data-theme={themeMode}
       style={{
-        position: 'absolute',
-        inset: 0,
-        zIndex: 100,
+        width: '100vw',
+        height: '100vh',
         display: 'flex',
         flexDirection: isMobile ? 'column' : 'row',
         background: 'var(--color-bg-base, #f8fafc)',
@@ -345,15 +278,6 @@ export function HelpPage({ open, onClose, activeView, hasDetail, isMobile }: Hel
         <PageCard
           icon={<span className="ntd-help-card-icon">📖</span>}
           title={pageTitle}
-          extra={
-            <Button
-              type="text"
-              size="small"
-              icon={<CloseOutlined />}
-              onClick={handleClose}
-              aria-label="关闭帮助"
-            />
-          }
           contentStyle={{ overflow: 'auto' }}
           style={{ flex: 1, minHeight: 0 }}
         >

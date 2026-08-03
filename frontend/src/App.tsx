@@ -67,15 +67,6 @@ function AppContent() {
   const [editingTodo, setEditingTodo] = useState<import('@/types').Todo | null>(null);
   const [smartCreateOpen, setSmartCreateOpen] = useState(false);
   const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
-  // 帮助页面开关：由 URL #/help 驱动，LeftRail 帮助按钮 pushState 到 #/help
-  const [helpDrawerOpen, setHelpDrawerOpen] = useState(() => {
-    // 初始化时检查 URL 是否为帮助路由
-    const hash = window.location.hash || '';
-    const hashWithoutHash = hash.startsWith('#') ? hash.slice(1) : hash;
-    const [path] = hashWithoutHash.split('?', 2);
-    const segments = (path || '').split('/').filter(Boolean);
-    return segments[0] === 'help';
-  });
   const [wikiChatMode, setWikiChatMode] = useState<WikiChatMode>(() => {
     try {
       const saved = localStorage.getItem('wiki_chat_mode') as WikiChatMode | null;
@@ -165,20 +156,6 @@ function AppContent() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
-
-  // 帮助路由同步：监听 popstate，URL 离开 #/help 时关闭帮助页面
-  useEffect(() => {
-    function onPopState() {
-      const hash = window.location.hash || '';
-      const hashWithoutHash = hash.startsWith('#') ? hash.slice(1) : hash;
-      const [path] = hashWithoutHash.split('?', 2);
-      const segments = (path || '').split('/').filter(Boolean);
-      const isHelp = segments[0] === 'help';
-      setHelpDrawerOpen(isHelp);
-    }
-    window.addEventListener('popstate', onPopState);
-    return () => window.removeEventListener('popstate', onPopState);
   }, []);
 
   // URL → React state 恢复：todos 视图需要让 selectedTodoId 与 URL 中的 todoDetailId 保持一致。
@@ -271,6 +248,12 @@ function AppContent() {
     if (key === 'settings_bots') { showStandaloneSettingsPanel('bots'); return; }
   }, [handleShowView, showListSection, showSettings, showStandaloneSettingsPanel]);
 
+  // 帮助路由：URL 为 #/help 时渲染独立帮助页面，不走主应用 Layout
+  // window.open('#/help') 打开的新窗口会命中此分支
+  if (activeView === ('help' as View)) {
+    return <HelpPage />;
+  }
+
   return (
     <Layout style={{ height: '100vh', flexDirection: isMobile ? 'column' : 'row' }}>
       {/* Mobile Header */}
@@ -314,16 +297,14 @@ function AppContent() {
             themeMode={themeMode}
             toggleTheme={toggleTheme}
             onOpenHelp={() => {
-              // pushState 到 #/help，由 HelpPage 监听 URL 打开
-              window.history.pushState(null, '', '#/help');
-              setHelpDrawerOpen(true);
+              // 帮助以独立页面打开（target=_blank 语义），内部所有帮助链接在同一新页面内导航
+              window.open('#/help', '_blank', 'noopener');
             }}
           />
         </div>
       )}
 
       {/* Main Content */}
-      {/* position: relative 作为 HelpPage 全屏覆盖的定位上下文 */}
       <Layout
         style={{
           flex: 1,
@@ -559,15 +540,6 @@ function AppContent() {
       <WikiChatFloatingWindow
         forceMode={wikiChatMode}
         onClose={() => setWikiChatMode('minimized')}
-      />
-
-      {/* 帮助页面：独立全屏窗口，左菜单 + 右 PageCard 内容 */}
-      <HelpPage
-        open={helpDrawerOpen}
-        onClose={() => setHelpDrawerOpen(false)}
-        activeView={activeView}
-        hasDetail={todoDetailId != null || loopDetailId != null || taskDetailId != null}
-        isMobile={isMobile}
       />
     </Layout>
   );
