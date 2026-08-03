@@ -42,8 +42,3 @@ flowchart LR
   QSF --> UCC2[useConceptCounts quickStart]
   QSF --> PUSH[pushUrl 跳转目标视图]
 ```
-
-## 功能点索引
-
-- [概念关系图](#/help/onboarding/onboarding-concept-graph)
-- [快速开始 5 步](#/help/onboarding/onboarding-quick-start)

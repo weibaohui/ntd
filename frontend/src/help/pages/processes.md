@@ -42,12 +42,3 @@ flowchart LR
   H4 --> FS1
   H8 --> FS1
 ```
-
-## 功能点索引
-
-- [创建工艺](#/help/processes/process-create)
-- [我的/模板视图切换](#/help/processes/process-scope-switch)
-- [安装到工作空间](#/help/processes/process-install)
-- [查看工艺详情](#/help/processes/process-detail)
-- [编辑工艺（进编辑器）](#/help/processes/process-edit)
-- [复制为我的工艺](#/help/processes/process-copy)

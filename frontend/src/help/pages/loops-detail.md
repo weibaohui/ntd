@@ -32,12 +32,3 @@ flowchart LR
   ACT --> CHG[onLoopChanged 递增 loopUpdateCount]
   CHG --> LST[LoopListPage 联动重拉]
 ```
-
-## 功能点索引
-
-- [返回列表](#/help/loops-detail/loop-detail-back)
-- [删除环路](#/help/loops-detail/loop-detail-delete)
-- [启停切换](#/help/loops-detail/loop-detail-toggle-status)
-- [跳转来源工艺](#/help/loops-detail/loop-detail-open-process)
-- [步骤展开/执行环节查看](#/help/loops-detail/loop-detail-steps-expand)
-- [流程图节点跳转事项](#/help/loops-detail/loop-detail-open-todo)

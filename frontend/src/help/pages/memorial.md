@@ -31,12 +31,3 @@ flowchart LR
   DB3 --> API3["GET /api/v1/workspaces/{ws}/loops + /loops/{id}/executions"]
   DB4 --> API4["GET /api/v1/workspaces/{ws}/todos/recent-completed"]
 ```
-
-## 功能点索引
-
-- [视图模式切换（四视图）](#/help/memorial/board-mode-switch)
-- [搜索任务](#/help/memorial/board-search)
-- [时间窗过滤](#/help/memorial/board-time-filter)
-- [切换历史运行记录](#/help/memorial/board-run-history-switch)
-- [展开/收起卡片详情](#/help/memorial/board-expand-toggle)
-- [跳转事项详情](#/help/memorial/board-open-todo)

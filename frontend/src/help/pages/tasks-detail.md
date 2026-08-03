@@ -38,10 +38,3 @@ flowchart LR
   panel -->|"再次执行 Modal"| create_exec["bundledApi.createTaskExecution<br/>→ POST /tasks/{id}/executions"]
   panel -->|"删除环路 Popconfirm"| del_loop["dbLoops.deleteLoop<br/>→ DELETE /loops/{id}"]
 ```
-
-## 功能点索引
-
-- [返回列表](#/help/tasks-detail/task-detail-back)
-- [动态详情标题](#/help/tasks-detail/task-detail-title)
-- [查看任务 DAG / 执行历史](#/help/tasks-detail/task-detail-dag)
-- [DAG 节点跳转事项](#/help/tasks-detail/task-detail-open-todo)

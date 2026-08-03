@@ -48,12 +48,3 @@ flowchart LR
 | 自动化 | 飞书消息吞吐、自动化触发频次、消息配置入口 |
 | 资源与运维 | 执行器资源占用、运维告警、系统健康度 |
 | 工艺 | 工艺统计数据，由 ProcessDashboard 自取 `/api/v1/processes/stats` |
-
-## 功能点索引
-
-- [Tab 切换（7 个语义域）](#/help/dashboard/dashboard-tab-switch)
-- [全局时间范围选择](#/help/dashboard/dashboard-time-range)
-- [总览 Tab](#/help/dashboard/dashboard-overview)
-- [成本与模型 Tab](#/help/dashboard/dashboard-cost)
-- [自动化 Tab](#/help/dashboard/dashboard-automation)
-- [工艺 Tab](#/help/dashboard/dashboard-process)

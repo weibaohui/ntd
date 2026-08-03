@@ -21,12 +21,3 @@ flowchart LR
   WorkspacePromptModal -->|"db.getWorkspaceSettings"| API6["GET /api/v1/workspaces/{id}/settings"]
   WorkspacePromptModal -->|"db.updateWorkspaceSettings"| API7["PUT /api/v1/workspaces/{id}/settings"]
 ```
-
-## 功能点索引
-
-- [ws-add](#/help/settings-pd/ws-add) — 新建工作空间（名称 + 路径）
-- [ws-rename](#/help/settings-pd/ws-rename) — 编辑工作空间名称
-- [ws-toggle-worktree](#/help/settings-pd/ws-toggle-worktree) — Git Worktree / 自动清理开关切换
-- [ws-delete](#/help/settings-pd/ws-delete) — 删除工作空间
-- [ws-bot-count](#/help/settings-pd/ws-bot-count) — 已绑定智能助手数量展示与联动跳转
-- [ws-prompt-modal](#/help/settings-pd/ws-prompt-modal) — 基础约定弹窗（工作空间级 system_prompt）
