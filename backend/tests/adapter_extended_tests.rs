@@ -621,7 +621,19 @@ mod codebuddy_executor_extended_tests {
 
     #[test]
     fn test_supports_resume() {
+        // Issue 058：CodeBuddy CLI 原生支持 --resume <sessionId>，适配器已补齐
+        // resume 三要素（supports_resume / command_args_with_session / session_id 缓存），
+        // 断言从「不支持」反转为「支持」。
         let executor = CodebuddyExecutor::new("codebuddy".to_string());
-        assert!(!executor.supports_resume());
+        assert!(executor.supports_resume());
+    }
+
+    #[test]
+    fn test_command_args_with_session_resume() {
+        // resume 场景：argv 必须携带 `--resume <sid>`，否则 CLI 会开新会话而非继续对话
+        let executor = CodebuddyExecutor::new("codebuddy".to_string());
+        let args = executor.command_args_with_session("go on", Some("sess_ext_1"), true);
+        let pos = args.iter().position(|a| a == "--resume").expect("should contain --resume");
+        assert_eq!(args[pos + 1], "sess_ext_1");
     }
 }
