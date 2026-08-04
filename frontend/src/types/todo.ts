@@ -110,32 +110,11 @@ export interface TodoListPage {
   page_size: number;
 }
 
-/** 环节 — 从 todo 提升而来的独立实体，不再寄生在 Todo 上。 */
-export interface StepSummary {
-  id: number;
-  title: string;
-  prompt: string;
-  executor?: string;
-  acceptance_criteria?: string | null;
-  source_todo_id?: number;
-  /** 被多少个 loop step 引用 */
-  used_by_loop_step_count: number;
-  /** 标签 ID 列表（单选，复用 Todo 的标签体系） */
-  tag_ids: number[];
-  created_at?: string;
-  updated_at?: string;
-}
-
 export interface Tag {
   id: number;
   name: string;
   color: string;
   created_at: string;
-}
-
-export interface TodoTag {
-  todo_id: number;
-  tag_id: number;
 }
 
 export interface TodoItem {
@@ -155,15 +134,6 @@ export interface TodoTemplate {
   last_sync_at?: string | null;
   created_at: string | null;
   updated_at: string | null;
-}
-
-export interface CustomTemplateStatus {
-  subscribed: boolean;
-  source_url: string | null;
-  last_sync_at: string | null;
-  auto_sync_enabled: boolean;
-  auto_sync_cron: string;
-  templates: TodoTemplate[];
 }
 
 // 复用 database/todos.ts 中的定义，避免多处定义造成漂移
