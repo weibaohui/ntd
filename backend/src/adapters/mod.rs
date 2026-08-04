@@ -157,7 +157,9 @@ pub static EXECUTORS: &[ExecutorDef] = &[
 ];
 
 /// 支持继续对话的执行器集合（与前端 RESUMABLE_EXECUTORS 保持一致）
-pub const RESUMABLE_EXECUTORS: &[&str] = &["claudecode", "kimi", "opencode", "mobilecoder", "hermes", "codewhale", "pi", "mimo", "zhanlu", "kilo"];
+/// Issue 058：codebuddy 补齐 resume 三要素（supports_resume / command_args_with_session /
+/// session_id 缓存）后加入集合，与前端 executors.tsx 的 resumable: true 同步。
+pub const RESUMABLE_EXECUTORS: &[&str] = &["claudecode", "codebuddy", "kimi", "opencode", "mobilecoder", "hermes", "codewhale", "pi", "mimo", "zhanlu", "kilo"];
 
 /// 默认执行器
 pub const DEFAULT_EXECUTOR: &str = "claudecode";
@@ -599,6 +601,22 @@ mod tests {
     fn test_resumable_executors_contains_kilo() {
         assert!(RESUMABLE_EXECUTORS.contains(&"kilo"),
             "kilo should be in RESUMABLE_EXECUTORS; current list: {:?}", RESUMABLE_EXECUTORS);
+    }
+
+    #[test]
+    fn test_resumable_executors_contains_codebuddy() {
+        // Issue 058：codebuddy 支持继续对话后必须登记进 RESUMABLE_EXECUTORS，
+        // 与前端 executors.tsx 的 resumable: true 保持同步
+        assert!(RESUMABLE_EXECUTORS.contains(&"codebuddy"),
+            "codebuddy should be in RESUMABLE_EXECUTORS; current list: {:?}", RESUMABLE_EXECUTORS);
+    }
+
+    #[test]
+    fn test_create_executor_codebuddy_supports_resume() {
+        // 注册表工厂产出的 codebuddy 实例必须声明 supports_resume，
+        // 否则 handlers/execution.rs 的 resume 校验会 400 拒绝
+        let executor = ExecutorRegistry::create_executor("codebuddy", "codebuddy").unwrap();
+        assert!(executor.supports_resume(), "Codebuddy executor should support resume");
     }
 
     #[test]

@@ -52,7 +52,9 @@ export function setDefaultExecutorCache(name: string): void {
 
 export const EXECUTORS: ExecutorOption[] = [
   { value: 'claudecode', label: 'Claude',    color: '#e17055', icon: <FaSquare color="#e17055" size={14} />, resumable: true },
-  { value: 'codebuddy',  label: 'CodeBuddy', color: '#00b894', icon: <FaSquare color="#00b894" size={14} /> },
+  // Issue 058：CodeBuddy CLI 原生支持 --resume <sessionId>，后端适配器已补齐
+  // resume 三要素，此处开放前端「继续对话」入口（RESUMABLE_EXECUTORS 由本标志自动派生）。
+  { value: 'codebuddy',  label: 'CodeBuddy', color: '#00b894', icon: <FaSquare color="#00b894" size={14} />, resumable: true },
   { value: 'opencode',   label: 'Opencode',  color: '#fdcb6e', icon: <FaSquare color="#fdcb6e" size={14} />, resumable: true },
   { value: 'mobilecoder', label: 'MobileCoder', color: '#6c5ce7', icon: <FaSquare color="#6c5ce7" size={14} />, resumable: true },
   { value: 'atomcode',   label: 'AtomCode',  color: '#e84393', icon: <FaSquare color="#e84393" size={14} /> },
