@@ -3,7 +3,7 @@
 // - 有 running 智能体帖时每 4s 轮询当前页，直到落定（success/failed）。
 //   完成回写由后端 completion.rs 的 discussion 分支负责，前端只刷新展示。
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Empty, Spin, Pagination, message } from 'antd';
 import bundledApi from '@/api/bundled';
 import { useViewState } from '@/hooks/useViewState';
@@ -14,6 +14,8 @@ import type { TaskPost } from '@/types';
 interface DiscussionTabProps {
   taskId: number;
   workspaceId: number;
+  /** running 帖数量变化时通知父组件（用于「讨论」Tab 角标）。 */
+  onRunningCountChange?: (count: number) => void;
 }
 
 /** 主楼层每页条数（与后端默认 limit 对齐，足够覆盖常见讨论长度）。 */
@@ -51,7 +53,7 @@ function removePost(posts: TaskPost[], id: number): TaskPost[] {
   return posts.map((p) => ({ ...p, replies: p.replies?.filter((r) => r.id !== id) }));
 }
 
-export function DiscussionTab({ taskId, workspaceId }: DiscussionTabProps) {
+export function DiscussionTab({ taskId, workspaceId, onRunningCountChange }: DiscussionTabProps) {
   const [posts, setPosts] = useState<TaskPost[]>([]);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
@@ -89,7 +91,7 @@ export function DiscussionTab({ taskId, workspaceId }: DiscussionTabProps) {
     setPage(1);
   }, [taskId]);
 
-  // 有 running 帖才轮询当前页：避免常驻定时器，落定后自动停止。
+  // 有 running 帖才轮询当前页（轮询为兜底：WS 断线/丢事件时仍能收敛到终态）。
   // agent 占位帖都是主楼层，故只查顶层 posts 的 running 状态即可。
   const hasRunning = posts.some((p) => p.status === 'running');
   useEffect(() => {
@@ -97,6 +99,33 @@ export function DiscussionTab({ taskId, workspaceId }: DiscussionTabProps) {
     const timer = setInterval(() => { void fetchPosts(); }, POLL_INTERVAL_MS);
     return () => clearInterval(timer);
   }, [hasRunning, fetchPosts]);
+
+  // 实时更新（M4）：监听全局「执行完成」事件（useExecutionEvents 的 WS 广播），
+  // 按 source_todo_id（载体 todo id）精确匹配 running 帖；命中即立即刷新当前页，
+  // 拿到 completion.rs 回写的结论，无需等下一轮轮询。
+  const runningTodoIdsRef = useRef<Set<number>>(new Set());
+  runningTodoIdsRef.current = new Set(
+    posts
+      .filter((p) => p.status === 'running' && p.source_todo_id != null)
+      .map((p) => p.source_todo_id as number),
+  );
+  useEffect(() => {
+    const onFinished = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { todoId: number };
+      // 只在该任务的某条 running 帖对应的执行完成时刷新，避免无关执行触发多余拉取。
+      if (runningTodoIdsRef.current.has(detail.todoId)) {
+        void fetchPosts();
+      }
+    };
+    window.addEventListener('executionFinished', onFinished);
+    return () => window.removeEventListener('executionFinished', onFinished);
+  }, [fetchPosts]);
+
+  // running 帖数量上报父组件（TaskDetailPanel 用于「讨论」Tab 角标，M4）。
+  const runningCount = posts.filter((p) => p.status === 'running').length;
+  useEffect(() => {
+    onRunningCountChange?.(runningCount);
+  }, [runningCount, onRunningCountChange]);
 
   const handleSend = async () => {
     if (!value.trim()) return;

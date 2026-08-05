@@ -8,7 +8,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import {
-  Tabs, Tag, Button, Typography, Spin, Space,
+  Tabs, Tag, Button, Typography, Spin, Space, Badge,
   message, Modal, Input, Empty, Popconfirm,
 } from 'antd';
 import {
@@ -199,6 +199,9 @@ export function TaskDetailPanel({
   const lpId = task.loop_id ?? detail.loop?.id ?? 0;
   const lpWsId = task.workspace_id ?? detail.loop?.workspace_id ?? null;
 
+  // 讨论区 running 帖数量（DiscussionTab 上报），用于「讨论」Tab 角标（M4）。
+  const [discussionRunning, setDiscussionRunning] = useState(0);
+
   const tabItems = [
     {
       key: 'overview',
@@ -224,10 +227,16 @@ export function TaskDetailPanel({
     },
     {
       // 任务讨论区（需求 060）：论坛跟帖 + @专家/@执行器 触发执行后回帖。
+      // forceRender：保证「讨论」Tab 非 active 时 DiscussionTab 仍挂载、持续上报 running 数，角标才可见。
       key: 'discussion',
-      label: '讨论',
+      label: <Badge count={discussionRunning} offset={[10, 0]} size="small">讨论</Badge>,
+      forceRender: true,
       children: (
-        <DiscussionTab taskId={task.id} workspaceId={task.workspace_id ?? lpWsId ?? 0} />
+        <DiscussionTab
+          taskId={task.id}
+          workspaceId={task.workspace_id ?? lpWsId ?? 0}
+          onRunningCountChange={setDiscussionRunning}
+        />
       ),
     },
   ];
