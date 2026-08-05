@@ -45,7 +45,8 @@ export function DiscussionTab({ taskId, workspaceId, onRunningCountChange }: Dis
       // 乐观并入：主楼层追加末尾、楼中楼挂到对应楼层；total 相应增加。下次轮询/SSE 会与服务端对齐。
       const appended = [res.human_post, res.agent_post].filter(Boolean) as TaskPost[];
       setPosts((prev) => mergeAppended(prev, appended));
-      setTotal((t) => t + appended.length);
+      // total 只计主楼层：楼中楼回复（parent_post_id 非空）不计入主楼层分页总数。
+      setTotal((t) => t + appended.filter((p) => p.parent_post_id === null).length);
       setValue('');
       setReplyTo(null);
     } catch (e) {
@@ -58,9 +59,11 @@ export function DiscussionTab({ taskId, workspaceId, onRunningCountChange }: Dis
   const handleDelete = async (id: number) => {
     try {
       await bundledApi.deleteTaskPost(workspaceId, taskId, id);
-      // 删主楼层连同其楼中楼（后端 CASCADE）；删楼中楼则只移除该回复。total 同步减 1。
+      // 删主楼层连同其楼中楼（后端 CASCADE）；删楼中楼则只移除该回复。
       setPosts((prev) => removePost(prev, id));
-      setTotal((t) => Math.max(0, t - 1));
+      // total 只计主楼层：删楼中楼不减；删主楼层才 -1。
+      const isMain = posts.some((p) => p.id === id);
+      setTotal((t) => (isMain ? Math.max(0, t - 1) : t));
     } catch (e) {
       message.error(e instanceof Error ? e.message : '删除失败');
     }

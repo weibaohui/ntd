@@ -122,6 +122,10 @@ export function TaskDetailPanel({
   const [triggering, setTriggering] = useState(false);
   const [reqModalOpen, setReqModalOpen] = useState(false);
   const [newRequirement, setNewRequirement] = useState('');
+  // 讨论区 running 帖数量（DiscussionTab 上报），用于「讨论」Tab 角标（M4）。
+  // 必须在下方所有 early return 之前声明：首渲染 loading 提前 return 时 hooks 也要执行，
+  // 否则二次渲染多一个 hook → React「Rendered more hooks than during the previous render」崩溃。
+  const [discussionRunning, setDiscussionRunning] = useState(0);
   const { dirs: projectDirs } = useProjectDirectories();
 
   // 拉取任务详情（含基本 loop 信息）。
@@ -198,9 +202,6 @@ export function TaskDetailPanel({
   const { task, template } = detail;
   const lpId = task.loop_id ?? detail.loop?.id ?? 0;
   const lpWsId = task.workspace_id ?? detail.loop?.workspace_id ?? null;
-
-  // 讨论区 running 帖数量（DiscussionTab 上报），用于「讨论」Tab 角标（M4）。
-  const [discussionRunning, setDiscussionRunning] = useState(0);
 
   const tabItems = [
     {
