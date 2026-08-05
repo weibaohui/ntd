@@ -60,7 +60,9 @@ export const EXECUTORS: ExecutorOption[] = [
   { value: 'atomcode',   label: 'AtomCode',  color: '#e84393', icon: <FaSquare color="#e84393" size={14} /> },
   { value: 'hermes',     label: 'Hermes',    color: '#0984e3', icon: <FaSquare color="#0984e3" size={14} />, resumable: true },
   { value: 'kimi',       label: 'Kimi',      color: '#d63031', icon: <FaSquare color="#d63031" size={14} />, resumable: true },
-  { value: 'codex',      label: 'Codex',     color: '#488597', icon: <FaSquare color="#488597" size={14} /> },
+  // Issue 059：Codex CLI 支持 `codex exec resume <session_id>`，后端已修复 thread_id
+  // 入库并补齐 resume 三要素，此处开放前端「继续对话」入口（RESUMABLE_EXECUTORS 自动派生）。
+  { value: 'codex',      label: 'Codex',     color: '#488597', icon: <FaSquare color="#488597" size={14} />, resumable: true },
   { value: 'codewhale',  label: 'CodeWhale', color: '#00cec9', icon: <FaSquare color="#00cec9" size={14} />, resumable: true },
   { value: 'pi',        label: 'Pi',        color: '#8e44ad', icon: <FaSquare color="#8e44ad" size={14} />, resumable: true },
   { value: 'mimo',      label: 'MiMo',      color: '#ff6b6b', icon: <FaSquare color="#ff6b6b" size={14} />, resumable: true },

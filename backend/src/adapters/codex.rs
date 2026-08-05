@@ -1,3 +1,6 @@
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 use serde_json::Value;
 
 use super::helpers;
@@ -12,15 +15,24 @@ use crate::models::utc_timestamp;
 ///   - Codex：error 关键字 → "stderr" log_type；其他 → "info"
 ///
 /// 这种反向分类是历史行为，必须保留 override，不能直接删除该方法。
-// `BaseExecutor` 已经 `#[derive(Clone)]`，组合字段无需手写 Clone impl。
+///
+/// `session_id` 缓存从 `thread.started` 事件提取的 thread_id（当前版本 Codex 输出
+/// 会话 ID 的唯一位置），它是 `codex exec resume <session_id>` 的会话凭据；
+/// 旧版本 `session_configured` 事件的 session_id 字段也一并兼容。
+// `BaseExecutor` 已经 `#[derive(Clone)]`，组合字段无需手写 Clone impl；
+// session_id 用 Arc 包裹，克隆体共享同一份缓存，与 codebuddy/claude_code 一致。
 #[derive(Clone)]
 pub struct CodexExecutor {
     base: BaseExecutor,
+    session_id: Arc<Mutex<Option<String>>>,
 }
 
 impl CodexExecutor {
     pub fn new(path: String) -> Self {
-        Self { base: BaseExecutor::new(path) }
+        Self {
+            base: BaseExecutor::new(path),
+            session_id: Arc::new(Mutex::new(None)),
+        }
     }
 
     /// item.started / item.completed：从顶层 json.item 提取 inner_type，再分发。
@@ -256,8 +268,54 @@ impl CodeExecutor for CodexExecutor {
         *self.base.model.lock() = model;
     }
 
-    fn command_args_with_session(&self, message: &str, _session_id: Option<&str>, _is_resume: bool) -> Vec<String> {
-        self.command_args(message)
+    /// 带 session 的 argv 构造：resume 时走 `codex exec resume [flags] <sid> <message>`。
+    ///
+    /// 设计取舍：
+    /// - Codex CLI 的 resume 是独立子命令（`codex exec resume [OPTIONS] [SESSION_ID] [PROMPT]`），
+    ///   OPTIONS 与 exec 共享（clap 解析与位置无关），故直接复用 exec 的 flag 集合。
+    /// - `is_resume=true` 但 sid 为 None 时静默回退新会话：handler 层
+    ///   （`resolve_resume_session_id`）已拦截 None 返回 400，此处只是防御。
+    /// - sid 在前、prompt 殿后，与 CLI 的位置参数定义一致。
+    fn command_args_with_session(&self, message: &str, session_id: Option<&str>, is_resume: bool) -> Vec<String> {
+        if !is_resume {
+            return self.command_args(message);
+        }
+        let Some(sid) = session_id else {
+            return self.command_args(message);
+        };
+        let mut args = vec!["exec".to_string(), "resume".to_string()];
+        // 模型注入与 command_args 保持同源：执行前 set_exec_model 写入的期望值在这里拼 -m。
+        if let Some(m) = self.base.model.lock().clone() {
+            args.push("-m".to_string());
+            args.push(m);
+        }
+        args.push("--json".to_string());
+        args.push("--dangerously-bypass-approvals-and-sandbox".to_string());
+        args.push("--skip-git-repo-check".to_string());
+        args.push(sid.to_string());
+        args.push(message.to_string());
+        args
+    }
+
+    /// Codex CLI 原生支持 `codex exec resume <session_id>`（设计文档 §5 记录了验证限制），
+    /// 声明可恢复后 handler 层才会放行 resume 请求。
+    fn supports_resume(&self) -> bool {
+        true
+    }
+
+    /// 从 stdout 行提取 session_id：命中 thread.started.thread_id（新格式）或
+    /// session_configured.session_id（旧格式）则更新缓存并返回，否则回退已缓存值。
+    /// EventPipeline 正常路径用不到本方法，它是 pipeline 无事件产出时的兑底。
+    fn extract_session_id(&self, line: &str) -> Option<String> {
+        if let Some(sid) = extract_sid_from_line(line) {
+            *self.session_id.lock() = Some(sid.clone());
+            return Some(sid);
+        }
+        self.session_id.lock().clone()
+    }
+
+    fn get_session_id(&self) -> Option<String> {
+        self.session_id.lock().clone()
     }
 
     fn parse_output_line(&self, line: &str) -> Option<ParsedLogEntry> {
@@ -276,8 +334,12 @@ impl CodeExecutor for CodexExecutor {
         if event_type == "turn.completed" || event_type == "turn.started" {
             return self.handle_turn_event(event_type, &json);
         }
-        // thread.started 单独路径
+        // thread.started 单独路径：除展示条目外同步缓存 thread_id —— 它是 resume 凭据，
+        // EventPipeline 回退路径（`update_session_id_once`）依赖本缓存回写 DB。
         if event_type == "thread.started" {
+            if let Some(tid) = json.get("thread_id").and_then(Value::as_str) {
+                *self.session_id.lock() = Some(tid.to_string());
+            }
             return Some(helpers::entry("system", "Codex thread started"));
         }
         // 通用路径：先存 model，再尝试 usage，再按 event_type 分发
@@ -314,6 +376,24 @@ impl CodeExecutor for CodexExecutor {
 
     fn get_model(&self) -> Option<String> {
         self.base.model.lock().clone()
+    }
+}
+
+/// 从一行 JSON 中提取会话 ID：新格式 `thread.started` 取 `thread_id`，
+/// 旧格式 `session_configured`/`task_started` 取 `session_id`。
+/// 非 JSON 行或不含会话字段时返回 None（调用方回退缓存值）。
+fn extract_sid_from_line(line: &str) -> Option<String> {
+    if line.is_empty() {
+        return None;
+    }
+    let json: Value = serde_json::from_str(line).ok()?;
+    let (event_type, event) = extract_codex_event(&json)?;
+    match event_type {
+        "thread.started" => event.get("thread_id").and_then(Value::as_str).map(str::to_string),
+        "session_configured" | "task_started" => {
+            event.get("session_id").and_then(Value::as_str).map(str::to_string)
+        }
+        _ => None,
     }
 }
 
@@ -452,5 +532,108 @@ mod tests {
         assert_eq!(usage.input_tokens, 46503);
         assert_eq!(usage.output_tokens, 90);
         assert_eq!(usage.cache_read_input_tokens, Some(45824));
+    }
+
+    // ====================== 059 R2：resume（继续对话）能力测试 ======================
+
+    #[test]
+    fn test_supports_resume_true() {
+        // Codex CLI 原生支持 `codex exec resume <session_id>`，必须为 true 才能通过 handler 层校验
+        let executor = CodexExecutor::new("codex".to_string());
+        assert!(executor.supports_resume());
+    }
+
+    #[test]
+    fn test_command_args_with_session_resume_builds_exec_resume() {
+        // resume 场景：argv 必须是 `exec resume [flags] <sid> <message>`，
+        // 且保留 --json / bypass / skip-git-repo-check，与新会话行为一致
+        let executor = CodexExecutor::new("codex".to_string());
+        let args = executor.command_args_with_session("continue task", Some("019f13f6-4be4"), true);
+        assert_eq!(args[0], "exec");
+        assert_eq!(args[1], "resume");
+        assert!(args.iter().any(|a| a == "--json"));
+        assert!(args.iter().any(|a| a == "--dangerously-bypass-approvals-and-sandbox"));
+        assert!(args.iter().any(|a| a == "--skip-git-repo-check"));
+        // sid 与 message 是两个位置参数，sid 在前、message 殿后
+        assert_eq!(args[args.len() - 2], "019f13f6-4be4");
+        assert_eq!(args.last().unwrap(), "continue task");
+    }
+
+    #[test]
+    fn test_command_args_with_session_resume_injects_model() {
+        // 注入模型后 resume 也要拼 -m，与新会话的模型注入行为同源
+        let executor = CodexExecutor::new("codex".to_string());
+        executor.set_exec_model(Some("gpt-5-codex".to_string()));
+        let args = executor.command_args_with_session("go on", Some("sid_m"), true);
+        let model_value = args.windows(2).find(|w| w[0] == "-m").map(|w| w[1].clone());
+        assert_eq!(model_value.as_deref(), Some("gpt-5-codex"));
+    }
+
+    #[test]
+    fn test_command_args_with_session_new_execution_unchanged() {
+        // 非 resume：与 command_args 完全一致，不引入 resume 子命令
+        let executor = CodexExecutor::new("codex".to_string());
+        let args = executor.command_args_with_session("hello", Some("sid_x"), false);
+        assert_eq!(args, executor.command_args("hello"));
+        assert!(!args.iter().any(|a| a == "resume"));
+    }
+
+    #[test]
+    fn test_command_args_with_session_resume_without_sid_degrades() {
+        // 防御：is_resume=true 但 sid 为 None 时静默回退新会话
+        // （handler 层已拦截 None 返回 400，正常不会走到这里）
+        let executor = CodexExecutor::new("codex".to_string());
+        let args = executor.command_args_with_session("hello", None, true);
+        assert_eq!(args, executor.command_args("hello"));
+    }
+
+    #[test]
+    fn test_extract_session_id_from_thread_started() {
+        // 真实输出格式：thread.started 携 thread_id，应返回并写入缓存
+        let executor = CodexExecutor::new("codex".to_string());
+        let line = r#"{"type":"thread.started","thread_id":"019f13f6-4be4-74f1-8b77-74fe3878091c"}"#;
+        assert_eq!(
+            executor.extract_session_id(line),
+            Some("019f13f6-4be4-74f1-8b77-74fe3878091c".to_string())
+        );
+        assert_eq!(
+            executor.get_session_id(),
+            Some("019f13f6-4be4-74f1-8b77-74fe3878091c".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_session_id_from_legacy_session_configured() {
+        // 旧格式兼容：早期 codex 用 session_configured + session_id
+        let executor = CodexExecutor::new("codex".to_string());
+        let line = r#"{"type":"session_configured","session_id":"legacy_sid_9","model":"o3"}"#;
+        assert_eq!(executor.extract_session_id(line), Some("legacy_sid_9".to_string()));
+    }
+
+    #[test]
+    fn test_extract_session_id_fallback_to_cached() {
+        // 非会话事件行（如 agent_message）：回退到 parse_output_line 已缓存的值
+        let executor = CodexExecutor::new("codex".to_string());
+        let thread = r#"{"type":"thread.started","thread_id":"tid_cached"}"#;
+        let _ = executor.parse_output_line(thread);
+        let msg = r#"{"type":"item.completed","item":{"id":"i1","type":"agent_message","text":"ok"}}"#;
+        assert_eq!(executor.extract_session_id(msg), Some("tid_cached".to_string()));
+    }
+
+    #[test]
+    fn test_extract_session_id_empty_before_thread_started() {
+        // thread.started 未到达前：空行返回 None，不应误报不存在的 sid
+        let executor = CodexExecutor::new("codex".to_string());
+        assert_eq!(executor.extract_session_id(""), None);
+    }
+
+    #[test]
+    fn test_parse_output_line_thread_started_caches_session_id() {
+        // parse_output_line 的 thread.started 分支：展示条目照常，副作用缓存 thread_id
+        let executor = CodexExecutor::new("codex".to_string());
+        let line = r#"{"type":"thread.started","thread_id":"tid_parse"}"#;
+        let entry = executor.parse_output_line(line).unwrap();
+        assert_eq!(entry.log_type, "system");
+        assert_eq!(executor.get_session_id(), Some("tid_parse".to_string()));
     }
 }

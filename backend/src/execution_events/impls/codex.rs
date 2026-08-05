@@ -95,6 +95,20 @@ impl CodexExtractor {
                 }
             }
 
+            // Thread 事件：thread.started 是当前版本 Codex 输出会话 ID 的唯一位置
+            // （docs/samples/codex/output.txt 实证），thread_id 即 `codex exec resume`
+            // 的会话凭据。is_none() 判重保证只记首次，与旧格式 session_configured 路径先到先赢。
+            "thread.started" => {
+                if let Some(tid) = json.get("thread_id").and_then(|v| v.as_str()) {
+                    if self.metadata.session_id.is_none() {
+                        self.metadata.session_id = Some(tid.to_string());
+                        events.push(ExecutionEvent::SessionStart {
+                            session_id: tid.to_string(),
+                        });
+                    }
+                }
+            }
+
             // Turn 事件
             "turn.completed" => {
                 // 提取 usage
@@ -353,5 +367,47 @@ mod tests {
     fn test_empty_line() {
         let mut extractor = CodexExtractor::new();
         assert!(extractor.extract("").is_empty());
+    }
+
+    // ====================== 059 R1：thread_id 入库测试 ======================
+
+    #[test]
+    fn test_thread_started_extracts_session_id() {
+        // 真实输出格式（docs/samples/codex/output.txt）：thread.started 携 thread_id，
+        // 必须产出 SessionStart 并写入 metadata，否则 execution_records.session_id 恒为 NULL
+        let mut extractor = CodexExtractor::new();
+        let json = r#"{"type":"thread.started","thread_id":"019f13f6-4be4-74f1-8b77-74fe3878091c"}"#;
+        let events = extractor.extract(json);
+        assert!(events.iter().any(|e| matches!(e, ExecutionEvent::SessionStart { session_id } if session_id == "019f13f6-4be4-74f1-8b77-74fe3878091c")));
+        assert_eq!(extractor.metadata().session_id.as_deref(), Some("019f13f6-4be4-74f1-8b77-74fe3878091c"));
+    }
+
+    #[test]
+    fn test_thread_started_dedup_repeated_events() {
+        // resume 后 CLI 会重吐 thread.started：判重保证只记一次，避免刷屏与重复回写
+        let mut extractor = CodexExtractor::new();
+        let json = r#"{"type":"thread.started","thread_id":"tid_1"}"#;
+        let first = extractor.extract(json);
+        let second = extractor.extract(json);
+        assert_eq!(first.iter().filter(|e| matches!(e, ExecutionEvent::SessionStart { .. })).count(), 1);
+        assert!(second.iter().all(|e| !matches!(e, ExecutionEvent::SessionStart { .. })));
+    }
+
+    #[test]
+    fn test_legacy_session_configured_still_extracts() {
+        // 旧格式回归保护：早期 codex 用 session_configured + session_id，不能因新增分支失效
+        let mut extractor = CodexExtractor::new();
+        let json = r#"{"type":"session_configured","session_id":"legacy_sid_1","model":"o3"}"#;
+        let events = extractor.extract(json);
+        assert!(events.iter().any(|e| matches!(e, ExecutionEvent::SessionStart { session_id } if session_id == "legacy_sid_1")));
+    }
+
+    #[test]
+    fn test_thread_started_without_thread_id_no_session() {
+        // 缺 thread_id 字段时不应误提取，metadata 保持 None
+        let mut extractor = CodexExtractor::new();
+        let events = extractor.extract(r#"{"type":"thread.started"}"#);
+        assert!(events.iter().all(|e| !matches!(e, ExecutionEvent::SessionStart { .. })));
+        assert!(extractor.metadata().session_id.is_none());
     }
 }
