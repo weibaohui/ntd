@@ -42,7 +42,11 @@ pub struct Model {
     pub updated_at: Option<String>,
 }
 
+// Relation 为空：task_posts 的外键级联删在 v88 DDL 里定义（ON DELETE CASCADE），
+// 不在 SeaORM Relation 层重复声明（与 tasks.rs 等既有实体一致）。
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {}
 
+// ActiveModelBehavior 用默认实现：写帖前的业务校验（content 非空、parent 归属等）在
+// handler 层完成，这里无需 insert/update hook，保持空。
 impl ActiveModelBehavior for ActiveModel {}

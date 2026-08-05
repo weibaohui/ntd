@@ -15,6 +15,7 @@ pub mod entity;
 pub mod process_artifact;
 pub mod process_template;
 pub mod task;
+/// 任务讨论帖 DAO（需求 060：task_posts 表读写 + @触发占位帖的执行回写）。
 pub mod task_post;
 pub mod sync_record;
 pub(super) mod migration;

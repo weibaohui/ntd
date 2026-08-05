@@ -47,6 +47,7 @@ mod v84;
 mod v85;
 mod v86;
 mod v87;
+/// v88：新建 task_posts 表（需求 060 任务讨论区）。
 mod v88;
 
 pub use v2_v5::read_applied_versions;
