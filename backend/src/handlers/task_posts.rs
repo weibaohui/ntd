@@ -259,9 +259,11 @@ async fn trigger_discussion_execution(
 /// 前端拿到即可直接渲染、无需再分组、无 N+1。响应含 total/page/limit 供翻页。
 pub async fn list_posts(
     State(state): State<AppState>,
-    Path((_ws, task_id)): Path<(i64, i64)>,
+    Path((ws, task_id)): Path<(i64, i64)>,
     Query(q): Query<ListPostsQuery>,
 ) -> Result<ApiResponse<serde_json::Value>, AppError> {
+    // 校验 task 属于 path 的 workspace，防跨 ws 越权读讨论帖。
+    require_task_in_ws(state.db.as_ref(), task_id, ws).await?;
     let page = q.page.unwrap_or(1).max(1);
     let limit = q.limit.unwrap_or(20).clamp(1, 100);
     let db = &state.db;
@@ -324,14 +326,19 @@ fn attach_replies(main: &task_posts::Model, replies: Option<Vec<serde_json::Valu
 /// GET .../tasks/{id}/posts/{pid} — 单帖（前端轮询占位帖状态用）。
 pub async fn get_post(
     State(state): State<AppState>,
-    Path((_ws, _task_id, pid)): Path<(i64, i64, i64)>,
+    Path((ws, task_id, pid)): Path<(i64, i64, i64)>,
 ) -> Result<ApiResponse<serde_json::Value>, AppError> {
+    // 校验 task 属该 ws（防越权），再校验 post 属该 task。
+    require_task_in_ws(state.db.as_ref(), task_id, ws).await?;
     let post = state
         .db
         .get_task_post(pid)
         .await
         .map_err(AppError::from)?
         .ok_or(AppError::NotFound)?;
+    if post.task_id != task_id {
+        return Err(AppError::NotFound);
+    }
     // Model → Value：与 list/delete 返回类型统一为 ApiResponse<Value>。
     Ok(ApiResponse::ok(
         serde_json::to_value(&post).unwrap_or(serde_json::Value::Null),
@@ -345,8 +352,10 @@ pub async fn get_post(
 /// 鉴权（仅作者可删）见 #6：项目无用户系统，暂不区分，先按内容删。
 pub async fn delete_post(
     State(state): State<AppState>,
-    Path((_ws, _task_id, pid)): Path<(i64, i64, i64)>,
+    Path((ws, task_id, pid)): Path<(i64, i64, i64)>,
 ) -> Result<ApiResponse<serde_json::Value>, AppError> {
+    // 校验 task 属该 ws（防越权），再取帖并校验 post 属该 task。
+    require_task_in_ws(state.db.as_ref(), task_id, ws).await?;
     // 先取帖：判断是否 running 智能体帖；是则先取消后台执行，再删帖。
     let post = state
         .db
@@ -354,6 +363,9 @@ pub async fn delete_post(
         .await
         .map_err(AppError::from)?
         .ok_or(AppError::NotFound)?;
+    if post.task_id != task_id {
+        return Err(AppError::NotFound);
+    }
     if post.kind == KIND_AGENT && post.status == STATUS_RUNNING {
         if let Some(record_id) = post.source_execution_id {
             cancel_running_post_execution(&state, record_id).await;
@@ -397,15 +409,11 @@ async fn cancel_running_post_execution(state: &AppState, record_id: i64) {
 /// POST .../tasks/{id}/posts — 创建人帖；含 @专家/@执行器 时同时触发执行并写占位帖。
 pub async fn create_post(
     State(state): State<AppState>,
-    Path((_ws, task_id)): Path<(i64, i64)>,
+    Path((ws, task_id)): Path<(i64, i64)>,
     Json(req): Json<CreatePostRequest>,
 ) -> Result<ApiResponse<serde_json::Value>, AppError> {
-    let task = state
-        .db
-        .get_task(task_id)
-        .await
-        .map_err(AppError::from)?
-        .ok_or(AppError::NotFound)?;
+    // 取 task 并校验属于 path 的 workspace（防跨 ws 越权写讨论帖）；返回 task 复用。
+    let task = require_task_in_ws(state.db.as_ref(), task_id, ws).await?;
     // trim 后判空，避免纯空白帖。
     let content = req.content.trim();
     if content.is_empty() {
@@ -492,11 +500,21 @@ async fn create_agent_post(
     match trigger_discussion_execution(state, task, mentions, &prompt).await {
         Ok((todo_id, record_id)) => {
             let placeholder = format!("{author} 正在干活…");
-            let post_val = insert_agent_post(
-                state, task.id, &author, executor, expert, &placeholder,
-                mentions_json, STATUS_RUNNING, Some(record_id), Some(todo_id),
-            )
-            .await;
+            // 占位帖：running，关联执行记录与载体 todo；executor/expert 来自 @ 解析。
+            let np = NewPost {
+                task_id: task.id,
+                parent_post_id: None,
+                kind: KIND_AGENT,
+                author_name: &author,
+                executor,
+                expert_name: expert,
+                content: &placeholder,
+                mentions_json,
+                status: STATUS_RUNNING,
+                source_execution_id: Some(record_id),
+                source_todo_id: Some(todo_id),
+            };
+            let post_val = insert_agent_post(state, np).await;
             // 补偿极快完成的执行：trigger 与 insert 占位帖之间若执行已结束，completion.rs 的
             // discussion 回写会错过（此时占位帖刚插入）→ 占位帖永久 running。插入后复查 record，
             // 已结束则手动回写。
@@ -506,57 +524,58 @@ async fn create_agent_post(
         Err(e) => {
             // 触发失败也留痕：写一条 failed 帖，让用户看到「没能启动」。
             let failed_content = format!("{author} 触发失败：{e:?}");
-            insert_agent_post(
-                state, task.id, &author, executor, expert, &failed_content,
-                mentions_json, STATUS_FAILED, None, None,
-            )
-            .await
+            let np = NewPost {
+                task_id: task.id,
+                parent_post_id: None,
+                kind: KIND_AGENT,
+                author_name: &author,
+                executor,
+                expert_name: expert,
+                content: &failed_content,
+                mentions_json,
+                status: STATUS_FAILED,
+                source_execution_id: None,
+                source_todo_id: None,
+            };
+            insert_agent_post(state, np).await
         }
     }
 }
 
-/// 插入一条智能体帖并序列化为 JSON 响应值；插入失败时返回 `{error}` 而非 panic。
+/// 插入一条智能体帖并序列化为 JSON 响应值。
 ///
-/// 参数较多但都描述同一条智能体帖，聚合成结构体会与 `NewPost` 重复，
-/// 故沿用 `finalize_normal_completion` 的 `too_many_arguments` 豁免（仓库既定模式）。
-#[allow(clippy::too_many_arguments)]
-async fn insert_agent_post(
-    state: &AppState,
-    task_id: i64,
-    author: &str,
-    executor: Option<&str>,
-    expert: Option<&str>,
-    content: &str,
-    mentions_json: &str,
-    status: &str,
-    source_execution_id: Option<i64>,
-    source_todo_id: Option<i64>,
-) -> serde_json::Value {
-    let post = state
-        .db
-        .create_task_post(NewPost {
-            task_id,
-            parent_post_id: None,
-            kind: KIND_AGENT,
-            author_name: author,
-            executor,
-            expert_name: expert,
-            content,
-            mentions_json,
-            status,
-            source_execution_id,
-            source_todo_id,
-        })
-        .await;
-    match post {
+/// 接收调用方已构造好的 `NewPost`（kind=KIND_AGENT、parent_post_id=None），
+/// 避免散开的长参数列表（后端规范 13#13：`#[cfg(test)]` 外禁用 `#[allow]`）。
+/// 插入失败返回 null（保持 agent_post: TaskPost|null 契约，前端 filter(Boolean) 丢弃）。
+async fn insert_agent_post(state: &AppState, post: NewPost<'_>) -> serde_json::Value {
+    match state.db.create_task_post(post).await {
         Ok(p) => serde_json::to_value(&p).unwrap_or(serde_json::Value::Null),
-        // 插入失败返回 null（而非 {error}）：保持 agent_post: TaskPost | null 契约，
-        // 前端 filter(Boolean) 会丢弃 null，不会把错误对象当 TaskPost 渲染。
         Err(e) => {
             tracing::warn!(error = %e, "insert agent post failed");
             serde_json::Value::Null
         }
     }
+}
+
+/// 取 task 并校验属于指定 workspace；不属于返回 NotFound（不泄露存在性，防越权探测）。
+///
+/// task_posts 四个 handler 的 path 都带 `{ws}`，必须校验 task 归属该 ws，否则可用别 ws 的
+/// task_id 越权读写讨论帖（review S6 安全反思）。
+async fn require_task_in_ws(
+    db: &crate::db::Database,
+    task_id: i64,
+    ws_id: i64,
+) -> Result<tasks::Model, AppError> {
+    let task = db
+        .get_task(task_id)
+        .await
+        .map_err(AppError::from)?
+        .ok_or(AppError::NotFound)?;
+    if task.workspace_id != Some(ws_id) {
+        // task 存在但不属于该 workspace：视为不存在，避免跨工作空间越权读写讨论帖。
+        return Err(AppError::NotFound);
+    }
+    Ok(task)
 }
 
 /// 校验被回复楼层属于本任务且为主楼层（parent_post_id IS NULL），保证楼中楼深度≤1。

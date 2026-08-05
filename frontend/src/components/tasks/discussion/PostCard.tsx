@@ -2,7 +2,7 @@
 // - 人帖：作者 + Markdown 正文 + 回复/删除。
 // - 智能体帖：执行器/专家徽标 + 状态 Tag + 结论（running 时显示「正在干活…」+ Spin）。
 
-import { Card, Tag, Space, Button, Spin, Typography, Popconfirm } from 'antd';
+import { Card, Tag, Space, Button, Spin, Typography, Popconfirm, theme } from 'antd';
 import { DeleteOutlined, MessageOutlined } from '@ant-design/icons';
 import XMarkdown from '@ant-design/x-markdown';
 import type { TaskPost } from '@/types';
@@ -29,6 +29,7 @@ function statusTag(status: TaskPost['status']) {
 }
 
 export function PostCard({ post, replies, onReply, onDelete, onOpenExecution }: PostCardProps) {
+  const { token } = theme.useToken();
   const isAgent = post.kind === 'agent';
   const isMain = post.parent_post_id === null;
 
@@ -46,8 +47,8 @@ export function PostCard({ post, replies, onReply, onDelete, onOpenExecution }: 
           ) : null}
         </Space>
         <Space size={4}>
-          {/* 只有主楼层的人帖可被回复（楼中楼深度 ≤1）。 */}
-          {isMain && !isAgent ? (
+          {/* 主楼层（人帖或智能体帖）均可被回复（楼中楼深度 ≤1）。 */}
+          {isMain ? (
             <Button
               size="small"
               type="text"
@@ -91,7 +92,7 @@ export function PostCard({ post, replies, onReply, onDelete, onOpenExecution }: 
 
       {/* 楼中楼：回复挂在主楼层下，缩进 + 左边框区隔。深度 ≤1，回复不再有回复。 */}
       {replies.length > 0 ? (
-        <div style={{ marginTop: 8, paddingLeft: 12, borderLeft: '2px solid #f0f0f0' }}>
+        <div style={{ marginTop: 8, paddingLeft: 12, borderLeft: `2px solid ${token.colorBorderSecondary}` }}>
           {replies.map((r) => (
             <PostCard
               key={r.id}
