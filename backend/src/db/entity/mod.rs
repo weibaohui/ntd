@@ -19,6 +19,7 @@ pub mod loop_step_executions;
 pub mod loop_steps;
 pub mod loop_tags;
 pub mod tasks;
+pub mod task_posts;
 pub mod loops;
 pub mod process_templates;
 pub mod project_directories;
@@ -58,6 +59,7 @@ pub mod prelude {
     pub use super::loop_steps::Entity as LoopSteps;
     pub use super::loop_tags::Entity as LoopTags;
     pub use super::loops::Entity as Loops;
+    pub use super::task_posts::Entity as TaskPosts;
     pub use super::process_templates::Entity as ProcessTemplates;
     pub use super::project_directories::Entity as ProjectDirectories;
     pub use super::sync_records::Entity as SyncRecords;

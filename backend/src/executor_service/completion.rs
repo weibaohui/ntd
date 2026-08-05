@@ -458,6 +458,16 @@ pub(crate) async fn finalize_normal_completion(
             crate::services::blackboard_debouncer::push_pending_record(ws_id, record_id, &db).await;
         }
     }
+
+    // ===== 讨论帖回写 (discussion) =====
+    // 任务讨论区 @触发的执行（trigger_type == "discussion"）：把结论回写到对应的智能体
+    // 占位帖，并软删载体 todo（隐藏兜底）。回写失败只记 warn，不影响执行本身的成功落定
+    // （帖子可由前端轮询兜底）。与 auto_review/blackboard 同级的并列分支，按 trigger_type 分派。
+    if trigger_type == "discussion" {
+        if let Err(e) = db.finalize_discussion_post(record_id, success, &result_str, None).await {
+            tracing::warn!(error = %e, record_id, "finalize discussion post failed");
+        }
+    }
 }
 
 /// 构建黑板防抖状态事件（用于 WebSocket 推送）。

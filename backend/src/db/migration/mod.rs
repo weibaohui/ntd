@@ -47,6 +47,7 @@ mod v84;
 mod v85;
 mod v86;
 mod v87;
+mod v88;
 
 pub use v2_v5::read_applied_versions;
 pub use v2_v5::drop_column_if_exists;
@@ -164,6 +165,9 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         // V87 在 V86 之后：残留态 DB 自愈（BUG-009 / Issue #973）——
         // 幂等探测并补齐历史残留态缺失的关键列，让中断/回退过的库能自愈启动
         Box::new(v87::V87SelfHealResidual),
+        // V88 在 V87 之后：新建 task_posts 表，支撑需求 060「任务讨论区」
+        // （论坛跟帖 + @专家/@执行器 触发执行后结论回帖）。
+        Box::new(v88::V88TaskDiscussionPosts),
     ]
 }
 

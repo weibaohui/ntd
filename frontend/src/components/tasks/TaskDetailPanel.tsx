@@ -23,6 +23,7 @@ import {
   OverviewTab, DAGTab, ExecHistoryTab,
 } from './TaskDetailTabs';
 import type { StepInfo } from './TaskDetailTabs';
+import { DiscussionTab } from './discussion/DiscussionTab';
 import styles from './TaskDetailPanel.module.css';
 
 const { Text } = Typography;
@@ -219,6 +220,14 @@ export function TaskDetailPanel({
       label: '执行历史',
       children: (
         <ExecHistoryTab loopId={lpId} workspaceId={lpWsId} loopName={loopDetail?.name ?? task.title} />
+      ),
+    },
+    {
+      // 任务讨论区（需求 060）：论坛跟帖 + @专家/@执行器 触发执行后回帖。
+      key: 'discussion',
+      label: '讨论',
+      children: (
+        <DiscussionTab taskId={task.id} workspaceId={task.workspace_id ?? lpWsId ?? 0} />
       ),
     },
   ];
