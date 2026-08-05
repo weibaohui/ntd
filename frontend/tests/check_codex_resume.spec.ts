@@ -5,7 +5,7 @@
 //   应渲染 ReplyRow（回复输入框）。
 // - ReplyRow 的判显条件是 supportsResume(record)：status 非 running +
 //   有 session_id + executor 在 RESUMABLE_EXECUTORS 集合内（codex 已于 059 加入）。
-// - 复用 058 的 atomcode 记录作为对照组（如仍存在），不出现回复框。
+//   反向对照（atomcode 不显示回复框）由 058 的 check_codebuddy_resume.spec.ts 覆盖。
 //
 // 运行前提：make dev 已启动（http://localhost:18088），且 dev DB 已插入上述记录。
 import { test, expect } from '@playwright/test';

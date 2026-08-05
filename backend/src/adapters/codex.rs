@@ -305,7 +305,7 @@ impl CodeExecutor for CodexExecutor {
 
     /// 从 stdout 行提取 session_id：命中 thread.started.thread_id（新格式）或
     /// session_configured.session_id（旧格式）则更新缓存并返回，否则回退已缓存值。
-    /// EventPipeline 正常路径用不到本方法，它是 pipeline 无事件产出时的兑底。
+    /// EventPipeline 正常路径用不到本方法，它是 pipeline 无事件产出时的兜底。
     fn extract_session_id(&self, line: &str) -> Option<String> {
         if let Some(sid) = extract_sid_from_line(line) {
             *self.session_id.lock() = Some(sid.clone());
