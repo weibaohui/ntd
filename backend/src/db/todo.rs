@@ -520,7 +520,8 @@ impl Database {
     ) -> Result<Vec<crate::models::TodoBrief>, sea_orm::DbErr> {
         let mut sql = String::from(
             "SELECT id, title, status, executor, updated_at, archived_at, workspace_id, \
-             (prompt IS NOT NULL AND prompt != '') AS has_prompt FROM todos WHERE deleted_at IS NULL",
+             (prompt IS NOT NULL AND prompt != '') AS has_prompt \
+             FROM todos WHERE deleted_at IS NULL AND COALESCE(todo_type, 0) != 4",
         );
         let mut values: Vec<sea_orm::Value> = Vec::new();
         match ids {
@@ -576,7 +577,7 @@ impl Database {
             .conn
             .query_all(sea_orm::Statement::from_sql_and_values(
                 sea_orm::DbBackend::Sqlite,
-                "SELECT id FROM todos WHERE deleted_at IS NULL AND archived_at IS NULL AND workspace_id = ? ORDER BY id DESC",
+                "SELECT id FROM todos WHERE deleted_at IS NULL AND archived_at IS NULL AND COALESCE(todo_type, 0) != 4 AND workspace_id = ? ORDER BY id DESC",
                 vec![workspace_id.into()],
             ))
             .await?;

@@ -234,7 +234,7 @@ export function TaskDetailPanel({
       children: (
         <DiscussionTab
           taskId={task.id}
-          workspaceId={task.workspace_id ?? lpWsId ?? 0}
+          workspaceId={task.workspace_id ?? lpWsId ?? workspaceId}
           onRunningCountChange={setDiscussionRunning}
         />
       ),

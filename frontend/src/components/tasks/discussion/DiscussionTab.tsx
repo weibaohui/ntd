@@ -9,6 +9,7 @@ import bundledApi from '@/api/bundled';
 import { useViewState } from '@/hooks/useViewState';
 import { DiscussionComposer } from './DiscussionComposer';
 import { PostCard } from './PostCard';
+import { mergeAppended, removePost } from './utils';
 import type { TaskPost } from '@/types';
 
 interface DiscussionTabProps {
@@ -22,36 +23,6 @@ interface DiscussionTabProps {
 const PAGE_SIZE = 20;
 /** running 帖的轮询间隔（ms）。低于 3s 会给后端造成无谓压力。 */
 const POLL_INTERVAL_MS = 4000;
-
-/**
- * 把刚发出的帖子并入当前列表：主楼层追加到末尾，楼中楼挂到对应主楼层 replies。
- * 纯函数（乐观更新用）：避免发帖后必须翻页/刷新才看到刚发的内容。
- */
-function mergeAppended(posts: TaskPost[], appended: TaskPost[]): TaskPost[] {
-  const mains = appended.filter((p) => p.parent_post_id === null);
-  const replies = appended.filter((p) => p.parent_post_id !== null);
-  let next = posts;
-  if (replies.length) {
-    // 楼中楼挂到目标主楼层（按 parent 匹配）；找不到目标则丢弃（刚回复的楼层必在当前页）。
-    next = next.map((p) => {
-      const mine = replies.filter((r) => r.parent_post_id === p.id);
-      // 只在确有挂载时产生新对象，减少无谓渲染。
-      return mine.length ? { ...p, replies: [...(p.replies ?? []), ...mine] } : p;
-    });
-  }
-  // 主楼层（含 @ 触发的 agent 占位帖）追加到末尾，契合 id ASC 的时间顺序。
-  return mains.length ? [...next, ...mains] : next;
-}
-
-/** 从列表移除一条帖子：主楼层整条剔除（含其楼中楼），楼中楼则在对应楼层 replies 内过滤。 */
-function removePost(posts: TaskPost[], id: number): TaskPost[] {
-  if (posts.some((p) => p.id === id)) {
-    // 命中主楼层：整条移除（其 replies 随之消失，与后端 CASCADE 一致）。
-    return posts.filter((p) => p.id !== id);
-  }
-  // 否则是楼中楼：在每条主楼层的 replies 里过滤掉它。
-  return posts.map((p) => ({ ...p, replies: p.replies?.filter((r) => r.id !== id) }));
-}
 
 export function DiscussionTab({ taskId, workspaceId, onRunningCountChange }: DiscussionTabProps) {
   const [posts, setPosts] = useState<TaskPost[]>([]);

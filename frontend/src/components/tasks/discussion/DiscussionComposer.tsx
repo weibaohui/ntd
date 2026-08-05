@@ -1,15 +1,14 @@
 // 讨论区输入器：Markdown 编辑 + inline @选择器 + 发送（M4）。
 // 输入 @ 即在编辑器上方弹出候选（专家优先 + 执行器，按已输入文本过滤），点击插入 @<规范名>。
-// 后端按正文里的 @token 解析触发执行；这里只负责便捷、准确地插入规范名。
+// @检测/候选构造是纯函数，提取到 ./utils 便于单测；本组件只负责渲染与副作用。
 
 import { useEffect, useState } from 'react';
 import { Button, Space, Typography } from 'antd';
 import { SendOutlined } from '@ant-design/icons';
 import { MdEditor } from '@/components/MdEditor';
-import { EXECUTORS_FOR_PICKER } from '@/utils/executors';
 import { getAllExperts } from '@/utils/database/experts';
-import { getExpertDisplayName } from '@/types/expert';
 import type { ExpertMetadata } from '@/types/expert';
+import { detectAtToken, buildCandidates, type MentionCandidate } from './utils';
 
 const { Text } = Typography;
 
@@ -21,47 +20,6 @@ interface DiscussionComposerProps {
   /** 回复目标提示（如 "#3 张三"）；null=主楼层新帖。 */
   replyTo?: string | null;
   onCancelReply?: () => void;
-}
-
-/** 候选项：专家或执行器，统一用 name（规范名，插入正文 + 后端匹配）。 */
-interface MentionCandidate {
-  kind: 'expert' | 'executor';
-  /** 规范名：专家 expert.name；执行器 executor.value。 */
-  name: string;
-  /** 展示名。 */
-  display: string;
-}
-
-/** 候选浮层每组（专家/执行器）最多展示条数，避免列表过长。 */
-const MAX_PER_GROUP = 4;
-
-/**
- * 检测正文末尾正在输入的 @token：末尾 `@` 后跟非空白/非@ 字符。
- * 返回 query（@ 之后的文本，空串=刚输入@）；无匹配返回 null。
- * 纯函数，只覆盖「在末尾输入 @」的常见场景；中间插入不触发（MVP 取舍）。
- */
-function detectAtToken(value: string): { query: string } | null {
-  const m = value.match(/@([^\s@]*)$/);
-  return m ? { query: m[1] } : null;
-}
-
-/**
- * 按 query 过滤专家 + 执行器，构造候选列表（专家优先，与后端 resolve_mentions 消歧顺序一致）。
- * query 为空各取前 MAX_PER_GROUP；非空则按规范名/展示名包含 query 过滤。
- */
-function buildCandidates(query: string, experts: ExpertMetadata[]): MentionCandidate[] {
-  const q = query.trim().toLowerCase();
-  // 命中条件：无 query（刚输入@）全显；否则规范名或展示名包含 query。
-  const hit = (norm: string, disp: string) => !q || norm.toLowerCase().includes(q) || disp.toLowerCase().includes(q);
-  const exps: MentionCandidate[] = experts
-    .filter((ex) => hit(ex.name, getExpertDisplayName(ex)))
-    .slice(0, MAX_PER_GROUP)
-    .map((ex) => ({ kind: 'expert', name: ex.name, display: getExpertDisplayName(ex) }));
-  const execs: MentionCandidate[] = EXECUTORS_FOR_PICKER
-    .filter((e) => hit(e.value, e.label))
-    .slice(0, MAX_PER_GROUP)
-    .map((e) => ({ kind: 'executor', name: e.value, display: e.label }));
-  return [...exps, ...execs];
 }
 
 interface MentionsPickerProps {
