@@ -14,6 +14,8 @@ interface PostCardProps {
   replies: TaskPost[];
   onReply: (id: number, author: string) => void;
   onDelete: (id: number) => void;
+  /** 点击「执行明细」跳转：由父组件用路由 pushUrl 注入，保持本组件与路由解耦。 */
+  onOpenExecution?: (todoId: number, recordId: number) => void;
 }
 
 /** 智能体帖状态 → Tag。人帖（sent）不显示状态 Tag。 */
@@ -26,7 +28,7 @@ function statusTag(status: TaskPost['status']) {
   }
 }
 
-export function PostCard({ post, replies, onReply, onDelete }: PostCardProps) {
+export function PostCard({ post, replies, onReply, onDelete, onOpenExecution }: PostCardProps) {
   const isAgent = post.kind === 'agent';
   const isMain = post.parent_post_id === null;
 
@@ -71,11 +73,18 @@ export function PostCard({ post, replies, onReply, onDelete }: PostCardProps) {
         ) : (
           <XMarkdown content={post.content || '（空）'} />
         )}
-        {post.source_execution_id ? (
+        {post.source_execution_id != null && post.source_todo_id != null ? (
+          // 跳转到该执行记录的帖子详情页（/#/todos/:载体todoId/posts/:recordId），
+          // 复用事项侧执行对话流页查看完整输出/日志。载体 todo 已隐藏软删，不影响按 recordId 加载。
           <div>
-            <Text type="secondary" style={{ fontSize: 12 }}>
+            <Button
+              size="small"
+              type="link"
+              style={{ padding: 0, height: 'auto', fontSize: 12 }}
+              onClick={() => onOpenExecution?.(post.source_todo_id!, post.source_execution_id!)}
+            >
               执行明细 #{post.source_execution_id}
-            </Text>
+            </Button>
           </div>
         ) : null}
       </div>
@@ -84,7 +93,14 @@ export function PostCard({ post, replies, onReply, onDelete }: PostCardProps) {
       {replies.length > 0 ? (
         <div style={{ marginTop: 8, paddingLeft: 12, borderLeft: '2px solid #f0f0f0' }}>
           {replies.map((r) => (
-            <PostCard key={r.id} post={r} replies={[]} onReply={() => undefined} onDelete={onDelete} />
+            <PostCard
+              key={r.id}
+              post={r}
+              replies={[]}
+              onReply={() => undefined}
+              onDelete={onDelete}
+              onOpenExecution={onOpenExecution}
+            />
           ))}
         </div>
       ) : null}

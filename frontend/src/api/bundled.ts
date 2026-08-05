@@ -589,9 +589,16 @@ export const bundledApi = {
 
   // ===== 任务讨论区（需求 060）=====
 
-  /** 列出任务的全部讨论帖（主楼层 + 楼中楼），前端按 parent_post_id 分组。 */
-  async listTaskPosts(wsId: number, taskId: number): Promise<{ items: TaskPost[] }> {
-    return unwrap(await api.get(`/api/v1/workspaces/${wsId}/tasks/${taskId}/posts`));
+  /** 列出任务讨论帖（主楼层分页，每条主楼层由后端附带 replies 楼中楼）。 */
+  async listTaskPosts(
+    wsId: number,
+    taskId: number,
+    page = 1,
+    limit = 20,
+  ): Promise<{ items: TaskPost[]; total: number; page: number; limit: number }> {
+    // 主楼层走服务端分页，避免一次拉全量；楼中楼由后端随主楼层组装返回。
+    const qs = `?page=${page}&limit=${limit}`;
+    return unwrap(await api.get(`/api/v1/workspaces/${wsId}/tasks/${taskId}/posts${qs}`));
   },
 
   /** 创建人帖；含 @ 时后端会触发执行并返回智能体占位帖。 */

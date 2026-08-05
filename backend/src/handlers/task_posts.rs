@@ -14,14 +14,14 @@ use axum::Router;
 use serde::{Deserialize, Serialize};
 
 use crate::adapters::find_executor;
-use crate::db::entity::tasks;
+use crate::db::entity::{task_posts, tasks};
 use crate::db::task_post::{
     NewPost, KIND_AGENT, KIND_HUMAN, STATUS_FAILED, STATUS_RUNNING,
 };
 use crate::executor_service::RunTodoExecutionRequest;
 use crate::handlers::execution::start_todo_execution;
 use crate::handlers::{AppError, AppState};
-use crate::models::ApiResponse;
+use crate::models::{ApiResponse, ExecutionStatus};
 
 /// 讨论触发用的 trigger_type：completion.rs 据此回写智能体占位帖。
 const TRIGGER_DISCUSSION: &str = "discussion";
@@ -39,6 +39,8 @@ pub struct CreatePostRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct ListPostsQuery {
+    /// 页码从 1 起（缺省 1）。
+    pub page: Option<u64>,
     pub limit: Option<u64>,
 }
 
@@ -109,31 +111,39 @@ fn serialize_mentions(mentions: &[MentionDto]) -> String {
     serde_json::to_string(mentions).unwrap_or_else(|_| "[]".to_string())
 }
 
-/// 解析 @token 为结构化提及：先匹配执行器，再匹配专家；都不中则忽略（当普通文本）。
-///
-/// 同名歧义（专家名与执行器名撞）按「先执行器后专家」消歧；
-/// `@选择器` 在前端若显式带类型，会插入带空格的规范名，此处仍能命中。
+/// 解析 @token 为结构化提及：先专家后执行器；都不中则忽略（当普通文本）。
+/// 同名歧义按需求§10/设计§6.4「先专家后执行器」消歧——单 token 的判定交给 [`classify_mention`]。
 async fn resolve_mentions(tokens: &[String], state: &AppState) -> Vec<MentionDto> {
     let mut out: Vec<MentionDto> = Vec::new();
     for tok in tokens {
-        // 执行器名/别名大小写不敏感（find_executor 内部 trim + lowercase）。
-        if let Some(def) = find_executor(tok) {
-            out.push(MentionDto {
-                kind: "executor".to_string(),
-                name: def.name.to_string(),
-                display: def.display_name.to_string(),
-            });
-            continue;
-        }
-        if let Some(meta) = state.expert_manager.get_expert_by_name(tok) {
-            out.push(MentionDto {
-                kind: "expert".to_string(),
-                name: meta.name.clone(),
-                display: meta.display_name_zh.unwrap_or_else(|| meta.name.clone()),
-            });
+        // get_expert_by_name 是 parking_lot 同步读；命中结果交给纯函数分类，保持本函数薄。
+        let expert = state.expert_manager.get_expert_by_name(tok);
+        if let Some(m) = classify_mention(tok, expert.as_ref()) {
+            out.push(m);
         }
     }
     out
+}
+
+/// 对单个 @token 分类：先专家后执行器，都不中返回 None。
+///
+/// 提取为纯函数（不 async、不碰 DB），便于单测同名消歧顺序（需求§10）。
+/// `expert` 由调用方先查 expert_manager 传入，避免本函数耦合 AppState。
+fn classify_mention(tok: &str, expert: Option<&crate::expert::ExpertMetadata>) -> Option<MentionDto> {
+    // 先专家：同名时人设优先（专家是更具体的语义实体，比执行器优先）。
+    if let Some(meta) = expert {
+        return Some(MentionDto {
+            kind: "expert".to_string(),
+            name: meta.name.clone(),
+            display: meta.display_name_zh.clone().unwrap_or_else(|| meta.name.clone()),
+        });
+    }
+    // 再执行器：名/别名大小写不敏感（find_executor 内部 trim + lowercase）。
+    find_executor(tok).map(|def| MentionDto {
+        kind: "executor".to_string(),
+        name: def.name.to_string(),
+        display: def.display_name.to_string(),
+    })
 }
 
 /// 取提及里的首个执行器名（决定由哪个执行器承载）。
@@ -243,19 +253,72 @@ async fn trigger_discussion_execution(
 // Handlers
 // ---------------------------------------------------------------------------
 
-/// GET .../tasks/{id}/posts — 列出该任务全部帖子（主楼层 + 楼中楼），前端按 parent 分组。
+/// GET .../tasks/{id}/posts — 主楼层分页列表，每条主楼层附带其楼中楼 replies。
+///
+/// 按主楼层分页（避免一次拉全量）；楼中楼随当前页主楼层批量取回并组装成树，
+/// 前端拿到即可直接渲染、无需再分组、无 N+1。响应含 total/page/limit 供翻页。
 pub async fn list_posts(
     State(state): State<AppState>,
     Path((_ws, task_id)): Path<(i64, i64)>,
     Query(q): Query<ListPostsQuery>,
 ) -> Result<ApiResponse<serde_json::Value>, AppError> {
-    let limit = q.limit.unwrap_or(200).clamp(1, 500);
-    let posts = state
-        .db
-        .list_all_task_posts(task_id, limit)
+    let page = q.page.unwrap_or(1).max(1);
+    let limit = q.limit.unwrap_or(20).clamp(1, 100);
+    let db = &state.db;
+    // 当前页主楼层 + 总数（两次轻查询）。
+    let main_posts = db
+        .list_main_posts_paged(task_id, page, limit)
         .await
         .map_err(AppError::from)?;
-    Ok(ApiResponse::ok(serde_json::json!({ "items": posts })))
+    let total = db
+        .count_main_posts(task_id)
+        .await
+        .map_err(AppError::from)?;
+    // 当前页主楼层各自的楼中楼：一次 IN 查询批量取回，再组装挂载。
+    let parent_ids: Vec<i64> = main_posts.iter().map(|p| p.id).collect();
+    let replies = db
+        .list_replies_for(task_id, &parent_ids)
+        .await
+        .map_err(AppError::from)?;
+    let items = build_post_tree(&main_posts, replies);
+    Ok(ApiResponse::ok(serde_json::json!({
+        "items": items,
+        "total": total,
+        "page": page,
+        "limit": limit,
+    })))
+}
+
+/// 把主楼层与其楼中楼组装成树：每条主楼层挂其 replies（按 id ASC）。
+///
+/// 纯函数（不触碰 DB），便于单测。楼中楼按 parent_post_id 归属对应主楼层；
+/// 未匹配到主楼层的孤儿回复被丢弃（当前页主楼层必含其楼中楼的 parent，理论不出现）。
+fn build_post_tree(
+    main_posts: &[task_posts::Model],
+    replies: Vec<task_posts::Model>,
+) -> Vec<serde_json::Value> {
+    use std::collections::HashMap;
+    // 先按 parent_post_id 分桶，避免对每个主楼层线性扫描。
+    let mut bucket: HashMap<i64, Vec<serde_json::Value>> = HashMap::new();
+    for r in replies {
+        if let Some(pid) = r.parent_post_id {
+            let val = serde_json::to_value(&r).unwrap_or(serde_json::Value::Null);
+            bucket.entry(pid).or_default().push(val);
+        }
+    }
+    main_posts
+        .iter()
+        .map(|m| attach_replies(m, bucket.remove(&m.id)))
+        .collect()
+}
+
+/// 把楼中楼 replies 挂到主楼层序列化结果上（无则空数组），保证前端 replies 字段恒存在。
+fn attach_replies(main: &task_posts::Model, replies: Option<Vec<serde_json::Value>>) -> serde_json::Value {
+    let mut v = serde_json::to_value(main).unwrap_or(serde_json::Value::Null);
+    if let Some(obj) = v.as_object_mut() {
+        obj.insert("replies".to_string(), serde_json::Value::Array(replies.unwrap_or_default()));
+    }
+    v
 }
 
 /// GET .../tasks/{id}/posts/{pid} — 单帖（前端轮询占位帖状态用）。
@@ -275,17 +338,60 @@ pub async fn get_post(
     ))
 }
 
-/// DELETE .../tasks/{id}/posts/{pid} — 删帖（MVP：直接硬删，不区分作者，因项目无用户系统）。
+/// DELETE .../tasks/{id}/posts/{pid} — 删帖。
+///
+/// 删 running 智能体帖时联动取消其后台执行，否则执行落定后 completion.rs 的 discussion
+/// 分支会再回写出一条结论帖——用户删帖的意图被旁路。人帖与已落定（success/failed）帖直接删。
+/// 鉴权（仅作者可删）见 #6：项目无用户系统，暂不区分，先按内容删。
 pub async fn delete_post(
     State(state): State<AppState>,
     Path((_ws, _task_id, pid)): Path<(i64, i64, i64)>,
 ) -> Result<ApiResponse<serde_json::Value>, AppError> {
+    // 先取帖：判断是否 running 智能体帖；是则先取消后台执行，再删帖。
+    let post = state
+        .db
+        .get_task_post(pid)
+        .await
+        .map_err(AppError::from)?
+        .ok_or(AppError::NotFound)?;
+    if post.kind == KIND_AGENT && post.status == STATUS_RUNNING {
+        if let Some(record_id) = post.source_execution_id {
+            cancel_running_post_execution(&state, record_id).await;
+        }
+    }
     let affected = state
         .db
         .delete_task_post(pid)
         .await
         .map_err(AppError::from)?;
     Ok(ApiResponse::ok(serde_json::json!({ "deleted": affected })))
+}
+
+/// 取消某执行记录的后台进程（删 running 帖时联动调用）。
+///
+/// 复用 `stop_execution_handler` 的内核思路：`record.task_id`（spawn 时生成的 UUID）
+/// → `task_manager.cancel` 发取消信号；若任务已不在 manager（自然结束/崩溃）但记录仍
+/// running，则 `force_fail` 兜底清理悬挂。取消失败只记日志、不阻断删帖——删帖是用户
+/// 明确意图，不应因取消信号未命中而回滚。
+async fn cancel_running_post_execution(state: &AppState, record_id: i64) {
+    // 记录不存在或已非 running：无需取消（get 失败也静默，删帖照常进行）。
+    let Ok(Some(rec)) = state.db.get_execution_record(record_id).await else {
+        return;
+    };
+    if rec.status != ExecutionStatus::Running {
+        return;
+    }
+    // task_id 为 spawn 时生成的 UUID；命中则发取消信号，执行内部 cancel 分支负责更新 DB。
+    let cancelled = match rec.task_id.as_deref() {
+        Some(tid) => state.task_manager.cancel(tid).await,
+        None => false,
+    };
+    if !cancelled {
+        // 已不在 manager 但记录仍 running：强制置 failed，避免悬挂记录。
+        if let Err(e) = state.db.force_fail_execution_record(record_id).await {
+            tracing::warn!(error = %e, record_id, "force_fail execution record on post delete failed");
+        }
+    }
 }
 
 /// POST .../tasks/{id}/posts — 创建人帖；含 @专家/@执行器 时同时触发执行并写占位帖。
@@ -450,6 +556,7 @@ async fn validate_reply_parent(
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
+    use crate::expert::{ExpertMetadata, ExpertSource, ExpertType};
 
     /// 基本 @token 抽取：英文、CJK、含下划线的名字都能切出。
     #[test]
@@ -499,5 +606,93 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&s).unwrap();
         assert_eq!(v[0]["type"], "executor");
         assert_eq!(v[0]["name"], "claudecode");
+    }
+
+    /// 构造一条 task_posts::Model（测试用，避免每次手写全部字段）。
+    fn post_model(id: i64, parent: Option<i64>) -> task_posts::Model {
+        task_posts::Model {
+            id,
+            task_id: 1,
+            parent_post_id: parent,
+            kind: "human".to_string(),
+            author_name: "x".to_string(),
+            executor: None,
+            expert_name: None,
+            content: "c".to_string(),
+            mentions: "[]".to_string(),
+            status: "sent".to_string(),
+            source_execution_id: None,
+            source_todo_id: None,
+            created_at: None,
+            updated_at: None,
+        }
+    }
+
+    /// build_post_tree：楼中楼按 parent 归属主楼层；孤儿回复（parent 不在主楼层）被丢弃。
+    #[test]
+    fn test_build_post_tree_attaches_replies_and_drops_orphans() {
+        let m1 = post_model(1, None);
+        let m2 = post_model(2, None);
+        let r1 = post_model(10, Some(1)); // 归属 m1
+        let orphan = post_model(11, Some(99)); // parent 不在主楼层 → 丢弃
+        let tree = build_post_tree(&[m1, m2], vec![r1, orphan]);
+        assert_eq!(tree.len(), 2, "主楼层数不变");
+        let m1v = tree.iter().find(|v| v["id"].as_i64() == Some(1)).expect("m1");
+        assert_eq!(m1v["replies"].as_array().expect("replies array").len(), 1);
+        assert_eq!(m1v["replies"][0]["id"].as_i64(), Some(10));
+        let m2v = tree.iter().find(|v| v["id"].as_i64() == Some(2)).expect("m2");
+        assert!(m2v["replies"].as_array().expect("replies empty").is_empty());
+    }
+
+    /// 构造最小可用 ExpertMetadata（仅 name/display_name_zh 影响分类，其余给空值）。
+    fn test_expert(name: &str) -> ExpertMetadata {
+        ExpertMetadata {
+            name: name.to_string(),
+            expert_type: ExpertType::Agent,
+            version: "1".to_string(),
+            source: ExpertSource::System,
+            display_name_zh: Some(name.to_string()),
+            display_name_en: None,
+            profession_zh: None,
+            profession_en: None,
+            description_zh: None,
+            description_en: None,
+            avatar_path: None,
+            category_id: None,
+            definition_dir: String::new(),
+            plugin_json_path: String::new(),
+            agent_name: None,
+            lead_agent: None,
+            member_agents: Vec::new(),
+            members: Vec::new(),
+            skills: Vec::new(),
+            default_init_prompt_zh: None,
+            default_init_prompt_en: None,
+            tags: Vec::new(),
+            loaded_at: String::new(),
+            is_active: true,
+        }
+    }
+
+    /// 同名（claudecode 既是内置执行器又注入了同名专家）时专家优先（需求§10）。
+    #[test]
+    fn test_classify_mention_prefers_expert_on_name_clash() {
+        let expert = test_expert("claudecode");
+        let m = classify_mention("claudecode", Some(&expert)).expect("应命中");
+        assert_eq!(m.kind, "expert", "同名时专家优先（需求§10）");
+        assert_eq!(m.name, "claudecode");
+    }
+
+    /// 无专家匹配时落到内置执行器（claudecode）。
+    #[test]
+    fn test_classify_mention_falls_back_to_executor() {
+        let m = classify_mention("claudecode", None).expect("应命中内置执行器");
+        assert_eq!(m.kind, "executor");
+    }
+
+    /// 既非专家也非执行器 → None（当普通文本，不触发执行）。
+    #[test]
+    fn test_classify_mention_unknown_returns_none() {
+        assert!(classify_mention("查无此名_xyz_9", None).is_none());
     }
 }

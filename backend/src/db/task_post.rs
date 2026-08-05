@@ -4,7 +4,7 @@
 //! （那部分在 `handlers/task_posts.rs`）。智能体帖的「占位 → 回写结论」状态机
 //! 由 `create_task_post`（写 running 占位）+ `finalize_discussion_post`（执行落定时回写）配合完成。
 
-use sea_orm::{ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
+use sea_orm::{ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect};
 
 use crate::db::entity::task_posts;
 use crate::db::Database;
@@ -73,41 +73,53 @@ impl Database {
         task_posts::Entity::find_by_id(id).one(&self.conn).await
     }
 
-    /// 列出某任务的全部帖子（主楼层 + 楼中楼），id ASC。
-    /// 讨论 Tab 一次拉全量由前端按 parent_post_id 分组，避免 N+1。
-    pub async fn list_all_task_posts(
+    /// 主楼层分页查询（id ASC，parent_post_id IS NULL）。`page` 从 1 起。
+    /// 用于讨论 Tab「主楼层分页 + 楼中楼跟随」：按主楼层翻页，避免一次拉全量。
+    pub async fn list_main_posts_paged(
         &self,
         task_id: i64,
+        page: u64,
         limit: u64,
     ) -> Result<Vec<task_posts::Model>, sea_orm::DbErr> {
+        // page 从 1 起：第 1 页 offset=0。saturating 运算防 page 过大时溢出。
+        let safe_limit = limit.max(1);
+        let offset = page.saturating_sub(1).saturating_mul(safe_limit);
         task_posts::Entity::find()
             .filter(task_posts::Column::TaskId.eq(task_id))
+            .filter(task_posts::Column::ParentPostId.is_null())
             .order_by_asc(task_posts::Column::Id)
-            .limit(limit.max(1))
+            .offset(offset)
+            .limit(safe_limit)
             .all(&self.conn)
             .await
     }
 
-    /// 列出某任务的帖子，按 parent 维度过滤，id ASC（楼层时间顺序）。
-    ///
-    /// - `parent_id = None` → 主楼层（parent_post_id IS NULL），用 `limit` 截断；
-    /// - `parent_id = Some(id)` → 该楼层下的楼中楼回复，调用方传大 limit 取全量。
-    pub async fn list_task_posts(
+    /// 主楼层总数（分页页码计算用；只数 parent_post_id IS NULL 的行）。
+    pub async fn count_main_posts(&self, task_id: i64) -> Result<u64, sea_orm::DbErr> {
+        task_posts::Entity::find()
+            .filter(task_posts::Column::TaskId.eq(task_id))
+            .filter(task_posts::Column::ParentPostId.is_null())
+            .count(&self.conn)
+            .await
+    }
+
+    /// 批量取一组主楼层的楼中楼回复（parent_post_id IN parent_ids，id ASC）。
+    /// 一次 IN 查询规避逐楼层查询的 N+1；空 parent_ids 直接返回空 Vec，不发 SQL。
+    pub async fn list_replies_for(
         &self,
         task_id: i64,
-        parent_id: Option<i64>,
-        limit: u64,
+        parent_ids: &[i64],
     ) -> Result<Vec<task_posts::Model>, sea_orm::DbErr> {
-        let q = task_posts::Entity::find()
+        // 空 IN 在某些后端生成非法 SQL，这里短路返回空。
+        if parent_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        task_posts::Entity::find()
             .filter(task_posts::Column::TaskId.eq(task_id))
-            // 主楼层走 IS NULL，楼中楼走等值；两个分支只是 parent 条件不同，其余一致。
-            .filter(match parent_id {
-                None => task_posts::Column::ParentPostId.is_null(),
-                Some(pid) => task_posts::Column::ParentPostId.eq(pid),
-            })
-            .order_by_asc(task_posts::Column::Id);
-        // limit(0) 在 SeaORM 语义为「不限制」，这里保证至少取 limit 条。
-        q.limit(limit.max(1)).all(&self.conn).await
+            .filter(task_posts::Column::ParentPostId.is_in(parent_ids.iter().copied()))
+            .order_by_asc(task_posts::Column::Id)
+            .all(&self.conn)
+            .await
     }
 
     /// 执行完成时把结论回写到对应的智能体占位帖（completion 回调用）。
@@ -184,6 +196,46 @@ mod tests {
         db.create_task("讨论任务T", 1, 0, None).await.expect("seed task").id
     }
 
+    /// 造一个主楼层人帖（parent_post_id=None），返回其 id。
+    async fn seed_main_post(db: &Database, task_id: i64, content: &str) -> i64 {
+        db.create_task_post(NewPost {
+            task_id,
+            parent_post_id: None,
+            kind: KIND_HUMAN,
+            author_name: "我",
+            executor: None,
+            expert_name: None,
+            content,
+            mentions_json: "[]",
+            status: "sent",
+            source_execution_id: None,
+            source_todo_id: None,
+        })
+        .await
+        .expect("seed main post")
+        .id
+    }
+
+    /// 造一条楼中楼回复，挂到 `parent_id` 指定的主楼层下（深度 1）。
+    async fn seed_reply(db: &Database, task_id: i64, parent_id: i64, content: &str) -> i64 {
+        db.create_task_post(NewPost {
+            task_id,
+            parent_post_id: Some(parent_id),
+            kind: KIND_HUMAN,
+            author_name: "我",
+            executor: None,
+            expert_name: None,
+            content,
+            mentions_json: "[]",
+            status: "sent",
+            source_execution_id: None,
+            source_todo_id: None,
+        })
+        .await
+        .expect("seed reply")
+        .id
+    }
+
     /// create → get → list → delete 全链路。
     #[tokio::test]
     async fn test_create_get_list_delete_post() {
@@ -212,14 +264,47 @@ mod tests {
         assert_eq!(got.content, "你好");
         assert_eq!(got.kind, KIND_HUMAN);
 
-        // list 命中（主楼层）
-        let list = db.list_all_task_posts(task_id, 50).await.expect("list");
+        // 主楼层分页第 1 页命中（刚建的是主楼层）；总数同步为 1。
+        let list = db.list_main_posts_paged(task_id, 1, 50).await.expect("list main");
         assert_eq!(list.len(), 1);
+        assert_eq!(db.count_main_posts(task_id).await.expect("count"), 1);
 
         // delete 后再查为空
         let affected = db.delete_task_post(post.id).await.expect("delete");
         assert_eq!(affected, 1);
         assert!(db.get_task_post(post.id).await.expect("get").is_none());
+    }
+
+    /// 主楼层分页 + 楼中楼批量查询：造 3 主楼层、其中两个各挂一条楼中楼，
+    /// 验证 page/offset 截断、count_total、IN 批量取与空入参短路。
+    #[tokio::test]
+    async fn test_main_posts_paged_and_replies_for() {
+        let db = fresh_db().await;
+        let task_id = seed_task(&db).await;
+        let m1 = seed_main_post(&db, task_id, "m1").await;
+        let m2 = seed_main_post(&db, task_id, "m2").await;
+        let m3 = seed_main_post(&db, task_id, "m3").await;
+        seed_reply(&db, task_id, m1, "r1").await;
+        seed_reply(&db, task_id, m2, "r2").await;
+
+        // 总数 = 3 个主楼层（楼中楼不计入主楼层分页总数）。
+        assert_eq!(db.count_main_posts(task_id).await.expect("count"), 3);
+        // page=1 limit=2 → 前 2 个主楼层（id ASC）。
+        let p1 = db.list_main_posts_paged(task_id, 1, 2).await.expect("page1");
+        assert_eq!(p1.len(), 2);
+        assert_eq!(p1[0].id, m1, "第 1 页应从最早的主楼层开始");
+        // page=2 limit=2 → 第 3 个。
+        let p2 = db.list_main_posts_paged(task_id, 2, 2).await.expect("page2");
+        assert_eq!(p2.len(), 1);
+        assert_eq!(p2[0].id, m3);
+        // page=3 → 越界空页。
+        assert!(db.list_main_posts_paged(task_id, 3, 2).await.expect("page3").is_empty());
+
+        // IN 批量取 m1/m2 的楼中楼，应得 2 条；m3 无楼中楼不计入。
+        let replies = db.list_replies_for(task_id, &[m1, m2, m3]).await.expect("replies");
+        assert_eq!(replies.len(), 2, "m1/m2 各一条，m3 无");
+        // 空 parent_ids 不发 SQL，直接返回空。
+        assert!(db.list_replies_for(task_id, &[]).await.expect("empty in").is_empty());
     }
 
     /// finalize 把 running 占位帖回写为结论，并软删载体 todo。

@@ -34,4 +34,9 @@ export interface TaskPost {
   source_todo_id: number | null;
   created_at: string | null;
   updated_at: string | null;
+  /**
+   * 楼中楼回复；仅主楼层在列表接口返回时由后端组装携带（id ASC）。
+   * 单帖 / create 接口返回的帖子不带此字段。
+   */
+  replies?: TaskPost[];
 }
