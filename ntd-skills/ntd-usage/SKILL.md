@@ -150,6 +150,7 @@ ntd 不是"另一个 Todo 工具"，它是**让 AI 替你做任务的操作系�
 | 查看运行中 | `ntd todo list --status running` |
 | 查看已完成 | `ntd todo list --status completed` |
 | 获取任务详情 | `ntd todo get <id>` |
+| 看任务讨论区（了解全貌） | `ntd task posts --workspace-id <N> --task <id> list` |
 | 按关键词搜索 | `ntd todo list --search "keyword"` |
 | 按标签筛选 | `ntd todo list --tag-id <id>` |
 | 统计概览 | `ntd stats` |
@@ -217,6 +218,37 @@ ntd process upgrade 4p12s-delivery --loop-id 7
 ```
 
 **小提示**：所有 process 命令都支持 `--output raw --fields "..."` 精简输出、减少 token，例如 `ntd process list --output raw --fields "name,guid,version,is_system"`。
+
+---
+
+## 💬 任务讨论区（Task Discussion）
+
+任务（Task）下有一个**讨论区**：人发 Markdown 跟帖，也能在帖子里 `@专家` / `@执行器` 让 AI 干一段活，结论由 ntd 自动回帖。当你被 `@` 进讨论区时，ntd 已经在给你的提示词里带上了**任务 ID / 工作空间 ID / 最近讨论上下文**——但若想看完整历史或任务全貌，用下面的命令主动拉取（默认连本地 ntd，无需额外参数）。
+
+> **命令格式坑**：`task posts` 是嵌套子命令，**父级参数必须在子命令前**，正确写法是 `ntd task posts --workspace-id <N> --task <id> <list|get>`；写成 `ntd task posts list --workspace-id ...`（子命令在前）会被拒绝。
+
+| 想做的事 | 怎么做 |
+|----------|--------|
+| 看任务全貌（标题 / 工艺 / 环节 / 执行历史） | `ntd task view --workspace-id <N> --task <id>` |
+| 看任务的完整讨论历史 | `ntd task posts --workspace-id <N> --task <id> list` |
+| 看某条帖子（轮询 AI 占位帖状态 / 拉单条） | `ntd task posts --workspace-id <N> --task <id> get <pid>` |
+| 列出工作空间下的任务 | `ntd task list --workspace-id <N>` |
+
+**被 `@` 后了解全貌（推荐流程）：**
+
+```bash
+# 1. 先看任务全貌：这是什么任务、跑到哪个环节、有没有执行历史
+ntd task view --workspace-id 1 --task 42
+
+# 2. 再看完整讨论历史：理解之前的来龙去脉与各方结论
+ntd task posts --workspace-id 1 --task 42 list
+
+# 3. 基于全貌给出可直接回复的结论（Markdown）——结论由 ntd 自动回帖，不要自己发帖
+```
+
+> `--workspace-id <N>` 即 `project_directories.id`，用 `ntd workspace list` 查；它是 **workspace-scoped 命令，必填**（漏传会报 `--workspace-id is required`）。
+
+**小提示**：精简输出加 `--output raw`（须放在命令前，如 `ntd --output raw task posts --workspace-id <N> --task <id> list`）。注意 `--fields` 只对**单条**命令（`task view` / `posts get`）按字段精简有效，对**列表**（`items` 数组）不递归——别对 `list` 加 `--fields`。
 
 ---
 

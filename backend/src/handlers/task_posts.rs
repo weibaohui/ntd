@@ -14,6 +14,7 @@ use axum::Router;
 use serde::{Deserialize, Serialize};
 
 use crate::adapters::find_executor;
+use crate::db::Database;
 use crate::db::entity::{task_posts, tasks};
 use crate::db::task_post::{
     NewPost, KIND_AGENT, KIND_HUMAN, STATUS_FAILED, STATUS_RUNNING,
@@ -25,6 +26,13 @@ use crate::models::{ApiResponse, ExecutionStatus};
 
 /// 讨论触发用的 trigger_type：completion.rs 据此回写智能体占位帖。
 const TRIGGER_DISCUSSION: &str = "discussion";
+
+/// 内联到 carrier prompt 的最近主楼层数；平衡「上下文充分」与「prompt 体积」。
+/// 被 @ 的 AI 既能看到即时上下文，又可用 ntd 命令拉取更多，故取较小的 5。
+const DISCUSSION_HISTORY_LIMIT: u64 = 5;
+
+/// 单条历史正文的字符截断上限，防止长帖（如执行器长结论）撑爆 prompt。
+const HISTORY_POST_TRUNCATE: usize = 500;
 
 // ---------------------------------------------------------------------------
 // 请求 / 响应结构
@@ -168,16 +176,75 @@ fn agent_author(mentions: &[MentionDto]) -> String {
 // 执行触发
 // ---------------------------------------------------------------------------
 
-/// 拼装发给执行器的 message：任务上下文 + 帖子诉求。
+/// 拼装发给执行器的 message：任务上下文 + 讨论历史 + 本次诉求 + ntd 命令用法。
+///
+/// 注入任务 id / workspace id / 最近讨论，让被 @ 的 AI 不再只看到当前一条楼层，
+/// 而能了解讨论全貌；并附 ntd 命令，AI 可按需拉取更多（仿 gh pr view --comments）。
 /// 专家人设由 inject_expert_context 按 todo.expert_name 自动前置，这里不重复。
-fn build_carrier_prompt(task: &tasks::Model, post_content: &str) -> String {
+fn build_carrier_prompt(task: &tasks::Model, post_content: &str, history_text: &str) -> String {
+    // workspace_id 回退到 0 仅作文案占位；讨论触发时 require_task_in_ws 已保证
+    // task.workspace_id 与 URL 里的 ws 一致，正常路径不会命中回退分支。
+    let ws_id = task.workspace_id.unwrap_or(0);
+    // 历史为空时给明确占位，避免 AI 误判「历史段缺失」为读取异常。
+    let history_section = if history_text.trim().is_empty() {
+        "（暂无历史）".to_string()
+    } else {
+        history_text.to_string()
+    };
     format!(
-        "你被 @ 到任务讨论区。请针对下面的讨论诉求给出可直接用于回复的结论（Markdown）。\n\n\
-         任务标题：{title}\n任务需求：\n{desc}\n\n讨论诉求：\n{content}",
+        "你被 @ 到「任务 #{id}（工作空间 #{ws}）」的讨论区。请基于上下文给出可直接用于回复的结论（Markdown）。\n\n\
+         任务标题：{title}\n任务需求：\n{desc}\n\n\
+         ## 既有讨论上下文（按时间正序）\n{history}\n\n\
+         ## 本次讨论诉求\n{content}\n\n\
+         ## 了解全貌的 ntd 命令（默认连本地 ntd，无需额外参数）\n\
+         - 任务全貌：ntd task view --workspace-id {ws} --task {id}\n\
+         - 完整讨论历史：ntd task posts --workspace-id {ws} --task {id} list",
+        id = task.id,
+        ws = ws_id,
         title = task.title,
         desc = task.description,
+        history = history_section,
         content = post_content,
     )
+}
+
+/// 拉最近 N 条主楼层讨论帖（N=DISCUSSION_HISTORY_LIMIT），失败静默回退空 Vec。
+///
+/// 讨论历史注入是增强项，读库失败不应阻断 @ 触发——故 unwrap_or_default 兜底，
+/// 与 inject_workspace_prompt / inject_expert_context 的降级哲学保持一致。
+async fn fetch_recent_main_posts(db: &Database, task_id: i64) -> Vec<task_posts::Model> {
+    db.list_main_posts_paged(task_id, 1, DISCUSSION_HISTORY_LIMIT)
+        .await
+        .unwrap_or_default()
+}
+
+/// 把帖子列表格式化为逐条文本「- [作者(身份) 状态] 正文」，每条正文截断防膨胀。
+///
+/// 纯函数（无 IO），便于单测覆盖截断 / 空列表 / 多条等边界。身份(kind)与状态(status)
+/// 都暴露，让 AI 能区分人帖与智能体帖、并看到历史中失败(failed)的回复。
+fn format_discussion_history(posts: &[task_posts::Model]) -> String {
+    posts
+        .iter()
+        .map(|p| {
+            // 正文超长按 char 边界截断，保留前若干字符 + 省略号，控制 prompt 体积。
+            let truncated = truncate_chars(&p.content, HISTORY_POST_TRUNCATE);
+            format!("- [{}({}) {}] {}", p.author_name, p.kind, p.status, truncated)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// 按字符（非字节）截断到 max_chars，超长追加省略号。
+///
+/// 单独抽出是因为 Rust 的 &str 是 UTF-8，直接按字节下标切片会 panic；
+/// 讨论正文多为中文，必须按 char 边界截断。
+fn truncate_chars(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        return s.to_string();
+    }
+    let mut t: String = s.chars().take(max_chars).collect();
+    t.push('…');
+    t
 }
 
 /// 建 carrier Todo 并触发执行，返回 (carrier_todo_id, record_id)。
@@ -509,7 +576,11 @@ async fn create_agent_post(
     let author = agent_author(mentions);
     let executor = first_executor(mentions);
     let expert = first_expert(mentions);
-    let prompt = build_carrier_prompt(task, post_content);
+    // 先拉最近若干条主楼层讨论注入 prompt，让被 @ 的 AI 了解讨论全貌；
+    // 读库失败由 fetch_recent_main_posts 静默回退空，不阻断本次触发。
+    let recent = fetch_recent_main_posts(state.db.as_ref(), task.id).await;
+    let history_text = format_discussion_history(&recent);
+    let prompt = build_carrier_prompt(task, post_content, &history_text);
     match trigger_discussion_execution(state, task, mentions, &prompt).await {
         Ok((todo_id, record_id)) => {
             let placeholder = format!("{author} 正在干活…");
@@ -759,5 +830,107 @@ mod tests {
     #[test]
     fn test_classify_mention_unknown_returns_none() {
         assert!(classify_mention("查无此名_xyz_9", None).is_none());
+    }
+
+    /// 构造一条可自定义正文/作者/身份/状态的 task_posts::Model（历史格式化测试用）。
+    fn post_with(id: i64, author: &str, kind: &str, status: &str, content: &str) -> task_posts::Model {
+        task_posts::Model {
+            id,
+            task_id: 1,
+            parent_post_id: None,
+            kind: kind.to_string(),
+            author_name: author.to_string(),
+            executor: None,
+            expert_name: None,
+            content: content.to_string(),
+            mentions: "[]".to_string(),
+            status: status.to_string(),
+            source_execution_id: None,
+            source_todo_id: None,
+            created_at: None,
+            updated_at: None,
+        }
+    }
+
+    /// 构造最小 tasks::Model（carrier prompt 测试用，只关心 id/title/description/workspace_id）。
+    fn task_model(id: i64, ws: Option<i64>) -> tasks::Model {
+        tasks::Model {
+            id,
+            title: format!("任务#{id}"),
+            description: format!("任务#{id}的需求描述"),
+            status: "pending".to_string(),
+            workspace_id: ws,
+            template_id: None,
+            loop_id: None,
+            created_by: "tester".to_string(),
+            created_at: None,
+            updated_at: None,
+        }
+    }
+
+    /// format_discussion_history：多条帖子逐行拼接，含作者/身份/状态。
+    #[test]
+    fn test_format_discussion_history_multiple() {
+        let posts = vec![
+            post_with(1, "alice", "human", "sent", "第一条"),
+            post_with(2, "codex", "agent", "success", "第二条结论"),
+        ];
+        let s = format_discussion_history(&posts);
+        assert!(s.contains("[alice(human) sent] 第一条"));
+        assert!(s.contains("[codex(agent) success] 第二条结论"));
+    }
+
+    /// format_discussion_history：空列表返回空串。
+    #[test]
+    fn test_format_discussion_history_empty() {
+        assert_eq!(format_discussion_history(&[]), "");
+    }
+
+    /// format_discussion_history：超长正文按字符截断并加省略号，避免 prompt 膨胀。
+    #[test]
+    fn test_format_discussion_history_truncates_long_post() {
+        let long = "a".repeat(HISTORY_POST_TRUNCATE + 10);
+        let posts = vec![post_with(1, "x", "human", "sent", &long)];
+        let s = format_discussion_history(&posts);
+        // 截断后末尾带省略号，且不残留被截掉的部分。
+        assert!(s.ends_with('…'));
+        assert!(!s.contains(&"a".repeat(HISTORY_POST_TRUNCATE + 1)));
+    }
+
+    /// truncate_chars：未超长原样返回（按 char 计数，中文算 1 个）。
+    #[test]
+    fn test_truncate_chars_under_limit() {
+        assert_eq!(truncate_chars("中文测试", 10), "中文测试");
+    }
+
+    /// truncate_chars：超长按 char 截断加省略号。
+    #[test]
+    fn test_truncate_chars_over_limit() {
+        assert_eq!(truncate_chars("一二三四五", 3), "一二三…");
+    }
+
+    /// build_carrier_prompt：含任务 id / workspace id / ntd 命令，且命令占位已被实际值替换。
+    #[test]
+    fn test_build_carrier_prompt_injects_id_ws_and_cmds() {
+        let task = task_model(42, Some(7));
+        let p = build_carrier_prompt(&task, "帮我分析", "[历史]");
+        // 任务与工作空间标识均已注入。
+        assert!(p.contains("任务 #42"));
+        assert!(p.contains("工作空间 #7"));
+        // ntd 命令存在，且 ws/task 占位已替换为实际值（不再含裸 {ws}/{id}）。
+        assert!(p.contains("ntd task view --workspace-id 7 --task 42"));
+        assert!(p.contains("ntd task posts --workspace-id 7 --task 42 list"));
+        assert!(!p.contains("{ws}"));
+        assert!(!p.contains("{id}"));
+    }
+
+    /// build_carrier_prompt：空历史 → 历史段显示「（暂无历史）」，但仍带任务 id 与命令。
+    #[test]
+    fn test_build_carrier_prompt_empty_history() {
+        let task = task_model(1, Some(1));
+        let p = build_carrier_prompt(&task, "诉求", "");
+        assert!(p.contains("（暂无历史）"));
+        assert!(p.contains("任务 #1"));
+        assert!(p.contains("ntd task posts --workspace-id 1 --task 1 list"));
     }
 }

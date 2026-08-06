@@ -75,10 +75,20 @@ enum Commands {
         #[command(subcommand)]
         action: SkillAction,
     },
+    /// Workspace (project directory) management
+    Workspace {
+        #[command(subcommand)]
+        action: cli::WorkspaceAction,
+    },
     /// Process template management
     Process {
         #[command(subcommand)]
         action: cli::ProcessAction,
+    },
+    /// Task management（任务详情 + 讨论帖查询）
+    Task {
+        #[command(subcommand)]
+        action: cli::TaskAction,
     },
 }
 
@@ -269,8 +279,16 @@ async fn main() {
             }
             return;
         }
+        Some(Commands::Workspace { action }) => {
+            dispatch_subcommand(&cli, cli::Commands::Workspace { action: action.clone() }).await;
+            return;
+        }
         Some(Commands::Process { action }) => {
             dispatch_subcommand(&cli, cli::Commands::Process { action: action.clone() }).await;
+            return;
+        }
+        Some(Commands::Task { action }) => {
+            dispatch_subcommand(&cli, cli::Commands::Task { action: action.clone() }).await;
             return;
         }
         None => {
