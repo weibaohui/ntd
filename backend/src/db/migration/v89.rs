@@ -30,7 +30,8 @@ impl Migration for V89AddExecutionRecordsWorkspaceId {
     }
 
     fn name(&self) -> &'static str {
-        "add_execution_records_workspace_id"
+        // 与 v67（同表加列先例 V67AddExecutionRecordsAgentRuns）一致：struct 名即迁移名
+        "V89AddExecutionRecordsWorkspaceId"
     }
 
     /// 加列 + 回填历史数据。

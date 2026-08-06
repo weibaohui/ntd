@@ -305,7 +305,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_verify_execution_uses_record_workspace_id_after_todo_soft_deleted() {
+    async fn test_verify_execution_belongs_to_ws_ignores_carrier_todo_soft_delete() {
         // 复刻 060 讨论区 bug：record 直接归属 ws，其 carrier todo 在执行完成后
         // 被软删。旧实现经 todo_id 间接关联 → get_todo 过滤 deleted_at → NotFound(404)；
         // v89 改用 record.workspace_id → 即便 todo 已软删，仍按 ws 正确放行。
