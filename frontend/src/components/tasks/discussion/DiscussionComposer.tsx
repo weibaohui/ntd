@@ -35,18 +35,20 @@ interface MentionsPickerProps {
 
 /** 候选浮层：渲染在编辑器上方（absolute bottom:100%），点击选中插入。 */
 function MentionsPicker({ candidates, onPick }: MentionsPickerProps) {
-  // 用 antd 主题 token 取色，跟随明暗主题，避免硬编码（前端规范 13#10）。
+  // 用 antd 主题 token 取色，跟随明暗主题，避免硬编码颜色（前端规范：禁硬编码色值）。
   const { token } = theme.useToken();
+  // hover 高亮用 state 驱动而非直接改 DOM style：React 惯用写法，颜色全程走 token 不硬编码。
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   return (
     <div
       style={{
         position: 'absolute', bottom: '100%', left: 0, right: 0, marginBottom: 2,
-        background: 'var(--color-bg, #fff)', border: '1px solid var(--color-border, #d9d9d9)',
+        background: token.colorBgContainer, border: `1px solid ${token.colorBorder}`,
         borderRadius: 6, maxHeight: 200, overflowY: 'auto', zIndex: 20,
         boxShadow: token.boxShadowSecondary,
       }}
     >
-      {candidates.map((c) => (
+      {candidates.map((c, i) => (
         <button
           key={`${c.kind}:${c.name}`}
           type="button"
@@ -54,10 +56,12 @@ function MentionsPicker({ candidates, onPick }: MentionsPickerProps) {
           // 用原生 button 而非 div：键盘用户可用 Tab 聚焦、Enter/Space 激活（可访问性，CodeRabbit）。
           style={{
             padding: '6px 12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8,
-            border: 'none', background: 'transparent', textAlign: 'left', width: '100%',
+            border: 'none', textAlign: 'left', width: '100%',
+            // hover 时高亮背景由 hoverIdx 三元决定，颜色取 antd 控件 hover token，明暗主题自适应。
+            background: hoverIdx === i ? token.controlItemBgHover : 'transparent',
           }}
-          onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-bg-hover, #f5f5f5)'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+          onMouseEnter={() => setHoverIdx(i)}
+          onMouseLeave={() => setHoverIdx(null)}
         >
           <Text style={{ fontSize: 12, color: c.kind === 'expert' ? token.colorPrimary : token.colorSuccess }}>
             {c.kind === 'expert' ? '专家' : '执行器'}

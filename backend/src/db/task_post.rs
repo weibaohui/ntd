@@ -94,6 +94,29 @@ impl Database {
             .await
     }
 
+    /// 最近 N 条主楼层讨论帖，按时间正序（id 升序）返回。
+    ///
+    /// 与 `list_main_posts_paged`（id ASC 翻页、供讨论 Tab 分页）的区别：本方法服务于
+    /// carrier prompt 注入——被 @ 的 AI 需要的是「最近的」讨论上下文，而非最早的。
+    /// 实现：DESC 取 N 条（最新），再原地反转为 ASC（时间正序），既是最新的又按时间正序。
+    pub async fn list_recent_main_posts(
+        &self,
+        task_id: i64,
+        limit: u64,
+    ) -> Result<Vec<task_posts::Model>, sea_orm::DbErr> {
+        let safe_limit = limit.max(1);
+        let mut posts: Vec<task_posts::Model> = task_posts::Entity::find()
+            .filter(task_posts::Column::TaskId.eq(task_id))
+            .filter(task_posts::Column::ParentPostId.is_null())
+            .order_by_desc(task_posts::Column::Id)
+            .limit(safe_limit)
+            .all(&self.conn)
+            .await?;
+        // DESC 取回的是「最新→最旧」，反转为「最旧→最新」（时间正序），与 prompt 标题一致。
+        posts.reverse();
+        Ok(posts)
+    }
+
     /// 主楼层总数（分页页码计算用；只数 parent_post_id IS NULL 的行）。
     pub async fn count_main_posts(&self, task_id: i64) -> Result<u64, sea_orm::DbErr> {
         task_posts::Entity::find()
@@ -317,6 +340,87 @@ mod tests {
         assert!(db.list_replies_for(task_id, &[]).await.expect("empty in").is_empty());
     }
 
+    /// list_recent_main_posts：返回最新 N 条且按时间正序（id 升序），楼中楼不计入。
+    /// 与 list_main_posts_paged（最早 N 条）形成对照，保证 carrier prompt 注入「最近的」上下文。
+    #[tokio::test]
+    async fn test_list_recent_main_posts_returns_latest_in_asc() {
+        let db = fresh_db().await;
+        let task_id = seed_task(&db).await;
+        let m1 = seed_main_post(&db, task_id, "m1").await;
+        let m2 = seed_main_post(&db, task_id, "m2").await;
+        let m3 = seed_main_post(&db, task_id, "m3").await;
+        let m4 = seed_main_post(&db, task_id, "m4").await;
+
+        // 取最近 2 条：应为 m3、m4（最新两条），且按时间正序（m3 在前）。
+        let recent = db.list_recent_main_posts(task_id, 2).await.expect("recent");
+        assert_eq!(recent.len(), 2);
+        assert_eq!(recent[0].id, m3, "最新 N 条应按时间正序（较早的在前）");
+        assert_eq!(recent[1].id, m4);
+        // 较早的 m1/m2 不在最近 2 条内（反向印证取的是「最新」而非「最早」）。
+        assert!(recent.iter().all(|p| p.id != m1 && p.id != m2));
+
+        // limit 超过总数：返回全部，仍按时间正序。
+        let all = db.list_recent_main_posts(task_id, 100).await.expect("all");
+        assert_eq!(all.len(), 4);
+        assert_eq!(all[0].id, m1);
+        assert_eq!(all[3].id, m4);
+
+        // 楼中楼不计入主楼层。
+        seed_reply(&db, task_id, m1, "r1").await;
+        let still = db.list_recent_main_posts(task_id, 100).await.expect("still");
+        assert_eq!(still.len(), 4, "楼中楼不应计入主楼层");
+    }
+
+    /// count_running_posts：只数 status=running 的帖（sent/success/failed 不计），供讨论 Tab 角标。
+    #[tokio::test]
+    async fn test_count_running_posts_only_counts_running() {
+        let db = fresh_db().await;
+        let task_id = seed_task(&db).await;
+        // 1 条 sent 人帖（不计入）。
+        seed_main_post(&db, task_id, "人帖").await;
+        // 2 条 running 智能体占位帖（计入）。
+        for exec in ["codex", "claude"] {
+            db.create_task_post(NewPost {
+                task_id,
+                parent_post_id: None,
+                kind: KIND_AGENT,
+                author_name: exec,
+                executor: Some(exec),
+                expert_name: None,
+                content: "正在干活…",
+                mentions_json: "[]",
+                status: STATUS_RUNNING,
+                source_execution_id: Some(1),
+                source_todo_id: None,
+            })
+            .await
+            .expect("seed running post");
+        }
+        assert_eq!(db.count_running_posts(task_id).await.expect("count"), 2);
+        // 跨任务隔离：另一任务的 running 帖不计入本 task。
+        let other_task = seed_task(&db).await;
+        db.create_task_post(NewPost {
+            task_id: other_task,
+            parent_post_id: None,
+            kind: KIND_AGENT,
+            author_name: "codex",
+            executor: Some("codex"),
+            expert_name: None,
+            content: "其它任务的 running",
+            mentions_json: "[]",
+            status: STATUS_RUNNING,
+            source_execution_id: Some(2),
+            source_todo_id: None,
+        })
+        .await
+        .expect("seed other task running");
+        assert_eq!(
+            db.count_running_posts(task_id).await.expect("count again"),
+            2,
+            "另一任务的 running 帖不应计入本任务"
+        );
+    }
+
     /// finalize 把 running 占位帖回写为结论，并软删载体 todo。
     #[tokio::test]
     async fn test_finalize_discussion_post_writes_result_and_soft_deletes_carrier() {
@@ -465,6 +569,53 @@ mod tests {
             .expect("create carrier");
         let after = db.count_todos_by_workspace(1).await.expect("count after");
         assert_eq!(before, after, "讨论载体 todo 不应计入工作空间 todo 数");
+    }
+
+    /// soft_delete_todo：置 deleted_at；不存在的 id 静默 no-op（不报错）。
+    /// 直接覆盖（finalize_discussion_post 间接路径之外）「标记删除」与「记录缺失」两条分支。
+    #[tokio::test]
+    async fn test_soft_delete_todo_marks_and_noops_on_missing() {
+        let db = fresh_db().await;
+        // 用讨论载体 todo 造一条记录（它落在 todos 表，可被软删）。
+        let tid = db
+            .create_discussion_todo("c".to_string(), "p".to_string(), None, None, 1, "/tmp")
+            .await
+            .expect("create todo");
+        // 软删前 deleted_at 应为空。
+        let row_before = db
+            .conn
+            .query_one(sea_orm::Statement::from_string(
+                sea_orm::DbBackend::Sqlite,
+                format!("SELECT deleted_at FROM todos WHERE id = {tid}"),
+            ))
+            .await
+            .expect("query before")
+            .expect("row exists");
+        let before: Option<String> = row_before
+            .try_get_by::<Option<String>, _>("deleted_at")
+            .ok()
+            .flatten();
+        assert!(before.is_none(), "软删前 deleted_at 应为空");
+
+        // 软删后 deleted_at 应非空。
+        db.soft_delete_todo(tid).await.expect("soft delete");
+        let row_after = db
+            .conn
+            .query_one(sea_orm::Statement::from_string(
+                sea_orm::DbBackend::Sqlite,
+                format!("SELECT deleted_at FROM todos WHERE id = {tid}"),
+            ))
+            .await
+            .expect("query after")
+            .expect("row exists");
+        let after: Option<String> = row_after
+            .try_get_by::<Option<String>, _>("deleted_at")
+            .ok()
+            .flatten();
+        assert!(after.is_some(), "软删后 deleted_at 应非空");
+
+        // 不存在的 id：静默 no-op，不报错（兜底分支）。
+        db.soft_delete_todo(999999).await.expect("noop on missing");
     }
 }
 

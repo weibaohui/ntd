@@ -194,7 +194,7 @@ fn build_carrier_prompt(task: &tasks::Model, post_content: &str, history_text: &
     format!(
         "你被 @ 到「任务 #{id}（工作空间 #{ws}）」的讨论区。请基于上下文给出可直接用于回复的结论（Markdown）。\n\n\
          任务标题：{title}\n任务需求：\n{desc}\n\n\
-         ## 既有讨论上下文（按时间正序）\n{history}\n\n\
+         ## 既有讨论上下文（最近 {n} 条，按时间正序）\n{history}\n\n\
          ## 本次讨论诉求\n{content}\n\n\
          ## 了解全貌的 ntd 命令（默认连本地 ntd，无需额外参数）\n\
          - 任务全貌：ntd task view --workspace-id {ws} --task {id}\n\
@@ -205,6 +205,7 @@ fn build_carrier_prompt(task: &tasks::Model, post_content: &str, history_text: &
         desc = task.description,
         history = history_section,
         content = post_content,
+        n = DISCUSSION_HISTORY_LIMIT,
     )
 }
 
@@ -213,7 +214,8 @@ fn build_carrier_prompt(task: &tasks::Model, post_content: &str, history_text: &
 /// 讨论历史注入是增强项，读库失败不应阻断 @ 触发——故 unwrap_or_default 兜底，
 /// 与 inject_workspace_prompt / inject_expert_context 的降级哲学保持一致。
 async fn fetch_recent_main_posts(db: &Database, task_id: i64) -> Vec<task_posts::Model> {
-    db.list_main_posts_paged(task_id, 1, DISCUSSION_HISTORY_LIMIT)
+    // 用「最新 N 条」查询（DESC 取 N 再反转）：被 @ 的 AI 需要最近上下文，而非最早的。
+    db.list_recent_main_posts(task_id, DISCUSSION_HISTORY_LIMIT)
         .await
         .unwrap_or_default()
 }
@@ -247,10 +249,28 @@ fn truncate_chars(s: &str, max_chars: usize) -> String {
     t
 }
 
+/// 按 workspace_id 反查项目目录；查不到或失败返回空串（执行器降级用默认 workspace）。
+/// 任务表不存 workspace_path，必须经此查 workspace 表补齐执行所需的真实路径。
+async fn resolve_ws_path(state: &AppState, ws_id: i64) -> String {
+    state
+        .db
+        .get_project_directory_by_id(ws_id)
+        .await
+        .ok()
+        .flatten()
+        .map(|p| p.path)
+        .unwrap_or_default()
+}
+
 /// 建 carrier Todo 并触发执行，返回 (carrier_todo_id, record_id)。
 ///
 /// start_todo_execution 内部 tokio::spawn 后立即返回 record_id，因此本函数不阻塞，
 /// HTTP 请求可即刻返回占位帖。执行落定时由 completion.rs discussion 分支回写。
+///
+/// 豁免说明（>50 行）：主体是线性管道——取执行器/专家 → 解析 ws_path → 建 carrier todo
+/// → 触发执行 → 取 record_id；其中 RunTodoExecutionRequest 构造是连续的纯数据赋值块
+/// （无 if/else/循环），符合规范豁免场景 #1（纯数据构建）+ #2（线性管道），拆分会把请求
+/// 字段打散成多参数函数、反而割裂阅读，故保留单函数。
 async fn trigger_discussion_execution(
     state: &AppState,
     task: &tasks::Model,
@@ -261,14 +281,7 @@ async fn trigger_discussion_execution(
     let expert_name = first_expert(mentions);
     let ws_id = task.workspace_id.unwrap_or(1);
     // 任务表不存 workspace_path，按 workspace_id 反查项目目录取真实路径（执行需要）。
-    let ws_path = state
-        .db
-        .get_project_directory_by_id(ws_id)
-        .await
-        .ok()
-        .flatten()
-        .map(|p| p.path)
-        .unwrap_or_default();
+    let ws_path = resolve_ws_path(state, ws_id).await;
     let title = format!("讨论触发 @{}", agent_author(mentions));
     let todo_id = state
         .db
@@ -566,6 +579,46 @@ async fn compensate_finished_execution(state: &AppState, record_id: i64) {
 
 /// 触发执行并写智能体占位帖；触发失败时写一条 failed 帖（不阻塞人帖已落库）。
 /// `post_content` 是触发它的那条人帖正文——执行器必须看到真实诉求才能作答。
+/// 智能体帖的共享字段（全借用，零拥有）：author/executor/expert/mentions 来自 @ 解析、
+/// task_id 来自任务。与每次落定的 content/status/关联记录分离，收口 create_agent_post 的
+/// Ok/Err 两分支，避免重复手写整段 NewPost。字段都是 Copy/借用，无需 clone。
+struct AgentPostSpec<'a> {
+    task_id: i64,
+    author: &'a str,
+    executor: Option<&'a str>,
+    expert_name: Option<&'a str>,
+    mentions_json: &'a str,
+}
+
+impl<'a> AgentPostSpec<'a> {
+    /// 按本次落定状态（running/failed）与关联执行记录/载体 todo 组装 NewPost。
+    /// 'a: 'b 保证 spec 借用的字段活得比 content/status（arm 内临时变量）更久。
+    fn into_post<'b>(
+        self,
+        content: &'b str,
+        status: &'b str,
+        source_execution_id: Option<i64>,
+        source_todo_id: Option<i64>,
+    ) -> NewPost<'b>
+    where
+        'a: 'b,
+    {
+        NewPost {
+            task_id: self.task_id,
+            parent_post_id: None,
+            kind: KIND_AGENT,
+            author_name: self.author,
+            executor: self.executor,
+            expert_name: self.expert_name,
+            content,
+            mentions_json: self.mentions_json,
+            status,
+            source_execution_id,
+            source_todo_id,
+        }
+    }
+}
+
 async fn create_agent_post(
     state: &AppState,
     task: &tasks::Model,
@@ -576,6 +629,15 @@ async fn create_agent_post(
     let author = agent_author(mentions);
     let executor = first_executor(mentions);
     let expert = first_expert(mentions);
+    // 共享字段提前打包：Ok/Err 两分支仅 content/status/关联 id 不同，spec 收口避免重复构造 NewPost。
+    // match 两 arm 互斥（运行时只走一条），故可各自 move 同一份 spec。
+    let spec = AgentPostSpec {
+        task_id: task.id,
+        author: &author,
+        executor,
+        expert_name: expert,
+        mentions_json,
+    };
     // 先拉最近若干条主楼层讨论注入 prompt，让被 @ 的 AI 了解讨论全貌；
     // 读库失败由 fetch_recent_main_posts 静默回退空，不阻断本次触发。
     let recent = fetch_recent_main_posts(state.db.as_ref(), task.id).await;
@@ -583,21 +645,9 @@ async fn create_agent_post(
     let prompt = build_carrier_prompt(task, post_content, &history_text);
     match trigger_discussion_execution(state, task, mentions, &prompt).await {
         Ok((todo_id, record_id)) => {
-            let placeholder = format!("{author} 正在干活…");
             // 占位帖：running，关联执行记录与载体 todo；executor/expert 来自 @ 解析。
-            let np = NewPost {
-                task_id: task.id,
-                parent_post_id: None,
-                kind: KIND_AGENT,
-                author_name: &author,
-                executor,
-                expert_name: expert,
-                content: &placeholder,
-                mentions_json,
-                status: STATUS_RUNNING,
-                source_execution_id: Some(record_id),
-                source_todo_id: Some(todo_id),
-            };
+            let placeholder = format!("{author} 正在干活…");
+            let np = spec.into_post(&placeholder, STATUS_RUNNING, Some(record_id), Some(todo_id));
             let post_val = insert_agent_post(state, np).await;
             // 补偿极快完成的执行：trigger 与 insert 占位帖之间若执行已结束，completion.rs 的
             // discussion 回写会错过（此时占位帖刚插入）→ 占位帖永久 running。插入后复查 record，
@@ -608,19 +658,7 @@ async fn create_agent_post(
         Err(e) => {
             // 触发失败也留痕：写一条 failed 帖，让用户看到「没能启动」。
             let failed_content = format!("{author} 触发失败：{e:?}");
-            let np = NewPost {
-                task_id: task.id,
-                parent_post_id: None,
-                kind: KIND_AGENT,
-                author_name: &author,
-                executor,
-                expert_name: expert,
-                content: &failed_content,
-                mentions_json,
-                status: STATUS_FAILED,
-                source_execution_id: None,
-                source_todo_id: None,
-            };
+            let np = spec.into_post(&failed_content, STATUS_FAILED, None, None);
             insert_agent_post(state, np).await
         }
     }
@@ -628,8 +666,9 @@ async fn create_agent_post(
 
 /// 插入一条智能体帖并序列化为 JSON 响应值。
 ///
-/// 接收调用方已构造好的 `NewPost`（kind=KIND_AGENT、parent_post_id=None），
-/// 避免散开的长参数列表（后端规范 13#13：`#[cfg(test)]` 外禁用 `#[allow]`）。
+/// 接收调用方已构造好的 `NewPost`（kind=KIND_AGENT、parent_post_id=None）。
+/// 用 struct 收口而非散开长参数列表——字段多，散开会触发 clippy::too_many_arguments
+/// 且调用点可读性差（create_agent_post 的 Ok/Err 两分支已由 AgentPostSpec::into_post 统一组装）。
 /// 插入失败返回 null（保持 agent_post: TaskPost|null 契约，前端 filter(Boolean) 丢弃）。
 async fn insert_agent_post(state: &AppState, post: NewPost<'_>) -> serde_json::Value {
     match state.db.create_task_post(post).await {
@@ -932,5 +971,79 @@ mod tests {
         assert!(p.contains("（暂无历史）"));
         assert!(p.contains("任务 #1"));
         assert!(p.contains("ntd task posts --workspace-id 1 --task 1 list"));
+    }
+
+    /// first_executor：返回首个 kind=executor 的 name；不混入专家。
+    #[test]
+    fn test_first_executor_returns_first_executor_name() {
+        let ms = vec![
+            MentionDto { kind: "expert".to_string(), name: "架构师".to_string(), display: "架构师".to_string() },
+            MentionDto { kind: "executor".to_string(), name: "codex".to_string(), display: "Codex".to_string() },
+            MentionDto { kind: "executor".to_string(), name: "claudecode".to_string(), display: "Claude Code".to_string() },
+        ];
+        // 多个执行器只取首个（决定由谁承载），且不被前置专家干扰。
+        assert_eq!(first_executor(&ms), Some("codex"));
+    }
+
+    /// first_executor：空列表或仅专家时返回 None。
+    #[test]
+    fn test_first_executor_none_when_no_executor() {
+        assert!(first_executor(&[]).is_none());
+        let only_expert = vec![MentionDto {
+            kind: "expert".to_string(),
+            name: "e".to_string(),
+            display: "e".to_string(),
+        }];
+        assert!(first_executor(&only_expert).is_none());
+    }
+
+    /// first_expert：返回首个 kind=expert 的 name；无专家返回 None。
+    #[test]
+    fn test_first_expert_returns_first_expert_name() {
+        let ms = vec![
+            MentionDto { kind: "executor".to_string(), name: "codex".to_string(), display: "Codex".to_string() },
+            MentionDto { kind: "expert".to_string(), name: "架构师".to_string(), display: "架构师".to_string() },
+        ];
+        assert_eq!(first_expert(&ms), Some("架构师"));
+        assert!(first_expert(&[]).is_none());
+    }
+
+    /// agent_author：优先专家、其次执行器、都没有时兜底「智能体」。
+    /// 体现展示顺序——@专家 时徽标显示专家名而非底层承载执行器。
+    #[test]
+    fn test_agent_author_priority_expert_then_executor_then_default() {
+        let both = vec![
+            MentionDto { kind: "executor".to_string(), name: "codex".to_string(), display: "Codex".to_string() },
+            MentionDto { kind: "expert".to_string(), name: "架构师".to_string(), display: "架构师".to_string() },
+        ];
+        assert_eq!(agent_author(&both), "架构师");
+        let only_exec = vec![MentionDto {
+            kind: "executor".to_string(),
+            name: "codex".to_string(),
+            display: "Codex".to_string(),
+        }];
+        assert_eq!(agent_author(&only_exec), "codex");
+        assert_eq!(agent_author(&[]), "智能体");
+    }
+
+    /// attach_replies：有 replies 时挂到主楼层 replies 字段，数组原样保留。
+    #[test]
+    fn test_attach_replies_with_list() {
+        let main = post_model(1, None);
+        let replies = vec![serde_json::json!({ "id": 10, "content": "回复1" })];
+        let v = attach_replies(&main, Some(replies));
+        let arr = v["replies"].as_array().expect("replies array");
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["id"].as_i64(), Some(10));
+    }
+
+    /// attach_replies：传 None 时 replies 为空数组，保证前端 replies 字段恒存在、无需判空。
+    #[test]
+    fn test_attach_replies_none_yields_empty_array() {
+        let main = post_model(2, None);
+        let v = attach_replies(&main, None);
+        assert!(v["replies"].as_array().expect("replies array").is_empty());
+        // 主楼层自身字段未丢（id 仍在）。
+        assert_eq!(v["id"].as_i64(), Some(2));
     }
 }

@@ -151,6 +151,29 @@ fn ws_prefix(workspace_id: i64) -> String {
     format!("/workspaces/{}", workspace_id)
 }
 
+// task 子命令组的路径拼接：抽成纯函数便于单测，确保 CLI 命中正确的 v1 路由
+// （client.rs 会自动补 /api/v1 前缀，这里只拼 workspaces 后缀）。
+
+/// task view 路径：/workspaces/{ws}/tasks/{task}（任务全貌）。
+fn task_detail_path(ws: i64, task: i64) -> String {
+    format!("{}/tasks/{}", ws_prefix(ws), task)
+}
+
+/// task list 路径：/workspaces/{ws}/tasks（可选 ?status= 由调用方拼接）。
+fn tasks_path(ws: i64) -> String {
+    format!("{}/tasks", ws_prefix(ws))
+}
+
+/// task posts list 路径：/workspaces/{ws}/tasks/{task}/posts（讨论历史）。
+fn task_posts_path(ws: i64, task: i64) -> String {
+    format!("{}/tasks/{}/posts", ws_prefix(ws), task)
+}
+
+/// task post get 路径：/workspaces/{ws}/tasks/{task}/posts/{pid}（单帖）。
+fn task_post_detail_path(ws: i64, task: i64, pid: i64) -> String {
+    format!("{}/tasks/{}/posts/{}", ws_prefix(ws), task, pid)
+}
+
 /// Wiki 文件子命令（替代旧的 Page 子命令）。
 #[derive(Debug, Clone, Subcommand)]
 pub enum WikiAction {
@@ -1118,8 +1141,8 @@ async fn handle_task(
         // 任务全貌：复用 get_task_detail（task + template + loop + steps + executions），
         // 让 AI 一次看清任务背景；该端点不含 description，但讨论触发 prompt 已带描述。
         TaskAction::View { workspace_id, task } => {
-            let path = format!("{}/tasks/{}", ws_prefix(*workspace_id), task);
-            let resp: ClientResponse<serde_json::Value> = client.get(&path).await?;
+            let resp: ClientResponse<serde_json::Value> =
+                client.get(&task_detail_path(*workspace_id, *task)).await?;
             print_response(&resp, output, fields)?;
         }
         // 任务列表：status 作为 query string 透传，无 status 时不带 '?' 保持路径干净。
@@ -1128,8 +1151,8 @@ async fn handle_task(
                 .as_ref()
                 .map(|s| format!("?status={}", s))
                 .unwrap_or_default();
-            let path = format!("{}/tasks{}", ws_prefix(*workspace_id), query);
-            let resp: ClientResponse<serde_json::Value> = client.get(&path).await?;
+            let resp: ClientResponse<serde_json::Value> =
+                client.get(&format!("{}{}", tasks_path(*workspace_id), query)).await?;
             print_response(&resp, output, fields)?;
         }
         // 讨论帖子组：委派给 handle_task_posts，保持本函数简短。
@@ -1154,14 +1177,14 @@ async fn handle_task_posts(
     match action {
         // 讨论历史：060 的 list_posts 返回主楼层 + 楼中楼树，足够 AI 还原讨论脉络。
         TaskPostAction::List => {
-            let path = format!("{}/tasks/{}/posts", ws_prefix(workspace_id), task);
-            let resp: ClientResponse<serde_json::Value> = client.get(&path).await?;
+            let resp: ClientResponse<serde_json::Value> =
+                client.get(&task_posts_path(workspace_id, task)).await?;
             print_response(&resp, output, fields)?;
         }
         // 单帖：前端轮询 running 占位帖状态、AI 拉单条结论详情都用它。
         TaskPostAction::Get { pid } => {
-            let path = format!("{}/tasks/{}/posts/{}", ws_prefix(workspace_id), task, pid);
-            let resp: ClientResponse<serde_json::Value> = client.get(&path).await?;
+            let resp: ClientResponse<serde_json::Value> =
+                client.get(&task_post_detail_path(workspace_id, task, *pid)).await?;
             print_response(&resp, output, fields)?;
         }
     }
@@ -2052,6 +2075,20 @@ fn truncate_to_width(s: &str, max_width: usize) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn test_ws_prefix() {
+        assert_eq!(ws_prefix(1), "/workspaces/1");
+    }
+
+    /// task 子命令组路径拼接：workspace 前缀 + 各端点后缀，确保 CLI 命中正确 v1 路由。
+    #[test]
+    fn test_task_paths() {
+        assert_eq!(task_detail_path(7, 42), "/workspaces/7/tasks/42");
+        assert_eq!(tasks_path(7), "/workspaces/7/tasks");
+        assert_eq!(task_posts_path(7, 42), "/workspaces/7/tasks/42/posts");
+        assert_eq!(task_post_detail_path(7, 42, 9), "/workspaces/7/tasks/42/posts/9");
+    }
 
     #[test]
     fn test_parse_fields_none() {
