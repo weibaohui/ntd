@@ -1,4 +1,6 @@
 import type { ReactNode, CSSProperties } from 'react';
+import { Button } from 'antd';
+import { ArrowLeftOutlined } from '@ant-design/icons';
 
 /**
  * 右侧页面卡片容器。
@@ -13,6 +15,8 @@ import type { ReactNode, CSSProperties } from 'react';
  * @param title    - 页面标题文本
  * @param titleSuffix - 标题文本后的附加元素（如折叠按钮），位于标题栏左侧区域
  * @param extra    - 标题栏右侧的操作按钮区域
+ * @param onBack   - 062：传入后在 extra 区最右端渲染统一返回按钮（固定右上角锚点）
+ * @param backLabel - 062：返回按钮文案，默认「返回列表」；返回目标非列表时传「返回」
  * @param children - 页面内容（渲染在横线下方）
  * @param showHeader - 是否显示顶部标题栏，默认为 true
  * @param className - 自定义类名
@@ -25,6 +29,8 @@ export function PageCard({
   title,
   titleSuffix,
   extra,
+  onBack,
+  backLabel,
   children,
   showHeader = true,
   className,
@@ -36,6 +42,8 @@ export function PageCard({
   title?: ReactNode;
   titleSuffix?: ReactNode;
   extra?: ReactNode;
+  onBack?: () => void;
+  backLabel?: string;
   children: ReactNode;
   showHeader?: boolean;
   className?: string;
@@ -43,6 +51,21 @@ export function PageCard({
   contentClassName?: string;
   contentStyle?: CSSProperties;
 }) {
+  // 062：返回按钮统一由 PageCard 渲染，样式/位置全站一致；
+  // 放在 extra 内容之后，保证它永远位于页头最右端（操作按钮数量变化不影响其锚点位置）。
+  const backButton = onBack ? (
+    <Button size="small" type="text" icon={<ArrowLeftOutlined />} onClick={onBack}>
+      {backLabel ?? '返回列表'}
+    </Button>
+  ) : null;
+  // extra 与 onBack 同时为空才不渲染右侧容器，保持无按钮页面的现状布局。
+  const headerExtra = extra != null || backButton != null ? (
+    <div className="ntd-page-card-extra">
+      {extra}
+      {backButton}
+    </div>
+  ) : null;
+
   return (
     <div className={`ntd-page-card ${className || ''}`} style={style}>
       {showHeader && (
@@ -54,7 +77,7 @@ export function PageCard({
               {title && <span className="ntd-page-card-title-text">{title}</span>}
               {titleSuffix && <span className="ntd-page-card-title-suffix">{titleSuffix}</span>}
             </div>
-            {extra && <div className="ntd-page-card-extra">{extra}</div>}
+            {headerExtra}
           </div>
           {/* 横线分隔 */}
           <div className="ntd-page-card-divider" />

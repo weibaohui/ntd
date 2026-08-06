@@ -3,17 +3,23 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { TodoDetailPage } from './TodoDetailPage';
 
 vi.mock('@/components/common/PageCard', () => ({
+  // 062：页面改为传 onBack/backLabel，mock 模拟 PageCard 在 extra 最右端渲染返回按钮的行为
   PageCard: (props: {
     icon?: React.ReactNode;
     title?: string;
-    titleSuffix?: React.ReactNode;
+    onBack?: () => void;
+    backLabel?: string;
     children?: React.ReactNode;
     style?: React.CSSProperties;
     contentStyle?: React.CSSProperties;
   }) => (
     <div data-testid="mock-page-card">
       <div data-testid="mock-page-card-title">{props.title}</div>
-      <div data-testid="mock-page-card-title-suffix">{props.titleSuffix}</div>
+      {props.onBack && (
+        <button data-testid="mock-page-card-back" onClick={props.onBack}>
+          {props.backLabel ?? '返回列表'}
+        </button>
+      )}
       {props.children}
     </div>
   ),

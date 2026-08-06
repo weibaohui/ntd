@@ -15,7 +15,8 @@ export interface LoopDetailActionsProps {
  * 抽成独立组件的目的：删除按钮在两个场景共用--
  *  1. LoopStudioDetailPanel：列表内嵌等「标题行可见」场景，按钮跟随标题行渲染；
  *  2. LoopDetailPage：独立路由场景，hideTitleRow=true 隐藏内层标题行后，
- *     按钮上提到外层 PageCard 的 titleSuffix 与「返回列表」并排。
+ *     按钮上提到外层 PageCard 的 extra 区（右上角），「返回列表」按钮由 PageCard
+ *     按 062 约定统一渲染在其最右端。
  * 抽组件避免两处复制按钮 JSX。
  */
 export function LoopDetailActions({ onDelete }: LoopDetailActionsProps) {

@@ -3,7 +3,7 @@
 // 设计要点（028-列表详情独立路由-设计 §4.6）：
 // 1. URL `/#/loops/:id`，作为环路命名空间的详情态独立挂载。
 // 2. 复用 `LoopDetailPanel`（已接收 loopId prop，与 state 解耦）。
-// 3. 顶部 PageCard 提供「返回列表」按钮（紧贴标题），用 history.back() 保留列表状态。
+// 3. 顶部 PageCard 提供「返回列表」按钮（062 起统一在 extra 最右端），用 history.back() 保留列表状态。
 // 4. 删除/启停等操作由 useLoopDetailActions hook 提供（044：触发/复制/导出/编辑已下线），
 //    完成后通过 onLoopChanged 通知父组件刷新 LoopListPage（loopUpdateCount 递增触发其重拉）。
 // 5. 删除按钮上提到 PageCard extra（右上角）--
@@ -13,8 +13,8 @@
 
 import { useState, useCallback } from 'react';
 import type { ReactNode } from 'react';
-import { Button, Space } from 'antd';
-import { ArrowLeftOutlined, RetweetOutlined } from '@ant-design/icons';
+import { Space } from 'antd';
+import { RetweetOutlined } from '@ant-design/icons';
 import { PageCard } from '@/components/common/PageCard';
 import { LoopDetailPanel } from './LoopStudioDetailPanel';
 import { useLoopDetailActions } from './LoopDetailPageParts';
@@ -41,7 +41,7 @@ interface LoopDetailPageProps {
  * 环路详情独立页：URL `/#/loops/:id`。
  *
  * 整体处理思路：
- * 1. PageCard 包裹 LoopDetailPanel，顶部标题 + 返回按钮（titleSuffix）+ 操作按钮（extra 右上角）。
+ * 1. PageCard 包裹 LoopDetailPanel，顶部标题（含环路名，062）+ 操作按钮 + 返回按钮（extra 右上角）。
  * 2. LoopDetailPanel 内部按 loopId 自己拉详情数据，本组件只负责容器与回调注入。
  * 3. 触发 / 复制 / 删除 / 启停等操作由 useLoopDetailActions hook 提供（已拆出），
  *    避免与 LoopListPage 形成循环依赖。
@@ -77,6 +77,13 @@ export function LoopDetailPage({
   // effect 的死循环（NTD-007）。
   const [actionsReady, setActionsReady] = useState(false);
 
+  // 062：环路名称由 LoopDetailPanel 加载后上报，标题从「环路 #id」升级为「环路 #id: 名称」。
+  // 同名时 setState 不触发重渲染（React 状态相同 bailout），无死循环风险。
+  const [loopName, setLoopName] = useState<string | null>(null);
+  const handleTitleReady = useCallback((name: string) => {
+    setLoopName((prev) => (prev === name ? prev : name));
+  }, []);
+
   // 右上角：删除按钮（044：触发/复制/导出/编辑已下线），仅 detail 加载后可见
   const extra: ReactNode = actionsReady ? (
     <Space size={4}>
@@ -84,24 +91,13 @@ export function LoopDetailPage({
     </Space>
   ) : undefined;
 
-  // 标题右侧：返回列表按钮
-  const titleSuffix: ReactNode = (
-    <Button
-      size="small"
-      type="text"
-      icon={<ArrowLeftOutlined />}
-      onClick={onBack}
-    >
-      返回列表
-    </Button>
-  );
-
   return (
     <PageCard
       icon={<RetweetOutlined />}
-      title={`环路 #${loopId}`}
-      titleSuffix={titleSuffix}
+      title={loopName ? `环路 #${loopId}: ${loopName}` : `环路 #${loopId}`}
       extra={extra}
+      // 062：返回按钮移交 PageCard 统一渲染（extra 最右端，删除按钮之后）
+      onBack={onBack}
       style={{ flex: 1, height: '100%' }}
       contentStyle={{ padding: 0, display: 'flex', flexDirection: 'column', height: 'calc(100% - 43px)' }}
     >
@@ -117,6 +113,7 @@ export function LoopDetailPage({
         onOpenProcess={onOpenProcess}
         onOpenTodo={onSelectTodo}
         onActionsReady={setActionsReady}
+        onTitleReady={handleTitleReady}
       />
     </PageCard>
   );

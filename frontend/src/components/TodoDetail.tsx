@@ -18,9 +18,10 @@ import type { TodoDetailActionsProps } from './todo-detail/TodoDetailActions';
 interface TodoDetailProps {
   hideTitleRow?: boolean;
   onOpenPost?: (todoId: number, recordId: number) => void;
-  /** 独立路由场景：把操作按钮上下文上报给外层 PageCard 的 titleSuffix。
+  /** 独立路由场景：把操作按钮上下文上报给外层 PageCard 的 extra 区。
    *  hideTitleRow=true 时内层标题行（含按钮）整体隐藏，外层通过此回调拿到按钮上下文
-   *  在 PageCard 标题行渲染优化标题/编辑/删除，避免按钮连带消失。 */
+   *  在 PageCard 头部右上角渲染优化标题/编辑/删除，避免按钮连带消失；
+   *  返回按钮由 PageCard 按 062 约定统一渲染在 extra 最右端，不占用本上下文。 */
   onActionsReady?: (ctx: TodoDetailActionsProps | null) => void;
 }
 
@@ -328,7 +329,7 @@ export function TodoDetail({ hideTitleRow = false, onOpenPost, onActionsReady }:
     }
   }, [selectedTodo, dispatch, message]);
 
-  // 独立路由场景：把操作按钮上下文上报给外层 PageCard 的 titleSuffix。
+  // 独立路由场景：把操作按钮上下文上报给外层 PageCard 的 extra 区（062 修正注释，原误写 titleSuffix）。
   // selectedTodo 为空时上报 null（加载中/错误态），外层相应不渲染按钮。
   // 依赖 handleDelete/handleTitleUpdate（均 useCallback 稳定），避免每次渲染重报。
   useEffect(() => {

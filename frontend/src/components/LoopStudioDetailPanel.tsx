@@ -25,7 +25,7 @@ import { TraceBreadcrumb } from '@/components/common/TraceBreadcrumb';
 import { getWorkspaceDisplayName, useProjectDirectories } from '@/utils/workspaceDisplay';
 import { LoopStepsPanel } from './LoopStudioStepsPanel';
 import { LoopExecutionsPanel } from './loop-studio/executions';
-// 删除按钮抽到 LoopDetailActions，与 LoopDetailPage 的 titleSuffix 共用。
+// 删除按钮抽到 LoopDetailActions，与 LoopDetailPage 的 extra 区共用。
 import { LoopDetailActions } from './LoopDetailActions';
 
 interface LoopDetailPanelProps {
@@ -42,10 +42,12 @@ interface LoopDetailPanelProps {
   /** 点击流程图节点上的事项标题跳转事项详情；未注入时标题不可点击。 */
   onOpenTodo?: (todoId: number) => void;
   hideTitleRow?: boolean;
-  /** 独立路由场景：把删除按钮上下文上报给外层 PageCard titleSuffix。
+  /** 独立路由场景：把删除按钮上下文上报给外层 PageCard 的 extra 区。
    *  hideTitleRow=true 时内层标题行（含按钮）整体隐藏，外层通过此回调拿到按钮上下文
-   *  在 PageCard 标题行渲染删除按钮，避免按钮连带消失。 */
+   *  在 PageCard 头部右上角渲染删除按钮，避免按钮连带消失（062 修正注释，原误写 titleSuffix）。 */
   onActionsReady?: (ready: boolean) => void;
+  /** 062：detail 加载完成后上报环路名称，外层 PageCard 用以拼「环路 #id: 名称」标题。 */
+  onTitleReady?: (name: string) => void;
 }
 
 export function LoopDetailPanel({
@@ -59,6 +61,7 @@ export function LoopDetailPanel({
   onOpenTodo,
   hideTitleRow = false,
   onActionsReady,
+  onTitleReady,
 }: LoopDetailPanelProps) {
   const { message: antMessage } = AntApp.useApp();
   const [detail, setDetail] = useState<LoopDetail | null>(null);
@@ -114,6 +117,13 @@ export function LoopDetailPanel({
     if (!onActionsReady) return;
     onActionsReady(detail != null);
   }, [detail, onActionsReady]);
+
+  // 062：detail 就绪后同步上报环路名称，供外层 PageCard 拼统一格式标题；
+  // 与 onActionsReady 同节奏（同一 detail 依赖），不引入额外请求。
+  useEffect(() => {
+    if (!onTitleReady || !detail) return;
+    onTitleReady(detail.name);
+  }, [detail, onTitleReady]);
 
   if (loading && !detail) {
     return <Skeleton active style={{ padding: 24 }} />;

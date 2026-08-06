@@ -62,9 +62,10 @@ export function ProcessEditorToolbar({
 }: ProcessEditorToolbarProps): JSX.Element {
   return (
     <div style={toolbarStyle}>
-      {/* 左：工艺名 + 显示名 */}
+      {/* 左：062 起标题统一「模块名: 具体名称」格式；displayName 与唯一名同时保留，
+          唯一名作次级文本便于区分同名显示名的工艺。 */}
       <div style={titleStyle}>
-        <Text strong>{displayName ?? processName}</Text>
+        <Text strong>工艺: {displayName ?? processName}</Text>
         {displayName && (
           <Text type="secondary" style={nameTextStyle}>
             ({processName})
@@ -105,11 +106,12 @@ export function ProcessEditorToolbar({
           </Button>
         )}
 
-        {/* 返回按钮：右上角，点击跳回工艺列表页（#/processes）。
-            经由父组件设置 location.hash，复用 hashchange 离开拦截，
-            有未保存修改时会自动弹确认框，避免误丢改动。 */}
-        <Button icon={<ArrowLeftOutlined />} onClick={onBack}>
-          返回
+        {/* 返回按钮：右上角（操作区最右端，与全站 PageCard onBack 位置一致，062）。
+            样式与 PageCard 统一返回按钮对齐：small + text + 左箭头。
+            点击跳回工艺列表页（#/processes），经由父组件设置 location.hash，
+            复用 hashchange 离开拦截，有未保存修改时会自动弹确认框，避免误丢改动。 */}
+        <Button size="small" type="text" icon={<ArrowLeftOutlined />} onClick={onBack}>
+          返回列表
         </Button>
       </Space>
     </div>
