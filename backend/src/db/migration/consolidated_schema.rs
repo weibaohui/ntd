@@ -396,6 +396,26 @@ pub const CONSOLIDATED_SCHEMA: &[&str] = &[
             created_at TEXT,
             updated_at TEXT
         )"#,
+    // task_posts：任务讨论帖表（需求 060，与 v88 迁移同构）。字段语义见 entity/task_posts.rs；
+    // 外键均 ON DELETE CASCADE，删任务/删父帖时连带清理，避免孤儿帖。
+    r#"CREATE TABLE task_posts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id INTEGER NOT NULL,
+                parent_post_id INTEGER,
+                kind TEXT NOT NULL,
+                author_name TEXT NOT NULL,
+                executor TEXT,
+                expert_name TEXT,
+                content TEXT NOT NULL DEFAULT '',
+                mentions TEXT NOT NULL DEFAULT '[]',
+                status TEXT NOT NULL DEFAULT 'sent',
+                source_execution_id INTEGER,
+                source_todo_id INTEGER,
+                created_at TEXT,
+                updated_at TEXT,
+                FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+                FOREIGN KEY (parent_post_id) REFERENCES task_posts(id) ON DELETE CASCADE
+            )"#,
     r#"CREATE TABLE todo_tags (
             todo_id INTEGER,
             tag_id INTEGER,
@@ -537,6 +557,8 @@ pub const CONSOLIDATED_SCHEMA: &[&str] = &[
     r#"CREATE INDEX idx_step_tags_step_id ON step_tags(step_id)"#,
     r#"CREATE INDEX idx_steps_source_todo ON steps(source_todo_id)"#,
     r#"CREATE INDEX idx_sync_records_created_at ON sync_records(created_at DESC)"#,
+    // task_posts 按 task 取帖子流是高频点查，必须走索引（需求 060）。
+    r#"CREATE INDEX idx_task_posts_task_id ON task_posts(task_id)"#,
     r#"CREATE INDEX idx_todo_tags_todo_id ON todo_tags(todo_id)"#,
     r#"CREATE UNIQUE INDEX idx_todos_action_type_key_workspace ON todos (action_type, action_key, workspace_id) WHERE action_type IS NOT NULL AND action_key IS NOT NULL"#,
     r#"CREATE INDEX idx_todos_archived_at ON todos(archived_at)"#,

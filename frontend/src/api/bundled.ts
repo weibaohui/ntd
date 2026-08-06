@@ -3,6 +3,7 @@
 // 统一管理专家、事项模板、Skills 的远程仓库同步
 
 import { api, unwrap } from '@/utils/database/client';
+import type { TaskPost } from '@/types';
 
 /**
  * 子目录类型
@@ -584,6 +585,43 @@ export const bundledApi = {
       locator,
       content_text: contentText,
     }));
+  },
+
+  // ===== 任务讨论区（需求 060）=====
+
+  /** 列出任务讨论帖（主楼层分页，每条主楼层由后端附带 replies 楼中楼）。 */
+  async listTaskPosts(
+    wsId: number,
+    taskId: number,
+    page = 1,
+    limit = 20,
+  ): Promise<{ items: TaskPost[]; total: number; running_total: number; page: number; limit: number }> {
+    // 主楼层走服务端分页，避免一次拉全量；楼中楼由后端随主楼层组装返回。
+    const qs = `?page=${page}&limit=${limit}`;
+    return unwrap(await api.get(`/api/v1/workspaces/${wsId}/tasks/${taskId}/posts${qs}`));
+  },
+
+  /** 创建人帖；含 @ 时后端会触发执行并返回智能体占位帖。 */
+  async createTaskPost(
+    wsId: number,
+    taskId: number,
+    content: string,
+    parentPostId?: number | null,
+  ): Promise<{ human_post: TaskPost; agent_post: TaskPost | null }> {
+    return unwrap(await api.post(`/api/v1/workspaces/${wsId}/tasks/${taskId}/posts`, {
+      content,
+      parent_post_id: parentPostId ?? null,
+    }));
+  },
+
+  /** 单帖（前端轮询占位帖状态用）。 */
+  async getTaskPost(wsId: number, taskId: number, postId: number): Promise<TaskPost> {
+    return unwrap(await api.get(`/api/v1/workspaces/${wsId}/tasks/${taskId}/posts/${postId}`));
+  },
+
+  /** 删帖。 */
+  async deleteTaskPost(wsId: number, taskId: number, postId: number): Promise<{ deleted: number }> {
+    return unwrap(await api.delete(`/api/v1/workspaces/${wsId}/tasks/${taskId}/posts/${postId}`));
   },
 };
 

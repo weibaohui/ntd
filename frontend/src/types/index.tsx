@@ -5,3 +5,4 @@ export * from './config';
 export * from './stats';
 export * from './loop';
 export * from './reviewTemplate';
+export * from './task';

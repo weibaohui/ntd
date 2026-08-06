@@ -13,6 +13,18 @@ use crate::models::{ComputedBucket, Todo, TodoBackup, TodoCenterItem, TodoStatus
 /// 模式与 todo_type=2 评审实例对称；事项列表以「异常处理」标签区分。需求 035。
 pub const TODO_TYPE_ABNORMAL_HANDLER: i32 = 3;
 
+/// todo_type 取值：任务讨论区「@触发执行」的隐藏载体 Todo（需求 060）。
+///
+/// 讨论帖里 @专家/@执行器 时创建一个载体 Todo 承载执行（执行系统是 Todo 中心的，
+/// 必须有 Todo 提供 executor/prompt/expert_name）。这类 Todo 不应出现在事项中心 /
+/// todo 列表，因此：① 各列表查询用 `is_discussion_carrier` 片段排除；② 执行完成时
+/// 由 `finalize_discussion_post` 软删（deleted_at），让所有 `deleted_at IS NULL` 查询兜底排除。
+pub const TODO_TYPE_DISCUSSION: i32 = 4;
+
+/// SQL 片段：在 todo 列表/事项中心查询里排除讨论载体 Todo（todo_type=4）。
+/// 用 COALESCE 兜底 NULL，与 todo_type 既有「NULL 视为普通(0)」口径一致。
+const DISCUSSION_CARRIER_EXCLUDE: &str = "COALESCE(t.todo_type, 0) != 4";
+
 /// 056：computed_bucket 的 SQL 表达式，优先级与 `models::compute_bucket` 严格一致
 /// （已归档 > Loop 驱动 > 时间驱动 > 事件驱动 > 手动）。
 /// 两侧实现由测试对拍防漂移（见本文件测试 `test_center_bucket_sql_matches_rust`）。
@@ -310,6 +322,9 @@ impl Database {
         q: &TodoCenterPageQuery<'_>,
     ) -> (String, Vec<sea_orm::Value>) {
         let mut sql = String::from("t.deleted_at IS NULL");
+        // 排除讨论载体 Todo（todo_type=4），避免 @触发的隐藏载体污染事项中心。
+        sql.push_str(" AND ");
+        sql.push_str(DISCUSSION_CARRIER_EXCLUDE);
         let mut values: Vec<sea_orm::Value> = Vec::new();
         if let Some(wid) = q.workspace_id {
             sql.push_str(" AND t.workspace_id = ?");
@@ -505,7 +520,8 @@ impl Database {
     ) -> Result<Vec<crate::models::TodoBrief>, sea_orm::DbErr> {
         let mut sql = String::from(
             "SELECT id, title, status, executor, updated_at, archived_at, workspace_id, \
-             (prompt IS NOT NULL AND prompt != '') AS has_prompt FROM todos WHERE deleted_at IS NULL",
+             (prompt IS NOT NULL AND prompt != '') AS has_prompt \
+             FROM todos WHERE deleted_at IS NULL AND COALESCE(todo_type, 0) != 4",
         );
         let mut values: Vec<sea_orm::Value> = Vec::new();
         match ids {
@@ -561,7 +577,7 @@ impl Database {
             .conn
             .query_all(sea_orm::Statement::from_sql_and_values(
                 sea_orm::DbBackend::Sqlite,
-                "SELECT id FROM todos WHERE deleted_at IS NULL AND archived_at IS NULL AND workspace_id = ? ORDER BY id DESC",
+                "SELECT id FROM todos WHERE deleted_at IS NULL AND archived_at IS NULL AND COALESCE(todo_type, 0) != 4 AND workspace_id = ? ORDER BY id DESC",
                 vec![workspace_id.into()],
             ))
             .await?;
@@ -580,6 +596,8 @@ impl Database {
             .filter(todos::Column::DeletedAt.is_null())
             .filter(todos::Column::ArchivedAt.is_null())
             .filter(todos::Column::WorkspaceId.eq(workspace_id))
+            // 排除讨论载体 Todo（todo_type=4），不计入工作空间 todo 数。
+            .filter(sea_orm::sea_query::Expr::cust("COALESCE(todo_type, 0) != 4"))
             .count(&self.conn)
             .await?;
         Ok(count.try_into().unwrap_or(i64::MAX))
@@ -600,6 +618,8 @@ impl Database {
         let page_size = page_size.clamp(1, 200);
         let mut cond = todos::Column::DeletedAt.is_null()
             .and(todos::Column::ArchivedAt.is_null());
+        // 排除讨论载体 Todo（todo_type=4），不让 @触发的隐藏载体出现在 todo 列表。
+        cond = cond.and(sea_orm::sea_query::Expr::cust("COALESCE(todo_type, 0) != 4"));
         if let Some(wid) = workspace_id {
             cond = cond.and(todos::Column::WorkspaceId.eq(wid));
         }
@@ -1244,6 +1264,60 @@ impl Database {
         };
         let inserted = am.insert(&self.conn).await?;
         Ok(inserted.id)
+    }
+
+    /// 创建任务讨论区的「@触发执行」载体 Todo（需求 060）。
+    ///
+    /// 执行系统是 Todo 中心的：`run_todo_execution` 必须有一个 Todo 提供
+    /// executor/prompt/expert_name。讨论帖里 @专家/@执行器 时用本方法建一个
+    /// `todo_type=DISCUSSION` 的隐藏载体，承载这次执行；返回 todo id。
+    /// `executor` 为 None 时由执行管线的 `resolve_executor_type` 回退默认执行器。
+    pub async fn create_discussion_todo(
+        &self,
+        title: String,
+        prompt: String,
+        executor: Option<&str>,
+        expert_name: Option<&str>,
+        workspace_id: i64,
+        workspace_path: &str,
+    ) -> Result<i64, sea_orm::DbErr> {
+        let now = crate::models::utc_timestamp();
+        // executor 缺省时取数据库默认执行器（内部再回退 DEFAULT_EXECUTOR，保证非空）。
+        let executor_str = match executor.map(str::trim).filter(|s| !s.is_empty()) {
+            Some(s) => s.to_string(),
+            None => self.get_default_executor_name().await?,
+        };
+        let am = todos::ActiveModel {
+            title: ActiveValue::Set(title),
+            // 载体 todo 的 prompt = 帖子正文 + 任务上下文（由 handler 拼装）。
+            prompt: ActiveValue::Set(Some(prompt)),
+            status: ActiveValue::Set(Some(TodoStatus::Pending.to_string())),
+            created_at: ActiveValue::Set(Some(now.clone())),
+            updated_at: ActiveValue::Set(Some(now)),
+            executor: ActiveValue::Set(Some(executor_str)),
+            // 讨论帖触发的执行不进自动评审（它是一次性问答，不是工艺产物）。
+            auto_review_enabled: ActiveValue::Set(Some(false)),
+            todo_type: ActiveValue::Set(Some(TODO_TYPE_DISCUSSION)),
+            workspace_id: ActiveValue::Set(Some(workspace_id)),
+            workspace_path: ActiveValue::Set(Some(workspace_path.to_string())),
+            // @专家 时把专家名存到 todo，inject_expert_context 会据此注入人设。
+            expert_name: ActiveValue::Set(expert_name.map(|s| s.to_string())),
+            ..Default::default()
+        };
+        let inserted = am.insert(&self.conn).await?;
+        Ok(inserted.id)
+    }
+
+    /// 软删一个 todo（置 deleted_at）。讨论载体 todo 执行完成后由回写逻辑调用，
+    /// 让所有 `deleted_at IS NULL` 的查询自动排除它（事项中心 / 列表 / 计数兜底）。
+    pub async fn soft_delete_todo(&self, id: i64) -> Result<(), sea_orm::DbErr> {
+        let existing = todos::Entity::find_by_id(id).one(&self.conn).await?;
+        if let Some(m) = existing {
+            let mut am: todos::ActiveModel = m.into();
+            am.deleted_at = ActiveValue::Set(Some(crate::models::utc_timestamp()));
+            am.update(&self.conn).await?;
+        }
+        Ok(())
     }
 
     /// 更新指定 todo 的 prompt（需求 035：工艺升级时刷新异常处理载体 todo 的 prompt）。

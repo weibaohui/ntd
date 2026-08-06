@@ -8,7 +8,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import {
-  Tabs, Tag, Button, Typography, Spin, Space,
+  Tabs, Tag, Button, Typography, Spin, Space, Badge,
   message, Modal, Input, Empty, Popconfirm,
 } from 'antd';
 import {
@@ -23,6 +23,7 @@ import {
   OverviewTab, DAGTab, ExecHistoryTab,
 } from './TaskDetailTabs';
 import type { StepInfo } from './TaskDetailTabs';
+import { DiscussionTab } from './discussion/DiscussionTab';
 import styles from './TaskDetailPanel.module.css';
 
 const { Text } = Typography;
@@ -121,6 +122,10 @@ export function TaskDetailPanel({
   const [triggering, setTriggering] = useState(false);
   const [reqModalOpen, setReqModalOpen] = useState(false);
   const [newRequirement, setNewRequirement] = useState('');
+  // 讨论区 running 帖数量（DiscussionTab 上报），用于「讨论」Tab 角标（M4）。
+  // 必须在下方所有 early return 之前声明：首渲染 loading 提前 return 时 hooks 也要执行，
+  // 否则二次渲染多一个 hook → React「Rendered more hooks than during the previous render」崩溃。
+  const [discussionRunning, setDiscussionRunning] = useState(0);
   const { dirs: projectDirs } = useProjectDirectories();
 
   // 拉取任务详情（含基本 loop 信息）。
@@ -219,6 +224,20 @@ export function TaskDetailPanel({
       label: '执行历史',
       children: (
         <ExecHistoryTab loopId={lpId} workspaceId={lpWsId} loopName={loopDetail?.name ?? task.title} />
+      ),
+    },
+    {
+      // 任务讨论区（需求 060）：论坛跟帖 + @专家/@执行器 触发执行后回帖。
+      // forceRender：保证「讨论」Tab 非 active 时 DiscussionTab 仍挂载、持续上报 running 数，角标才可见。
+      key: 'discussion',
+      label: <Badge count={discussionRunning} offset={[10, 0]} size="small">讨论</Badge>,
+      forceRender: true,
+      children: (
+        <DiscussionTab
+          taskId={task.id}
+          workspaceId={task.workspace_id ?? lpWsId ?? workspaceId}
+          onRunningCountChange={setDiscussionRunning}
+        />
       ),
     },
   ];

@@ -105,6 +105,11 @@ pub enum Commands {
         #[command(subcommand)]
         action: ProcessAction,
     },
+    /// Task management（任务详情 + 讨论帖查询；workspace-scoped，仿 Blackboard）
+    Task {
+        #[command(subcommand)]
+        action: TaskAction,
+    },
 }
 
 /// Workspace CLI actions: 列出 / 查询单个 / 注册一个项目目录。
@@ -146,6 +151,29 @@ fn ws_prefix(workspace_id: i64) -> String {
     format!("/workspaces/{}", workspace_id)
 }
 
+// task 子命令组的路径拼接：抽成纯函数便于单测，确保 CLI 命中正确的 v1 路由
+// （client.rs 会自动补 /api/v1 前缀，这里只拼 workspaces 后缀）。
+
+/// task view 路径：/workspaces/{ws}/tasks/{task}（任务全貌）。
+fn task_detail_path(ws: i64, task: i64) -> String {
+    format!("{}/tasks/{}", ws_prefix(ws), task)
+}
+
+/// task list 路径：/workspaces/{ws}/tasks（可选 ?status= 由调用方拼接）。
+fn tasks_path(ws: i64) -> String {
+    format!("{}/tasks", ws_prefix(ws))
+}
+
+/// task posts list 路径：/workspaces/{ws}/tasks/{task}/posts（讨论历史）。
+fn task_posts_path(ws: i64, task: i64) -> String {
+    format!("{}/tasks/{}/posts", ws_prefix(ws), task)
+}
+
+/// task post get 路径：/workspaces/{ws}/tasks/{task}/posts/{pid}（单帖）。
+fn task_post_detail_path(ws: i64, task: i64, pid: i64) -> String {
+    format!("{}/tasks/{}/posts/{}", ws_prefix(ws), task, pid)
+}
+
 /// Wiki 文件子命令（替代旧的 Page 子命令）。
 #[derive(Debug, Clone, Subcommand)]
 pub enum WikiAction {
@@ -155,6 +183,56 @@ pub enum WikiAction {
     Get {
         /// 文件 slug（如 "auth-module", "index", "log"）
         slug: String,
+    },
+}
+
+/// Task CLI actions（任务 + 讨论帖查询）。
+///
+/// task 路由是 workspace-scoped（/workspaces/{ws}/tasks），故 --workspace-id 必填，
+/// 结构仿 BlackboardAction 的 Wiki 子命令。核心用途：让被 @ 到讨论区的 AI（以及终端
+/// 用户）能像 `gh pr view --comments` 一样查询任务全貌与讨论历史，从而了解全貌。
+#[derive(Debug, Clone, Subcommand)]
+pub enum TaskAction {
+    /// 查看任务全貌（GET /workspaces/{ws}/tasks/{id}）
+    View {
+        /// Workspace ID（project_directories.id）
+        #[arg(long = "workspace-id")]
+        workspace_id: i64,
+        /// 任务 ID（对应路径段 {id}）
+        #[arg(long = "task")]
+        task: i64,
+    },
+    /// 列出工作空间下的任务（GET /workspaces/{ws}/tasks）
+    List {
+        /// Workspace ID（project_directories.id）
+        #[arg(long = "workspace-id")]
+        workspace_id: i64,
+        /// 按状态过滤（可选，透传为 ?status=）
+        #[arg(long)]
+        status: Option<String>,
+    },
+    /// 讨论帖子命令组（/workspaces/{ws}/tasks/{id}/posts）
+    Posts {
+        #[command(subcommand)]
+        action: TaskPostAction,
+        /// Workspace ID（project_directories.id）
+        #[arg(long = "workspace-id")]
+        workspace_id: i64,
+        /// 目标任务 ID（帖子挂在 task 下）
+        #[arg(long = "task")]
+        task: i64,
+    },
+}
+
+/// 讨论帖子子命令（只读：列出 / 查看单帖）。
+#[derive(Debug, Clone, Subcommand)]
+pub enum TaskPostAction {
+    /// 列出该任务的讨论帖（主楼层 + 楼中楼）
+    List,
+    /// 查看单个帖子（轮询占位帖状态 / AI 拉单条详情用）
+    Get {
+        /// 帖子 ID（对应路径段 {pid}）
+        pid: i64,
     },
 }
 
@@ -709,6 +787,7 @@ pub async fn run_command(cli: &Cli) -> Result<()> {
         Commands::Blackboard { action } => handle_blackboard(&client, action, &cli.output, &cli.fields).await?,
         Commands::Workspace { action } => handle_workspace(&client, action, &cli.output, &cli.fields).await?,
         Commands::Process { action } => handle_process(&client, action, &cli.output, &cli.fields).await?,
+        Commands::Task { action } => handle_task(&client, action, &cli.output, &cli.fields).await?,
     }
 
     Ok(())
@@ -1038,6 +1117,75 @@ async fn handle_blackboard(
                     print_response(&resp, output, fields)?;
                 }
             }
+        }
+    }
+    Ok(())
+}
+
+// ============== Task Handlers ==============
+//
+// task 命令只读对接已有 HTTP 路由（060 的 task_posts + tasks::get_task_detail），
+// 不写库、不触发执行。路径用 ws_prefix 拼 /workspaces/{ws} 前缀，client 自动补 /api/v1，
+// 故这里只写 /workspaces/.. 起的相对路径，不重复写 /api/v1。
+
+/// 处理 `ntd task` 子命令组（view / list / posts）。
+///
+/// 拆出 handle_task_posts 承载 posts 子组，避免本函数因二级 match 膨胀超 30 行。
+async fn handle_task(
+    client: &ApiClient,
+    action: &TaskAction,
+    output: &OutputFormat,
+    fields: &Option<String>,
+) -> Result<()> {
+    match action {
+        // 任务全貌：复用 get_task_detail（task + template + loop + steps + executions），
+        // 让 AI 一次看清任务背景；该端点不含 description，但讨论触发 prompt 已带描述。
+        TaskAction::View { workspace_id, task } => {
+            let resp: ClientResponse<serde_json::Value> =
+                client.get(&task_detail_path(*workspace_id, *task)).await?;
+            print_response(&resp, output, fields)?;
+        }
+        // 任务列表：status 作为 query string 透传，无 status 时不带 '?' 保持路径干净。
+        TaskAction::List { workspace_id, status } => {
+            let query = status
+                .as_ref()
+                .map(|s| format!("?status={}", s))
+                .unwrap_or_default();
+            let resp: ClientResponse<serde_json::Value> =
+                client.get(&format!("{}{}", tasks_path(*workspace_id), query)).await?;
+            print_response(&resp, output, fields)?;
+        }
+        // 讨论帖子组：委派给 handle_task_posts，保持本函数简短。
+        TaskAction::Posts { action, workspace_id, task } => {
+            handle_task_posts(client, action, *workspace_id, *task, output, fields).await?;
+        }
+    }
+    Ok(())
+}
+
+/// 处理 `ntd task posts` 子命令（list / get），只读。
+///
+/// 这是「被 @ 的 AI 了解讨论全貌」的主入口：list 拉历史楼层，get 拉单帖（含状态）。
+async fn handle_task_posts(
+    client: &ApiClient,
+    action: &TaskPostAction,
+    workspace_id: i64,
+    task: i64,
+    output: &OutputFormat,
+    fields: &Option<String>,
+) -> Result<()> {
+    match action {
+        // 讨论历史：060 的 list_posts 返回主楼层 + 楼中楼树，足够 AI 还原讨论脉络。
+        TaskPostAction::List => {
+            let resp: ClientResponse<serde_json::Value> =
+                client.get(&task_posts_path(workspace_id, task)).await?;
+            print_response(&resp, output, fields)?;
+        }
+        // 单帖：前端轮询 running 占位帖状态、AI 拉单条结论详情都用它。
+        TaskPostAction::Get { pid } => {
+            let resp: ClientResponse<serde_json::Value> =
+                client.get(&task_post_detail_path(workspace_id, task, *pid)).await?;
+            print_response(&resp, output, fields)?;
         }
     }
     Ok(())
@@ -1927,6 +2075,20 @@ fn truncate_to_width(s: &str, max_width: usize) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn test_ws_prefix() {
+        assert_eq!(ws_prefix(1), "/workspaces/1");
+    }
+
+    /// task 子命令组路径拼接：workspace 前缀 + 各端点后缀，确保 CLI 命中正确 v1 路由。
+    #[test]
+    fn test_task_paths() {
+        assert_eq!(task_detail_path(7, 42), "/workspaces/7/tasks/42");
+        assert_eq!(tasks_path(7), "/workspaces/7/tasks");
+        assert_eq!(task_posts_path(7, 42), "/workspaces/7/tasks/42/posts");
+        assert_eq!(task_post_detail_path(7, 42, 9), "/workspaces/7/tasks/42/posts/9");
+    }
 
     #[test]
     fn test_parse_fields_none() {

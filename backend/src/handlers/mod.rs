@@ -156,6 +156,7 @@ pub mod experts;
 pub mod bundled;
 pub mod process;
 pub mod tasks;
+pub mod task_posts;
 pub mod quick_button;
 pub mod profiles;
 /// workspace 归属校验 helper：v1 路由的租户边界守卫（verify_*_belongs_to_ws）。
@@ -315,6 +316,8 @@ fn mount_v1_domain_routes() -> Router<AppState> {
         .merge(process::process_routes())
         // 任务管理（独立于工艺市场的创建入口）
         .merge(tasks::task_routes())
+        // 任务讨论区（论坛跟帖 + @专家/@执行器 触发执行后回帖，需求 060）
+        .merge(task_posts::task_post_routes())
         // v1 版本化 API 由 action::v1_routes() 统一聚合
         .merge(action::v1_routes())
 }
