@@ -168,6 +168,29 @@ function getInitialPostRecordId(): number | null {
   return getPathIdAt(segs, 3);
 }
 
+/**
+ * 是否为帖子页 URL：path 段 `todos/:id/posts/:rid`。
+ * 帖子页返回来源（?from=task&taskId=）只在该 URL 形态下有意义，
+ * todos 列表/详情即使带 ?from= 也应忽略，避免无关 query 污染状态。
+ */
+function isTodosPostUrl(): boolean {
+  const segs = getHashPathSegments();
+  return segs[0] === 'todos' && segs[2] === 'posts';
+}
+
+/**
+ * 从 query 解析帖子页返回来源。
+ * `from=task&taskId=<id>` → 从任务-讨论 tab 跳入，返回时回到该任务讨论 tab；
+ * 否则默认 'todo'（返回事项详情）。taskId 非法（非正数）时视为无效来源。
+ */
+export function parsePostBackFrom(params: URLSearchParams): { from: 'todo' | 'task'; taskId: number | null } {
+  if (params.get('from') !== 'task') return { from: 'todo', taskId: null };
+  const raw = params.get('taskId');
+  const n = Number(raw);
+  const taskId = raw && Number.isFinite(n) && n > 0 ? n : null;
+  return { from: taskId != null ? 'task' : 'todo', taskId };
+}
+
 function getInitialTab(): string | null {
   const params = getHashSearchParams();
   const tab = params.get('tab');
@@ -217,6 +240,13 @@ interface NavOpts {
   id?: number | null;
   /** 帖子记录 id（todos 用，构造 /todos/:id/posts/:recordId）。 */
   recordId?: number | null;
+  /**
+   * 帖子页返回来源：`'task'` = 从任务-讨论 tab 跳入，帖子 URL 带 `?from=task&taskId=`，
+   * 返回按钮据此回到该任务的讨论 tab；`'todo'`/缺省 = 返回事项详情。
+   */
+  postBack?: 'todo' | 'task' | null;
+  /** postBack='task' 时返回的目标任务 id。 */
+  postBackTaskId?: number | null;
   tab?: string | null;
   mode?: BoardMode;
   workspace?: number | null;
@@ -240,11 +270,17 @@ interface NavOpts {
  * - todos/loops 用 path 段（/todos、/todos/:id、/todos/:id/posts/:rid、/loops、/loops/:id）
  * - 其他视图用 query 参数（与 028 之前一致）
  */
-function buildHashUrl(view: View, opts?: NavOpts): string {
+export function buildHashUrl(view: View, opts?: NavOpts): string {
   // 事项命名空间：path 段驱动
   if (view === 'todos') {
     if (opts?.id != null && opts?.recordId != null) {
-      return `#/todos/${opts.id}/posts/${opts.recordId}`;
+      // 帖子页 URL。从任务-讨论 tab 跳入时带返回来源 query（?from=task&taskId=），
+      // 帖子页返回按钮据此回到对应任务的讨论 tab；否则默认返回事项详情。
+      let url = `#/todos/${opts.id}/posts/${opts.recordId}`;
+      if (opts?.postBack === 'task' && opts?.postBackTaskId != null) {
+        url += `?from=task&taskId=${opts.postBackTaskId}`;
+      }
+      return url;
     }
     if (opts?.id != null) {
       return `#/todos/${opts.id}`;
@@ -258,10 +294,12 @@ function buildHashUrl(view: View, opts?: NavOpts): string {
     }
     return `#/loops`;
   }
-  // 任务命名空间：path 段驱动，与 todos/loops 一致
+  // 任务命名空间：path 段驱动，与 todos/loops 一致。
+  // 支持 ?tab= query：帖子页返回任务-讨论 tab 时据此恢复 Tabs 选中态（对齐 Settings 页模式）。
   if (view === 'tasks') {
     if (opts?.id != null) {
-      return `#/tasks/${opts.id}`;
+      const qs = typeof opts.tab === 'string' && opts.tab.trim() ? `?tab=${opts.tab}` : '';
+      return `#/tasks/${opts.id}${qs}`;
     }
     return `#/tasks`;
   }
@@ -325,6 +363,13 @@ export function useViewState() {
   const [loopDetailId, setLoopDetailId] = useState<number | null>(getInitialLoopDetailId);
   const [taskDetailId, setTaskDetailId] = useState<number | null>(getInitialTaskDetailId);
   const [postRecordId, setPostRecordId] = useState<number | null>(getInitialPostRecordId);
+  // 帖子页返回来源：仅帖子页 URL 解析 ?from=task，其他视图一律 'todo'（回事项详情）
+  const [postBackFrom, setPostBackFrom] = useState<'todo' | 'task'>(
+    () => (isTodosPostUrl() ? parsePostBackFrom(getHashSearchParams()).from : 'todo'),
+  );
+  const [postBackTaskId, setPostBackTaskId] = useState<number | null>(
+    () => (isTodosPostUrl() ? parsePostBackFrom(getHashSearchParams()).taskId : null),
+  );
   const [activeTab, setActiveTab] = useState<string | null>(getInitialTab);
   const [boardMode, setBoardMode] = useState<BoardMode>(getInitialBoardMode);
   const [wikiSlug, setWikiSlug] = useState<string | null>(getInitialWikiSlug);
@@ -337,6 +382,7 @@ export function useViewState() {
   // setters 集中传入 syncFromHash，避免每个回调都重复一遍
   const setters = {
     setActiveView, setTodoDetailId, setLoopDetailId, setTaskDetailId, setPostRecordId,
+    setPostBackFrom, setPostBackTaskId,
     setActiveTab, setBoardMode, setWikiSlug, setBlackboardFile, setProcessGuid, setProcessMode,
   };
 
@@ -395,9 +441,16 @@ export function useViewState() {
    *   - 其他视图                       → 该视图根路径
    */
   const backToList = useCallback(() => {
-    // 帖子页优先返回父事项详情（保留列表状态恢复策略）
+    // 帖子页返回：区分来源——从任务-讨论 tab 跳入则回到该任务的讨论 tab，
+    // 否则回父事项详情（保留列表状态恢复策略）。
+    // 统一用 replaceUrl：与桌面端 TodoPostPage onBack 一致，避免 pushUrl 在
+    // 「帖子页 → 来源页」之间留下多余 history 条目（浏览器后退不会回到帖子页）。
     if (activeView === 'todos' && todoDetailId != null && postRecordId != null) {
-      pushUrl('todos', { id: todoDetailId });
+      if (postBackFrom === 'task' && postBackTaskId != null) {
+        replaceUrl('tasks', { id: postBackTaskId, tab: 'discussion' });
+        return;
+      }
+      replaceUrl('todos', { id: todoDetailId });
       return;
     }
     // 事项/环路/任务详情返回列表
@@ -405,7 +458,7 @@ export function useViewState() {
     if (activeView === 'loops') { replaceUrl('loops'); return; }
     if (activeView === 'tasks') { replaceUrl('tasks'); return; }
     pushUrl(activeView);
-  }, [activeView, todoDetailId, postRecordId, pushUrl, replaceUrl]);
+  }, [activeView, todoDetailId, postRecordId, postBackFrom, postBackTaskId, pushUrl, replaceUrl]);
 
   // MobileHeader 需要知道当前是否处于「详情态」以决定返回按钮显隐；
   // 由 todoDetailId/loopDetailId/taskDetailId 派生，保持兼容旧 activePanel: 'detail' | 'list' 接口。
@@ -423,6 +476,9 @@ export function useViewState() {
     loopDetailId,
     taskDetailId,
     postRecordId,
+    // 帖子页返回来源（from=task 时返回对应任务讨论 tab）
+    postBackFrom,
+    postBackTaskId,
     // 派生：仅用于 MobileHeader 返回按钮显隐
     activePanel,
     activeTab,
@@ -455,6 +511,8 @@ function syncStateFromOptions(
     setLoopDetailId: (id: number | null) => void;
     setTaskDetailId: (id: number | null) => void;
     setPostRecordId: (id: number | null) => void;
+    setPostBackFrom: (f: 'todo' | 'task') => void;
+    setPostBackTaskId: (id: number | null) => void;
     setActiveTab: (t: string | null) => void;
     setBoardMode: (m: BoardMode) => void;
     setWikiSlug: (s: string | null) => void;
@@ -465,12 +523,16 @@ function syncStateFromOptions(
 ): void {
   const {
     setActiveView, setTodoDetailId, setLoopDetailId, setTaskDetailId, setPostRecordId,
+    setPostBackFrom, setPostBackTaskId,
     setActiveTab, setBoardMode, setWikiSlug, setBlackboardFile, setProcessGuid, setProcessMode,
   } = setters;
   setActiveView(view);
   // todos: id+recordId 表示帖子页；仅 id 表示详情；都没有表示列表
   setTodoDetailId(view === 'todos' ? (opts?.id ?? null) : null);
   setPostRecordId(view === 'todos' ? (opts?.recordId ?? null) : null);
+  // 帖子页返回来源只在 todos 帖子 URL 上有意义；其他视图一律清空（回事项详情默认分支）
+  setPostBackFrom(view === 'todos' && opts?.postBack === 'task' ? 'task' : 'todo');
+  setPostBackTaskId(view === 'todos' && opts?.postBack === 'task' ? (opts?.postBackTaskId ?? null) : null);
   setLoopDetailId(view === 'loops' ? (opts?.id ?? null) : null);
   setTaskDetailId(view === 'tasks' ? (opts?.id ?? null) : null);
   setActiveTab(opts?.tab ?? null);
@@ -494,6 +556,8 @@ function syncFromHash(setters: {
   setLoopDetailId: (id: number | null) => void;
   setTaskDetailId: (id: number | null) => void;
   setPostRecordId: (id: number | null) => void;
+  setPostBackFrom: (f: 'todo' | 'task') => void;
+  setPostBackTaskId: (id: number | null) => void;
   setActiveTab: (t: string | null) => void;
   setBoardMode: (m: BoardMode) => void;
   setWikiSlug: (s: string | null) => void;
@@ -519,6 +583,12 @@ function syncFromHash(setters: {
   // todos/loops/tasks 详情 id 仅在对应 view 下提取，避免跨视图串台
   setters.setTodoDetailId(view === 'todos' ? getPathIdAt(segments, 1) : null);
   setters.setPostRecordId(view === 'todos' && segments[2] === 'posts' ? getPathIdAt(segments, 3) : null);
+  // 帖子页返回来源：仅 todos 帖子 URL 解析 ?from=task&taskId=，
+  // 列表/详情/其他视图一律清空（回事项详情默认分支）
+  const isPost = view === 'todos' && segments[2] === 'posts';
+  const postBack = parsePostBackFrom(params);
+  setters.setPostBackFrom(isPost ? postBack.from : 'todo');
+  setters.setPostBackTaskId(isPost ? postBack.taskId : null);
   setters.setLoopDetailId(view === 'loops' ? getPathIdAt(segments, 1) : null);
   setters.setTaskDetailId(view === 'tasks' ? getPathIdAt(segments, 1) : null);
   setters.setActiveTab(tab || null);

@@ -26,9 +26,11 @@ export function DiscussionTab({ taskId, workspaceId, onRunningCountChange }: Dis
 
   const { pushUrl } = useViewState();
   // 点击「执行明细」→ 跳转到该执行记录的帖子详情页（事项侧执行对话流），由 PostCard 调用。
+  // 带 postBack='task' + postBackTaskId：帖子页返回按钮据此回到本任务-讨论 tab，而不是事项详情。
   const handleOpenExecution = useCallback(
-    (todoId: number, recordId: number) => pushUrl('todos', { id: todoId, recordId }),
-    [pushUrl],
+    (todoId: number, recordId: number) =>
+      pushUrl('todos', { id: todoId, recordId, postBack: 'task', postBackTaskId: taskId }),
+    [pushUrl, taskId],
   );
 
   // running 帖数量上报父组件（TaskDetailPanel 用于「讨论」Tab 角标，M4）。
