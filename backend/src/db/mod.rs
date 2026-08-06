@@ -676,6 +676,7 @@ mod tests {
             source_todo_title: None,
             loop_step_execution_id: None,
             step_id: None,
+            workspace_id: None, // v89 新增字段：本 helper 不测归属，None 即可
         })
         .await
         .unwrap()
@@ -1698,6 +1699,7 @@ mod tests {
             source_todo_title: None,
             loop_step_execution_id: None,
             step_id: None,
+            workspace_id: None, // v89 新增字段：orphan 测试不关心归属
         }).await.unwrap();
 
         // Detach task_id from todo so the record becomes "orphan" (running but todo.task_id IS NULL)

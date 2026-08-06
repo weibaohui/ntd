@@ -62,6 +62,8 @@ pub struct Model {
     pub loop_step_execution_id: Option<i64>,
     /// 当本次执行是环节执行时，指向 steps 表的 id。
     pub step_id: Option<i64>,
+    /// record 直接归属的 workspace（v89 新增）。归属校验用它，不再经 todo 间接关联。
+    pub workspace_id: Option<i64>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

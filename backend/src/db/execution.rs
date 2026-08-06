@@ -74,6 +74,9 @@ pub struct NewExecutionRecord<'a> {
     pub loop_step_execution_id: Option<i64>,
     /// 环节 id（指向 steps 表），环节独立执行时使用
     pub step_id: Option<i64>,
+    /// record 直接归属的 workspace（v89）：写入 execution_records.workspace_id，
+    /// 归属校验改用它，不再经 todo 间接关联。
+    pub workspace_id: Option<i64>,
 }
 
 pub struct UpdateExecutionRecordRequest<'a> {
@@ -193,6 +196,7 @@ impl From<execution_records::Model> for ExecutionRecord {
             worktree_path: m.worktree_path,
             loop_step_execution_id: m.loop_step_execution_id,
             step_id: m.step_id,
+            workspace_id: m.workspace_id,
         }
     }
 }
@@ -455,6 +459,7 @@ impl Database {
             source_todo_title: ActiveValue::Set(record.source_todo_title.map(|s| s.to_string())),
             loop_step_execution_id: ActiveValue::Set(record.loop_step_execution_id),
             step_id: ActiveValue::Set(record.step_id),
+            workspace_id: ActiveValue::Set(record.workspace_id),
             ..Default::default()
         };
         let inserted = am.insert(&self.conn).await?;

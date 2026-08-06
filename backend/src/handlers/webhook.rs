@@ -92,7 +92,7 @@ async fn trigger_todo_webhook_internal(
             feishu_receive_id: None,
             feishu_receive_id_type: None,
             workspace_path: todo.workspace_path.clone(),
-            workspace_id: None,
+            workspace_id: todo.workspace_id, // v89: 直接归属 ws，避免 carrier todo 软删后归属链断裂
             // webhook 触发路径：注入专家上下文，外部触发也需尊重 todo 的专家绑定
             expert_manager: Some(state.expert_manager.clone()),
         },
