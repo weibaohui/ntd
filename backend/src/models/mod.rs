@@ -452,6 +452,9 @@ pub struct ExecutionRecord {
     /// 已废弃，曾用于环节独立执行。现始终为 None。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub step_id: Option<i64>,
+    /// record 直接归属的 workspace（v89 新增）。归属校验用它，不再经 todo 间接关联。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

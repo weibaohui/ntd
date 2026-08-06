@@ -504,6 +504,8 @@ async fn create_record_or_reject(
             source_todo_title: request.source_todo_title.as_deref(),
             loop_step_execution_id: request.loop_step_execution_id,
             step_id: request.step_id,
+            // 透传请求携带的 workspace：持久化层据此写入 record 直接归属，不重新依赖 todo（v89）
+            workspace_id: request.workspace_id,
         })
         .await
     {

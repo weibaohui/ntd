@@ -437,7 +437,7 @@ async fn execute_review_instance(
         feishu_receive_id: None,
             feishu_receive_id_type: None,
         workspace_path: None,
-        workspace_id: None,
+        workspace_id: original.workspace_id, // v89: 评审 record 归属原 todo 的 ws，不经间接关联
         // auto_review 创建的评审 todo 不继承原 todo 的 expert_name，
         // 传 None 跳过专家上下文注入，避免给评审 instance 错误加载原 todo 的专家
         expert_manager: None,

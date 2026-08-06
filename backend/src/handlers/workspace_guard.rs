@@ -96,21 +96,32 @@ pub async fn verify_todos_belong_to_ws(
 
 /// 校验 execution record 属于指定 workspace。
 ///
-/// `execution_records` 表没有 `workspace_id` 列，只能经其 `todo_id` 间接关联到
-/// workspace —— 因此先查 record 拿 `todo_id`，再复用 `verify_todo_belongs_to_ws`，
-/// 保证「record 属于 ws」与「record 的 todo 属于 ws」语义一致。
+/// v89 起 `execution_records` 自带 `workspace_id` 列（record 创建时由写入点回填），
+/// 直接比对 record 自身归属即可。此前 record 经 `todo_id` 间接关联 ws，但讨论区
+/// carrier todo 在执行完成后会被软删（`get_todo` 过滤 `deleted_at`），导致间接归属
+/// 链断裂、record 误判 NotFound 而 404。改用 record 自身字段后，归属判断与 todo
+/// 是否存在彻底解耦。
 pub async fn verify_execution_belongs_to_ws(
     db: &Database,
     record_id: i64,
     ws_id: i64,
 ) -> Result<(), AppError> {
+    // get_execution_record 返回 Option；None → record 不存在，统一映射 NotFound，
+    // 不向调用方泄露存在性细节。
     let record = db
         .get_execution_record(record_id)
         .await?
         .ok_or(AppError::NotFound)?;
-    // record.todo_id 是 i64（非 Option），直接交给 todo 校验；
-    // record 不存在已在上一步映射为 NotFound。
-    verify_todo_belongs_to_ws(db, record.todo_id, ws_id).await
+    // 直接比对 record 自身 workspace_id（v89 新列），不再经 todo 间接关联：
+    // 否则 carrier todo 被软删后会误判 NotFound（060 讨论区「执行明细完成后 404」根因）。
+    if workspace_id_matches(record.workspace_id, ws_id) {
+        Ok(())
+    } else {
+        Err(AppError::Forbidden(format!(
+            "execution #{} 不属于工作空间 #{}",
+            record_id, ws_id
+        )))
+    }
 }
 
 #[cfg(test)]
@@ -188,10 +199,12 @@ mod tests {
             .expect("create todo must succeed")
     }
 
-    /// 建一条 execution record，挂在指定 todo 下。
-    async fn create_record_for_todo(db: &Database, todo_id: i64) -> i64 {
+    /// 建一条 execution record，直接归属 ws_id（v89：record 自带 workspace_id，
+    /// 与生产写入点行为一致，不再经 todo 间接关联）。
+    async fn create_record_for_todo(db: &Database, todo_id: i64, ws_id: i64) -> i64 {
         db.create_execution_record(NewExecutionRecord {
             todo_id: Some(todo_id),
+            workspace_id: Some(ws_id),
             command: "cmd",
             executor: "claudecode",
             trigger_type: "manual",
@@ -272,8 +285,8 @@ mod tests {
         let db = Database::new(":memory:").await.expect("db must open");
         let ws = create_workspace(&db, "/tmp/ws-a").await;
         let todo_id = create_todo_in_ws(&db, ws).await;
-        let record_id = create_record_for_todo(&db, todo_id).await;
-        // record 的 todo 属于该 ws → record 也属于该 ws，放行
+        let record_id = create_record_for_todo(&db, todo_id, ws).await;
+        // record 直接归属该 ws（v89）→ 放行，与 todo 是否存在无关
         assert!(verify_execution_belongs_to_ws(&db, record_id, ws).await.is_ok());
     }
 
@@ -283,10 +296,44 @@ mod tests {
         let ws_a = create_workspace(&db, "/tmp/ws-a").await;
         let ws_b = create_workspace(&db, "/tmp/ws-b").await;
         let todo_id = create_todo_in_ws(&db, ws_a).await;
-        let record_id = create_record_for_todo(&db, todo_id).await;
-        // 用 ws_b 访问 ws_a 的 record → 间接跨 ws（record→todo→ws），返回 Forbidden
+        let record_id = create_record_for_todo(&db, todo_id, ws_a).await;
+        // 用 ws_b 访问 ws_a 的 record → record 归属 ws_a，跨 ws，返回 Forbidden
         assert!(matches!(
             verify_execution_belongs_to_ws(&db, record_id, ws_b).await,
+            Err(AppError::Forbidden(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_verify_execution_belongs_to_ws_not_found() {
+        // 不存在的 record id → NotFound，与其他 verify_* 一致，不向调用方泄露存在性
+        let db = Database::new(":memory:").await.expect("db must open");
+        let ws = create_workspace(&db, "/tmp/ws-nf").await;
+        assert!(matches!(
+            verify_execution_belongs_to_ws(&db, 99999, ws).await.unwrap_err(),
+            AppError::NotFound
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_verify_execution_belongs_to_ws_ignores_carrier_todo_soft_delete() {
+        // 复刻 060 讨论区 bug：record 直接归属 ws，其 carrier todo 在执行完成后
+        // 被软删。旧实现经 todo_id 间接关联 → get_todo 过滤 deleted_at → NotFound(404)；
+        // v89 改用 record.workspace_id → 即便 todo 已软删，仍按 ws 正确放行。
+        let db = Database::new(":memory:").await.expect("db must open");
+        let ws = create_workspace(&db, "/tmp/ws-bug").await;
+        let todo_id = create_todo_in_ws(&db, ws).await;
+        // record 直接归属 ws（与生产写入点一致）
+        let record_id = create_record_for_todo(&db, todo_id, ws).await;
+        // 软删 carrier todo，模拟讨论执行完成后的清理（task_post finalize 阶段）
+        db.soft_delete_todo(todo_id)
+            .await
+            .expect("soft delete todo must succeed");
+        // 旧实现此处返回 NotFound；新实现用 record.workspace_id 仍 Ok —— bug 修复核心断言
+        assert!(verify_execution_belongs_to_ws(&db, record_id, ws).await.is_ok());
+        // 跨 ws 访问仍被拒绝：软删 todo 不应成为越权缺口
+        assert!(matches!(
+            verify_execution_belongs_to_ws(&db, record_id, ws + 1).await,
             Err(AppError::Forbidden(_))
         ));
     }

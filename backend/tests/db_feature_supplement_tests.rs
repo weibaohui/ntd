@@ -1203,6 +1203,8 @@ async fn test_get_execution_records_by_workspace_joins_todos() {
     for (todo_id, task_id) in &[(t1_id, "tk1"), (t2_id, "tk2")] {
         db.create_execution_record(NewExecutionRecord {
             todo_id: Some(*todo_id),
+            // v89：record 直接归属 ws1（与生产写入点一致），验证 ws 隔离查询
+            workspace_id: Some(ws1),
             command: "cmd",
             executor: "pi",
             trigger_type: "manual",
@@ -1229,6 +1231,8 @@ async fn test_get_execution_records_by_workspace_joins_todos() {
         .unwrap();
     db.create_execution_record(NewExecutionRecord {
         todo_id: Some(t3_id),
+        // v89：record 直接归属 ws2，与 ws1 的记录完全隔离
+        workspace_id: Some(ws2),
         command: "cmd",
         executor: "pi",
         trigger_type: "manual",

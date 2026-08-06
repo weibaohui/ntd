@@ -64,7 +64,7 @@ pub const CONSOLIDATED_SCHEMA: &[&str] = &[
             trigger_type TEXT DEFAULT 'manual',
             pid INTEGER,
             task_id TEXT,
-            session_id TEXT, todo_progress TEXT, execution_stats TEXT, resume_message TEXT, source_todo_id INTEGER, source_todo_title TEXT, rating INTEGER, source_execution_record_id INTEGER, last_review_status TEXT, last_reviewed_at TEXT, worktree_path TEXT, loop_step_execution_id BIGINT, step_id BIGINT, agent_runs TEXT,
+            session_id TEXT, todo_progress TEXT, execution_stats TEXT, resume_message TEXT, source_todo_id INTEGER, source_todo_title TEXT, rating INTEGER, source_execution_record_id INTEGER, last_review_status TEXT, last_reviewed_at TEXT, worktree_path TEXT, loop_step_execution_id BIGINT, step_id BIGINT, agent_runs TEXT, workspace_id INTEGER,
             FOREIGN KEY (todo_id) REFERENCES todos(id) ON DELETE CASCADE
         )"#,
     r#"CREATE TABLE executors (

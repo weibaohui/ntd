@@ -912,6 +912,7 @@ mod resume_session_id_tests {
             todo_progress: None,
             agent_runs: None,
             execution_stats: None,
+            workspace_id: None, // v89 新增字段：测试 make_record 不关心归属
             resume_message: None,
             source_todo_id: None,
             source_todo_title: None,

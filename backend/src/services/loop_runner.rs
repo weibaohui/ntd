@@ -1166,7 +1166,7 @@ impl LoopRunner {
             feishu_receive_id: None,
             feishu_receive_id_type: None,
             workspace_path,
-            workspace_id: None,
+            workspace_id: todo.workspace_id, // v89: 直接归属 ws，避免 carrier todo 软删后归属链断裂
             // loop 环节执行路径：注入专家上下文，让 loop 内 todo 也尊重 expert_name 绑定
             expert_manager: Some(self.ctx.expert_manager.clone()),
         };
@@ -1537,7 +1537,7 @@ impl LoopRunner {
             feishu_receive_id: None,
             feishu_receive_id_type: None,
             workspace_path: handler_todo.workspace_path.clone(),
-            workspace_id: None,
+            workspace_id: handler_todo.workspace_id, // v89: 直接归属 ws，避免 carrier todo 软删后归属链断裂
             // loop 异常处理执行路径：注入专家上下文，让 handler todo 也尊重其 expert_name 绑定
             expert_manager: Some(self.ctx.expert_manager.clone()),
         };
