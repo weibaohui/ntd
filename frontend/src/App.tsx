@@ -54,7 +54,7 @@ function AppContent() {
   const { state, dispatch, clearSelection } = useApp();
   // 028：路由统一为 /#/todos + /#/todos/:id + /#/todos/:id/posts/:rid + /#/loops + /#/loops/:id
   // todoDetailId / loopDetailId / postRecordId 均来自 path 段，刷新可恢复
-  const { activeView, todoDetailId, loopDetailId, taskDetailId, postRecordId, activePanel, processGuid, processMode, showView, pushUrl, replaceUrl, backToList } = useViewState();
+  const { activeView, todoDetailId, loopDetailId, taskDetailId, postRecordId, postBackFrom, postBackTaskId, activePanel, processGuid, processMode, showView, pushUrl, replaceUrl, backToList } = useViewState();
   const { themeMode, toggleTheme } = useTheme();
   // 底部执行日志面板的显隐开关：来自设置-界面显示，关掉后即使有运行中任务也不渲染面板。
   const { visible: consolePanelVisible, setVisible: setConsolePanelVisible } = useConsolePanel();
@@ -332,7 +332,15 @@ function AppContent() {
             <TodoPostPage
               todoId={todoDetailId}
               recordId={postRecordId}
-              onBack={() => replaceUrl('todos', { id: todoDetailId })}
+              onBack={() => {
+                // 帖子页返回区分来源：从任务-讨论 tab 跳入 → 回到该任务的讨论 tab（?tab=discussion）；
+                // 否则回父事项详情（旧逻辑）。用 replaceUrl 不污染浏览器历史。
+                if (postBackFrom === 'task' && postBackTaskId != null) {
+                  replaceUrl('tasks', { id: postBackTaskId, tab: 'discussion' });
+                } else {
+                  replaceUrl('todos', { id: todoDetailId });
+                }
+              }}
             />
           )}
 
