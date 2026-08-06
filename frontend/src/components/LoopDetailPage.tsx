@@ -3,7 +3,9 @@
 // 设计要点（028-列表详情独立路由-设计 §4.6）：
 // 1. URL `/#/loops/:id`，作为环路命名空间的详情态独立挂载。
 // 2. 复用 `LoopDetailPanel`（已接收 loopId prop，与 state 解耦）。
-// 3. 顶部 PageCard 提供「返回列表」按钮（062 起统一在 extra 最右端），用 history.back() 保留列表状态。
+// 3. 顶部 PageCard 提供「返回列表」按钮（062 起统一在 extra 最右端）；当前调用方（App.tsx）
+//    传入 backToList()，内部用 replaceUrl 回列表路由——详情页不产生历史条目，
+//    浏览器后退键不会退回到已离开的详情页。
 // 4. 删除/启停等操作由 useLoopDetailActions hook 提供（044：触发/复制/导出/编辑已下线），
 //    完成后通过 onLoopChanged 通知父组件刷新 LoopListPage（loopUpdateCount 递增触发其重拉）。
 // 5. 删除按钮上提到 PageCard extra（右上角）--
@@ -11,7 +13,7 @@
 //    上报按钮所需上下文，本组件存 state 后渲染到 extra。
 // 6. 单函数 ≤ 30 行：操作回调已拆到 useLoopDetailActions。
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import { Space } from 'antd';
 import { RetweetOutlined } from '@ant-design/icons';
@@ -83,6 +85,12 @@ export function LoopDetailPage({
   const handleTitleReady = useCallback((name: string) => {
     setLoopName((prev) => (prev === name ? prev : name));
   }, []);
+
+  // 切换环路（组件不重挂载、仅 loopId prop 变化）时重置名称，
+  // 避免新环路 detail 未加载完成前标题短暂显示旧名称（与 TasksPage detailTitle 同款防御）。
+  useEffect(() => {
+    setLoopName(null);
+  }, [loopId]);
 
   // 右上角：删除按钮（044：触发/复制/导出/编辑已下线），仅 detail 加载后可见
   const extra: ReactNode = actionsReady ? (

@@ -5,8 +5,9 @@
 // 2. 内部仍复用 `TodoDetail` 组件（执行历史 / 所属环路 / 编辑等），不重写详情逻辑；
 //    App.tsx 已在 useEffect 中根据 todoDetailId 派发 SELECT_TODO 同步 state.selectedTodoId，
 //    TodoDetail 内部读 state.selectedTodoId 即可拿到当前 todoId。
-// 3. 顶部 PageCard 提供「返回列表」按钮（062 起统一在 extra 最右端），使用 history.back()
-//    让浏览器原生后退保留列表状态（搜索词 / 分页 / 选中行）。
+// 3. 顶部 PageCard 提供「返回列表」按钮（062 起统一在 extra 最右端）；当前调用方（App.tsx）
+//    传入 backToList()，内部用 replaceUrl 回列表路由——详情页不产生历史条目，
+//    浏览器后退键不会退回到已离开的详情页。
 // 4. 操作按钮（优化标题/编辑/删除）上提到 PageCard extra（右上角）--
 //    内层 hideTitleRow=true 隐藏标题行时按钮不会连带消失。TodoDetail 通过 onActionsReady
 //    上报按钮所需上下文（todo + 回调），本组件存 state 后渲染到 extra。
