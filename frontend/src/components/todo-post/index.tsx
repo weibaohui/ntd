@@ -64,10 +64,14 @@ export function TodoPostPage({
   const loadSessionRecords = async () => {
     // 捕获本次请求所属的 recordId，resolve 后与最新值比较，丢弃切换后的 stale 响应
     const id = recordId;
+    // v1 纯 workspace-scoped：execution 查询需 workspaceId。
+    // selectedWorkspace 冷启动深链（/#/todos/:id/posts/:rid）时可能尚未解析（null），
+    // 直接返回不请求；等下方 effect 依赖里的 selectedWorkspace 就绪后自动重跑补拉。
+    // 不能回退到 0——record 归属真实 ws，用 0 请求会 403 触发空态。
+    const wsId = state.selectedWorkspace;
+    if (wsId == null) return;
     setLoading(true);
     try {
-      // v1 纯 workspace-scoped：execution 查询需 workspaceId
-      const wsId = state.selectedWorkspace ?? 0;
       // 1. 获取目标记录
       const targetRecord = await db.getExecutionRecord(wsId, id);
       // 2. 如果有 session_id，拉取同 session 的所有记录
@@ -91,8 +95,11 @@ export function TodoPostPage({
   };
 
   useEffect(() => {
+    // 依赖里加入 selectedWorkspace：冷启动直达帖子页时 ws 尚未解析（null），
+    // loadSessionRecords 提前返回不请求；DataLoader 解析出 workspace 后本 effect
+    // 因依赖变化重跑，自动补拉同 session 记录，避免首帧用 ws=0 请求 403 空态。
     loadSessionRecords();
-  }, [recordId]);
+  }, [recordId, state.selectedWorkspace]);
 
   // 加载日志
   const loadLogsForRecord = async (rId: number, page: number) => {

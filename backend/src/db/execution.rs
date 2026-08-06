@@ -860,12 +860,13 @@ impl Database {
         session_id: &str,
         workspace_id: Option<i64>,
     ) -> Result<Vec<ExecutionRecord>, sea_orm::DbErr> {
-        // V1 隔离：同一 session 可能含跨 ws 记录（todo 被移过空间），按子查询过滤只留本 ws
+        // V1 隔离：同一 session 可能含跨 ws 记录，按 record 自身归属过滤只留本 ws。
+        // 用 execution_records.workspace_id（v89 新列）而非经 todos 子查询间接关联——
+        // 060 讨论执行完成会软删 carrier todo，旧子查询过滤 deleted_at 导致软删后
+        // 查不到本 session 记录（帖子页「暂无执行记录」）。record 直接归属与 todo 生命周期解耦。
         let filter = execution_records::Column::SessionId.eq(session_id);
         let filter = if let Some(wid) = workspace_id {
-            filter.and(execution_records::Column::TodoId.in_subquery(
-                workspace_todo_subquery(wid),
-            ))
+            filter.and(execution_records::Column::WorkspaceId.eq(wid))
         } else {
             filter
         };
@@ -1952,5 +1953,104 @@ mod center_aggregate_tests {
         seed_exec(&db, t2, "success", "manual").await;
         let map2 = db.get_last_webhook_trigger_for_todos(&[t2]).await.unwrap();
         assert!(!map2.contains_key(&t2), "纯手动执行不应出现在 webhook 触发 map");
+    }
+}
+
+/// get_execution_records_by_session 测试：软删 todo 的 session 记录仍应能查到（v89 归属解耦）。
+///
+/// 背景：060 讨论区执行完成会软删 carrier todo。旧实现按
+/// `todo_id IN (SELECT id FROM todos WHERE workspace_id=? AND deleted_at IS NULL)` 过滤，
+/// 软删后子查询排除该 todo → session 查询返回空 → 帖子页「暂无执行记录」。
+/// v89 给 execution_records 加了 workspace_id 列，本查询改用 record 自身归属，与 todo 生命周期解耦。
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
+mod session_query_tests {
+    use super::*;
+
+    /// 建 workspace + 归属于它的 todo + 一条带 session_id 的 execution record，
+    /// 返回 (workspace_id, todo_id, record_id)。
+    async fn seed_session_record(
+        db: &Database,
+        path: &str,
+        session_id: &str,
+    ) -> (i64, i64, i64) {
+        // 直接写 project_directories 表造 workspace，避免依赖 create_todo 等业务入口
+        let ws = db
+            .create_project_directory(path, None, false, false)
+            .await
+            .expect("create workspace");
+        // todo 归属 ws：旧实现的子查询要求 todo.workspace_id=ws 且未软删
+        db.exec(&format!(
+            "INSERT INTO todos (title, prompt, status, workspace_id) \
+             VALUES ('t-{path}', 'p', 'pending', {ws})"
+        ))
+        .await
+        .expect("insert todo");
+        let todo_row = db
+            .conn
+            .query_one(Statement::from_string(
+                sea_orm::DbBackend::Sqlite,
+                format!("SELECT id FROM todos WHERE title = 't-{path}'"),
+            ))
+            .await
+            .expect("query todo id")
+            .expect("todo exists");
+        let todo_id: i64 = todo_row.try_get_by_index(0).expect("todo id readable");
+        // record 直接归属 ws（v89 语义，与生产写入点一致）
+        db.exec(&format!(
+            "INSERT INTO execution_records (todo_id, workspace_id, session_id, status, trigger_type) \
+             VALUES ({todo_id}, {ws}, '{session_id}', 'success', 'manual')"
+        ))
+        .await
+        .expect("insert record");
+        let record_row = db
+            .conn
+            .query_one(Statement::from_string(
+                sea_orm::DbBackend::Sqlite,
+                "SELECT id FROM execution_records ORDER BY id DESC LIMIT 1".to_string(),
+            ))
+            .await
+            .expect("query record id")
+            .expect("record exists");
+        let record_id: i64 = record_row.try_get_by_index(0).expect("record id readable");
+        (ws, todo_id, record_id)
+    }
+
+    #[tokio::test]
+    async fn test_get_execution_records_by_session_returns_record_when_todo_soft_deleted() {
+        let db = Database::new(":memory:").await.expect("db must open");
+        let session = "sess-bug-1";
+        let (ws, todo_id, record_id) = seed_session_record(&db, "/tmp/ws-bug", session).await;
+        // 软删 carrier todo，模拟 060 讨论执行完成后的清理（task_post finalize 阶段）
+        db.soft_delete_todo(todo_id).await.expect("soft delete todo");
+        // 修复前：todo 被软删 → 旧子查询排除 → 返回空；修复后：按 record.workspace_id 直接命中
+        let records = db
+            .get_execution_records_by_session(session, Some(ws))
+            .await
+            .expect("query must succeed");
+        assert_eq!(records.len(), 1, "软删 todo 的 session 记录仍应查到");
+        assert_eq!(records[0].id, record_id);
+    }
+
+    #[tokio::test]
+    async fn test_get_execution_records_by_session_cross_workspace_excluded() {
+        let db = Database::new(":memory:").await.expect("db must open");
+        // 记录归属 ws_a；用另一个 ws 查同 session → V1 隔离，应返回空
+        let (_ws_a, _todo, _record) = seed_session_record(&db, "/tmp/ws-a", "sess-x").await;
+        let other_ws = db
+            .create_project_directory("/tmp/ws-other", None, false, false)
+            .await
+            .expect("create other ws");
+        let records = db
+            .get_execution_records_by_session("sess-x", Some(other_ws))
+            .await
+            .expect("query must succeed");
+        assert!(records.is_empty(), "跨 ws 不应命中（V1 隔离）");
+        // 无 workspace 过滤时（None）应能命中——session 本身不受 ws 限制
+        let all = db
+            .get_execution_records_by_session("sess-x", None)
+            .await
+            .expect("query must succeed");
+        assert_eq!(all.len(), 1, "不过滤 ws 时同 session 记录应全部返回");
     }
 }
