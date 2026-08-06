@@ -19,7 +19,7 @@ interface DiscussionTabProps {
 }
 
 export function DiscussionTab({ taskId, workspaceId, onRunningCountChange }: DiscussionTabProps) {
-  const { posts, page, total, loading, setPage, setPosts, setTotal } = useDiscussionPosts(taskId, workspaceId);
+  const { posts, page, total, runningTotal, loading, setPage, setPosts, setTotal } = useDiscussionPosts(taskId, workspaceId);
   const [sending, setSending] = useState(false);
   const [value, setValue] = useState('');
   const [replyTo, setReplyTo] = useState<{ id: number; author: string } | null>(null);
@@ -32,10 +32,10 @@ export function DiscussionTab({ taskId, workspaceId, onRunningCountChange }: Dis
   );
 
   // running 帖数量上报父组件（TaskDetailPanel 用于「讨论」Tab 角标，M4）。
-  const runningCount = posts.filter((p) => p.status === 'running').length;
+  // 用任务级 runningTotal（后端 running_total，跨页），而非当前页 posts.filter（翻页会跳变/漏算）。
   useEffect(() => {
-    onRunningCountChange?.(runningCount);
-  }, [runningCount, onRunningCountChange]);
+    onRunningCountChange?.(runningTotal);
+  }, [runningTotal, onRunningCountChange]);
 
   const handleSend = async () => {
     if (!value.trim()) return;

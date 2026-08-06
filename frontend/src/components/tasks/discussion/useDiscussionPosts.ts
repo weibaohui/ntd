@@ -21,6 +21,8 @@ export function useDiscussionPosts(taskId: number, workspaceId: number) {
   const [posts, setPosts] = useState<TaskPost[]>([]);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
+  // 任务级 running 总数（跨页，后端 running_total）：用于 Tab 角标，避免只算当前页。
+  const [runningTotal, setRunningTotal] = useState(0);
   const [loading, setLoading] = useState(false);
 
   const fetchPosts = useCallback(async () => {
@@ -29,6 +31,7 @@ export function useDiscussionPosts(taskId: number, workspaceId: number) {
       const res = await bundledApi.listTaskPosts(workspaceId, taskId, page, PAGE_SIZE);
       setPosts(res.items);
       setTotal(res.total);
+      setRunningTotal(res.running_total);
     } catch (e) {
       // Tab 切换频繁，不打扰用户（不弹 toast），但记 console 便于排查。
       console.warn('讨论帖加载失败', e);
@@ -75,5 +78,5 @@ export function useDiscussionPosts(taskId: number, workspaceId: number) {
     return () => window.removeEventListener('executionFinished', onFinished);
   }, [fetchPosts]);
 
-  return { posts, page, total, loading, setPage, setPosts, setTotal };
+  return { posts, page, total, runningTotal, loading, setPage, setPosts, setTotal };
 }

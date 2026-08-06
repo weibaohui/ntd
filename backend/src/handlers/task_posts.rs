@@ -241,11 +241,18 @@ async fn trigger_discussion_execution(
         workspace_id: Some(ws_id),
         expert_manager: Some(state.expert_manager.clone()),
     })
-    .await?;
-    // start_todo_execution 在 record_id 为 None 时已返回 Err，此处再兜底一次。
-    let record_id = result
-        .record_id
-        .ok_or_else(|| AppError::Internal("执行启动失败：未获取到执行记录 ID".to_string()))?;
+    .await;
+    // start_todo_execution 失败时软删已建的载体 todo，避免残留（review suggestion）；
+    // 成功时取 record_id（为 None 视为启动失败，同样软删）。
+    let record_id = match result {
+        Ok(r) => r
+            .record_id
+            .ok_or_else(|| AppError::Internal("执行启动失败：未获取到执行记录 ID".to_string()))?,
+        Err(e) => {
+            let _ = state.db.soft_delete_todo(todo_id).await;
+            return Err(e);
+        }
+    };
     Ok((todo_id, record_id))
 }
 
@@ -276,6 +283,11 @@ pub async fn list_posts(
         .count_main_posts(task_id)
         .await
         .map_err(AppError::from)?;
+    // 任务级 running 总数（跨页），用于 Tab 角标；与当前页分离，避免翻页时角标跳变。
+    let running_total = db
+        .count_running_posts(task_id)
+        .await
+        .map_err(AppError::from)?;
     // 当前页主楼层各自的楼中楼：一次 IN 查询批量取回，再组装挂载。
     let parent_ids: Vec<i64> = main_posts.iter().map(|p| p.id).collect();
     let replies = db
@@ -286,6 +298,7 @@ pub async fn list_posts(
     Ok(ApiResponse::ok(serde_json::json!({
         "items": items,
         "total": total,
+        "running_total": running_total,
         "page": page,
         "limit": limit,
     })))

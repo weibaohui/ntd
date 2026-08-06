@@ -595,7 +595,7 @@ export const bundledApi = {
     taskId: number,
     page = 1,
     limit = 20,
-  ): Promise<{ items: TaskPost[]; total: number; page: number; limit: number }> {
+  ): Promise<{ items: TaskPost[]; total: number; running_total: number; page: number; limit: number }> {
     // 主楼层走服务端分页，避免一次拉全量；楼中楼由后端随主楼层组装返回。
     const qs = `?page=${page}&limit=${limit}`;
     return unwrap(await api.get(`/api/v1/workspaces/${wsId}/tasks/${taskId}/posts${qs}`));

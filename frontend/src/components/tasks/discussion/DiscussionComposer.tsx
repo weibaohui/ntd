@@ -47,11 +47,15 @@ function MentionsPicker({ candidates, onPick }: MentionsPickerProps) {
       }}
     >
       {candidates.map((c) => (
-        <div
+        <button
           key={`${c.kind}:${c.name}`}
-          role="option"
+          type="button"
           onClick={() => onPick(c.name)}
-          style={{ padding: '6px 12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}
+          // 用原生 button 而非 div：键盘用户可用 Tab 聚焦、Enter/Space 激活（可访问性，CodeRabbit）。
+          style={{
+            padding: '6px 12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8,
+            border: 'none', background: 'transparent', textAlign: 'left', width: '100%',
+          }}
           onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-bg-hover, #f5f5f5)'; }}
           onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
         >
@@ -59,7 +63,7 @@ function MentionsPicker({ candidates, onPick }: MentionsPickerProps) {
             {c.kind === 'expert' ? '专家' : '执行器'}
           </Text>
           <Text>{c.display}</Text>
-        </div>
+        </button>
       ))}
     </div>
   );

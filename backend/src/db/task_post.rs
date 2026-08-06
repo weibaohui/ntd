@@ -103,6 +103,16 @@ impl Database {
             .await
     }
 
+    /// 任务级 running 帖总数（不限当前分页）：用于「讨论」Tab 角标，跨页也准（CodeRabbit）。
+    /// running 帖恒为 agent 主楼层（status=running），按 status 过滤即可。
+    pub async fn count_running_posts(&self, task_id: i64) -> Result<u64, sea_orm::DbErr> {
+        task_posts::Entity::find()
+            .filter(task_posts::Column::TaskId.eq(task_id))
+            .filter(task_posts::Column::Status.eq(STATUS_RUNNING))
+            .count(&self.conn)
+            .await
+    }
+
     /// 批量取一组主楼层的楼中楼回复（parent_post_id IN parent_ids，id ASC）。
     /// 一次 IN 查询规避逐楼层查询的 N+1；空 parent_ids 直接返回空 Vec，不发 SQL。
     pub async fn list_replies_for(
