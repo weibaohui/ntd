@@ -305,6 +305,17 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_verify_execution_belongs_to_ws_not_found() {
+        // 不存在的 record id → NotFound，与其他 verify_* 一致，不向调用方泄露存在性
+        let db = Database::new(":memory:").await.expect("db must open");
+        let ws = create_workspace(&db, "/tmp/ws-nf").await;
+        assert!(matches!(
+            verify_execution_belongs_to_ws(&db, 99999, ws).await.unwrap_err(),
+            AppError::NotFound
+        ));
+    }
+
+    #[tokio::test]
     async fn test_verify_execution_belongs_to_ws_ignores_carrier_todo_soft_delete() {
         // 复刻 060 讨论区 bug：record 直接归属 ws，其 carrier todo 在执行完成后
         // 被软删。旧实现经 todo_id 间接关联 → get_todo 过滤 deleted_at → NotFound(404)；

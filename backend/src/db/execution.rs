@@ -196,6 +196,7 @@ impl From<execution_records::Model> for ExecutionRecord {
             worktree_path: m.worktree_path,
             loop_step_execution_id: m.loop_step_execution_id,
             step_id: m.step_id,
+            // 保留持久化归属：软删/迁移 todo 后，详情授权仍可用 record 自身 ws（v89 解耦）
             workspace_id: m.workspace_id,
         }
     }
@@ -459,6 +460,7 @@ impl Database {
             source_todo_title: ActiveValue::Set(record.source_todo_title.map(|s| s.to_string())),
             loop_step_execution_id: ActiveValue::Set(record.loop_step_execution_id),
             step_id: ActiveValue::Set(record.step_id),
+            // 写入 record 直接归属：把授权链路与 todo 生命周期解耦的前提（v89 核心）
             workspace_id: ActiveValue::Set(record.workspace_id),
             ..Default::default()
         };
