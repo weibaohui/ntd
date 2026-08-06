@@ -169,11 +169,21 @@ function getInitialPostRecordId(): number | null {
 }
 
 /**
+ * 是否为帖子页 URL：path 段 `todos/:id/posts/:rid`。
+ * 帖子页返回来源（?from=task&taskId=）只在该 URL 形态下有意义，
+ * todos 列表/详情即使带 ?from= 也应忽略，避免无关 query 污染状态。
+ */
+function isTodosPostUrl(): boolean {
+  const segs = getHashPathSegments();
+  return segs[0] === 'todos' && segs[2] === 'posts';
+}
+
+/**
  * 从 query 解析帖子页返回来源。
  * `from=task&taskId=<id>` → 从任务-讨论 tab 跳入，返回时回到该任务讨论 tab；
  * 否则默认 'todo'（返回事项详情）。taskId 非法（非正数）时视为无效来源。
  */
-function parsePostBackFrom(params: URLSearchParams): { from: 'todo' | 'task'; taskId: number | null } {
+export function parsePostBackFrom(params: URLSearchParams): { from: 'todo' | 'task'; taskId: number | null } {
   if (params.get('from') !== 'task') return { from: 'todo', taskId: null };
   const raw = params.get('taskId');
   const n = Number(raw);
@@ -353,12 +363,12 @@ export function useViewState() {
   const [loopDetailId, setLoopDetailId] = useState<number | null>(getInitialLoopDetailId);
   const [taskDetailId, setTaskDetailId] = useState<number | null>(getInitialTaskDetailId);
   const [postRecordId, setPostRecordId] = useState<number | null>(getInitialPostRecordId);
-  // 帖子页返回来源：from=task 时回到对应任务讨论 tab，否则回事项详情
+  // 帖子页返回来源：仅帖子页 URL 解析 ?from=task，其他视图一律 'todo'（回事项详情）
   const [postBackFrom, setPostBackFrom] = useState<'todo' | 'task'>(
-    () => parsePostBackFrom(getHashSearchParams()).from,
+    () => (isTodosPostUrl() ? parsePostBackFrom(getHashSearchParams()).from : 'todo'),
   );
   const [postBackTaskId, setPostBackTaskId] = useState<number | null>(
-    () => parsePostBackFrom(getHashSearchParams()).taskId,
+    () => (isTodosPostUrl() ? parsePostBackFrom(getHashSearchParams()).taskId : null),
   );
   const [activeTab, setActiveTab] = useState<string | null>(getInitialTab);
   const [boardMode, setBoardMode] = useState<BoardMode>(getInitialBoardMode);
@@ -432,13 +442,15 @@ export function useViewState() {
    */
   const backToList = useCallback(() => {
     // 帖子页返回：区分来源——从任务-讨论 tab 跳入则回到该任务的讨论 tab，
-    // 否则回父事项详情（保留列表状态恢复策略）
+    // 否则回父事项详情（保留列表状态恢复策略）。
+    // 统一用 replaceUrl：与桌面端 TodoPostPage onBack 一致，避免 pushUrl 在
+    // 「帖子页 → 来源页」之间留下多余 history 条目（浏览器后退不会回到帖子页）。
     if (activeView === 'todos' && todoDetailId != null && postRecordId != null) {
       if (postBackFrom === 'task' && postBackTaskId != null) {
-        pushUrl('tasks', { id: postBackTaskId, tab: 'discussion' });
+        replaceUrl('tasks', { id: postBackTaskId, tab: 'discussion' });
         return;
       }
-      pushUrl('todos', { id: todoDetailId });
+      replaceUrl('todos', { id: todoDetailId });
       return;
     }
     // 事项/环路/任务详情返回列表
@@ -571,10 +583,12 @@ function syncFromHash(setters: {
   // todos/loops/tasks 详情 id 仅在对应 view 下提取，避免跨视图串台
   setters.setTodoDetailId(view === 'todos' ? getPathIdAt(segments, 1) : null);
   setters.setPostRecordId(view === 'todos' && segments[2] === 'posts' ? getPathIdAt(segments, 3) : null);
-  // 帖子页返回来源：仅 todos 帖子 URL 解析 ?from=task&taskId=，其他视图一律清空
+  // 帖子页返回来源：仅 todos 帖子 URL 解析 ?from=task&taskId=，
+  // 列表/详情/其他视图一律清空（回事项详情默认分支）
+  const isPost = view === 'todos' && segments[2] === 'posts';
   const postBack = parsePostBackFrom(params);
-  setters.setPostBackFrom(view === 'todos' ? postBack.from : 'todo');
-  setters.setPostBackTaskId(view === 'todos' ? postBack.taskId : null);
+  setters.setPostBackFrom(isPost ? postBack.from : 'todo');
+  setters.setPostBackTaskId(isPost ? postBack.taskId : null);
   setters.setLoopDetailId(view === 'loops' ? getPathIdAt(segments, 1) : null);
   setters.setTaskDetailId(view === 'tasks' ? getPathIdAt(segments, 1) : null);
   setters.setActiveTab(tab || null);

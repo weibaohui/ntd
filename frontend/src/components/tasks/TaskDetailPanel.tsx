@@ -134,7 +134,8 @@ export function TaskDetailPanel({
   const { dirs: projectDirs } = useProjectDirectories();
   // URL ?tab= 驱动 Tabs 选中态（对齐 Settings 页模式）：帖子页返回任务-讨论 tab 时
   // 返回 URL 带 ?tab=discussion，此处解析出 activeTab 落到对应 Tab；非法值回退「概览」。
-  const { activeTab, pushUrl } = useViewState();
+  // 切 tab 用 replaceUrl：只更新 URL 不压 history，避免浏览器后退逐个回退 tab 而非离开页面。
+  const { activeTab, replaceUrl } = useViewState();
   const resolvedTab = activeTab && (TAB_KEYS as readonly string[]).includes(activeTab)
     ? activeTab
     : 'overview';
@@ -263,7 +264,7 @@ export function TaskDetailPanel({
         <Tabs
           items={tabItems}
           activeKey={resolvedTab}
-          onChange={(key) => pushUrl('tasks', { id: task.id, tab: key })}
+          onChange={(key) => replaceUrl('tasks', { id: task.id, tab: key })}
           style={{ height: '100%' }}
           tabBarExtraContent={loopLoading ? <Spin size="small" style={{ marginRight: 16 }} /> : undefined}
         />
