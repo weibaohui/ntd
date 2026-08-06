@@ -18,6 +18,7 @@ import {
   useCallback,
 } from 'react';
 import { Modal, Form, Input, Select, message } from 'antd';
+import { generateUUID } from '@/utils/uuid';
 import { bundledApi } from '@/api/bundled';
 import { buildEmptyProcessYaml, type ProcessMetaInput } from './buildEmptyProcessYaml';
 
@@ -84,7 +85,8 @@ export function CreateProcessMetaModal({
       const meta: ProcessMetaInput = {
         name: values.name,
         // 040：新建工艺即时生成 guid 写入 YAML，作为其稳定身份
-        guid: crypto.randomUUID(),
+        // 用降级工具：secure context 走 crypto.randomUUID，IP 直连回退 getRandomValues
+        guid: generateUUID(),
         display_name: values.display_name,
         description: values.description,
         category: values.category,

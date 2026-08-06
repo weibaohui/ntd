@@ -18,7 +18,7 @@ import { yamlDump } from './processYamlValidator';
 export interface ProcessMetaInput {
   // 工艺标识名（文件名/展示用，040 起不再唯一）
   name: string;
-  // 040：稳定身份（UUID v4），随文件走；由调用方（Modal）用 crypto.randomUUID() 生成
+  // 040：稳定身份（UUID v4），随文件走；由调用方（Modal）用 generateUUID() 生成（兼容 IP 直连非 secure context）
   guid: string;
   // 列表页显示名（必填）
   display_name: string;
