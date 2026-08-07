@@ -3,17 +3,23 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { LoopDetailPage } from './LoopDetailPage';
 
 vi.mock('@/components/common/PageCard', () => ({
+  // 062：页面改为传 onBack/backLabel，mock 模拟 PageCard 在 extra 最右端渲染返回按钮的行为
   PageCard: (props: {
     icon?: React.ReactNode;
     title?: string;
-    titleSuffix?: React.ReactNode;
+    onBack?: () => void;
+    backLabel?: string;
     children?: React.ReactNode;
     style?: React.CSSProperties;
     contentStyle?: React.CSSProperties;
   }) => (
     <div data-testid="mock-page-card">
       <div data-testid="mock-page-card-title">{props.title}</div>
-      <div data-testid="mock-page-card-title-suffix">{props.titleSuffix}</div>
+      {props.onBack && (
+        <button data-testid="mock-page-card-back" onClick={props.onBack}>
+          {props.backLabel ?? '返回列表'}
+        </button>
+      )}
       {props.children}
     </div>
   ),
@@ -30,11 +36,14 @@ vi.mock('@/components/LoopStudioDetailPanel', () => ({
     onChanged: () => void;
     onOpenProcess?: (templateName: string) => void;
     onOpenTodo?: (todoId: number) => void;
+    onTitleReady?: (name: string) => void;
   }) => (
     <div data-testid="mock-loop-detail-panel">
       <div data-testid="mock-hide-title-row">{props.hideTitleRow ? 'true' : 'false'}</div>
       <button onClick={props.onDelete} data-testid="mock-delete">Delete</button>
       <button onClick={props.onToggleStatus} data-testid="mock-toggle-status">Toggle Status</button>
+      {/* 062：模拟 detail 加载完成后上报环路名称 */}
+      <button onClick={() => props.onTitleReady?.('测试环路')} data-testid="mock-title-ready">Title Ready</button>
     </div>
   ),
 }));
@@ -107,6 +116,24 @@ describe('LoopDetailPage', () => {
 
     expect(screen.getByTestId('mock-loop-detail-panel')).toBeInTheDocument();
     expect(screen.getByTestId('mock-hide-title-row')).toHaveTextContent('true');
+  });
+
+  it('updates title with loop name when onTitleReady fires', () => {
+    // 062：标题应从「环路 #id」升级为「环路 #id: 名称」
+    render(
+      <LoopDetailPage
+        loopId={456}
+        workspaceId={1}
+        tags={[]}
+        onBack={mockOnBack}
+        onOpenProcess={mockOnOpenProcess}
+        onSelectTodo={mockOnSelectTodo}
+        onLoopChanged={mockOnLoopChanged}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('mock-title-ready'));
+    expect(screen.getByTestId('mock-page-card-title')).toHaveTextContent('环路 #456: 测试环路');
   });
 
   it('passes workspaceId as null when not provided', () => {

@@ -83,22 +83,11 @@ export function WikiViewPage() {
   return (
     <PageCard
       icon={<TfiBlackboard style={{ fontSize: 18 }} />}
-      title={slug || 'Wiki'}
-      extra={
-        <button
-          onClick={handleBack}
-          style={{
-            background: 'none',
-            border: 'none',
-            cursor: 'pointer',
-            color: 'var(--color-primary, #1677ff)',
-            fontSize: 13,
-            padding: '4px 8px',
-          }}
-        >
-          ← 回到黑板
-        </button>
-      }
+      // 062：标题统一「模块名: 具体名称」格式（wiki 无数字 id）
+      title={slug ? `Wiki: ${slug}` : 'Wiki'}
+      // 062：返回按钮移交 PageCard 统一渲染；目标是黑板视图而非列表，文案用「返回」
+      onBack={handleBack}
+      backLabel="返回"
       contentStyle={{ padding: 0, overflow: 'auto' }}
     >
       <div

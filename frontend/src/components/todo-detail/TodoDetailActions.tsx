@@ -35,7 +35,8 @@ export interface TodoDetailActionsProps {
  * 抽成独立组件的目的：这套按钮在两个场景共用--
  *  1. DetailHeader：列表内嵌/移动端等「标题行可见」场景，按钮跟随标题行渲染；
  *  2. TodoDetailPage：独立路由场景，hideTitleRow=true 隐藏内层标题行后，
- *     按钮上提到外层 PageCard 的 titleSuffix 与「返回列表」并排。
+ *     按钮上提到外层 PageCard 的 extra 区（右上角），「返回列表」按钮由 PageCard
+ *     按 062 约定统一渲染在其最右端。
  * 抽组件避免两处复制按钮 JSX 与 prompt 模板。
  */
 export function TodoDetailActions({ todo, onDelete, onEdit, onTitleUpdate }: TodoDetailActionsProps) {

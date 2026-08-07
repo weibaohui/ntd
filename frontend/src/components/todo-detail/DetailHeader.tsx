@@ -9,7 +9,7 @@ import { InlineTokenStats } from './InlineTokenStats';
 import { ProgressWidget } from './ProgressWidget';
 import { formatLocalDateTime } from '@/utils/datetime';
 import { CopyButton } from '@/components/CopyButton';
-// 按钮组（优化标题/编辑/删除）抽到 TodoDetailActions，与 TodoDetailPage 的 titleSuffix 共用。
+// 按钮组（优化标题/编辑/删除）抽到 TodoDetailActions，与 TodoDetailPage 的 extra 区共用。
 import { TodoDetailActions } from './TodoDetailActions';
 import type { ExecutionSummary, ExecutionRecord } from '@/types';
 import type { Todo } from '@/types';

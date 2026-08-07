@@ -7,7 +7,6 @@ import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { Input, Button, Segmented, message } from 'antd';
 import {
   AppstoreOutlined,
-  ArrowLeftOutlined,
   LayoutOutlined,
   PlusOutlined,
   ReloadOutlined,
@@ -245,21 +244,17 @@ export function TasksPage({ workspaceId }: TasksPageProps) {
     </Button>
   );
 
-  // 详情态顶栏 titleSuffix：返回按钮，紧贴标题右侧（与 TodoDetailPage/LoopDetailPage 一致）。
+  // 详情态顶栏：返回按钮由 PageCard onBack 统一渲染在 extra 最右端（062）。
   // 列表/看板/卡片态顶栏 extra：搜索 + 时间分段 + 刷新 + 视图切换 + 新建。
   const isDetail = selectedTaskId != null;
 
-  // 返回按钮：放在 titleSuffix，与事项/环路详情页位置一致
-  const detailTitleSuffix = (
-    <Button
-      size="small"
-      type="text"
-      icon={<ArrowLeftOutlined />}
-      onClick={() => handleSelectTask(null)}
-    >
-      返回列表
-    </Button>
-  );
+  // 062：详情态动态标题「任务 #id: 标题」，标题由 TaskDetailPanel 加载后上报。
+  const [detailTitle, setDetailTitle] = useState<string | null>(null);
+
+  // 切换任务/返回列表时重置标题，避免新任务数据未加载时闪现旧任务标题。
+  useEffect(() => {
+    setDetailTitle(null);
+  }, [selectedTaskId]);
 
   // 时间分段：搜索框之后（与看板页顶栏顺序一致：搜索 → 时间分段）。
   // showAll 形态提供「全部」选项，value null 表示不过滤。
@@ -290,20 +285,26 @@ export function TasksPage({ workspaceId }: TasksPageProps) {
   }, [wsId, selectedTaskId, handleSelectTask]);
 
   // —— 渲染分发 ——
-  // 详情态：全屏 TaskDetailPanel + 返回按钮（titleSuffix）。
+  // 详情态分支整体思路（062 对齐 TaskDetailPage 独立路由页的表现）：
+  // 1. 标题回退策略：TaskDetailPanel 数据未就绪时显示「任务 #id」，就绪后经 onTitleReady
+  //    回传任务标题拼成「任务 #id: 标题」；切任务/回列表时由上方 effect 重置，避免闪现旧标题。
+  // 2. 返回按钮：走 PageCard onBack（extra 最右端统一样式），点击调 handleSelectTask(null)
+  //    用 replaceUrl 回列表路由，详情态不占历史条目。
+  // 3. 布局：PageCard 全屏（flex:1），内容区高度扣掉 43px 页头后自滚动。
   // 列表/看板/卡片态：全屏单页 PageCard，根据 viewMode 渲染对应视图。
   if (isDetail) {
     return (
       <PageCard
         icon={<RocketOutlined />}
-        title="任务详情"
-        titleSuffix={detailTitleSuffix}
+        title={detailTitle ?? `任务 #${selectedTaskId}`}
+        onBack={() => handleSelectTask(null)}
         style={{ flex: 1, height: '100%' }}
         contentStyle={{ height: 'calc(100% - 43px)', overflow: 'auto' }}
       >
         <TaskDetailPanel
           taskId={selectedTaskId!}
           workspaceId={wsId}
+          onTitleReady={(title) => setDetailTitle(`任务 #${selectedTaskId}: ${title}`)}
           onTriggered={() => setRefreshKey((k) => k + 1)}
         />
       </PageCard>

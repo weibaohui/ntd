@@ -3,12 +3,11 @@
 // 设计要点：
 // 1. URL `/#/tasks/:id`，作为任务命名空间的详情态独立挂载。
 // 2. 内部复用 `TaskDetailPanel` 组件，已合并环路详情全部内容（DAG/执行历史）。
-// 3. 顶部 PageCard 提供「返回列表」按钮 + 动态标题。
+// 3. 顶部 PageCard 提供「返回列表」按钮（062 起统一在 extra 最右端）+ 动态标题。
 // 4. workspaceId 从当前选中的 workspace 获取，与任务列表页一致。
 
 import { useState } from 'react';
-import { Button } from 'antd';
-import { ArrowLeftOutlined, OrderedListOutlined } from '@ant-design/icons';
+import { OrderedListOutlined } from '@ant-design/icons';
 import { useApp } from '@/hooks/useApp';
 import { PageCard } from '@/components/common/PageCard';
 import { TaskDetailPanel } from './TaskDetailPanel';
@@ -41,11 +40,8 @@ export function TaskDetailPage({
     <PageCard
       icon={<OrderedListOutlined />}
       title={detailTitle}
-      titleSuffix={
-        <Button size="small" type="text" icon={<ArrowLeftOutlined />} onClick={onBack}>
-          返回列表
-        </Button>
-      }
+      // 062：返回按钮移交 PageCard 统一渲染（extra 最右端）
+      onBack={onBack}
       style={{ flex: 1, height: '100%' }}
       contentStyle={{ padding: 0, display: 'flex', flexDirection: 'column', height: 'calc(100% - 43px)' }}
     >

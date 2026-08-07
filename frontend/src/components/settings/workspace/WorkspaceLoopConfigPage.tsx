@@ -1,5 +1,4 @@
-import { Button } from 'antd';
-import { ArrowLeftOutlined, SettingOutlined } from '@ant-design/icons';
+import { SettingOutlined } from '@ant-design/icons';
 import { PageCard } from '@/components/common/PageCard';
 import type { ProjectDirectory } from '@/utils/database';
 import { ReviewTemplatesPanel } from '../ReviewTemplatesPanel';
@@ -16,19 +15,11 @@ interface WorkspaceLoopConfigPageProps {
 export function WorkspaceLoopConfigPage({ workspace, onBack }: WorkspaceLoopConfigPageProps) {
   return (
     <PageCard
-      icon={
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Button
-            type="text"
-            size="small"
-            icon={<ArrowLeftOutlined />}
-            onClick={onBack}
-            style={{ marginLeft: -8 }}
-          />
-          <SettingOutlined />
-        </div>
-      }
-      title={`${workspace.name} - 环路配置`}
+      icon={<SettingOutlined />}
+      // 062：标题统一「模块名: 具体名称」格式，功能名在前、工作空间名在后
+      title={`环路配置: ${workspace.name}`}
+      // 062：返回按钮移交 PageCard 统一渲染（extra 最右端）
+      onBack={onBack}
     >
       <div className="workspace-loop-config-page">
         <ReviewTemplatesPanel workspaceId={workspace.id} />
