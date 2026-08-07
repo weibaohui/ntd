@@ -61,4 +61,21 @@ describe('PageCard', () => {
     render(<PageCard title="标题"><div>内容</div></PageCard>);
     expect(document.querySelector('.ntd-page-card-extra')).toBeNull();
   });
+
+  it('does not render extra container for falsy extra (false) without onBack', () => {
+    // 调用方传 extra={cond && <Button/>} 且 cond=false 时，与改造前 `extra && ...` 语义一致：不渲染容器
+    render(<PageCard title="标题" extra={false}><div>内容</div></PageCard>);
+    expect(document.querySelector('.ntd-page-card-extra')).toBeNull();
+  });
+
+  it('renders only back button when extra is falsy (false) but onBack is provided', () => {
+    // falsy extra 不产生 DOM，但 onBack 存在时容器仍需渲染以安放返回按钮
+    render(<PageCard title="标题" extra={false} onBack={() => {}}><div>内容</div></PageCard>);
+    const extra = document.querySelector('.ntd-page-card-extra');
+    expect(extra).not.toBeNull();
+    // 容器内唯一的可见元素是返回按钮（false 不产生任何节点）
+    const buttons = extra!.querySelectorAll('button');
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0]).toHaveTextContent('返回列表');
+  });
 });

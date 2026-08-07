@@ -11,7 +11,7 @@
 //
 // 数据依赖：开发库（18088）需存在 todo#8 / loop#8 / task#32 / execution#46(属 todo#27) /
 // wiki slug=code-quality-monitoring / 工艺 guid=4bafee67（E2E验证工艺055）。
-// 缺数据时对应用例失败，请先核对开发库。
+// 缺数据时桌面端用例整体 skip（对齐 028 spec 先例），移动端用例不依赖数据照常运行。
 
 import { test, expect, type Page } from '@playwright/test';
 
@@ -19,6 +19,40 @@ const BASE = 'http://localhost:18088';
 
 /** 等待 hash 路由生效 + 详情数据加载的统一延迟。 */
 const ROUTE_SETTLE_MS = 1500;
+
+/** 种子数据探测结果：缺失时桌面端标题断言无意义，整体跳过（beforeAll 赋值）。 */
+let seedOk = false;
+
+// 桌面端标题断言依赖固定种子数据；参考 028 spec 先例，缺失时跳过而非失败。
+// 通过 API 探测全部必需记录，任一条缺失即视为种子数据未就绪。
+test.beforeAll(async ({ request }) => {
+  try {
+    const [todosRes, loopsRes, tasksRes, execsRes, wikiRes, procRes] = await Promise.all([
+      request.get(`${BASE}/api/v1/workspaces/1/todos?page=1&limit=100`),
+      request.get(`${BASE}/api/v1/workspaces/1/loops`),
+      request.get(`${BASE}/api/v1/workspaces/1/tasks`),
+      request.get(`${BASE}/api/v1/workspaces/1/executions?page=1&limit=100`),
+      request.get(`${BASE}/api/v1/workspaces/1/wiki/files`),
+      request.get(`${BASE}/api/bundled/processes?is_system=false`),
+    ]);
+    const [todos, loops, tasks, execs, wiki, procs] = await Promise.all([
+      todosRes.json(), loopsRes.json(), tasksRes.json(), execsRes.json(), wikiRes.json(), procRes.json(),
+    ]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const d = (j: any) => j?.data;
+    seedOk =
+      d(todos)?.items?.some((t: { id: number }) => t.id === 8) === true &&
+      d(todos)?.items?.some((t: { id: number }) => t.id === 27) === true &&
+      d(loops)?.some((l: { id: number }) => l.id === 8) === true &&
+      d(tasks)?.some((t: { id: number }) => t.id === 32) === true &&
+      d(execs)?.records?.some((r: { id: number; todo_id: number }) => r.id === 46 && r.todo_id === 27) === true &&
+      d(wiki)?.some((w: { slug: string }) => w.slug === 'code-quality-monitoring') === true &&
+      d(procs)?.some((p: { guid: string }) => p.guid === '4bafee67-a3e7-4c1f-b096-5f60ec8f6c14') === true;
+  } catch {
+    // 后端未启动或接口异常：视为无种子数据，桌面端用例跳过
+    seedOk = false;
+  }
+});
 
 /**
  * 断言 PageCard 头部：返回按钮位于 extra 区最右端，且为统一的 small+text 样式。
@@ -34,6 +68,11 @@ async function expectUnifiedBackButton(page: Page, label: string) {
 }
 
 test.describe('062 页面头部返回与标题统一（桌面端）', () => {
+  // 种子数据未就绪时跳过桌面端全部用例（标题内容断言依赖固定记录）
+  test.beforeEach(() => {
+    test.skip(!seedOk, '开发库缺少 062 所需种子数据（todo#8/loop#8/task#32 等），跳过桌面端用例');
+  });
+
   test('事项详情页：标题「事项 #id: 标题」+ 返回列表在 extra 最右端', async ({ page }) => {
     await page.goto(`${BASE}/#/todos/8`);
     await page.waitForTimeout(ROUTE_SETTLE_MS);
@@ -131,5 +170,22 @@ test.describe('062 页面头部（移动端）', () => {
     await page.waitForTimeout(ROUTE_SETTLE_MS);
 
     await expect(page.locator('.mobile-header-menu-btn[aria-label="返回列表"]')).toBeVisible();
+  });
+
+  test('tasks 详情：点击 MobileHeader 返回后真正回到任务列表（CodeRabbit#7 回归）', async ({ page }) => {
+    // CodeRabbit 曾担忧：backToList 走 replaceUrl 不触发 popstate，TasksPage 内部
+    // selectedTaskId 可能残留导致卡在详情态。实际上 URL 带任务 id 时 App 渲染的是
+    // TaskDetailPage（TasksPage 已整体卸载，内部状态不存在），返回后 TasksPage 重新挂载
+    // 并从 URL 初始化为列表态。本用例点击验证该行为，防止未来路由改动破坏此前提。
+    // 注意：本用例只依赖 URL 路由态，不依赖种子数据，故不受 seedOk 门控。
+    await page.goto(`${BASE}/#/tasks/32`);
+    await page.waitForTimeout(ROUTE_SETTLE_MS);
+
+    await page.locator('.mobile-header-menu-btn[aria-label="返回列表"]').click();
+    await page.waitForTimeout(ROUTE_SETTLE_MS);
+
+    // 断言 URL 回到任务列表，且列表页 PageCard 标题「任务」可见（未卡在详情态）
+    await expect(page).toHaveURL(/\/#\/tasks$/);
+    await expect(page.locator('.ntd-page-card-title-text', { hasText: '任务' }).first()).toBeVisible();
   });
 });

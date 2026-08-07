@@ -86,11 +86,11 @@ export function LoopDetailPage({
     setLoopName((prev) => (prev === name ? prev : name));
   }, []);
 
-  // 切换环路（组件不重挂载、仅 loopId prop 变化）时重置名称，
+  // 切换环路或工作空间（组件不重挂载、仅 prop 变化）时重置名称，
   // 避免新环路 detail 未加载完成前标题短暂显示旧名称（与 TasksPage detailTitle 同款防御）。
   useEffect(() => {
     setLoopName(null);
-  }, [loopId]);
+  }, [loopId, workspaceId]);
 
   // 右上角：删除按钮（044：触发/复制/导出/编辑已下线），仅 detail 加载后可见
   const extra: ReactNode = actionsReady ? (

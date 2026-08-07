@@ -246,8 +246,9 @@ export function TodoPostPage({
   return (
     <PageCard
       icon={<InfoCircleOutlined />}
-      // 062：标题统一「事项 #id: 标题」格式，与事项详情页保持一致
-      title={todo ? `事项 #${todoId}: ${todo.title}` : `事项 #${todoId}`}
+      // 062：标题统一「事项 #id: 标题」格式，与事项详情页保持一致；
+      // 用 todo?.title 真值守卫而非 todo 对象存在性：title 为空串时回退「事项 #id」，不输出裸冒号
+      title={todo?.title ? `事项 #${todoId}: ${todo.title}` : `事项 #${todoId}`}
       // 062：返回按钮移交 PageCard 统一渲染；目标是父级详情页而非列表，文案用「返回」
       onBack={onBack}
       backLabel="返回"

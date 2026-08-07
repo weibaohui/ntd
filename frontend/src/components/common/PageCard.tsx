@@ -59,7 +59,9 @@ export function PageCard({
     </Button>
   ) : null;
   // extra 与 onBack 同时为空才不渲染右侧容器，保持无按钮页面的现状布局。
-  const headerExtra = extra != null || backButton != null ? (
+  // 用真值判断而非 != null：调用方传 extra={cond && <Button/>} 且 cond 为 false 时
+  // 不应渲染空容器（与改造前 `extra && ...` 的渲染语义保持一致）。
+  const headerExtra = extra || backButton ? (
     <div className="ntd-page-card-extra">
       {extra}
       {backButton}

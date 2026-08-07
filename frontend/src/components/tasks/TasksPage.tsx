@@ -285,7 +285,12 @@ export function TasksPage({ workspaceId }: TasksPageProps) {
   }, [wsId, selectedTaskId, handleSelectTask]);
 
   // —— 渲染分发 ——
-  // 详情态：全屏 TaskDetailPanel + 返回按钮（PageCard onBack，extra 最右端，062）。
+  // 详情态分支整体思路（062 对齐 TaskDetailPage 独立路由页的表现）：
+  // 1. 标题回退策略：TaskDetailPanel 数据未就绪时显示「任务 #id」，就绪后经 onTitleReady
+  //    回传任务标题拼成「任务 #id: 标题」；切任务/回列表时由上方 effect 重置，避免闪现旧标题。
+  // 2. 返回按钮：走 PageCard onBack（extra 最右端统一样式），点击调 handleSelectTask(null)
+  //    用 replaceUrl 回列表路由，详情态不占历史条目。
+  // 3. 布局：PageCard 全屏（flex:1），内容区高度扣掉 43px 页头后自滚动。
   // 列表/看板/卡片态：全屏单页 PageCard，根据 viewMode 渲染对应视图。
   if (isDetail) {
     return (
