@@ -19,11 +19,14 @@ const LOG_CAP = 500;
 
 interface LogsState {
   logsByTask: Record<string, LogEntry[]>;
+  // 091：每任务日志「全量条数」（Sync 时由后端 log_total 给出，WS Output 追加时同步累加）。
+  // 用于面板提示「共 N 条」——logs 因 RECONNECT_LOG_CAP/cap() 只保留最近一段，total 告知还有更多历史。
+  totalByTask: Record<string, number>;
 }
 
 type LogsAction =
-  // 重连 Sync：整体替换某任务的日志（用后端回传的最近 N 条）。
-  | { type: 'SET_TASK_LOGS'; payload: { taskId: string; logs: LogEntry[] } }
+  // 重连 Sync：整体替换某任务的日志（用后端回传的最近 N 条）；total 为后端全量条数。
+  | { type: 'SET_TASK_LOGS'; payload: { taskId: string; logs: LogEntry[]; total?: number } }
   // 批量追加：WS Output 50ms 缓冲合并后一次写入。
   | { type: 'APPEND_TASK_LOGS'; payload: { taskId: string; logs: LogEntry[] } }
   // 任务从 runningTasks 移除时同步清掉其日志，释放内存。
@@ -31,7 +34,7 @@ type LogsAction =
   // 重连 Sync 开头：清空全部任务日志（与 CLEAR_RUNNING_TASKS 配对）。
   | { type: 'CLEAR_LOGS' };
 
-const initialState: LogsState = { logsByTask: {} };
+const initialState: LogsState = { logsByTask: {}, totalByTask: {} };
 
 /** 截断到最近 LOG_CAP 条：超限只留尾部，保证「最近」语义而非「最早」。 */
 function cap(logs: LogEntry[]): LogEntry[] {
@@ -43,22 +46,31 @@ function reducer(state: LogsState, action: LogsAction): LogsState {
     case 'SET_TASK_LOGS':
       return {
         logsByTask: { ...state.logsByTask, [action.payload.taskId]: cap(action.payload.logs) },
+        // total 缺省时用 logs.length 兜底（非 Sync 路径调用方未传 total 的安全退化）。
+        totalByTask: {
+          ...state.totalByTask,
+          [action.payload.taskId]: action.payload.total ?? action.payload.logs.length,
+        },
       };
     case 'APPEND_TASK_LOGS': {
       const { taskId, logs } = action.payload;
       // 空批次直接返回原 state：reducer 必须返回同引用，避免无变化也触发消费方重渲染。
       if (logs.length === 0) return state;
       const prev = state.logsByTask[taskId] || [];
+      const prevTotal = state.totalByTask[taskId] ?? 0;
       return {
         logsByTask: { ...state.logsByTask, [taskId]: cap(prev.concat(logs)) },
+        // 实时追加的日志也计入全量条数，保持 total 与 logs 同步增长。
+        totalByTask: { ...state.totalByTask, [taskId]: prevTotal + logs.length },
       };
     }
     case 'REMOVE_TASK_LOGS': {
-      const { [action.payload]: _removed, ...rest } = state.logsByTask;
-      return { logsByTask: rest };
+      const { [action.payload]: _removed, ...restLogs } = state.logsByTask;
+      const { [action.payload]: _removedTotal, ...restTotals } = state.totalByTask;
+      return { logsByTask: restLogs, totalByTask: restTotals };
     }
     case 'CLEAR_LOGS':
-      return { logsByTask: {} };
+      return { logsByTask: {}, totalByTask: {} };
     default:
       return state;
   }
@@ -100,6 +112,17 @@ export function useTaskLogs(taskId: string | null | undefined): LogEntry[] {
   if (!state) throw new Error('useTaskLogs must be used within LogsProvider');
   if (!taskId) return EMPTY_LOGS;
   return state.logsByTask[taskId] || EMPTY_LOGS;
+}
+
+/**
+ * 选择器：取单个任务的日志全量条数（Sync 给的历史快照 + 实时追加累加）。
+ * 无该任务记录时返回 undefined（调用方据此决定是否显示「共 N 条」提示）。
+ */
+export function useTaskLogTotal(taskId: string | null | undefined): number | undefined {
+  const state = useContext(LogsStateContext);
+  if (!state) throw new Error('useTaskLogTotal must be used within LogsProvider');
+  if (!taskId) return undefined;
+  return state.totalByTask[taskId];
 }
 
 export type { LogsAction };

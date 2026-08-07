@@ -2,7 +2,8 @@
 // 数据/分页/WS 事件刷新副作用抽到 useDiscussionPosts；本组件只管输入态、发送/删除与渲染。
 
 import { useCallback, useEffect, useState } from 'react';
-import { Empty, Spin, Pagination, message } from 'antd';
+import { Empty, Spin, Pagination, message, Button } from 'antd';
+import { ReloadOutlined } from '@ant-design/icons';
 import bundledApi from '@/api/bundled';
 import { useViewState } from '@/hooks/useViewState';
 import { DiscussionComposer } from './DiscussionComposer';
@@ -19,7 +20,7 @@ interface DiscussionTabProps {
 }
 
 export function DiscussionTab({ taskId, workspaceId, onRunningCountChange }: DiscussionTabProps) {
-  const { posts, page, total, runningTotal, loading, setPage, setPosts, setTotal } = useDiscussionPosts(taskId, workspaceId);
+  const { posts, page, total, runningTotal, loading, setPage, setPosts, setTotal, refresh } = useDiscussionPosts(taskId, workspaceId);
   const [sending, setSending] = useState(false);
   const [value, setValue] = useState('');
   const [replyTo, setReplyTo] = useState<{ id: number; author: string } | null>(null);
@@ -73,6 +74,13 @@ export function DiscussionTab({ taskId, workspaceId, onRunningCountChange }: Dis
 
   return (
     <div>
+      {/* 手动刷新按钮：纯 WS 事件驱动后，断线或长延迟时用户可自行重拉当前页。
+          右对齐成一行，与帖子流解耦；loading 复用 fetchPosts 的拉取态驱动按钮转圈。 */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+        <Button size="small" icon={<ReloadOutlined />} loading={loading} onClick={() => void refresh()}>
+          刷新
+        </Button>
+      </div>
       {loading && posts.length === 0 ? (
         <Spin />
       ) : posts.length === 0 ? (

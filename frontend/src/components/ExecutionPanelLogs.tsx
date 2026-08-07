@@ -11,7 +11,8 @@
 
 import { memo, useEffect, useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { useTaskLogs } from '@/hooks/useLogsContext';
+// 091：total 选择器用于「共 N 条」截断提示——Sync 只回传最近 N 条，total 是全量条数。
+import { useTaskLogs, useTaskLogTotal } from '@/hooks/useLogsContext';
 import { LOG_TYPE_LABELS } from '@/constants';
 import type { LogEntry } from '@/types';
 
@@ -75,6 +76,9 @@ export const ExecutionPanelLogs = memo(function ExecutionPanelLogs({
   const parentRef = useRef<HTMLDivElement>(null);
   // 订阅 LogsContext 取本任务日志：仅日志变化触发重渲染，与 ExecutionPanel 执行态解耦。
   const logs = useTaskLogs(taskId);
+  // 全量条数：Sync 给的历史快照条数 + 实时追加累加。logs 因 cap()/RECONNECT_LOG_CAP
+  // 可能只保留最近一段，total > logs.length 即存在更早的截断历史，据此显示提示。
+  const total = useTaskLogTotal(taskId);
 
   const virtualizer = useVirtualizer({
     count: logs.length,
@@ -102,38 +106,51 @@ export const ExecutionPanelLogs = memo(function ExecutionPanelLogs({
   }
 
   const items = virtualizer.getVirtualItems();
+  // 仅当存在截断（全量条数 > 当前展示条数）时才提示，正常执行（未触顶）不显示，避免噪声。
+  const showTruncationHint = total != null && total > logs.length;
 
   return (
-    <div className="execution-panel-logs" ref={parentRef}>
-      {/* 撑开滚动高度的相对定位容器：虚拟行绝对定位其内，由 translateY 定位到 vi.start。 */}
-      <div style={{ height: virtualizer.getTotalSize(), position: 'relative', width: '100%' }}>
-        {items.map(vi => {
-          const log = logs[vi.index];
-          return (
-            <div
-              key={vi.key}
-              // data-index 让 measureElement 回调知道测量的是哪一行，回填精确偏移。
-              data-index={vi.index}
-              ref={virtualizer.measureElement}
-              style={{
-                position: 'absolute',
-                top: 0,
-                left: 0,
-                width: '100%',
-                transform: `translateY(${vi.start}px)`,
-              }}
-            >
-              <LogRow log={log} color={logTypeColors[log.type] || '#cbd5e1'} />
-            </div>
-          );
-        })}
-      </div>
-      {/* 终态结果块：放在虚拟容器之后的正常流，随滚动自然出现在所有日志行末尾。 */}
-      {status === 'finished' && result && (
-        <div className={`log-result ${success ? 'log-result-success' : 'log-result-error'}`}>
-          {result}
+    // 外层 wrap 纵向排「截断提示条 + 滚动容器」。提示条必须在滚动容器之外：
+    // 若放进 .execution-panel-logs，会把虚拟列表的 spacer 下推 H 像素，破坏 translateY 偏移基准，
+    // 导致 scrollToIndex 到底时少滚 H 像素（最后一行被裁切）。两者彻底分离即无此问题。
+    <div className="execution-panel-logs-wrap">
+      {showTruncationHint && (
+        <div className="execution-panel-log-hint">
+          {/* 告知用户：Sync 只回传最近一段，更早的历史需去执行详情页（已有分页）查看。 */}
+          共 {total} 条 · 仅显示最近 {logs.length} 条，完整记录见执行详情
         </div>
       )}
+      <div className="execution-panel-logs" ref={parentRef}>
+        {/* 撑开滚动高度的相对定位容器：虚拟行绝对定位其内，由 translateY 定位到 vi.start。 */}
+        <div style={{ height: virtualizer.getTotalSize(), position: 'relative', width: '100%' }}>
+          {items.map(vi => {
+            const log = logs[vi.index];
+            return (
+              <div
+                key={vi.key}
+                // data-index 让 measureElement 回调知道测量的是哪一行，回填精确偏移。
+                data-index={vi.index}
+                ref={virtualizer.measureElement}
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  transform: `translateY(${vi.start}px)`,
+                }}
+              >
+                <LogRow log={log} color={logTypeColors[log.type] || '#cbd5e1'} />
+              </div>
+            );
+          })}
+        </div>
+        {/* 终态结果块：放在虚拟容器之后的正常流，随滚动自然出现在所有日志行末尾。 */}
+        {status === 'finished' && result && (
+          <div className={`log-result ${success ? 'log-result-success' : 'log-result-error'}`}>
+            {result}
+          </div>
+        )}
+      </div>
     </div>
   );
 });

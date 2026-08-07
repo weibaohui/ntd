@@ -225,6 +225,12 @@ pub async fn events_handler(State(state): State<AppState>, ws: WebSocketUpgrade)
             if let Some(json) = serialized.get(&task.task_id) {
                 task.logs = json.clone();
             }
+            // 091：log_total 用 logs_map 的「全量」条数（logs_map 未被 RECONNECT_LOG_CAP 截断），
+            // 告知前端「还有更多历史」——前端只收到最近 N 条，但能据此提示「共 M 条」，
+            // 完整历史走执行记录详情页分页。无对应 record（DB 查询降级）时记 0。
+            if let Some(record) = record_map.get(&task.task_id) {
+                task.log_total = logs_map.get(&record.id).map(|v| v.len() as i64).unwrap_or(0);
+            }
         }
         let sync_event = ExecEvent::Sync { tasks: running_tasks };
         let sync_json = serde_json::to_string(&sync_event).unwrap_or_default();

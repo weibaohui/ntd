@@ -209,6 +209,8 @@ pub(crate) async fn register_websocket_task_info(
             executor: executor_spawn.executor_type().to_string(),
             // 初始为空，WebSocket 同步时会从数据库获取实际日志。
             logs: "[]".to_string(),
+            // 初始 0：Sync 时 events_handler 用 DB 全量日志条数覆盖为真实 total。
+            log_total: 0,
         })
         .await;
 }

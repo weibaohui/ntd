@@ -24,6 +24,10 @@ pub struct TaskInfo {
     pub executor: String,
     /// 执行记录的日志（JSON 字符串）
     pub logs: String,
+    /// 该任务执行日志的全量条数（091：Sync 只回传最近 N 条，
+    /// 用 total 告知前端「还有更多历史」，完整历史走执行记录详情页分页）。
+    /// register 时为 0，WS Sync 时由 events_handler 用 DB 全量日志条数覆盖。
+    pub log_total: i64,
 }
 
 /// 任务管理器：维护当前正在运行的 task 列表，支持取消信号与状态同步。
@@ -250,6 +254,7 @@ mod tests {
             todo_title: "Test Task".to_string(),
             executor: "claudecode".to_string(),
             logs: "[]".to_string(),
+            log_total: 0,
         })
         .await;
 

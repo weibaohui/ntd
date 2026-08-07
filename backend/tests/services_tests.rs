@@ -303,6 +303,7 @@ mod feishu_push_service_tests {
                     todo_title: "Test".to_string(),
                     executor: "kimi".to_string(),
                     logs: "[]".to_string(),
+                    log_total: 0,
                 }
             ],
         };

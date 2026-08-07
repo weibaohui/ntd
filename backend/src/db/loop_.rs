@@ -2450,6 +2450,73 @@ mod loop_approval_tests {
         row.try_get_by::<i64, _>("m").unwrap_or(0)
     }
 
+    /// list_loop_step_executions_by_exec_ids：按 loop_execution_id 批量取环节执行并分组，
+    /// 组内按 sequence_index 升序；未挂环节执行的 exec 不出现；空入参返空（091 批量化新增）。
+    #[tokio::test]
+    async fn test_list_loop_step_executions_by_exec_ids_groups_and_orders() {
+        let db = fresh_db().await;
+        db.exec("INSERT INTO todos (title, prompt, status) VALUES ('t','p','pending')")
+            .await
+            .expect("insert todo");
+        let todo_id = max_id(&db, "todos").await;
+        db.exec("INSERT INTO loops (name) VALUES ('L')").await.expect("insert loop");
+        let loop_id = max_id(&db, "loops").await;
+        // 两个 loop_execution：le1 挂环节执行，le2 不挂（验证未命中不出现在 map）。
+        db.exec(&format!(
+            "INSERT INTO loop_executions (loop_id, trigger_type, status, started_at) \
+             VALUES ({loop_id}, 'manual', 'running', datetime('now'))"
+        ))
+        .await
+        .expect("insert le1");
+        let le1 = max_id(&db, "loop_executions").await;
+        db.exec(&format!(
+            "INSERT INTO loop_executions (loop_id, trigger_type, status, started_at) \
+             VALUES ({loop_id}, 'manual', 'success', datetime('now'))"
+        ))
+        .await
+        .expect("insert le2");
+        let le2 = max_id(&db, "loop_executions").await;
+        // 两个真实 loop_step（取自增 id 作 step_id，避免 FK 悬空）。
+        db.exec(&format!(
+            "INSERT INTO loop_steps (loop_id, name, todo_id, enabled) VALUES ({loop_id}, 'a', {todo_id}, 1)"
+        ))
+        .await
+        .expect("insert step a");
+        let step_a = max_id(&db, "loop_steps").await;
+        db.exec(&format!(
+            "INSERT INTO loop_steps (loop_id, name, todo_id, enabled) VALUES ({loop_id}, 'b', {todo_id}, 1)"
+        ))
+        .await
+        .expect("insert step b");
+        let step_b = max_id(&db, "loop_steps").await;
+        // le1 两条 step_execution：故意先插 seq=2 再插 seq=1，验证返回按 seq 升序（非插入序）。
+        db.exec(&format!(
+            "INSERT INTO loop_step_executions (loop_execution_id, step_id, todo_id, sequence_index, status) \
+             VALUES ({le1}, {step_a}, {todo_id}, 2, 'success')"
+        ))
+        .await
+        .expect("insert se seq=2");
+        db.exec(&format!(
+            "INSERT INTO loop_step_executions (loop_execution_id, step_id, todo_id, sequence_index, status) \
+             VALUES ({le1}, {step_b}, {todo_id}, 1, 'success')"
+        ))
+        .await
+        .expect("insert se seq=1");
+        let map = db
+            .list_loop_step_executions_by_exec_ids(&[le1, le2, 9999])
+            .await
+            .unwrap();
+        let le1_rows = map.get(&le1).expect("le1 应有环节执行");
+        assert_eq!(le1_rows.len(), 2, "le1 应有两条环节执行");
+        assert_eq!(le1_rows[0].sequence_index, 1, "组内按 sequence_index 升序");
+        assert_eq!(le1_rows[1].sequence_index, 2);
+        assert!(!map.contains_key(&le2), "le2 无环节执行不应出现");
+        assert!(
+            db.list_loop_step_executions_by_exec_ids(&[]).await.unwrap().is_empty(),
+            "空入参应返回空 map"
+        );
+    }
+
     /// 造一条 pending_approval 的环节执行记录（含 todo/loop/step/execution 四级外键），
     /// 返回 (loop_execution_id, step_execution_id)。
     async fn seed_pending_step_execution(db: &Database) -> (i64, i64) {

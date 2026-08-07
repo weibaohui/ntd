@@ -1879,6 +1879,30 @@ code {
   color: var(--color-text);
 }
 
+.execution-panel-logs-wrap {
+  /* 作为 .execution-panel 的 flex 子项占满剩余空间；内部纵向排「截断提示条 + 滚动容器」。
+     min-height:0 是关键：flex 子项默认 min-height:auto 会阻止内部滚动容器收缩到内容以下，
+     导致长日志撑爆面板高度而非出滚动条。 */
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.execution-panel-log-hint {
+  /* 截断提示条：单行、不收缩，把动态滚动区与提示条在文档流上彻底分开，
+     使虚拟列表的偏移测算只受滚动容器内部 spacer 影响。 */
+  flex-shrink: 0;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-family: var(--font-base);
+  color: var(--log-text-muted);
+  background: var(--color-bg);
+  border-bottom: 1px solid var(--color-border-light);
+  text-align: right;
+  user-select: none;
+}
+
 .execution-panel-logs {
   flex: 1;
   overflow-y: auto;

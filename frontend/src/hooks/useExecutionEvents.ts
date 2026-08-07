@@ -49,6 +49,8 @@ interface ExecEventSync {
     todo_title: string;
     executor: string;
     logs: string;
+    // 091：该任务执行日志的全量条数（logs 只含最近 RECONNECT_LOG_CAP 条）。
+    log_total: number;
   }>;
 }
 
@@ -202,8 +204,9 @@ function connectShared(dispatch: ReturnType<typeof useApp>['dispatch']) {
             cancelRemoveTimer(task.task_id);
             // 091：RunningTask 不再携带 logs 字段（已迁至 LogsContext）。
             dispatch({ type: 'ADD_RUNNING_TASK', payload: { taskId: task.task_id, todoId: task.todo_id, todoTitle: task.todo_title, executor: task.executor || 'claudecode', status: 'running', startedAt: new Date().toISOString() } });
-            // 091：日志整体替换走 SET_TASK_LOGS，与执行态 reducer 完全隔离。
-            dispatch({ type: 'SET_TASK_LOGS', payload: { taskId: task.task_id, logs: parsedLogs } });
+            // 091：日志整体替换走 SET_TASK_LOGS，与执行态 reducer 完全隔离；
+            // 带上 log_total（全量条数）供面板提示「共 N 条」，logs 只含最近 N 条。
+            dispatch({ type: 'SET_TASK_LOGS', payload: { taskId: task.task_id, logs: parsedLogs, total: task.log_total } });
           });
           // 056：全局 todos 桶已删除，列表页改从服务端拉取——Sync 到达即通知列表刷新
           dispatchListRefreshDebounced();

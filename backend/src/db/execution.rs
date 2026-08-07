@@ -1838,6 +1838,51 @@ mod center_aggregate_tests {
         .expect("insert exec");
     }
 
+    /// get_execution_records_by_ids：按 id 批量取执行记录并按 id 索引；
+    /// 不存在的 id 不出现，空入参返空 map（091 批量化新增，消除逐 id 查询的 N+1）。
+    #[tokio::test]
+    async fn test_get_execution_records_by_ids_batch_indexes_by_id() {
+        let db = fresh_db().await;
+        let t = seed_todo(&db, "T").await;
+        seed_exec(&db, t, "success", "manual").await; // id=1
+        seed_exec(&db, t, "failed", "manual").await; // id=2
+        // 入参故意乱序并夹一个不存在的 id=9999，验证只返回真实存在的记录。
+        let map = db.get_execution_records_by_ids(&[2, 1, 9999]).await.unwrap();
+        assert_eq!(map.len(), 2, "只返回存在的 id");
+        assert!(map.contains_key(&1) && map.contains_key(&2), "存在的 id 都应入 map");
+        assert!(!map.contains_key(&9999), "不存在的 id 不应出现");
+        assert!(
+            db.get_execution_records_by_ids(&[]).await.unwrap().is_empty(),
+            "空入参应返回空 map"
+        );
+    }
+
+    /// find_review_record_id_by_source_batch：批量反查每个 source 的最新评审 record（id 最大）；
+    /// 同一 source 多条只取最新，未引用的 source 不出现，空入参返空（091 批量化新增）。
+    #[tokio::test]
+    async fn test_find_review_record_id_by_source_batch_picks_latest() {
+        let db = fresh_db().await;
+        let t = seed_todo(&db, "T").await;
+        seed_exec(&db, t, "success", "manual").await; // id=1：被评审的原记录
+        // 同一 source=1 两条评审 record（id=2、3），batch 应取 id 最大者（最新一次返工）。
+        for _ in 0..2 {
+            db.exec(
+                "INSERT INTO execution_records (todo_id, status, trigger_type, started_at, \
+                 source_execution_record_id) \
+                 VALUES (1, 'success', 'auto_review', '2026-07-08T09:00:00Z', 1)",
+            )
+            .await
+            .expect("insert review record");
+        }
+        let map = db.find_review_record_id_by_source_batch(&[1, 9999]).await.unwrap();
+        assert_eq!(map.get(&1).copied(), Some(3), "同一 source 取 id 最大（最新）的评审 record");
+        assert!(!map.contains_key(&9999), "未引用的 source 不应出现");
+        assert!(
+            db.find_review_record_id_by_source_batch(&[]).await.unwrap().is_empty(),
+            "空入参应返回空 map"
+        );
+    }
+
     /// get_latest_execution_summaries_for_todos：批量取每个 todo 最近一条执行记录摘要。
     #[tokio::test]
     async fn test_get_latest_execution_summaries_for_todos_batch() {

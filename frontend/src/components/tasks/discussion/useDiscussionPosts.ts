@@ -89,5 +89,6 @@ export function useDiscussionPosts(taskId: number, workspaceId: number) {
     return () => window.removeEventListener('executionFinished', onFinished);
   }, [fetchPosts]);
 
-  return { posts, page, total, runningTotal, loading, setPage, setPosts, setTotal };
+  // refresh 供「手动刷新」按钮调用：纯事件驱动后，用户等不及或 WS 长时间无响应时可自行重拉当前页。
+  return { posts, page, total, runningTotal, loading, setPage, setPosts, setTotal, refresh: fetchPosts };
 }

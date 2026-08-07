@@ -4,7 +4,8 @@
 // 在本目录内自用，不再从此 index 重新导出；外部 caller 走 RunningBoard.tsx。
 
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
-import { Tabs, Skeleton, Card } from 'antd';
+import { Tabs, Skeleton, Card, Button } from 'antd';
+import { ReloadOutlined } from '@ant-design/icons';
 import { useApp } from '@/hooks/useApp';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { useViewState } from '@/hooks/useViewState';
@@ -242,6 +243,18 @@ export function RunningBoard({ searchText, hours }: RunningBoardProps = {}) {
         <span className="running-stat-item" style={{ color: 'var(--color-text-secondary)' }}>
           共 <strong>{stats.total}</strong> 条
         </span>
+        {/* 手动刷新：纯 WS 事件驱动后，断线或长时间无响应时用户可自行重拉。
+            marginLeft:auto 把按钮推到统计栏最右；loading 复用 useRunningBoard 的拉取态驱动转圈。 */}
+        <Button
+          type="text"
+          size="small"
+          icon={<ReloadOutlined />}
+          loading={loading}
+          onClick={() => void refresh()}
+          style={{ marginLeft: 'auto', flexShrink: 0 }}
+        >
+          刷新
+        </Button>
       </div>
 
       {/* Desktop: 6 columns */}
