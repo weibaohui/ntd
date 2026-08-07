@@ -1,4 +1,4 @@
-//! 合并版最终 schema（v1-v87 全部应用后的状态），供全新库一次性建表（bootstrap）。
+//! 合并版最终 schema（v1-v90 全部应用后的状态），供全新库一次性建表（bootstrap）。
 //! 自动生成：全新库跑完增量迁移后 dump sqlite_master。
 //! 改动任何迁移后需重新生成：`cargo test --test dbg_gen_schema -- --ignored`
 
@@ -575,4 +575,18 @@ pub const CONSOLIDATED_SCHEMA: &[&str] = &[
     r#"CREATE INDEX idx_usage_executor_daily_stats_executor ON usage_executor_daily_stats(executor)"#,
     r#"CREATE INDEX idx_usage_model_breakdowns_daily_stat_id ON usage_model_breakdowns(daily_stat_id)"#,
     r#"CREATE UNIQUE INDEX uk_process_templates_guid ON process_templates(guid)"#,
+    // —— V90 性能索引（091 性能优化）：服务高频读路径，SQL 不带 IF NOT EXISTS，
+    // 与增量迁移 V90 的 `CREATE INDEX IF NOT EXISTS ...` 经 SQLite 规范化后一致。
+    r#"CREATE INDEX idx_execution_records_workspace_id ON execution_records(workspace_id)"#,
+    r#"CREATE INDEX idx_feishu_messages_bot_chat ON feishu_messages(bot_id, chat_id, created_at DESC)"#,
+    r#"CREATE INDEX idx_loop_executions_task_id ON loop_executions(task_id)"#,
+    r#"CREATE INDEX idx_loop_step_executions_loop_exec ON loop_step_executions(loop_execution_id, sequence_index)"#,
+    r#"CREATE INDEX idx_loop_steps_todo_id ON loop_steps(todo_id)"#,
+    r#"CREATE INDEX idx_loops_process_template_id ON loops(process_template_id)"#,
+    r#"CREATE INDEX idx_loops_workspace_id ON loops(workspace_id)"#,
+    r#"CREATE INDEX idx_skill_invocations_invoked_at ON skill_invocations(invoked_at)"#,
+    r#"CREATE INDEX idx_task_posts_source_execution_id ON task_posts(source_execution_id)"#,
+    r#"CREATE INDEX idx_task_posts_task_parent ON task_posts(task_id, parent_post_id, id)"#,
+    r#"CREATE INDEX idx_tasks_workspace_id ON tasks(workspace_id)"#,
+    r#"CREATE INDEX idx_todos_workspace_id ON todos(workspace_id)"#,
 ];

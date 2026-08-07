@@ -129,6 +129,29 @@ impl Database {
             .all(&self.conn)
             .await
     }
+
+    /// 批量取多个 step_execution 的门禁，按 loop_step_execution_id 分组返回。
+    /// 执行历史批量 enrich 门禁摘要时调用，一次 IN 查询消除逐 step 的 N+1（091 性能优化）。
+    /// 每组内按 id 升序，与单条版 `list_loop_step_execution_gates` 口径一致。
+    pub async fn list_loop_step_execution_gates_by_step_ids(
+        &self,
+        loop_step_execution_ids: &[i64],
+    ) -> Result<std::collections::HashMap<i64, Vec<loop_step_execution_gates::Model>>, sea_orm::DbErr> {
+        use std::collections::HashMap;
+        if loop_step_execution_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let rows = loop_step_execution_gates::Entity::find()
+            .filter(loop_step_execution_gates::Column::LoopStepExecutionId.is_in(loop_step_execution_ids.to_vec()))
+            .order_by_asc(loop_step_execution_gates::Column::Id)
+            .all(&self.conn)
+            .await?;
+        let mut map: HashMap<i64, Vec<_>> = HashMap::new();
+        for row in rows {
+            map.entry(row.loop_step_execution_id).or_default().push(row);
+        }
+        Ok(map)
+    }
 }
 
 #[cfg(test)]

@@ -443,18 +443,25 @@ pub async fn batch_delete_todos(
     if req.ids.is_empty() {
         return Ok(ApiResponse::ok(serde_json::json!({"deleted": 0})));
     }
-    let mut deleted = 0u64;
+    // 一次批量查所有 id 的引用计数（替代逐 id 查询，消除 N+1，091 性能优化）。
+    let ref_counts = state.db.count_loop_steps_by_todos(&req.ids).await?;
+    // 按引用计数拆分：被 loop_steps 引用的阻止删除并上报原因，其余进入批量软删。
+    let mut deletable: Vec<i64> = Vec::new();
     let mut errors: Vec<(i64, String)> = Vec::new();
     for id in &req.ids {
-        // 引用校验：被 loop_steps 引用的 todo 不允许直接删除
-        let loop_ref_count = state.db.count_loop_steps_by_todo(*id).await?;
-        if loop_ref_count > 0 {
-            errors.push((*id, format!("被 {loop_ref_count} 个 Loop 环节引用")));
-            continue;
+        let cnt = ref_counts.get(id).copied().unwrap_or(0);
+        if cnt > 0 {
+            errors.push((*id, format!("被 {cnt} 个 Loop 环节引用")));
+        } else {
+            deletable.push(*id);
         }
-        state.db.delete_todo(*id).await.map_err(AppError::from)?;
-        deleted += 1;
     }
+    // 复用现有批量软删 DAO：一条 UPDATE ... WHERE id IN (...) 完成全部软删，替代逐 id 删除。
+    let deleted = if deletable.is_empty() {
+        0u64
+    } else {
+        state.db.batch_delete_todos(&deletable).await.map_err(AppError::from)?
+    };
     Ok(ApiResponse::ok(serde_json::json!({
         "deleted": deleted,
         "errors": errors,

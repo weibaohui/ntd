@@ -51,6 +51,8 @@ mod v87;
 mod v88;
 /// v89：execution_records 新增 workspace_id 列（BUG：讨论区执行明细完成后 404）。
 mod v89;
+/// v90：为高频读路径补建性能索引（091 性能优化）。
+mod v90;
 
 pub use v2_v5::read_applied_versions;
 pub use v2_v5::drop_column_if_exists;
@@ -174,6 +176,8 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         // V89 在 V88 之后：execution_records 新增 workspace_id 列——record 直接归属 workspace，
         // 消除经 carrier todo 间接关联导致讨论区执行明细完成后 404 的 bug。
         Box::new(v89::V89AddExecutionRecordsWorkspaceId),
+        // V90 在 V89 之后：为高频读路径补建性能索引（091 性能优化）。
+        Box::new(v90::V90AddPerformanceIndexes),
     ]
 }
 

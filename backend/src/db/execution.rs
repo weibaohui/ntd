@@ -318,6 +318,28 @@ impl Database {
         Ok(m.map(Into::into))
     }
 
+    /// 批量按 id 取 execution_record（含 usage），按 id 分组返回。
+    /// 执行历史列表批量 enrich token 用量时调用，一次 IN 查询消除逐 step 的 N+1（091 性能优化）。
+    pub async fn get_execution_records_by_ids(
+        &self,
+        ids: &[i64],
+    ) -> Result<std::collections::HashMap<i64, ExecutionRecord>, sea_orm::DbErr> {
+        use std::collections::HashMap;
+        if ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let rows = execution_records::Entity::find()
+            .filter(execution_records::Column::Id.is_in(ids.to_vec()))
+            .all(&self.conn)
+            .await?;
+        // Entity Model 转 domain ExecutionRecord（含 usage 反序列化），按 id 索引。
+        let map: HashMap<i64, ExecutionRecord> = rows
+            .into_iter()
+            .map(|m| (m.id, m.into()))
+            .collect();
+        Ok(map)
+    }
+
     /// 获取指定 todo 的最新一条执行记录（按 id 降序）。
     ///
     /// 用于黑板 debouncer：从 pending 队列取出 todo_id 后查其最新执行结论。
@@ -1608,6 +1630,32 @@ impl Database {
             .one(&self.conn)
             .await?;
         Ok(row.map(|m| m.id))
+    }
+
+    /// 批量反查评审 record：给定一批「原 step 的 execution_record_id」，找每个对应的最新评审实例 id。
+    /// 单次 IN 查询（按 id 倒序）+ Rust 端按 source 取首条，消除逐 step 的 N+1（091 性能优化）。
+    /// 返回 `source_record_id -> 评审 record id`；无评审的 source 不出现在 map 中（调用方视作 None）。
+    pub async fn find_review_record_id_by_source_batch(
+        &self,
+        source_record_ids: &[i64],
+    ) -> Result<std::collections::HashMap<i64, i64>, sea_orm::DbErr> {
+        use std::collections::HashMap;
+        if source_record_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let rows = execution_records::Entity::find()
+            .filter(execution_records::Column::SourceExecutionRecordId.is_in(source_record_ids.to_vec()))
+            .order_by_desc(execution_records::Column::Id)
+            .all(&self.conn)
+            .await?;
+        let mut latest: HashMap<i64, i64> = HashMap::new();
+        for row in rows {
+            // 倒序遍历：首个出现的 source 即其最新评审 record（id 最大），后续同 source 跳过。
+            if let Some(src) = row.source_execution_record_id {
+                latest.entry(src).or_insert(row.id);
+            }
+        }
+        Ok(latest)
     }
 }
 

@@ -711,50 +711,49 @@ impl UsageStatsService {
 
     /// Save aggregated stats to database
     pub async fn save_daily_stats(&self, stats: &[UsageStat], breakdowns: &[ModelBreakdown]) -> Result<(), String> {
+        // 预先按日期把 breakdown 分桶，避免内层每个 stat 都 filter 全量 breakdowns（O(D·M)→O(M)）。
+        let mut bds_by_date: HashMap<&str, Vec<crate::db::ModelBreakdownRow>> = HashMap::new();
+        for bd in breakdowns {
+            bds_by_date
+                .entry(bd.date.as_str())
+                .or_default()
+                .push(crate::db::ModelBreakdownRow {
+                    model_name: bd.model_name.clone(),
+                    input_tokens: bd.input_tokens,
+                    output_tokens: bd.output_tokens,
+                    cache_creation_tokens: bd.cache_creation_tokens,
+                    cache_read_tokens: bd.cache_read_tokens,
+                    extra_total_tokens: bd.extra_total_tokens,
+                    cost: bd.cost,
+                });
+        }
+
         for stat in stats {
-            // Check if we already have this date's stats
-            let existing = self.db.get_latest_usage_stat(&stat.date, "daily").await
+            // 取该日期下的 breakdown；空切片也合法（事务方法内部跳过批量插入）。
+            let empty: Vec<crate::db::ModelBreakdownRow> = vec![];
+            let rows = bds_by_date.get(stat.date.as_str()).unwrap_or(&empty);
+
+            // 单事务完成「删旧 → 写 daily → 批量写 breakdown」，把 N 次 INSERT 压成 1 次，
+            // 并消除原先先 SELECT 判存在的往返（091 性能优化）。
+            self.db
+                .replace_daily_stats_for_date(
+                    &stat.date,
+                    stat.project.as_deref(),
+                    stat.input_tokens,
+                    stat.output_tokens,
+                    stat.cache_creation_tokens,
+                    stat.cache_read_tokens,
+                    stat.extra_total_tokens,
+                    stat.total_cost,
+                    stat.credits,
+                    stat.message_count,
+                    &stat.models_used,
+                    stat.project.as_deref(),
+                    stat.last_activity.as_deref(),
+                    rows,
+                )
+                .await
                 .map_err(|e| e.to_string())?;
-
-            if existing.is_some() {
-                // Delete and re-insert (update)
-                self.db.delete_usage_stats_by_date(&stat.date, "daily").await
-                    .map_err(|e| e.to_string())?;
-            }
-
-            // Insert new stats
-            let stat_id = self.db.create_usage_daily_stat(
-                &stat.date,
-                stat.project.as_deref(),
-                None,
-                stat.input_tokens,
-                stat.output_tokens,
-                stat.cache_creation_tokens,
-                stat.cache_read_tokens,
-                stat.extra_total_tokens,
-                stat.total_cost,
-                stat.credits,
-                stat.message_count,
-                &stat.models_used,
-                stat.project.as_deref(),
-                None,
-                stat.last_activity.as_deref(),
-                "daily",
-            ).await.map_err(|e| e.to_string())?;
-
-            // Insert model breakdowns for this date
-            for bd in breakdowns.iter().filter(|b| b.date == stat.date) {
-                self.db.create_usage_model_breakdown(
-                    stat_id,
-                    &bd.model_name,
-                    bd.input_tokens,
-                    bd.output_tokens,
-                    bd.cache_creation_tokens,
-                    bd.cache_read_tokens,
-                    bd.extra_total_tokens,
-                    bd.cost,
-                ).await.map_err(|e| e.to_string())?;
-            }
         }
 
         Ok(())

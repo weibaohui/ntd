@@ -78,29 +78,6 @@ pub async fn create_task(
     }
 }
 
-/// 单任务最近一次执行的状态与需求文本（列表「最近执行」列用）。
-///
-/// loop_executions 是执行流水，按 started_at 倒序取第一行即为最近一次；
-/// trigger_meta 内嵌需求文本，解析失败或缺省时两个字段均返回 None（展示层已有兜底）。
-async fn fetch_latest_execution(
-    state: &AppState,
-    task_id: i64,
-) -> (Option<String>, Option<String>) {
-    use sea_orm::{ConnectionTrait, DbBackend, Statement};
-    let sql = format!(
-        "SELECT le.status, le.trigger_meta FROM loop_executions le \
-         WHERE le.task_id={task_id} ORDER BY le.started_at DESC LIMIT 1"
-    );
-    let rows = state.db.conn.query_all(Statement::from_string(DbBackend::Sqlite, sql)).await.ok();
-    rows.and_then(|rows| rows.first().map(|r| {
-        let status = r.try_get_by::<Option<String>, _>("status").ok().flatten();
-        let requirement = r.try_get_by::<Option<String>, _>("trigger_meta").ok().flatten()
-            .and_then(|meta| serde_json::from_str::<serde_json::Value>(&meta).ok())
-            .and_then(|v| v.get("requirement").and_then(|r| r.as_str().map(|s| s.to_string())));
-        (status, requirement)
-    })).unwrap_or((None, None))
-}
-
 /// 组装单条任务列表项。
 ///
 /// template 来自批量取回的工艺模板（名称 / 复杂度 / 回退版本），version 已由调用方
@@ -158,6 +135,9 @@ pub async fn list_tasks(
     let loops_by_id: HashMap<i64, &loops::Model> =
         loops.iter().map(|l| (l.id, l)).collect();
 
+    // 一次批量取所有 task 的最近一次执行（status + trigger_meta），消除逐 task 的 N+1（091 性能优化）。
+    let task_ids: Vec<i64> = tasks.iter().map(|t| t.id).collect();
+    let latest_by_task = state.db.get_latest_execution_by_task_ids(&task_ids).await?;
     let mut items = Vec::with_capacity(tasks.len());
     for t in tasks {
         let template = t.template_id.and_then(|tid| templates_by_id.get(&tid).copied());
@@ -166,8 +146,13 @@ pub async fn list_tasks(
             .and_then(|lid| loops_by_id.get(&lid))
             .and_then(|l| l.process_template_version.clone())
             .or_else(|| template.map(|p| p.version.clone()));
-        let latest = fetch_latest_execution(&state, t.id).await;
-        items.push(build_task_item(t, template, version, latest));
+        // 从批量结果取该 task 的最近执行：status 直接取；requirement 从 trigger_meta JSON 解析。
+        let latest = latest_by_task.get(&t.id);
+        let latest_status = latest.map(|m| m.status.clone());
+        let latest_requirement = latest
+            .and_then(|m| serde_json::from_str::<serde_json::Value>(&m.trigger_meta).ok())
+            .and_then(|v| v.get("requirement").and_then(|r| r.as_str().map(|s| s.to_string())));
+        items.push(build_task_item(t, template, version, (latest_status, latest_requirement)));
     }
     Ok(ApiResponse::ok(items))
 }
