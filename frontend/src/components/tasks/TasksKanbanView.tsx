@@ -1,10 +1,13 @@
 // 任务看板视图：按状态横向分泳道。
 // 形态参考 MemorialBoard 的 KanbanBoard：
-//   4 列泳道（pending / running / success / failed），每列卡片墙垂直排列。
+//   5 列泳道（待审批 / pending / running / success / failed），每列卡片墙垂直排列。
+//   「待审批」为 063 新增的虚拟泳道：pending_approval_count>0 的任务优先进该列，
+//   让用户打开看板第一眼就看到需要人工审批的任务。
 // 交互：
 //   - hover 卡片有阴影增强 + translateY(-1px)（prefers-reduced-motion 关闭）
 //   - cursor: pointer
 //   - 点击卡片 → 调 onSelectTask 选中并切到 list 视图
+//   - 点击「N 待审批」标记 → onSelectTask(id, 'exec') 直达详情执行历史（063）
 // 不做拖拽（后端 PATCH /tasks/:id 未实现 status 更新，YAGNI）。
 
 import { memo, useMemo } from 'react';
@@ -14,9 +17,11 @@ import type { TaskItem } from '@/components/tasks/constants';
 import {
   TASK_LANES,
   STATUS_LABEL,
+  PendingApprovalTag,
   complexityColor,
   complexityLabel,
   formatDateShort,
+  laneOfTask,
   statusColor,
 } from '@/components/tasks/constants';
 
@@ -26,15 +31,16 @@ interface TasksKanbanViewProps {
   tasks: TaskItem[];
   loading: boolean;
   workspaceId: number;
-  onSelectTask: (taskId: number | null) => void;
+  /** tab 可选（063）：点待审批标记时传 'exec'，详情直达执行历史 Tab。 */
+  onSelectTask: (taskId: number | null, tab?: string) => void;
 }
 
 /**
- * 把扁平任务列表按状态分组到 4 个泳道。
+ * 把扁平任务列表按状态分组到各泳道。
  *
  * 处理思路：
- *   1. 以 TASK_LANES 为顺序初始化 4 个空数组。
- *   2. 遍历 tasks，按 status 推入对应泳道。
+ *   1. 以 TASK_LANES 为顺序初始化空数组。
+ *   2. 遍历 tasks，按 laneOfTask（待审批优先于真实 status）推入对应泳道。
  *   3. 未匹配 status 的任务不会显示（防止脏数据塞错列）。
  */
 function groupByLane(tasks: TaskItem[]): Record<string, TaskItem[]> {
@@ -43,9 +49,9 @@ function groupByLane(tasks: TaskItem[]): Record<string, TaskItem[]> {
   for (const lane of TASK_LANES) {
     lanes[lane.status] = [];
   }
-  // 分桶：按 status 推入对应泳道，未匹配 status 丢弃。
+  // 分桶：laneOfTask 已处理「待审批优先」口径，未匹配泳道丢弃。
   for (const task of tasks) {
-    const bucket = lanes[task.status];
+    const bucket = lanes[laneOfTask(task)];
     if (bucket) bucket.push(task);
   }
   return lanes;
@@ -58,7 +64,7 @@ const KanbanTaskCard = memo(function KanbanTaskCard({
   onSelectTask,
 }: {
   task: TaskItem;
-  onSelectTask: (id: number) => void;
+  onSelectTask: (id: number, tab?: string) => void;
 }) {
   return (
     <div
@@ -106,6 +112,11 @@ const KanbanTaskCard = memo(function KanbanTaskCard({
             {complexityLabel(task.complexity)}
           </Tag>
         )}
+        {/* 063：待审批标记放头部行，卡片在未展开的看板里也能一眼看到；点击直达执行历史。 */}
+        <PendingApprovalTag
+          count={task.pending_approval_count ?? 0}
+          onApprove={() => onSelectTask(task.id, 'exec')}
+        />
         <Text type="secondary" style={{ fontSize: 11, marginLeft: 'auto' }}>
           {formatDateShort(task.created_at)}
         </Text>
@@ -153,7 +164,7 @@ const KanbanLane = memo(function KanbanLane({
   label: string;
   color: string;
   items: TaskItem[];
-  onSelectTask: (id: number) => void;
+  onSelectTask: (id: number, tab?: string) => void;
 }) {
   return (
     <div
@@ -241,11 +252,11 @@ export function TasksKanbanView({
   loading,
   onSelectTask,
 }: TasksKanbanViewProps) {
-  // 把扁平任务列表按状态分到 4 个泳道。
+  // 把扁平任务列表按状态分到各泳道（待审批优先，063）。
   // useMemo：tasks 不变时不重新分组。
   const lanes = useMemo(() => groupByLane(tasks), [tasks]);
 
-  // loading 态：4 列骨架屏。
+  // loading 态：按泳道数渲染骨架屏。
   if (loading) {
     return (
       <div

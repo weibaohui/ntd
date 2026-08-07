@@ -548,7 +548,8 @@ export const bundledApi = {
   },
 
   /** 任务列表 */
-  async listTasks(wsId: number, status?: string): Promise<Array<{ id: number; title: string; description: string; status: string; template_name?: string; complexity?: string; loop_id?: number; workspace_id?: number; latest_execution_status?: string; latest_execution_requirement?: string; created_at?: string }>> {
+  // 返回类型与 tasks/constants.tsx 的 TaskItem 保持同名字段；pending_approval_count 为 063 新增（后端派生，恒 ≥ 0）。
+  async listTasks(wsId: number, status?: string): Promise<Array<{ id: number; title: string; description: string; status: string; template_name?: string; complexity?: string; loop_id?: number; workspace_id?: number; latest_execution_status?: string; latest_execution_requirement?: string; pending_approval_count?: number; created_at?: string }>> {
     const params = status ? { status } : {};
     return unwrap(await api.get(`/api/v1/workspaces/${wsId}/tasks`, { params }));
   },

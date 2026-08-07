@@ -156,14 +156,15 @@ export function TasksPage({ workspaceId }: TasksPageProps) {
   // 点击任务：通过路由跳转到详情页。
   // pushUrl 会更新 URL hash，但本组件 selectedTaskId 由 popstate 监听同步，
   // 所以这里手动 setSelectedTaskId 确保 SPA 内点击立即响应。
+  // tab 可选（063）：点「待审批」标记时传 'exec'，详情直接落到执行历史 Tab 并自动展开待审批执行。
   const handleSelectTask = useCallback(
-    (taskId: number | null) => {
+    (taskId: number | null, tab?: string) => {
       if (taskId == null) {
         // 返回列表：replaceUrl 避免详情页占历史栈。
         replaceUrl('tasks', {});
         setSelectedTaskId(null);
       } else {
-        pushUrl('tasks', { id: taskId });
+        pushUrl('tasks', { id: taskId, tab });
         setSelectedTaskId(taskId);
       }
     },

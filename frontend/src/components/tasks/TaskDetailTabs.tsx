@@ -279,7 +279,9 @@ export function DAGTab({
   );
 }
 
-/** Tab 3：执行历史 — 复用 LoopExecutionsPanel 完整组件。 */
+/** Tab 3：执行历史 — 复用 LoopExecutionsPanel 完整组件。
+ *  063：固定开启 autoExpandFirstPending——任务列表「待审批」标记会带 ?tab=exec 直达本 Tab，
+ *  首屏自动展开含待审批环节的执行记录，审批按钮一步可见。 */
 export function ExecHistoryTab({
   loopId, workspaceId, loopName,
 }: {
@@ -292,7 +294,7 @@ export function ExecHistoryTab({
   }
   return (
     <div className={styles.paneBody}>
-      <LoopExecutionsPanel loopId={loopId} workspaceId={workspaceId} loopName={loopName} />
+      <LoopExecutionsPanel loopId={loopId} workspaceId={workspaceId} loopName={loopName} autoExpandFirstPending />
     </div>
   );
 }

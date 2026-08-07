@@ -2,17 +2,20 @@
 // 形态参考 ItemsPage 列表态的双栏联动：
 //   左侧 Table 行可点击选中任务，触发宿主右栏渲染 TaskDetailPanel。
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Dropdown, Table, Tag, Typography, Select, Empty, App as AntApp } from 'antd';
 import { MoreOutlined, DeleteOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import type { TaskItem } from '@/components/tasks/constants';
 import {
+  PENDING_APPROVAL_LANE,
   STATUS_LABEL,
+  PendingApprovalTag,
   statusColor,
   complexityColor,
   complexityLabel,
   formatDateShort,
+  isPendingApproval,
 } from '@/components/tasks/constants';
 import bundledApi from '@/api/bundled';
 import { formatProcessText } from '@/utils/processText';
@@ -26,14 +29,16 @@ interface TasksTableViewProps {
   searchKeyword: string;
   workspaceId: number;
   selectedTaskId: number | null;
-  onSelectTask: (taskId: number | null) => void;
+  /** tab 可选（063）：点待审批标记时传 'exec'，详情直达执行历史 Tab。 */
+  onSelectTask: (taskId: number | null, tab?: string) => void;
   /** 列表数据被本组件修改（如批量删除成功）后，通知父组件刷新。 */
   onChanged: () => void;
 }
 
-/** 状态筛选项：all = 不筛。 */
+/** 状态筛选项：all = 不筛；pending_approval 为 063 虚拟选项（按待审批数过滤而非匹配 status）。 */
 const STATUS_FILTER_OPTIONS = [
   { value: 'all', label: '全部状态' },
+  { value: PENDING_APPROVAL_LANE, label: '待审批' },
   { value: 'pending', label: '待执行' },
   { value: 'running', label: '进行中' },
   { value: 'success', label: '已完成' },
@@ -44,12 +49,15 @@ const STATUS_FILTER_OPTIONS = [
  * 构造 Table 列定义。
  *
  * 列顺序与宽度：
- *   ID(60) | 标题(flex) | 状态(100) | 复杂度(80) | 工艺(220) | 最近执行(110) | 创建时间(110)
+ *   ID(60) | 标题(flex) | 状态(100) | 待审批(100) | 复杂度(80) | 工艺(220) | 最近执行(110) | 创建时间(110)
  *
  * 标题列 ellipsis：防止长标题撑爆行宽。
  * 状态/最近执行列用 Tag：颜色与 STATUS_COLOR 一致。
+ * onSelectTaskRef：待审批 Tag 点击需调父级跳转（063），经 ref 传入避免列定义随闭包重建。
  */
-function buildColumns(): ColumnsType<TaskItem> {
+function buildColumns(
+  onSelectTaskRef: React.MutableRefObject<(taskId: number | null, tab?: string) => void>,
+): ColumnsType<TaskItem> {
   return [
     {
       title: '#',
@@ -79,6 +87,23 @@ function buildColumns(): ColumnsType<TaskItem> {
       render: (status: string) => (
         <Tag color={statusColor(status)}>{STATUS_LABEL[status] ?? status}</Tag>
       ),
+    },
+    {
+      // 063：独立「待审批」列（对齐环路列表 LoopListViewParts 模式），可排序让待审批多的任务排前。
+      title: '待审批',
+      dataIndex: 'pending_approval_count',
+      key: 'pending_approval_count',
+      width: 100,
+      sorter: makeSorter<TaskItem>('pending_approval_count'),
+      render: (count: number | undefined, task) =>
+        isPendingApproval(task) ? (
+          <PendingApprovalTag
+            count={count ?? 0}
+            onApprove={() => onSelectTaskRef.current(task.id, 'exec')}
+          />
+        ) : (
+          <Text type="secondary">—</Text>
+        ),
     },
     {
       title: '复杂度',
@@ -207,7 +232,10 @@ export function TasksTableView({
   const visibleTasks = useMemo(() => {
     const kw = searchKeyword.trim().toLowerCase();
     return tasks.filter((task) => {
-      if (statusFilter !== 'all' && task.status !== statusFilter) return false;
+      // 063：「待审批」是虚拟筛选项，按待审批数过滤；真实状态仍按 status 精确匹配。
+      if (statusFilter === PENDING_APPROVAL_LANE) {
+        if (!isPendingApproval(task)) return false;
+      } else if (statusFilter !== 'all' && task.status !== statusFilter) return false;
       if (!kw) return true;
       const titleMatch = task.title.toLowerCase().includes(kw);
       const reqMatch = (task.latest_execution_requirement ?? '').toLowerCase().includes(kw);
@@ -215,8 +243,14 @@ export function TasksTableView({
     });
   }, [tasks, statusFilter, searchKeyword]);
 
+  // 待审批 Tag 点击跳转需用最新 onSelectTask；用 ref 持有，列定义即可保持 useMemo 空依赖不重建。
+  const onSelectTaskRef = useRef(onSelectTask);
+  useEffect(() => {
+    onSelectTaskRef.current = onSelectTask;
+  }, [onSelectTask]);
+
   // 列定义：useMemo 避免每次 render 重建造成 Table 性能抖动。
-  const rawColumns = useMemo(() => buildColumns(), []);
+  const rawColumns = useMemo(() => buildColumns(onSelectTaskRef), []);
   // 054：注入可拖拽列宽 + 受控排序 + localStorage 持久化。
   const { columns, tableProps } = useResizableColumns('tasks', rawColumns);
 

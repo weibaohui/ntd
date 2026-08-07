@@ -17,11 +17,14 @@ import { ThunderboltOutlined } from '@ant-design/icons';
 import bundledApi from '@/api/bundled';
 import type { TaskItem } from '@/components/tasks/constants';
 import {
+  PENDING_APPROVAL_LANE,
   STATUS_LABEL,
+  PendingApprovalTag,
   statusColor,
   complexityColor,
   complexityLabel,
   formatDateShort,
+  isPendingApproval,
 } from '@/components/tasks/constants';
 
 const { Text, Paragraph } = Typography;
@@ -31,12 +34,14 @@ interface TasksCardViewProps {
   loading: boolean;
   searchKeyword: string;
   workspaceId: number;
-  onSelectTask: (taskId: number | null) => void;
+  /** tab 可选（063）：点待审批标记时传 'exec'，详情直达执行历史 Tab。 */
+  onSelectTask: (taskId: number | null, tab?: string) => void;
 }
 
-/** 状态筛选项。 */
+/** 状态筛选项；pending_approval 为 063 虚拟选项（按待审批数过滤而非匹配 status）。 */
 const STATUS_FILTER_OPTIONS = [
   { value: 'all', label: '全部状态' },
+  { value: PENDING_APPROVAL_LANE, label: '待审批' },
   { value: 'pending', label: '待执行' },
   { value: 'running', label: '进行中' },
   { value: 'success', label: '已完成' },
@@ -62,11 +67,14 @@ function TaskCard({
   task,
   workspaceId,
   onSelect,
+  onApprove,
   onTriggered,
 }: {
   task: TaskItem;
   workspaceId: number;
   onSelect: () => void;
+  /** 063：点待审批标记直达详情执行历史 Tab（与卡片本体点进概览区分开）。 */
+  onApprove: () => void;
   onTriggered: () => void;
 }) {
   // 再次执行 Modal 开关 + 输入态。
@@ -151,6 +159,8 @@ function TaskCard({
         <Tag color={statusColor(task.status)} style={{ fontSize: 11, margin: 0 }}>
           {STATUS_LABEL[task.status] ?? task.status}
         </Tag>
+        {/* 063：待审批标记与状态 Tag 同行展示，不进详情即可感知。 */}
+        <PendingApprovalTag count={task.pending_approval_count ?? 0} onApprove={onApprove} />
         <Text type="secondary" style={{ fontSize: 11, marginLeft: 'auto' }}>
           {formatDateShort(task.created_at)}
         </Text>
@@ -263,8 +273,10 @@ export function TasksCardView({
   const visibleTasks = useMemo(() => {
     const kw = searchKeyword.trim().toLowerCase();
     return tasks.filter((task) => {
-      // 状态过滤：all 跳过；其余匹配 task.status。
-      if (statusFilter !== 'all' && task.status !== statusFilter) return false;
+      // 状态过滤：all 跳过；063「待审批」虚拟项按待审批数过滤；其余匹配 task.status。
+      if (statusFilter === PENDING_APPROVAL_LANE) {
+        if (!isPendingApproval(task)) return false;
+      } else if (statusFilter !== 'all' && task.status !== statusFilter) return false;
       // 复杂度过滤：all 跳过；未设置 complexity 的任务被过滤掉。
       if (complexityFilter !== 'all' && task.complexity !== complexityFilter) return false;
       // 关键词过滤：空跳过；匹配 title 或 latest_execution_requirement。
@@ -361,6 +373,7 @@ export function TasksCardView({
             task={task}
             workspaceId={workspaceId}
             onSelect={() => onSelectTask(task.id)}
+            onApprove={() => onSelectTask(task.id, 'exec')}
             onTriggered={() => onSelectTask(task.id)}
           />
         ))}

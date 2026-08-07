@@ -1,7 +1,9 @@
 // 任务页共享常量：状态色板、复杂度色板、视图模式、共享类型。
 // 集中管理避免列表/看板/卡片三态视图各写一套产生口径漂移。
 
-import type { ReactNode } from 'react';
+import type { MouseEvent, ReactNode } from 'react';
+import { Tag } from 'antd';
+import { ExclamationCircleOutlined } from '@ant-design/icons';
 
 /**
  * 任务状态色板。
@@ -56,7 +58,15 @@ export interface TaskLane {
   color: string;
 }
 
+/**
+ * 「待审批」虚拟泳道键（063）：不对应 task.status 的任何真实枚举值，
+ * 仅用于看板分组与筛选下拉的 value，避免与后端状态机混淆。
+ */
+export const PENDING_APPROVAL_LANE = 'pending_approval';
+
 export const TASK_LANES: TaskLane[] = [
+  // 待审批放第一列：需要人处理的事项优先级最高，进页即见；橙色与红色标记形成同族警示色。
+  { status: PENDING_APPROVAL_LANE, label: '待审批', color: '#fa8c16' },
   { status: 'pending', label: '待执行', color: '#3b82f6' },
   { status: 'running', label: '进行中', color: '#f59e0b' },
   { status: 'success', label: '已完成', color: '#22c55e' },
@@ -80,7 +90,54 @@ export interface TaskItem {
   workspace_id?: number;
   latest_execution_status?: string;
   latest_execution_requirement?: string;
+  /** 该任务所有执行中未处理的待审批环节总数（063：后端派生下发，>0 即需用户去审批）。 */
+  pending_approval_count?: number;
   created_at?: string;
+}
+
+/** 待审批判定：>0 即成立。抽成函数供三态视图与筛选共用，避免各处各写 >0 漂移口径。 */
+export function isPendingApproval(task: Pick<TaskItem, 'pending_approval_count'>): boolean {
+  return (task.pending_approval_count ?? 0) > 0;
+}
+
+/**
+ * 看板分组：返回任务应落入的泳道 status。
+ * 待审批任务只进「待审批」泳道、不再落入真实 status 泳道——
+ * 一卡两列会让看板各列计数之和大于任务总数，审批完成后卡片“跳列”也更直观。
+ */
+export function laneOfTask(task: TaskItem): string {
+  if (isPendingApproval(task)) return PENDING_APPROVAL_LANE;
+  return task.status;
+}
+
+/**
+ * 「N 待审批」共享标记：红色 Tag + 警示图标，与执行历史行内既有标记同款视觉。
+ * 传 onApprove 时表现为可点击：stopPropagation 防止冒泡触发卡片/行的普通选中，
+ * 点击后由调用方跳转任务详情执行历史 Tab（063 需求 4B：一步到位到审批入口）。
+ */
+export function PendingApprovalTag({
+  count,
+  onApprove,
+}: {
+  count: number;
+  onApprove?: () => void;
+}): ReactNode {
+  if (count <= 0) return null;
+  const handleClick = (e: MouseEvent) => {
+    // 阻断冒泡：卡片/行本体点击是「进详情概览」，待审批点击是「进详情执行历史」，语义不同。
+    e.stopPropagation();
+    onApprove?.();
+  };
+  return (
+    <Tag
+      color="red"
+      style={{ fontWeight: 600, margin: 0, cursor: onApprove ? 'pointer' : undefined }}
+      onClick={onApprove ? handleClick : undefined}
+      data-testid="pending-approval-tag"
+    >
+      <ExclamationCircleOutlined /> {count} 待审批
+    </Tag>
+  );
 }
 
 /** 三态视图模式。 */
