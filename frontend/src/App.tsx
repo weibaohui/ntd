@@ -1,7 +1,7 @@
 // 主应用入口组件。
 
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { ConfigProvider, Layout, App as AntApp, Drawer } from 'antd';
+import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
+import { ConfigProvider, Layout, App as AntApp, Drawer, Spin } from 'antd';
 import { TODO_LIST_REFRESH_EVENT } from './constants';
 import { AppProvider, useApp } from './hooks/useApp';
 import { useIsMobile } from './hooks/useIsMobile';
@@ -10,25 +10,30 @@ import { useViewState, viewToNavKey, type View } from './hooks/useViewState';
 import { ThemeProvider, useTheme } from '@/hooks/useTheme';
 import { ConsolePanelProvider, useConsolePanel } from '@/hooks/useConsolePanel';
 // 028-列表详情独立路由：todos/loops 用 path 段区分列表/详情，旧 ItemsPage/TodoPage/LoopPage 已删除
+// 091：首屏代码分割——事项主路径（TodoListPage/TodoDetailPage/Dashboard）保持静态加载
+// 保首屏速度，其余页面级组件改为 React.lazy，各自拆成独立 chunk，按视图按需加载。
+// 这样 monaco / @xyflow 等重型依赖随对应页面一起移出主 bundle（index.js 显著缩小）。
 import { TodoListPage } from '@/components/todo-list/TodoListPage';
 import { TodoDetailPage } from '@/components/TodoDetailPage';
-import { LoopListPage } from '@/components/loop-list';
-import { LoopDetailPage } from '@/components/LoopDetailPage';
-import { TodoPostPage } from './components/todo-post';
-import { ProcessPage } from './components/ProcessPage';
-import { TasksPage } from './components/tasks/TasksPage';
-import { TaskDetailPage } from './components/tasks/TaskDetailPage';
-import { ConceptNavPage } from './components/onboarding/ConceptNavPage';
-import { Dashboard } from './components/Dashboard';
-import { MemorialBoard } from './components/MemorialBoard';
-import { SettingsPage } from './components/SettingsPage';
-import { SkillsPanel } from './components/SkillsPanel';
-import { ProjectDirectoriesPanel } from './components/settings/ProjectDirectoriesPanel';
-import { ExecutorsPanel } from './components/settings/ExecutorsPanel';
-import { ExpertsPanel } from './components/settings/ExpertsPanel';
-import { BlackboardPage } from './components/BlackboardPage';
-import { MessagesPage } from './components/MessagesPage';
-import { AssistantManagementPage } from './components/assistant-management/AssistantManagementPage';
+import { Dashboard } from '@/components/Dashboard';
+// 命名导出组件需包一层 .then 取 default，React.lazy 只认 default 导出。
+const LoopListPage = lazy(() => import('@/components/loop-list').then(m => ({ default: m.LoopListPage })));
+const LoopDetailPage = lazy(() => import('@/components/LoopDetailPage').then(m => ({ default: m.LoopDetailPage })));
+const TodoPostPage = lazy(() => import('@/components/todo-post').then(m => ({ default: m.TodoPostPage })));
+const ProcessPage = lazy(() => import('@/components/ProcessPage').then(m => ({ default: m.ProcessPage })));
+const TasksPage = lazy(() => import('@/components/tasks/TasksPage').then(m => ({ default: m.TasksPage })));
+const TaskDetailPage = lazy(() => import('@/components/tasks/TaskDetailPage').then(m => ({ default: m.TaskDetailPage })));
+const ConceptNavPage = lazy(() => import('@/components/onboarding/ConceptNavPage').then(m => ({ default: m.ConceptNavPage })));
+const MemorialBoard = lazy(() => import('@/components/MemorialBoard').then(m => ({ default: m.MemorialBoard })));
+const SettingsPage = lazy(() => import('@/components/SettingsPage').then(m => ({ default: m.SettingsPage })));
+const SkillsPanel = lazy(() => import('@/components/SkillsPanel').then(m => ({ default: m.SkillsPanel })));
+const ProjectDirectoriesPanel = lazy(() => import('@/components/settings/ProjectDirectoriesPanel').then(m => ({ default: m.ProjectDirectoriesPanel })));
+const ExecutorsPanel = lazy(() => import('@/components/settings/ExecutorsPanel').then(m => ({ default: m.ExecutorsPanel })));
+const ExpertsPanel = lazy(() => import('@/components/settings/ExpertsPanel').then(m => ({ default: m.ExpertsPanel })));
+const BlackboardPage = lazy(() => import('@/components/BlackboardPage').then(m => ({ default: m.BlackboardPage })));
+const MessagesPage = lazy(() => import('@/components/MessagesPage').then(m => ({ default: m.MessagesPage })));
+const AssistantManagementPage = lazy(() => import('@/components/assistant-management/AssistantManagementPage').then(m => ({ default: m.AssistantManagementPage })));
+const WikiViewPage = lazy(() => import('@/components/WikiViewPage').then(m => ({ default: m.WikiViewPage })));
 import { ExecutionPanel } from './components/ExecutionPanel';
 import { TodoDrawer } from './components/TodoDrawer';
 import { SmartCreateModal } from './components/SmartCreateModal';
@@ -37,7 +42,6 @@ import { LeftRail, type LeftRailKey } from './components/shell/LeftRail';
 import { MobileHeader } from './components/shell/MobileHeader';
 import { FloatingActionButton } from '@/components/shell/FloatingActionButton';
 import { WikiChatFloatingWindow, type WikiChatMode } from '@/components/WikiChatFloatingWindow';
-import { WikiViewPage } from '@/components/WikiViewPage';
 import { HelpPage } from '@/help/HelpPage';
 import { viewToPageId, findHelpPage } from '@/help/useHelpContent';
 
@@ -49,6 +53,16 @@ import zhCN from 'antd/locale/zh_CN';
 import './App.css';
 
 const { Content } = Layout;
+
+// 091：lazy 页面加载占位——居中 Spin，避免切换到按需加载的页面时短暂白屏。
+// 静态页面（Dashboard/TodoList/TodoDetail）不触发 Suspense，只有 lazy 页面首访时短暂出现。
+function LazyFallback() {
+  return (
+    <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
+      <Spin />
+    </div>
+  );
+}
 
 function AppContent() {
   const { state, dispatch, clearSelection } = useApp();
@@ -341,6 +355,8 @@ function AppContent() {
             transition: 'height 0.3s ease, padding-bottom 0.3s ease',
           }}
         >
+          {/* 091：所有页面级组件在此挂载；lazy 页面首访时由 Suspense 兜底显示 LazyFallback。 */}
+          <Suspense fallback={<LazyFallback />}>
           {/* 帖子详情页（URL: /#/todos/:id/posts/:rid） */}
           {activeView === 'todos' && postRecordId != null && todoDetailId != null && (
             <TodoPostPage
@@ -468,6 +484,7 @@ function AppContent() {
               )}
             </div>
           )}
+          </Suspense>
         </Content>
       </Layout>
 

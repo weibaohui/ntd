@@ -25,6 +25,12 @@ export default defineConfig({
 
           'vendor-icons': ['react-icons'],
           'vendor-misc': ['qrcode', 'react-countup', 'react-js-cron'],
+          // 091：monaco-editor 体量巨大（核心 + 各语言子包），且仅工艺 YAML 编辑器使用。
+          // ProcessYamlEditor 已改为动态 import('monaco-editor')，这里再用 manualChunks
+          // 把它锚定到稳定命名 chunk，确保不被并入主 bundle 或工艺页 chunk。
+          'vendor-monaco': ['monaco-editor'],
+          // 091：@xyflow/react（React Flow）+ dagre 布局仅工艺可视化页使用，独立成 chunk。
+          'vendor-flow': ['@xyflow/react', 'dagre'],
         },
       },
     },
