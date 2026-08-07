@@ -203,6 +203,21 @@ impl Database {
         Ok(1)
     }
 
+    /// 按 source_execution_id 取对应的智能体占位帖（需求 092 P2 自动接力用）。
+    ///
+    /// 一条讨论类执行只对应一条占位帖（trigger=discussion/discussion_auto）。completion
+    /// 回写后用此查询取回帖子的 task_id / expert_name / executor，供接力判断「本次执行者
+    /// 是否就是 assignee 管家」与定位所属委派任务。找不到（帖已删）返回 None，调用方跳过接力。
+    pub async fn get_task_post_by_source_execution(
+        &self,
+        record_id: i64,
+    ) -> Result<Option<task_posts::Model>, sea_orm::DbErr> {
+        task_posts::Entity::find()
+            .filter(task_posts::Column::SourceExecutionId.eq(record_id))
+            .one(&self.conn)
+            .await
+    }
+
     /// 硬删一条帖子（删 running 帖由调用方联动取消执行）。
     pub async fn delete_task_post(&self, id: i64) -> Result<u64, sea_orm::DbErr> {
         let res = task_posts::Entity::delete_by_id(id)
