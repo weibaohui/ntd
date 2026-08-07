@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useReducer, useMemo, ReactNode } from 'react';
-import type { ExecutionRecord, RunningTask, LogEntry, TodoItem, ExecutionStats } from '@/types';
+import type { ExecutionRecord, RunningTask, TodoItem, ExecutionStats } from '@/types';
 
 // ─── State & Reducer ─────────────────────────────────────────
 
@@ -14,7 +14,6 @@ type ExecutionAction =
   | { type: 'ADD_EXECUTION_RECORD'; payload: { todoId: number; record: ExecutionRecord } }
   | { type: 'UPDATE_EXECUTION_RECORD'; payload: { todoId: number; record: ExecutionRecord } }
   | { type: 'ADD_RUNNING_TASK'; payload: RunningTask }
-  | { type: 'APPEND_TASK_LOG'; payload: { taskId: string; log: LogEntry } }
   | { type: 'FINISH_TASK'; payload: { taskId: string; todoId: number; success: boolean; result: string | null } }
   | { type: 'REMOVE_RUNNING_TASK'; payload: string }
   | { type: 'CLEAR_RUNNING_TASKS' }
@@ -54,12 +53,8 @@ function reducer(state: ExecutionState, action: ExecutionAction): ExecutionState
       const task = action.payload;
       return { ...state, runningTasks: { ...state.runningTasks, [task.taskId]: task }, activeTaskId: state.activeTaskId || task.taskId };
     }
-    case 'APPEND_TASK_LOG': {
-      const { taskId, log } = action.payload;
-      const task = state.runningTasks[taskId];
-      if (!task) return state;
-      return { ...state, runningTasks: { ...state.runningTasks, [taskId]: { ...task, logs: [...task.logs, log] } } };
-    }
+    // 091：APPEND_TASK_LOG 已移除——日志改由 LogsContext（useLogsContext）的
+    // APPEND_TASK_LOGS 处理，不再进入本执行态 reducer。
     case 'FINISH_TASK': {
       const { taskId, success, result } = action.payload;
       const task = state.runningTasks[taskId];

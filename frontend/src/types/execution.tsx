@@ -163,7 +163,7 @@ export interface RunningTask {
   todoId: number;
   todoTitle: string;
   executor: string;
-  logs: LogEntry[];
+  // 091：logs 已拆到独立的 LogsContext（hooks/useLogsContext），不再随执行态变化触发 46 个消费方重渲染。
   status: 'running' | 'finished';
   success?: boolean;
   result?: string | null;

@@ -181,27 +181,40 @@ function connectShared(dispatch: ReturnType<typeof useApp>['dispatch']) {
       switch (data.type) {
         case 'Sync': {
           dispatch({ type: 'CLEAR_RUNNING_TASKS' });
+          // 091：执行态与日志解耦后，Sync 需分别清两个 context。
+          // Sync 带的是后端权威日志快照，缓冲里断线前的残余日志一律作废。
+          dispatch({ type: 'CLEAR_LOGS' });
+          outputBuffer.clear();
           data.tasks.forEach(task => {
             let parsedLogs: LogEntry[] = [];
             try { parsedLogs = JSON.parse(task.logs || '[]'); } catch {}
             // 056（L6 修复）：Sync 把该任务重置为 running，撤销可能存在的自动移除定时器，
             // 否则重连后旧定时器会把 Sync 恢复的任务再次移除（任务闪现/提前消失）。
             cancelRemoveTimer(task.task_id);
-            dispatch({ type: 'ADD_RUNNING_TASK', payload: { taskId: task.task_id, todoId: task.todo_id, todoTitle: task.todo_title, executor: task.executor || 'claudecode', logs: parsedLogs, status: 'running', startedAt: new Date().toISOString() } });
+            // 091：RunningTask 不再携带 logs 字段（已迁至 LogsContext）。
+            dispatch({ type: 'ADD_RUNNING_TASK', payload: { taskId: task.task_id, todoId: task.todo_id, todoTitle: task.todo_title, executor: task.executor || 'claudecode', status: 'running', startedAt: new Date().toISOString() } });
+            // 091：日志整体替换走 SET_TASK_LOGS，与执行态 reducer 完全隔离。
+            dispatch({ type: 'SET_TASK_LOGS', payload: { taskId: task.task_id, logs: parsedLogs } });
           });
           // 056：全局 todos 桶已删除，列表页改从服务端拉取——Sync 到达即通知列表刷新
           dispatchListRefreshDebounced();
           break;
         }
         case 'Started': {
-          dispatch({ type: 'ADD_RUNNING_TASK', payload: { taskId: data.task_id, todoId: data.todo_id, todoTitle: data.todo_title, executor: data.executor || 'claudecode', logs: [], status: 'running', startedAt: new Date().toISOString() } });
+          // 091：新任务起始无日志，logs 已不在执行态；不预置 logs 避免触发 LogsContext 写入。
+          dispatch({ type: 'ADD_RUNNING_TASK', payload: { taskId: data.task_id, todoId: data.todo_id, todoTitle: data.todo_title, executor: data.executor || 'claudecode', status: 'running', startedAt: new Date().toISOString() } });
           // 056：状态不再写全局桶，改为通知列表页刷新（服务端数据源为准）
           dispatchListRefreshDebounced();
           window.dispatchEvent(new CustomEvent('executionStarted', { detail: { todoId: data.todo_id } }));
           break;
         }
         case 'Output': {
-          dispatch({ type: 'APPEND_TASK_LOG', payload: { taskId: data.task_id, log: data.entry } });
+          // 091：逐条 dispatch 会让 reducer 每行深拷贝一次日志数组；
+          // 攒进 outputBuffer，50ms 后按 task 合并一次 APPEND_TASK_LOGS。
+          const buf = outputBuffer.get(data.task_id) || [];
+          buf.push(data.entry);
+          outputBuffer.set(data.task_id, buf);
+          scheduleOutputFlush();
           break;
         }
         case 'TodoProgress': {
@@ -219,6 +232,8 @@ function connectShared(dispatch: ReturnType<typeof useApp>['dispatch']) {
           const timer = setTimeout(() => {
             sharedRemoveTaskTimers.delete(data.task_id);
             dispatch({ type: 'REMOVE_RUNNING_TASK', payload: data.task_id });
+            // 091：任务移出 runningTasks 时同步释放其日志，避免长跑后残留内存。
+            dispatch({ type: 'REMOVE_TASK_LOGS', payload: data.task_id });
           }, 3000);
           sharedRemoveTaskTimers.set(data.task_id, timer);
           // 056：终态落定，通知列表页刷新（服务端数据源为准）
@@ -291,6 +306,12 @@ function teardownShared() {
     clearTimeout(onRefreshDebounceTimer);
     onRefreshDebounceTimer = null;
   }
+  // 091：关 WS 前先冲刷日志缓冲，避免最后一批日志丢失；再取消未触发定时器。
+  flushOutputBuffer();
+  if (outputFlushTimer) {
+    clearTimeout(outputFlushTimer);
+    outputFlushTimer = null;
+  }
   if (sharedWs) {
     sharedWs.close();
     sharedWs = null;
@@ -333,6 +354,42 @@ function triggerOnRefreshDebounced() {
     onRefreshDebounceTimer = null;
     sharedOnRefreshRefs.forEach(ref => ref.current?.());
   }, REFRESH_DEBOUNCE_MS);
+}
+
+// 091：Output 日志批量缓冲。
+// WS Output 在执行器输出密集时几乎逐行到达（每条一条 LogEntry）。
+// 若逐条 dispatch APPEND_TASK_LOGS，LogsContext reducer 会让每个 task 每行都
+// 深拷贝整段日志数组并触发 ExecutionPanel 重渲染。改为 50ms 攒一批按 task 合并
+// dispatch，把「每行一次 reducer」压成「每 50ms 一次」。
+const OUTPUT_FLUSH_MS = 50;
+/** 按 task 聚合的待刷日志缓冲：key=taskId，value=待追加的 LogEntry 数组。 */
+let outputBuffer = new Map<string, LogEntry[]>();
+/** 单个 flush 定时器：已有未触发定时器时复用，保证窗口内至多一个 flush。 */
+let outputFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** 安排一次 flush：窗口内多次 Output 只挂一个定时器，合并触发。 */
+function scheduleOutputFlush() {
+  if (outputFlushTimer) return;
+  outputFlushTimer = setTimeout(() => {
+    outputFlushTimer = null;
+    flushOutputBuffer();
+  }, OUTPUT_FLUSH_MS);
+}
+
+/** 取出缓冲并按 task 批量 dispatch APPEND_TASK_LOGS。
+ *  先快照再置空：flush 期间新到达的日志进入新缓冲，不会被本次或下次误丢。 */
+function flushOutputBuffer() {
+  // sharedDispatch 在 effect 内赋值；WS 关闭后可能为 null，flush 应安全跳过。
+  // 取到局部 const 再用：模块级 let 变量进闭包后会被 TS 还原为可空，无法直接调用。
+  const dispatch = sharedDispatch;
+  if (!dispatch) return;
+  if (outputBuffer.size === 0) return;
+  const batch = outputBuffer;
+  outputBuffer = new Map();
+  batch.forEach((logs, taskId) => {
+    if (logs.length === 0) return;
+    dispatch({ type: 'APPEND_TASK_LOGS', payload: { taskId, logs } });
+  });
 }
 
 /**
