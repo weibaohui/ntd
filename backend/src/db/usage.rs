@@ -196,26 +196,24 @@ impl Database {
             return Ok(vec![]);
         }
 
-        let stat_dates: std::collections::HashMap<i64, String> = daily_stats
-            .iter()
-            .map(|s| (s.id, s.date.clone()))
-            .collect();
-        let stat_ids: Vec<i64> = stat_dates.keys().copied().collect();
+        // daily_stats 已由 get_usage_stats 按 date DESC 排序；直接按其顺序取 id，
+        // 保证返回的 all_breakdowns 仍是「按日期降序」——早期实现用 HashMap keys() 生成
+        // stat_ids，迭代顺序不确定，会让按数组顺序渲染图表/表格的调用方顺序抖动（091 评审修复）。
+        let stat_ids: Vec<i64> = daily_stats.iter().map(|s| s.id).collect();
 
         // 一次 IN 查询取回全部 breakdown 并按 stat 分组，避免逐 stat N 次往返。
         let breakdowns_by_stat = self.get_usage_model_breakdowns_by_stat_ids(&stat_ids).await?;
 
         let mut all_breakdowns: Vec<ModelBreakdownWithDate> = vec![];
-        for stat_id in stat_ids {
-            let date = stat_dates.get(&stat_id).cloned().unwrap_or_default();
+        for stat in &daily_stats {
             // 该 stat 没有 breakdown 时跳过（map 未命中），避免无谓的空迭代。
-            let Some(breakdowns) = breakdowns_by_stat.get(&stat_id) else {
+            let Some(breakdowns) = breakdowns_by_stat.get(&stat.id) else {
                 continue;
             };
             for bd in breakdowns {
                 // bd 取自 map 的引用，model_name 是 String 需 clone；token/cost 为 Copy 直接取。
                 all_breakdowns.push(ModelBreakdownWithDate {
-                    date: date.clone(),
+                    date: stat.date.clone(),
                     model_name: bd.model_name.clone(),
                     input_tokens: bd.input_tokens,
                     output_tokens: bd.output_tokens,

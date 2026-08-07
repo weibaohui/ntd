@@ -96,11 +96,27 @@ export const ExecutionPanelLogs = memo(function ExecutionPanelLogs({
     virtualizer.scrollToIndex(logs.length - 1, { align: 'end' });
   }, [logs.length, virtualizer]);
 
+  // 终态到达时把容器滚到真正的底部：result 块位于虚拟 spacer 之后的正常流，
+  // Finished 不改变 logs.length（上面的 length effect 不会触发），需单独把容器滚到
+  // scrollHeight，才能让结果块进入视口，而不是停留在最后一行日志下方（091 评审修复）。
+  useEffect(() => {
+    if (status !== 'finished') return;
+    const el = parentRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [status, result]);
+
   // 空日志早返回：放在所有 hook 之后，保证 hook 调用顺序稳定。
   if (logs.length === 0) {
     return (
       <div className="execution-panel-logs">
-        <div className="execution-panel-empty">等待输出...</div>
+        {/* 空日志但有终态结果：任务可能在产出任何日志前就结束，此时展示结果而非「等待输出」。 */}
+        {status === 'finished' && result ? (
+          <div className={`log-result ${success ? 'log-result-success' : 'log-result-error'}`}>
+            {result}
+          </div>
+        ) : (
+          <div className="execution-panel-empty">等待输出...</div>
+        )}
       </div>
     );
   }

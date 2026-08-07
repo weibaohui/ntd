@@ -24,10 +24,13 @@ import { LogsProvider, useLogsDispatch } from './useLogsContext';
 import type { LogsAction } from './useLogsContext';
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
+  // 嵌套顺序的意图：UI（loading/theme）无依赖、被所有视图消费 → 最外层；
+  // Todo/Execution 是平行的领域状态，相对顺序无依赖约束；LogsProvider 必须包住
+  // ExecutionProvider 与 children——useApp 内的 useLogsDispatch（日志 action 路由）
+  // 与 ExecutionPanel 的 useTaskLogs 都要从它解析，故夹在 UI 与 Execution 之间。
+  // DataLoader 放最内层：它要用 todo/ui 的 dispatch 做启动初始化，须等所有 Provider 就位。
   return (
     <UIProvider>
-      {/* LogsProvider 置于最内层：包裹 ExecutionProvider 与 children，
-          使其内部的 useLogsDispatch（本文件 useApp 路由）与 ExecutionPanel 的 useTaskLogs 都能解析。 */}
       <LogsProvider>
         <ExecutionProvider>
           <TodoProvider>

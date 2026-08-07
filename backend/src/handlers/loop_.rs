@@ -333,14 +333,30 @@ pub async fn list_executions_v1(
     let mut items: Vec<LoopExecutionDto> = records.into_iter().map(Into::into).collect();
     for item in &mut items {
         item.pending_approval_count = pending_counts.get(&item.id).copied().unwrap_or(0);
-        // 列表响应（LoopExecutionDto）不含 step 明细，门禁/评审 populate 的结果不会被序列化，
-        // 属纯死工作——此处只需 token 汇总：构造 step DTO → 批量填 usage → 聚合（091 性能优化）。
-        let mut enriched: Vec<LoopStepExecutionDto> = steps_by_exec
-            .get(&item.id)
-            .map(|v| v.iter().cloned().map(Into::into).collect())
-            .unwrap_or_default();
-        enrich_step_executions_usage_batch(&state.db, &mut enriched).await;
-        item.token_summary = Some(aggregate_tokens_from_step_dtos(&enriched));
+    }
+    // 列表响应（LoopExecutionDto）不含 step 明细，只需 token 汇总。
+    // 091：把全页所有 execution 的 step DTO 扁平收集后「一次」批量 enrich usage，
+    // 再按 loop_execution_id 分组聚合——避免在 for item 循环内逐 execution 调 enrich：
+    // enrich 内部一次 get_execution_records_by_ids，逐 exec 调用 = 每页 N 次往返（N+1 未消除）。
+    let mut flat_steps: Vec<LoopStepExecutionDto> = items
+        .iter()
+        .filter_map(|item| {
+            steps_by_exec
+                .get(&item.id)
+                .map(|v| v.iter().cloned().map(Into::into).collect::<Vec<_>>())
+        })
+        .flatten()
+        .collect();
+    enrich_step_executions_usage_batch(&state.db, &mut flat_steps).await;
+    // DTO 自带 loop_execution_id，据此分组（move，无额外 clone），逐 exec 聚合 token。
+    let mut tokens_by_exec: std::collections::HashMap<i64, Vec<LoopStepExecutionDto>> =
+        std::collections::HashMap::new();
+    for dto in flat_steps {
+        tokens_by_exec.entry(dto.loop_execution_id).or_default().push(dto);
+    }
+    for item in &mut items {
+        let group = tokens_by_exec.remove(&item.id).unwrap_or_default();
+        item.token_summary = Some(aggregate_tokens_from_step_dtos(&group));
     }
     Ok(ApiResponse::ok(serde_json::json!({
         "items": items, "total": total, "page": page, "limit": limit,

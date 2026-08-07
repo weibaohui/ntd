@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Table, Tag, Space, Input, Select, Button, Popconfirm, Typography, Tooltip, message,
 } from 'antd';
@@ -34,20 +34,29 @@ export function SessionManager({ embedded }: SessionManagerProps) {
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // 091：请求序号守卫——搜索输入在非首页会立即 setPage(1)（用旧 debouncedSearch 触发一次请求），
+  // 300ms 后 debouncedSearch 更新又触发一次；若旧请求晚返回会覆盖新结果。每次请求自增序号，
+  // 仅「最新」那次可写 sessions/total，晚到的旧响应直接丢弃。
+  const fetchSeqRef = useRef(0);
 
   const fetchSessions = useCallback(async () => {
+    // 自增并快照本次序号；await 后仅当仍是最新序号才落地结果，丢弃乱序的旧响应。
+    const seq = ++fetchSeqRef.current;
     setLoading(true);
     try {
       const res = await db.listSessions({
         page, page_size: pageSize, status: statusFilter,
         source: sourceFilter, search: debouncedSearch || undefined,
       });
+      // 期间又发起了新请求（seq 已变）→ 本次是过期响应，丢弃，不覆盖更新的列表。
+      if (seq !== fetchSeqRef.current) return;
       setSessions(res.sessions);
       setTotal(res.total);
     } catch {
       // ignore
     } finally {
-      setLoading(false);
+      // 只有最新请求负责关 loading，避免旧请求的 finally 把 loading 提前置回 false。
+      if (seq === fetchSeqRef.current) setLoading(false);
     }
   }, [page, pageSize, statusFilter, sourceFilter, debouncedSearch]);
 
