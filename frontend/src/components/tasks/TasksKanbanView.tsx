@@ -7,7 +7,7 @@
 //   - 点击卡片 → 调 onSelectTask 选中并切到 list 视图
 // 不做拖拽（后端 PATCH /tasks/:id 未实现 status 更新，YAGNI）。
 
-import { useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import { Empty, Skeleton, Tag, Typography } from 'antd';
 import { InboxOutlined } from '@ant-design/icons';
 import type { TaskItem } from '@/components/tasks/constants';
@@ -51,17 +51,18 @@ function groupByLane(tasks: TaskItem[]): Record<string, TaskItem[]> {
   return lanes;
 }
 
-/** 单张任务卡片。 */
-function KanbanTaskCard({
+/** 单张任务卡片。memo：task / onSelectTask 引用不变时跳过重渲染（091 性能优化）。
+ *  接收 onSelectTask 而非预绑定的 onSelect，避免每张卡每渲染新建闭包破坏 memo。 */
+const KanbanTaskCard = memo(function KanbanTaskCard({
   task,
-  onSelect,
+  onSelectTask,
 }: {
   task: TaskItem;
-  onSelect: () => void;
+  onSelectTask: (id: number) => void;
 }) {
   return (
     <div
-      onClick={onSelect}
+      onClick={() => onSelectTask(task.id)}
       style={{
         // 卡片基础样式：白底、圆角、轻阴影。
         background: 'var(--color-bg-card, #fff)',
@@ -139,10 +140,10 @@ function KanbanTaskCard({
       )}
     </div>
   );
-}
+});
 
-/** 单个泳道列。 */
-function KanbanLane({
+/** 单个泳道列。memo：items / onSelectTask 引用不变时跳过重渲染（091 性能优化）。 */
+const KanbanLane = memo(function KanbanLane({
   label,
   color,
   items,
@@ -226,14 +227,14 @@ function KanbanLane({
             <KanbanTaskCard
               key={task.id}
               task={task}
-              onSelect={() => onSelectTask(task.id)}
+              onSelectTask={onSelectTask}
             />
           ))
         )}
       </div>
     </div>
   );
-}
+});
 
 export function TasksKanbanView({
   tasks,
@@ -303,7 +304,7 @@ export function TasksKanbanView({
           status={lane.status}
           label={lane.label}
           color={lane.color}
-          items={lanes[lane.status] ?? []}
+          items={lanes[lane.status]}
           onSelectTask={onSelectTask}
         />
       ))}

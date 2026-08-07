@@ -175,8 +175,8 @@ function connectShared(dispatch: ReturnType<typeof useApp>['dispatch']) {
       const data: ExecEvent = JSON.parse(event.data);
 
       // 触发所有调用方注册的 onRefresh 回调（如 loop 面板刷新）。
-      // 通过 ref 数组间接调用，确保总是拿到最新的回调函数引用。
-      sharedOnRefreshRefs.forEach(ref => ref.current?.());
+      // 091：改为 trailing debounce，避免 Output 日志洪峰下每行日志都触发一次调用方刷新。
+      triggerOnRefreshDebounced();
 
       switch (data.type) {
         case 'Sync': {
@@ -286,6 +286,11 @@ function teardownShared() {
     clearTimeout(refreshDebounceTimer);
     refreshDebounceTimer = null;
   }
+  // 091：同步清掉 onRefresh debounce，避免 teardown 后回调仍向已卸载页面触发刷新。
+  if (onRefreshDebounceTimer) {
+    clearTimeout(onRefreshDebounceTimer);
+    onRefreshDebounceTimer = null;
+  }
   if (sharedWs) {
     sharedWs.close();
     sharedWs = null;
@@ -303,6 +308,9 @@ function cancelRemoveTimer(taskId: string) {
 
 /** 列表刷新事件的共享 trailing debounce 定时器。 */
 let refreshDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+/** onRefresh 回调的 debounce 定时器（091：每条事件都立即触发调用方刷新，
+ *  Output 日志洪峰下会变成「每行日志一次刷新」，trailing 合并成 500ms 一次）。 */
+let onRefreshDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** 列表刷新事件的 debounce 毫秒数（评审 I1：Loop 连续执行时 Started/Finished 密集触发，
  *  每条都让各列表视图重拉一页，30 步 Loop = 60 次全视图 HTTP。合并为 trailing 一次）。 */
@@ -314,6 +322,16 @@ function dispatchListRefreshDebounced() {
   refreshDebounceTimer = setTimeout(() => {
     refreshDebounceTimer = null;
     window.dispatchEvent(new Event(TODO_LIST_REFRESH_EVENT));
+  }, REFRESH_DEBOUNCE_MS);
+}
+
+/** 500ms trailing debounce 触发 onRefresh 回调（模板同 dispatchListRefreshDebounced，091 性能优化）。
+ *  onmessage 对每条事件都触发，Output 日志洪峰下立即触发会让调用方每行日志刷新一次。 */
+function triggerOnRefreshDebounced() {
+  if (onRefreshDebounceTimer) clearTimeout(onRefreshDebounceTimer);
+  onRefreshDebounceTimer = setTimeout(() => {
+    onRefreshDebounceTimer = null;
+    sharedOnRefreshRefs.forEach(ref => ref.current?.());
   }, REFRESH_DEBOUNCE_MS);
 }
 

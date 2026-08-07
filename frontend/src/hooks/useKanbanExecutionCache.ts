@@ -49,7 +49,9 @@ export function useKanbanExecutionCache({
     if (storeRecord?.result) return storeRecord.result;
 
     try {
-      const page = await db.getExecutionRecords(todo.id, 1, 1, undefined, undefined, workspaceId ?? undefined);
+      // 091 修复参数错位：getExecutionRecords(workspaceId, todoId, page, limit, status, stepId)。
+      // 旧代码把 todo.id 当 workspaceId、把 workspaceId 当 stepId，请求打到错误 workspace 且无结果。
+      const page = await db.getExecutionRecords(workspaceId ?? 0, todo.id, 1, 1, undefined, undefined);
       return page.records[0]?.result ?? null;
     } catch {
       return null;
@@ -79,7 +81,8 @@ export function useKanbanExecutionCache({
 
     setLoadingRunIndex(prev => ({ ...prev, [todoId]: runIndex }));
     try {
-      const page = await db.getExecutionRecords(todoId, runIndex + 1, 1, undefined, undefined, workspaceId ?? undefined);
+      // 091 修复参数错位：第一参是 workspaceId（旧代码误传 todoId），末参 stepId 不再误传 workspaceId。
+      const page = await db.getExecutionRecords(workspaceId ?? 0, todoId, runIndex + 1, 1, undefined, undefined);
       if (page.records.length > 0) {
         setRunDataCache(prev => {
           const arr = prev[todoId] || [];

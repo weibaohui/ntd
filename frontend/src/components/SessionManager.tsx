@@ -29,6 +29,9 @@ export function SessionManager({ embedded }: SessionManagerProps) {
   const [statusFilter, setStatusFilter] = useState<string | undefined>();
   const [sourceFilter, setSourceFilter] = useState<string | undefined>();
   const [searchText, setSearchText] = useState('');
+  // 091：搜索防抖——searchText 即时更新（输入框 UI 反馈），debouncedSearch 停顿 300ms 后才变，
+  // fetchSessions 依赖 debouncedSearch，避免逐字符打服务端（模板同 TodoListPage）。
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
@@ -37,7 +40,7 @@ export function SessionManager({ embedded }: SessionManagerProps) {
     try {
       const res = await db.listSessions({
         page, page_size: pageSize, status: statusFilter,
-        source: sourceFilter, search: searchText || undefined,
+        source: sourceFilter, search: debouncedSearch || undefined,
       });
       setSessions(res.sessions);
       setTotal(res.total);
@@ -46,7 +49,7 @@ export function SessionManager({ embedded }: SessionManagerProps) {
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, statusFilter, sourceFilter, searchText]);
+  }, [page, pageSize, statusFilter, sourceFilter, debouncedSearch]);
 
   const fetchStats = useCallback(async () => {
     try {
@@ -56,6 +59,12 @@ export function SessionManager({ embedded }: SessionManagerProps) {
       // ignore
     }
   }, []);
+
+  // 搜索输入停顿 300ms 后才落盘到 debouncedSearch（触发上面的 fetchSessions）。
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(searchText.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [searchText]);
 
   useEffect(() => { fetchSessions(); }, [fetchSessions]);
   useEffect(() => { fetchStats(); }, [fetchStats]);

@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useLayoutEffect, type ReactNode } from 'react';
+import { createContext, useContext, useState, useLayoutEffect, useCallback, useMemo, type ReactNode } from 'react';
 import type { ThemeConfig } from 'antd';
 import type { ThemeMode } from '@/themes';
 import { themeMap } from '@/themes';
@@ -34,14 +34,21 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     } catch {}
   }, [themeMode]);
 
-  const toggleTheme = () => {
+  // 091：toggleTheme 与 value 记忆化，避免 Provider 每次渲染都产出新对象、
+  // 拖着所有 useTheme 消费者一起重渲染（即便 themeMode 未变）。
+  const toggleTheme = useCallback(() => {
     setThemeMode(prev => (prev === 'light' ? 'dark' : 'light'));
-  };
+  }, []);
 
   const themeConfig = themeMap[themeMode];
 
+  const value = useMemo<ThemeContextValue>(
+    () => ({ themeMode, themeConfig, toggleTheme }),
+    [themeMode, themeConfig, toggleTheme],
+  );
+
   return (
-    <ThemeContext.Provider value={{ themeMode, themeConfig, toggleTheme }}>
+    <ThemeContext.Provider value={value}>
       {children}
     </ThemeContext.Provider>
   );

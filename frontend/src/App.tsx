@@ -197,6 +197,20 @@ function AppContent() {
     pushUrl('loops', { id: loopId });
   }, [clearSelection, pushUrl]);
 
+  // 091：抽出稳定 handler，替代 TodoListPage 的 inline 箭头（inline 每次渲染新建函数，
+  // 会让依赖引用相等性的子组件 memo 失效）。
+  const handleCreateTodo = useCallback(() => {
+    // 新建模式：editingTodo 保持 null，TodoDrawer 走创建分支
+    setEditingTodo(null);
+    setTodoModalOpen(true);
+  }, []);
+
+  const handleEditTodo = useCallback((todo: import('@/types').Todo) => {
+    // 编辑模式：设置 editingTodo，TodoDrawer 切到编辑分支
+    setEditingTodo(todo);
+    setTodoModalOpen(true);
+  }, []);
+
   // 跳转来源工艺详情：环路详情「来源工艺」行的目标。
   // 040：携带 guid 参数，ProcessPage 据此自动打开该工艺的详情 Modal。
   const handleOpenProcess = useCallback((templateGuid: string) => {
@@ -357,19 +371,10 @@ function AppContent() {
           {/* 事项列表页（URL: /#/todos，卡片/列表形态切换由 TodoListPage 内部管理） */}
           {activeView === 'todos' && todoDetailId == null && postRecordId == null && (
             <TodoListPage
-              onSelectTodo={(id) => handleSelectTodo(id)}
+              onSelectTodo={handleSelectTodo}
               onSelectLoop={handleSelectLoop}
-              onOpenCreateModal={() => {
-                // 新建模式：editingTodo 保持 null，TodoDrawer 走创建分支
-                setEditingTodo(null);
-                setTodoModalOpen(true);
-              }}
-              onEditTodo={(todo) => {
-                // 编辑模式：设置 editingTodo，TodoDrawer 切到编辑分支
-                // TodoCenterItem extends Todo，可直接当 Todo 用
-                setEditingTodo(todo);
-                setTodoModalOpen(true);
-              }}
+              onOpenCreateModal={handleCreateTodo}
+              onEditTodo={handleEditTodo}
             />
           )}
 
@@ -381,7 +386,7 @@ function AppContent() {
               tags={state.tags}
               onBack={() => backToList()}
               onOpenProcess={handleOpenProcess}
-              onSelectTodo={(todoId) => handleSelectTodo(todoId)}
+              onSelectTodo={handleSelectTodo}
               onLoopChanged={() => setLoopUpdateCount(c => c + 1)}
             />
           )}
@@ -443,7 +448,7 @@ function AppContent() {
                   <TaskDetailPage
                     taskId={taskDetailId}
                     onBack={() => backToList()}
-                    onSelectTodo={(todoId) => handleSelectTodo(todoId)}
+                    onSelectTodo={handleSelectTodo}
                     onLoopChanged={() => setLoopUpdateCount(c => c + 1)}
                   />
                 ) : (
