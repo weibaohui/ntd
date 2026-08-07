@@ -397,8 +397,13 @@ export function TodoListView({
     onClearSelection: () => setSelectedIds([]),
   });
 
-  // 列定义：useMemo 避免每次渲染重建
-  const callbacks = { onSelectTodo, onExecuteTodo, onExecuteWithArgs, onEditTodo, onDeleteTodo };
+  // 列定义：useMemo 避免每次渲染重建。
+  // 091：callbacks 必须先 memoize，否则每次渲染新建对象会让下方的 useMemo 依赖失效、
+  // rawColumns 每次都重建（原代码注释说"避免重建"但 callbacks 内联对象恰恰破坏了它）。
+  const callbacks = useMemo(
+    () => ({ onSelectTodo, onExecuteTodo, onExecuteWithArgs, onEditTodo, onDeleteTodo }),
+    [onSelectTodo, onExecuteTodo, onExecuteWithArgs, onEditTodo, onDeleteTodo],
+  );
   const rawColumns = useMemo(() => buildTodoColumns(tags, callbacks), [tags, callbacks]);
   // 054：注入可拖拽列宽 + 受控排序 + localStorage 持久化。
   // 返回的 tableProps 包含 components / scroll / onChange，直接展开到 Table。

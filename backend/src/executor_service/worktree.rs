@@ -56,18 +56,32 @@ pub(crate) async fn resolve_worktree_context(
     // 创建失败时不阻塞执行——回退到原始 workspace，子进程仍然能跑通。
     let todo_id = t.as_ref().map(|t| t.id).unwrap_or(0);
     let svc = WorktreeService::new();
-    match svc.create_worktree(&ws, todo_id) {
-        Ok(wt_path) => WorktreeContext {
+    // create_worktree 同步跑多条 git 子进程（每条最长 30s 超时），直接在 async 路径调用会
+    // 占住 tokio worker；挪进 spawn_blocking 交给阻塞线程池（091 性能优化）。
+    // ws 会被 move 进闭包，先克隆一份用于失败日志。
+    let ws_for_log = ws.clone();
+    match tokio::task::spawn_blocking(move || svc.create_worktree(&ws, todo_id)).await {
+        Ok(Ok(wt_path)) => WorktreeContext {
             effective_workspace_path: Some(wt_path.clone()),
             record_path: Some(wt_path),
             auto_cleanup: dir.auto_cleanup,
         },
-        Err(e) => {
+        Ok(Err(e)) => {
             tracing::warn!(
-                workspace_path = %ws,
+                workspace_path = %ws_for_log,
                 todo_id = todo_id,
                 error = %e,
                 "failed to create git worktree, falling back to original workspace"
+            );
+            WorktreeContext::default()
+        }
+        Err(e) => {
+            // spawn_blocking 任务 panic / 被取消时落到这里，按创建失败回退原始 workspace。
+            tracing::warn!(
+                workspace_path = %ws_for_log,
+                todo_id = todo_id,
+                error = %e,
+                "create git worktree task panicked, falling back to original workspace"
             );
             WorktreeContext::default()
         }
@@ -88,17 +102,24 @@ pub(crate) async fn record_worktree_path(db: &Database, record_id: i64, path: Op
 
 /// 执行结束后清理 worktree（如果启用了 auto_cleanup）。
 ///
-/// `WorktreeError` 不会出现：本服务把失败映射成 warn，不再向上抛。
-pub(crate) fn cleanup_worktree_if_needed(ctx: &WorktreeContext) {
+/// `WorktreeError` 不会向上抛：本服务把失败映射成 warn。
+/// 因 `cleanup_worktree` 同步跑 `git worktree remove`，整个函数挪进 spawn_blocking
+/// 以免阻塞 async 运行时（091 性能优化），故为 async。
+pub(crate) async fn cleanup_worktree_if_needed(ctx: &WorktreeContext) {
     if !ctx.auto_cleanup {
         return;
     }
     let Some(path) = ctx.record_path.as_deref() else {
         return;
     };
+    // path 借用自 ctx，闭包需 owned；另克隆一份用于失败日志。
+    let path = path.to_string();
+    let log_path = path.clone();
     let svc = WorktreeService::new();
-    if let Err(e) = svc.cleanup_worktree(path) {
-        tracing::warn!(worktree = %path, error = %e, "worktree cleanup failed");
+    match tokio::task::spawn_blocking(move || svc.cleanup_worktree(&path)).await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => tracing::warn!(worktree = %log_path, error = %e, "worktree cleanup failed"),
+        Err(e) => tracing::warn!(worktree = %log_path, error = %e, "worktree cleanup task panicked"),
     }
 }
 
@@ -115,25 +136,25 @@ pub(crate) async fn kill_process_tree(child: &mut command_group::AsyncGroupChild
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_cleanup_worktree_if_needed_disabled() {
+    #[tokio::test]
+    async fn test_cleanup_worktree_if_needed_disabled() {
         let ctx = WorktreeContext {
             effective_workspace_path: None,
             record_path: Some("/tmp/ntd-643-disabled".into()),
             auto_cleanup: false,
         };
         // 不应 panic，不应触发任何 git 调用
-        cleanup_worktree_if_needed(&ctx);
+        cleanup_worktree_if_needed(&ctx).await;
     }
 
-    #[test]
-    fn test_cleanup_worktree_if_needed_no_path() {
+    #[tokio::test]
+    async fn test_cleanup_worktree_if_needed_no_path() {
         let ctx = WorktreeContext {
             effective_workspace_path: None,
             record_path: None,
             auto_cleanup: true,
         };
-        cleanup_worktree_if_needed(&ctx);
+        cleanup_worktree_if_needed(&ctx).await;
     }
 
     #[test]

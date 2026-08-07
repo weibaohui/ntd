@@ -1184,7 +1184,11 @@ impl LoopRunner {
     /// 原注释已承认"多 loop 并发时会有歧义；首版接受这个限制"，此处修复该问题。
     async fn wait_for_step_finish(&self, record_id: i64) -> Result<String, String> {
         let wait_timeout = Duration::from_secs(24 * 60 * 60);
-        let poll_interval = Duration::from_millis(500);
+        // 轮询指数退避：500ms 起、每轮翻倍、封顶 5s（091 性能优化）。长跑 step 不需要 500ms 紧轮询，
+        // 退避后单 step 最多多 ~5s 终态检测延迟，换来 DB 轮询压力大幅下降。
+        // 未来可给 Finished 事件补 record_id 走事件驱动，彻底去掉本处轮询。
+        let mut poll_interval = Duration::from_millis(500);
+        const POLL_MAX: Duration = Duration::from_secs(5);
         let start = std::time::Instant::now();
         // 连续错误计数器：防止数据库持续异常导致无限轮询；
         // 单次成功查询或查询返回 None（记录尚未创建）时重置计数。
@@ -1229,6 +1233,8 @@ impl LoopRunner {
             }
 
             tokio::time::sleep(poll_interval).await;
+            // 仍无终态：下一轮拉长间隔（翻倍、封顶 5s），降低长跑 step 的 DB 轮询压力。
+            poll_interval = std::cmp::min(poll_interval * 2, POLL_MAX);
         }
     }
 

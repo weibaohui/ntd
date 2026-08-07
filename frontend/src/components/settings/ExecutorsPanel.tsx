@@ -12,6 +12,7 @@ import { getExecutorInstallPrompt } from '@/components/settings/executorInstallP
 import * as db from '@/utils/database';
 import type { ExecutorConfig, ExecutionRecord, TodoBrief } from '@/types';
 import { useApp } from '@/hooks/useApp';
+import { useAutoRefreshRunningBoard } from '@/hooks/useRunningBoard';
 import { SessionManager } from '@/components/SessionManager';
 
 import { DEFAULT_EXECUTION_TIMEOUT_SECS, MAX_EXECUTION_TIMEOUT_MINUTES } from '@/constants';
@@ -126,13 +127,17 @@ export function ExecutorsPanel() {
     }
   };
 
+  // 091：正在运行 tab——切到该 tab 时做一次初始加载；执行态变化全由事件驱动刷新
+  // （见下方 useAutoRefreshRunningBoard，订阅 Started/Finished/ReviewStatusChanged，
+  //  以及 WS 重连 Sync + 切回标签页）。彻底移除原 60s 兜底定时轮询，无变化时不打请求。
   useEffect(() => {
-    if (runningTab === 'running') {
-      loadRunningRecords();
-      const timer = setInterval(loadRunningRecords, 10000);
-      return () => clearInterval(timer);
-    }
+    if (runningTab !== 'running') return;
+    loadRunningRecords();
   }, [runningTab]);
+
+  // 事件驱动刷新：executionStarted/Finished/ReviewStatusChanged 时立即重拉运行记录
+  //（Finished 延迟 1s 等后端落库）。始终订阅，refresh 内部轻量。
+  useAutoRefreshRunningBoard(loadRunningRecords);
 
   // 正在运行 tab：批量停止
   const handleBatchStop = async () => {

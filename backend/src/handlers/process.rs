@@ -389,7 +389,8 @@ pub async fn update_process(
     let target_path = compute_user_process_path(&template)?;
 
     // 原子写盘（已含自动递增后的版本号），避免崩溃导致文件损坏。
-    atomic_write(&target_path, &new_yaml)?;
+    // new_yaml 后续还要回传前端 / 写快照，这里 clone 一份进 spawn_blocking。
+    atomic_write_async(target_path, new_yaml.clone()).await?;
 
     // 版本快照：把当前版本写入 process_template_versions（BUG-005），
     // 供 versions/diff 查询历史版本。
@@ -466,7 +467,7 @@ pub async fn create_process(
     }
 
     // 原子写盘：临时文件 + rename，避免崩溃导致文件损坏。
-    atomic_write(&target_path, &req.definition)?;
+    atomic_write_async(target_path, req.definition.clone()).await?;
 
     // 触发用户层 upsert，把刚保存的文件刷新入库为 is_system=false。
     if let Err(e) =
@@ -529,7 +530,10 @@ pub async fn delete_process(
     // 计算用户目录下的目标路径，删除文件。
     let target_path = compute_user_process_path(&template)?;
     if target_path.exists() {
-        std::fs::remove_file(&target_path)
+        // remove_file 挪进 spawn_blocking，避免在磁盘抖动下卡住 tokio worker（091 性能优化）。
+        tokio::task::spawn_blocking(move || std::fs::remove_file(&target_path))
+            .await
+            .map_err(|e| AppError::Internal(format!("删除任务失败: {}", e)))?
             .map_err(|e| AppError::Internal(format!("删除用户工艺文件失败: {}", e)))?;
     }
 
@@ -591,6 +595,18 @@ fn atomic_write(
     Ok(())
 }
 
+/// `atomic_write` 的异步版：把「写临时文件 + rename」两步磁盘 IO 挪进 spawn_blocking，
+/// 避免在偶发磁盘抖动下卡住 tokio worker（091 性能优化）。这些工艺保存 handler 都不是
+/// 热路径，spawn_blocking 的派发开销可忽略；入参取 owned 便于 move 进阻塞闭包。
+async fn atomic_write_async(
+    path: std::path::PathBuf,
+    content: String,
+) -> Result<(), AppError> {
+    tokio::task::spawn_blocking(move || atomic_write(&path, &content))
+        .await
+        .map_err(|e| AppError::Internal(format!("写盘任务失败: {}", e)))?
+}
+
 /// name 正则校验：`^[a-zA-Z0-9_-]+$`。
 ///
 /// 避免 name 含空格、中文、特殊符号导致文件名或 YAML map key 异常。
@@ -639,7 +655,7 @@ pub async fn copy_process_to_user(
 
     let target_path = compute_copy_target_path(&template)?;
 
-    atomic_write(&target_path, &copied)?;
+    atomic_write_async(target_path.clone(), copied).await?;
 
     // 触发用户层重扫，把副本入库为 is_system=false。
     if let Err(e) =

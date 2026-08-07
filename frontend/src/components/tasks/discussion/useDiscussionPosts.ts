@@ -1,20 +1,22 @@
-// 讨论帖数据 hook：主楼层分页拉取 + running 帖轮询/WS 实时刷新。
+// 讨论帖数据 hook：主楼层分页拉取 + running 帖纯事件驱动实时刷新。
 // 从 DiscussionTab 抽出（S2：组件不超 150 行），副作用集中于此，组件只管渲染与输入。
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import bundledApi from '@/api/bundled';
 import type { TaskPost } from '@/types';
+// 091：WS 重连全量 Sync 信号——替代被移除的 4s 兜底轮询。
+import { EXECUTION_SYNC_EVENT } from '@/hooks/useExecutionEvents';
 
 /** 主楼层每页条数（与后端默认 limit 对齐，足够覆盖常见讨论长度）。 */
 export const PAGE_SIZE = 20;
-/** running 帖的轮询间隔（ms）。低于 3s 会给后端造成无谓压力。 */
-const POLL_INTERVAL_MS = 4000;
 
 /**
  * 管理某任务讨论帖的分页列表与实时刷新。
  * - 挂载/翻页时拉当前页主楼层（含楼中楼 replies）。
- * - 有 running 帖时每 POLL_INTERVAL_MS 轮询当前页（WS 断线兜底）。
- * - 监听全局 executionFinished（WS），按 source_todo_id 精确匹配 running 帖即时刷新。
+ * - 实时刷新改为纯事件驱动（091：移除原 4s 定时轮询）：
+ *   · executionFinished（WS）：按 source_todo_id 精确匹配 running 帖，执行结束即时刷新。
+ *   · EXECUTION_SYNC_EVENT（WS 重连全量快照）：补刷一次，纠正断线期间漏掉的终态。
+ *   · visibilitychange（用户切回标签页）：补刷一次，覆盖后台挂起 WS、重连未就绪的窗口。
  * 返回 setPosts/setTotal 供组件做乐观更新（发帖/删帖）。
  */
 export function useDiscussionPosts(taskId: number, workspaceId: number) {
@@ -49,13 +51,22 @@ export function useDiscussionPosts(taskId: number, workspaceId: number) {
     setPage(1);
   }, [taskId]);
 
-  // 有 running 帖才轮询（轮询为兜底：WS 断线/丢事件时仍能收敛到终态）。
-  const hasRunning = posts.some((p) => p.status === 'running');
+  // 091：实时刷新改为纯事件驱动（移除原 4s 定时轮询）。
+  // - EXECUTION_SYNC_EVENT：WS 重连后端推全量快照——补刷当前页，纠正断线期间漏掉的终态。
+  // - visibilitychange：用户切回标签页时刷新一次（浏览器后台会节流/挂起 WS，
+  //   切回瞬间重连可能尚未完成，用可见性事件做单次纠偏，非定时轮询）。
   useEffect(() => {
-    if (!hasRunning) return;
-    const timer = setInterval(() => { void fetchPosts(); }, POLL_INTERVAL_MS);
-    return () => clearInterval(timer);
-  }, [hasRunning, fetchPosts]);
+    const onResync = () => { void fetchPosts(); };
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') void fetchPosts();
+    };
+    window.addEventListener(EXECUTION_SYNC_EVENT, onResync);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener(EXECUTION_SYNC_EVENT, onResync);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [fetchPosts]);
 
   // 实时更新（M4）：监听全局 executionFinished（useExecutionEvents 的 WS 广播），
   // 按 source_todo_id（载体 todo id）精确匹配 running 帖；命中即立即刷新当前页，
@@ -78,5 +89,6 @@ export function useDiscussionPosts(taskId: number, workspaceId: number) {
     return () => window.removeEventListener('executionFinished', onFinished);
   }, [fetchPosts]);
 
-  return { posts, page, total, runningTotal, loading, setPage, setPosts, setTotal };
+  // refresh 供「手动刷新」按钮调用：纯事件驱动后，用户等不及或 WS 长时间无响应时可自行重拉当前页。
+  return { posts, page, total, runningTotal, loading, setPage, setPosts, setTotal, refresh: fetchPosts };
 }

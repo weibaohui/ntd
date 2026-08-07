@@ -1,8 +1,9 @@
 // 任务讨论区 Tab：帖子流（主楼层 + 楼中楼）+ 输入器。
-// 数据/分页/轮询/SSE 副作用抽到 useDiscussionPosts；本组件只管输入态、发送/删除与渲染。
+// 数据/分页/WS 事件刷新副作用抽到 useDiscussionPosts；本组件只管输入态、发送/删除与渲染。
 
 import { useCallback, useEffect, useState } from 'react';
-import { Empty, Spin, Pagination, message } from 'antd';
+import { Empty, Spin, Pagination, message, Button } from 'antd';
+import { ReloadOutlined } from '@ant-design/icons';
 import bundledApi from '@/api/bundled';
 import { useViewState } from '@/hooks/useViewState';
 import { DiscussionComposer } from './DiscussionComposer';
@@ -19,7 +20,7 @@ interface DiscussionTabProps {
 }
 
 export function DiscussionTab({ taskId, workspaceId, onRunningCountChange }: DiscussionTabProps) {
-  const { posts, page, total, runningTotal, loading, setPage, setPosts, setTotal } = useDiscussionPosts(taskId, workspaceId);
+  const { posts, page, total, runningTotal, loading, setPage, setPosts, setTotal, refresh } = useDiscussionPosts(taskId, workspaceId);
   const [sending, setSending] = useState(false);
   const [value, setValue] = useState('');
   const [replyTo, setReplyTo] = useState<{ id: number; author: string } | null>(null);
@@ -44,7 +45,7 @@ export function DiscussionTab({ taskId, workspaceId, onRunningCountChange }: Dis
     setSending(true);
     try {
       const res = await bundledApi.createTaskPost(workspaceId, taskId, value, replyTo?.id ?? null);
-      // 乐观并入：主楼层追加末尾、楼中楼挂到对应楼层；total 相应增加。下次轮询/SSE 会与服务端对齐。
+      // 乐观并入：主楼层追加末尾、楼中楼挂到对应楼层；total 相应增加。下次事件刷新会与服务端对齐。
       const appended = [res.human_post, res.agent_post].filter(Boolean) as TaskPost[];
       setPosts((prev) => mergeAppended(prev, appended));
       // total 只计主楼层：楼中楼回复（parent_post_id 非空）不计入主楼层分页总数。
@@ -73,6 +74,13 @@ export function DiscussionTab({ taskId, workspaceId, onRunningCountChange }: Dis
 
   return (
     <div>
+      {/* 手动刷新按钮：纯 WS 事件驱动后，断线或长延迟时用户可自行重拉当前页。
+          右对齐成一行，与帖子流解耦；loading 复用 fetchPosts 的拉取态驱动按钮转圈。 */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+        <Button size="small" icon={<ReloadOutlined />} loading={loading} onClick={() => void refresh()}>
+          刷新
+        </Button>
+      </div>
       {loading && posts.length === 0 ? (
         <Spin />
       ) : posts.length === 0 ? (

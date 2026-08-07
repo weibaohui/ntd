@@ -21,6 +21,8 @@ pub mod sync_record;
 pub(super) mod migration;
 pub use entity::prelude::*;
 mod usage;
+/// model breakdown 写入载荷（事务化重写 daily stat 时由 service 构造传入）。
+pub use usage::ModelBreakdownRow;
 
 /// Model breakdown with date (for API responses)
 #[derive(Debug, Clone)]

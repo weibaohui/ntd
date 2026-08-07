@@ -196,10 +196,40 @@ pub async fn events_handler(State(state): State<AppState>, ws: WebSocketUpgrade)
                 tracing::error!("[ws-events] 查询执行日志失败，Sync 降级为空日志: {e}");
                 std::collections::HashMap::new()
             });
+        // reconnect 时每个任务只回传最近 RECONNECT_LOG_CAP 条日志，避免长跑任务的全量日志
+        // 把首帧撑爆（既卡 serde 序列化，也卡 WS 推送）。完整历史前端通过 REST 分页按需拉取（091）。
+        const RECONNECT_LOG_CAP: usize = 200;
+        // 收集「task_id → 最近 N 条日志」，统一交给 spawn_blocking 做 CPU 密集的 JSON 序列化，
+        // 不占住 WS 升级后的 async 任务（091 性能优化）。
+        let logs_to_serialize = running_tasks
+            .iter()
+            .filter_map(|t| {
+                let record = record_map.get(&t.task_id)?;
+                // logs_map 按 id 升序，取尾部即最近 N 条。
+                let mut logs = logs_map.get(&record.id).cloned().unwrap_or_default();
+                if logs.len() > RECONNECT_LOG_CAP {
+                    logs = logs.split_off(logs.len() - RECONNECT_LOG_CAP);
+                }
+                Some((t.task_id.clone(), logs))
+            })
+            .collect::<Vec<_>>();
+        let serialized = tokio::task::spawn_blocking(move || {
+            logs_to_serialize
+                .into_iter()
+                .map(|(tid, logs)| (tid, serde_json::to_string(&logs).unwrap_or_default()))
+                .collect::<std::collections::HashMap<String, String>>()
+        })
+        .await
+        .unwrap_or_default();
         for task in &mut running_tasks {
+            if let Some(json) = serialized.get(&task.task_id) {
+                task.logs = json.clone();
+            }
+            // 091：log_total 用 logs_map 的「全量」条数（logs_map 未被 RECONNECT_LOG_CAP 截断），
+            // 告知前端「还有更多历史」——前端只收到最近 N 条，但能据此提示「共 M 条」，
+            // 完整历史走执行记录详情页分页。无对应 record（DB 查询降级）时记 0。
             if let Some(record) = record_map.get(&task.task_id) {
-                let logs = logs_map.get(&record.id).cloned().unwrap_or_default();
-                task.logs = serde_json::to_string(&logs).unwrap_or_default();
+                task.log_total = logs_map.get(&record.id).map(|v| v.len() as i64).unwrap_or(0);
             }
         }
         let sync_event = ExecEvent::Sync { tasks: running_tasks };
@@ -222,31 +252,52 @@ pub async fn events_handler(State(state): State<AppState>, ws: WebSocketUpgrade)
         //
         // 对比 `services/feishu_push.rs:91-93`（warn-only，不重新订阅）；
         // 这里额外 resubscribe 以跳过 lag 期间的积压事件。
+        // 心跳：每 30s 发一次 Ping 探测客户端是否存活。半开连接（客户端已死、TCP 未感知）
+        // 会让 rx.recv() 长期空等；Ping 发送失败即视为连接断开，跳出循环清理资源（091）。
+        // 用 select! 让「broadcast 事件」与「心跳到点」二选一就绪，互不阻塞。
+        let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(30));
+        // interval 首个 tick 立即触发，会与首次事件竞争并立刻发一个空 Ping；跳过它，从下一个 30s 周期开始。
+        heartbeat.tick().await;
         loop {
-            match rx.recv().await {
-                Ok(event) => {
-                    let json = serde_json::to_string(&event).unwrap_or_default();
-                    if json.is_empty() {
-                        continue;
+            tokio::select! {
+                recv = rx.recv() => {
+                    match recv {
+                        Ok(event) => {
+                            let json = serde_json::to_string(&event).unwrap_or_default();
+                            if json.is_empty() {
+                                continue;
+                            }
+                            if ws
+                                .send(axum::extract::ws::Message::Text(json.into()))
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Lagged(n)) => {
+                            tracing::warn!(
+                                "[ws-events] client lagged, skipped {} events; resubscribing to skip backlog",
+                                n
+                            );
+                            rx = state.tx.subscribe();
+                        }
+                        Err(broadcast::error::RecvError::Closed) => {
+                            tracing::info!("[ws-events] broadcast channel closed, closing WebSocket");
+                            break;
+                        }
                     }
+                }
+                _ = heartbeat.tick() => {
+                    // Ping 载荷留空：客户端按 WS 规范回 Pong 即可，无需载荷内容。
                     if ws
-                        .send(axum::extract::ws::Message::Text(json.into()))
+                        .send(axum::extract::ws::Message::Ping(Vec::new().into()))
                         .await
                         .is_err()
                     {
+                        tracing::info!("[ws-events] heartbeat ping failed, closing WebSocket");
                         break;
                     }
-                }
-                Err(broadcast::error::RecvError::Lagged(n)) => {
-                    tracing::warn!(
-                        "[ws-events] client lagged, skipped {} events; resubscribing to skip backlog",
-                        n
-                    );
-                    rx = state.tx.subscribe();
-                }
-                Err(broadcast::error::RecvError::Closed) => {
-                    tracing::info!("[ws-events] broadcast channel closed, closing WebSocket");
-                    break;
                 }
             }
         }

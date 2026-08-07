@@ -60,7 +60,8 @@ export function MemorialBoard() {
           // Fetch total run count for each todo
           for (const item of data) {
             if (!totalRunsCache[item.todo_id]) {
-              db.getExecutionRecords(item.todo_id, 1, 1, undefined, undefined, state.selectedWorkspace ?? undefined).then(page => {
+              // 091 修复参数错位：第一参是 workspaceId（旧代码误传 todo_id）。
+              db.getExecutionRecords(state.selectedWorkspace ?? 0, item.todo_id, 1, 1, undefined, undefined).then(page => {
                 if (page.total > 0) {
                   setTotalRunsCache(prev => ({ ...prev, [item.todo_id]: page.total }));
                 }
@@ -157,7 +158,8 @@ export function MemorialBoard() {
 
     setLoadingRunIndex(prev => ({ ...prev, [todoId]: runIndex }));
     try {
-      const page = await db.getExecutionRecords(todoId, runIndex + 1, 1, undefined, undefined, state.selectedWorkspace ?? undefined);
+      // 091 修复参数错位：第一参是 workspaceId。
+      const page = await db.getExecutionRecords(state.selectedWorkspace ?? 0, todoId, runIndex + 1, 1, undefined, undefined);
       if (page.records.length > 0) {
         const record = page.records[0];
         setRunDataCache(prev => {

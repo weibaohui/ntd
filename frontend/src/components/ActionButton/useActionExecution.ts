@@ -1,6 +1,8 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { getExecutionRecord } from '@/utils/database';
 import { useExecution } from '@/hooks/useExecutionContext';
+// 091：实时日志已从 runningTasks[taskId].logs 迁至独立的 LogsContext。
+import { useTaskLogs } from '@/hooks/useLogsContext';
 import type { LogEntry } from '@/types';
 import type { ActionStatus } from './types';
 import { api, unwrap } from '@/utils/database/client';
@@ -74,11 +76,10 @@ export function useActionExecution(
   const taskIdRef = useRef<string | null>(null);
   const { state } = useExecution();
 
-  // 从全局 runningTasks 取当前任务的实时日志流。taskIdRef 在 execute() 拿到 task_id 后赋值；
-  // state.runningTasks 由 WS 事件驱动更新，Output 事件会持续 append logs → 本组件随之重渲染。
-  // 直接在渲染期读 ref + state 是安全的：ref 写入发生在 execute 闭包，state 变化由订阅触发。
-  const runningTask = taskIdRef.current ? state.runningTasks[taskIdRef.current] : undefined;
-  const logs: LogEntry[] = runningTask?.logs ?? [];
+  // 091：日志从 runningTasks[taskId].logs 迁至 LogsContext。taskIdRef.current 是 ref，
+  // execute() 拿到 task_id 后写入；日志变化触发 LogsStateContext 重渲染，重渲染时
+  // 重新读 ref 取最新 taskId，从而正确订阅对应任务的日志流。
+  const logs: LogEntry[] = useTaskLogs(taskIdRef.current);
 
   // 监听 WebSocket 的 FINISH_TASK 事件
   useEffect(() => {

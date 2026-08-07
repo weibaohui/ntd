@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ExpandOutlined, CompressOutlined, InfoCircleOutlined, StopOutlined, CloseOutlined } from '@ant-design/icons';
 import { Popconfirm, Popover, Dropdown, App } from 'antd';
 import { useApp } from '@/hooks/useApp';
@@ -6,7 +6,10 @@ import { useTheme } from '@/hooks/useTheme';
 import { getExecutorOption } from '@/types';
 import { stopExecution } from '@/utils/database';
 import { formatLocalDateTime, formatDurationSec } from '@/utils/datetime';
-import { LOG_TYPE_COLORS_LIGHT, LOG_TYPE_COLORS_DARK, LOG_TYPE_LABELS } from '@/constants';
+// 091：日志类型徽标常量。labels 随日志渲染迁入 ExecutionPanelLogs，这里只剩颜色表。
+import { LOG_TYPE_COLORS_LIGHT, LOG_TYPE_COLORS_DARK } from '@/constants';
+// 091：日志渲染（含虚拟滚动）拆到独立组件，避免日志变化导致整个面板重渲染。
+import { ExecutionPanelLogs } from './ExecutionPanelLogs';
 
 interface ExecutionPanelProps {
   collapsed: boolean;
@@ -20,26 +23,11 @@ interface ExecutionPanelProps {
   onPermanentClose?: () => void;
 }
 
-function formatShortTime(iso: string): string {
-  try {
-    const d = new Date(iso);
-    return d.toLocaleTimeString('zh-CN', {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false,
-    });
-  } catch {
-    return iso;
-  }
-}
-
 export function ExecutionPanel({ collapsed, onToggleCollapse, hidden, onTemporaryClose, onPermanentClose }: ExecutionPanelProps) {
   const { state, dispatch } = useApp();
   const { themeMode } = useTheme();
   const { runningTasks, activeTaskId, executionRecords } = state;
   const { message } = App.useApp();
-  const logsEndRef = useRef<HTMLDivElement>(null);
   const [fullscreen, setFullscreen] = useState(false);
 
   const logTypeColors = themeMode === 'dark' ? LOG_TYPE_COLORS_DARK : LOG_TYPE_COLORS_LIGHT;
@@ -57,11 +45,8 @@ export function ExecutionPanel({ collapsed, onToggleCollapse, hidden, onTemporar
     return () => clearInterval(interval);
   }, [hasRunningTasks, collapsed, hidden]);
 
-  useEffect(() => {
-    if (logsEndRef.current && !collapsed && activeTask) {
-      logsEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [activeTask?.logs, collapsed, activeTask]);
+  // 091：日志滚动已由 ExecutionPanelLogs 的虚拟列表接管（scrollToIndex 钉底），
+  // 这里不再需要基于 activeTask.logs 的 scrollIntoView 副作用。
 
   // Finished tasks auto-remove after 5s
   useEffect(() => {
@@ -72,6 +57,8 @@ export function ExecutionPanel({ collapsed, onToggleCollapse, hidden, onTemporar
         const delay = Math.max(0, 5000 - elapsed);
         timers.push(setTimeout(() => {
           dispatch({ type: 'REMOVE_RUNNING_TASK', payload: id });
+          // 091：任务移出运行列表时同步释放其日志内存，与 WS 事件 Finished 路径一致。
+          dispatch({ type: 'REMOVE_TASK_LOGS', payload: id });
         }, delay));
       }
     });
@@ -246,37 +233,16 @@ export function ExecutionPanel({ collapsed, onToggleCollapse, hidden, onTemporar
 
       {/* Log Area */}
       {!collapsed && activeTask && (
-        <div className="execution-panel-logs">
-          {activeTask.logs.length === 0 ? (
-            <div className="execution-panel-empty">等待输出...</div>
-          ) : (
-            <>
-              {activeTask.logs.map((log, idx) => (
-                <div key={idx} className="log-line">
-                  <span className="log-timestamp">{formatShortTime(log.timestamp)}</span>
-                  <span
-                    className="log-type-badge"
-                    style={{
-                      color: logTypeColors[log.type] || '#cbd5e1',
-                      background: `${logTypeColors[log.type] || '#cbd5e1'}20`,
-                    }}
-                  >
-                    {LOG_TYPE_LABELS[log.type] || log.type}
-                  </span>
-                  <span className="log-content">{log.content}</span>
-                </div>
-              ))}
-              {activeTask.status === 'finished' && activeTask.result && (
-                <div
-                  className={`log-result ${activeTask.success ? 'log-result-success' : 'log-result-error'}`}
-                >
-                  {activeTask.result}
-                </div>
-              )}
-              <div ref={logsEndRef} />
-            </>
-          )}
-        </div>
+        // 091：key=activeTaskId 切换任务时强制重挂载，避免不同任务的虚拟列表状态串台；
+        // 日志读取与虚拟滚动封装在 ExecutionPanelLogs 内，面板本体不再触碰 logs。
+        <ExecutionPanelLogs
+          key={activeTaskId}
+          taskId={activeTaskId!}
+          logTypeColors={logTypeColors}
+          status={activeTask.status}
+          result={activeTask.result}
+          success={activeTask.success}
+        />
       )}
     </div>
   );

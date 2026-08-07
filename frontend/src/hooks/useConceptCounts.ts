@@ -114,7 +114,8 @@ async function checkExecutionsExist(
 ): Promise<boolean> {
   if (!todoIds || todoIds.length === 0) return false;
   try {
-    const page = await db.getExecutionRecords(todoIds[0], 1, 1, undefined, undefined, wsId);
+    // 091 修复参数错位：第一参是 workspaceId（旧代码误传 todoId、把 wsId 当 stepId）。
+    const page = await db.getExecutionRecords(wsId, todoIds[0], 1, 1, undefined, undefined);
     return page.total > 0;
   } catch {
     return false;

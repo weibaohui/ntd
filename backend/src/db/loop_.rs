@@ -678,6 +678,37 @@ impl Database {
         row.try_get_by("cnt")
     }
 
+    /// 批量查多个 todo 各自被 loop_steps 引用的次数，按 todo_id 分组返回。
+    /// 批量删除事项前的可删除性校验用：一次 GROUP BY 查询替代逐 id 的 `count_loop_steps_by_todo`（消除 N+1，091 性能优化）。
+    /// 仅返回存在引用的 todo；调用方对未出现的 todo 视作引用数 0。
+    pub async fn count_loop_steps_by_todos(
+        &self,
+        todo_ids: &[i64],
+    ) -> Result<std::collections::HashMap<i64, i64>, sea_orm::DbErr> {
+        use sea_orm::Statement;
+        use std::collections::HashMap;
+        if todo_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        // 参数化 IN：in_clause 按 ids 数量生成 ? 占位符，避免 SQL 拼接（与单条版一致）。
+        let (placeholders, values) = Database::in_clause(todo_ids);
+        let sql = format!(
+            "SELECT todo_id, COUNT(*) AS cnt FROM loop_steps WHERE todo_id IN ({placeholders}) GROUP BY todo_id"
+        );
+        let rows = self
+            .conn
+            .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, sql, values))
+            .await?;
+        let mut map: HashMap<i64, i64> = HashMap::new();
+        for row in rows {
+            // 行级取值失败按整行跳过（理论上 COUNT 结果列一定可读）。
+            let todo_id: i64 = row.try_get_by("todo_id")?;
+            let cnt: i64 = row.try_get_by("cnt")?;
+            map.insert(todo_id, cnt);
+        }
+        Ok(map)
+    }
+
     /// 参数数量由 loop_steps 表 schema 决定
     #[allow(clippy::too_many_arguments)]
     pub async fn create_loop_step(
@@ -1066,6 +1097,58 @@ impl Database {
             .order_by_asc(loop_step_executions::Column::SequenceIndex)
             .all(&self.conn)
             .await
+    }
+
+    /// 批量取多个 loop_execution 的 step_executions，按 loop_execution_id 分组返回。
+    /// 执行历史列表用：一次 IN 查询替代逐 execution 查询，消除 N+1（091 性能优化）。
+    /// 每组内仍按 sequence_index 升序，与单条版 `list_loop_step_executions` 口径一致。
+    pub async fn list_loop_step_executions_by_exec_ids(
+        &self,
+        loop_execution_ids: &[i64],
+    ) -> Result<std::collections::HashMap<i64, Vec<loop_step_executions::Model>>, sea_orm::DbErr> {
+        use std::collections::HashMap;
+        // 空入参直接返回空 map，避免生成非法的 `IN ()` SQL。
+        if loop_execution_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let rows = loop_step_executions::Entity::find()
+            .filter(loop_step_executions::Column::LoopExecutionId.is_in(loop_execution_ids.to_vec()))
+            .order_by_asc(loop_step_executions::Column::SequenceIndex)
+            .all(&self.conn)
+            .await?;
+        // 按 loop_execution_id 分组，组内已按 sequence_index 升序。
+        let mut map: HashMap<i64, Vec<_>> = HashMap::new();
+        for row in rows {
+            map.entry(row.loop_execution_id).or_default().push(row);
+        }
+        Ok(map)
+    }
+
+    /// 批量取多个 task 各自最近一次 loop_execution（任务列表「最近执行」列用）。
+    /// 单次 IN 查询（按 started_at 倒序）+ Rust 端按 task_id 取首条，消除逐 task 的 N+1（091 性能优化）。
+    /// 返回 `task_id -> 最新执行 Model`，未出现的 task 视为无执行记录。
+    pub async fn get_latest_execution_by_task_ids(
+        &self,
+        task_ids: &[i64],
+    ) -> Result<std::collections::HashMap<i64, loop_executions::Model>, sea_orm::DbErr> {
+        use std::collections::HashMap;
+        if task_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let rows = loop_executions::Entity::find()
+            .filter(loop_executions::Column::TaskId.is_in(task_ids.to_vec()))
+            .order_by_desc(loop_executions::Column::StartedAt)
+            .all(&self.conn)
+            .await?;
+        let mut latest: HashMap<i64, loop_executions::Model> = HashMap::new();
+        for row in rows {
+            // 倒序遍历：首个出现的 task_id 即其最新执行（started_at 最大），后续同 task_id 跳过。
+            // task_id 列可空（历史数据），NULL 行无法按 task 索引，跳过。
+            if let Some(tid) = row.task_id {
+                latest.entry(tid).or_insert(row);
+            }
+        }
+        Ok(latest)
     }
 
     pub async fn mark_step_execution_started(
@@ -1755,6 +1838,84 @@ mod loop_step_count_tests {
         );
     }
 
+    /// count_loop_steps_by_todos（批量，删除校验口径，不区分 enabled）：
+    /// 一次 GROUP BY 聚合多 todo 的引用计数；未被引用的 todo 不出现在 map（调用方按 0 兜底）。
+    #[tokio::test]
+    async fn test_count_loop_steps_by_todos_batch_groups_by_todo() {
+        let db = fresh_db().await;
+        let t1 = seed_todo(&db, "T1").await;
+        let t2 = seed_todo(&db, "T2").await;
+        let lp = seed_loop(&db, "L").await;
+        // t1 被两个环节引用（一启用一禁用）；删除校验口径不区分 enabled，应计 2。
+        db.exec(&format!(
+            "INSERT INTO loop_steps (loop_id, name, todo_id, enabled) VALUES ({lp}, 'a', {t1}, 1)"
+        ))
+        .await
+        .expect("insert a");
+        db.exec(&format!(
+            "INSERT INTO loop_steps (loop_id, name, todo_id, enabled) VALUES ({lp}, 'b', {t1}, 0)"
+        ))
+        .await
+        .expect("insert b");
+        let map = db.count_loop_steps_by_todos(&[t1, t2]).await.unwrap();
+        assert_eq!(map.get(&t1).copied().unwrap_or(0), 2, "t1 应计数全部引用（含禁用）");
+        assert!(!map.contains_key(&t2), "未被引用的 todo 不应出现在 map");
+        assert!(
+            db.count_loop_steps_by_todos(&[]).await.unwrap().is_empty(),
+            "空入参应返回空 map"
+        );
+    }
+
+    /// get_latest_execution_by_task_ids：按 task 批量取最近一次执行（started_at 倒序取首条）。
+    /// 验证「每 task 取最新」+ task_id 可空行不参与 + 空入参。
+    #[tokio::test]
+    async fn test_get_latest_execution_by_task_ids_picks_latest() {
+        let db = fresh_db().await;
+        let lp = seed_loop(&db, "L").await;
+        // loop_executions.task_id 有 FK→tasks，先建 task 行再引用。
+        db.exec("INSERT INTO tasks (title, description, status, created_by) VALUES ('T','d','pending','test')")
+            .await
+            .expect("insert task");
+        let task_id: i64 = db
+            .conn
+            .query_one(sea_orm::Statement::from_string(
+                sea_orm::DbBackend::Sqlite,
+                "SELECT MAX(id) AS m FROM tasks",
+            ))
+            .await
+            .expect("query task id")
+            .expect("task row exists")
+            .try_get_by("m")
+            .expect("task id readable");
+        // 同 task 两条执行：started_at 一早一晚，晚的应被选为「最近」。
+        db.exec(&format!(
+            "INSERT INTO loop_executions (loop_id, trigger_type, started_at, task_id, status) \
+             VALUES ({lp}, 'manual', '2026-01-01T00:00:00Z', {task_id}, 'failed')"
+        ))
+        .await
+        .expect("insert old exec");
+        db.exec(&format!(
+            "INSERT INTO loop_executions (loop_id, trigger_type, started_at, task_id, status) \
+             VALUES ({lp}, 'manual', '2026-02-01T00:00:00Z', {task_id}, 'success')"
+        ))
+        .await
+        .expect("insert new exec");
+        // 另插一条 task_id=NULL 的执行：不应被任何 task 选中。
+        db.exec(&format!(
+            "INSERT INTO loop_executions (loop_id, trigger_type, started_at, task_id, status) \
+             VALUES ({lp}, 'manual', '2026-03-01T00:00:00Z', NULL, 'running')"
+        ))
+        .await
+        .expect("insert null-task exec");
+        let map = db.get_latest_execution_by_task_ids(&[task_id]).await.unwrap();
+        let latest = map.get(&task_id).expect("该 task 应有最近执行");
+        assert_eq!(latest.status, "success", "应选 started_at 最新的执行");
+        assert!(
+            db.get_latest_execution_by_task_ids(&[]).await.unwrap().is_empty(),
+            "空入参应返回空 map"
+        );
+    }
+
     /// find_loop_step_by_todo_id：按 todo_id 反查 step；存在/不存在两条路径。
     /// 用于 todo 级 auto_review 判定是否由环路闸门接管（step.min_rating.is_some()）。
     #[tokio::test]
@@ -2287,6 +2448,73 @@ mod loop_approval_tests {
             .expect("query max id")
             .expect("max id row exists");
         row.try_get_by::<i64, _>("m").unwrap_or(0)
+    }
+
+    /// list_loop_step_executions_by_exec_ids：按 loop_execution_id 批量取环节执行并分组，
+    /// 组内按 sequence_index 升序；未挂环节执行的 exec 不出现；空入参返空（091 批量化新增）。
+    #[tokio::test]
+    async fn test_list_loop_step_executions_by_exec_ids_groups_and_orders() {
+        let db = fresh_db().await;
+        db.exec("INSERT INTO todos (title, prompt, status) VALUES ('t','p','pending')")
+            .await
+            .expect("insert todo");
+        let todo_id = max_id(&db, "todos").await;
+        db.exec("INSERT INTO loops (name) VALUES ('L')").await.expect("insert loop");
+        let loop_id = max_id(&db, "loops").await;
+        // 两个 loop_execution：le1 挂环节执行，le2 不挂（验证未命中不出现在 map）。
+        db.exec(&format!(
+            "INSERT INTO loop_executions (loop_id, trigger_type, status, started_at) \
+             VALUES ({loop_id}, 'manual', 'running', datetime('now'))"
+        ))
+        .await
+        .expect("insert le1");
+        let le1 = max_id(&db, "loop_executions").await;
+        db.exec(&format!(
+            "INSERT INTO loop_executions (loop_id, trigger_type, status, started_at) \
+             VALUES ({loop_id}, 'manual', 'success', datetime('now'))"
+        ))
+        .await
+        .expect("insert le2");
+        let le2 = max_id(&db, "loop_executions").await;
+        // 两个真实 loop_step（取自增 id 作 step_id，避免 FK 悬空）。
+        db.exec(&format!(
+            "INSERT INTO loop_steps (loop_id, name, todo_id, enabled) VALUES ({loop_id}, 'a', {todo_id}, 1)"
+        ))
+        .await
+        .expect("insert step a");
+        let step_a = max_id(&db, "loop_steps").await;
+        db.exec(&format!(
+            "INSERT INTO loop_steps (loop_id, name, todo_id, enabled) VALUES ({loop_id}, 'b', {todo_id}, 1)"
+        ))
+        .await
+        .expect("insert step b");
+        let step_b = max_id(&db, "loop_steps").await;
+        // le1 两条 step_execution：故意先插 seq=2 再插 seq=1，验证返回按 seq 升序（非插入序）。
+        db.exec(&format!(
+            "INSERT INTO loop_step_executions (loop_execution_id, step_id, todo_id, sequence_index, status) \
+             VALUES ({le1}, {step_a}, {todo_id}, 2, 'success')"
+        ))
+        .await
+        .expect("insert se seq=2");
+        db.exec(&format!(
+            "INSERT INTO loop_step_executions (loop_execution_id, step_id, todo_id, sequence_index, status) \
+             VALUES ({le1}, {step_b}, {todo_id}, 1, 'success')"
+        ))
+        .await
+        .expect("insert se seq=1");
+        let map = db
+            .list_loop_step_executions_by_exec_ids(&[le1, le2, 9999])
+            .await
+            .unwrap();
+        let le1_rows = map.get(&le1).expect("le1 应有环节执行");
+        assert_eq!(le1_rows.len(), 2, "le1 应有两条环节执行");
+        assert_eq!(le1_rows[0].sequence_index, 1, "组内按 sequence_index 升序");
+        assert_eq!(le1_rows[1].sequence_index, 2);
+        assert!(!map.contains_key(&le2), "le2 无环节执行不应出现");
+        assert!(
+            db.list_loop_step_executions_by_exec_ids(&[]).await.unwrap().is_empty(),
+            "空入参应返回空 map"
+        );
     }
 
     /// 造一条 pending_approval 的环节执行记录（含 todo/loop/step/execution 四级外键），

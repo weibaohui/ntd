@@ -1,10 +1,8 @@
-use std::collections::HashMap;
-
 use crate::db::entity::feishu_messages;
 use crate::db::Database;
 use sea_orm::{
     sea_query::{Expr, LikeExpr},
-    ActiveModelTrait, ActiveValue, ColumnTrait, ConnectionTrait, EntityTrait,
+    ActiveModelTrait, ActiveValue, ColumnTrait, ConnectionTrait, DbBackend, EntityTrait,
     PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Statement,
 };
 
@@ -288,36 +286,33 @@ impl Database {
     pub async fn get_distinct_senders(
         &self,
     ) -> Result<Vec<(String, Option<String>, Option<String>, i64)>, sea_orm::DbErr> {
-        // Returns distinct sender_open_ids with their message count, sender_type, and sender_nickname
-        let models = feishu_messages::Entity::find()
-            .order_by_desc(feishu_messages::Column::CreatedAt)
-            .all(&self.conn)
+        // 原实现把整张 feishu_messages 读进内存再在 Rust 端按 sender_open_id 聚合，
+        // 随消息量增长会把全表搬运进应用内存；改为单条 GROUP BY 直接在 DB 端聚合（091 性能优化）。
+        //
+        // 取值口径：sender_type / sender_nickname 用 MAX()——对可空文本列 MAX 忽略 NULL，
+        // 返回「任一非空值」；与原先「按 created_at 倒序取首个非空」相比具体值可能不同，
+        // 但该字段仅用于发送者下拉展示，任一非空代表值都可用。
+        let sql = "SELECT sender_open_id, \
+                   MAX(sender_type) AS sender_type, \
+                   MAX(sender_nickname) AS sender_nickname, \
+                   COUNT(*) AS cnt \
+                   FROM feishu_messages GROUP BY sender_open_id";
+        let rows = self
+            .conn
+            .query_all(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                sql,
+                vec![],
+            ))
             .await?;
-
-        let mut sender_map: HashMap<String, (Option<String>, Option<String>, i64)> = HashMap::new();
-        for model in models {
-            let entry = sender_map.entry(model.sender_open_id.clone()).or_insert((
-                model.sender_type.clone(),
-                model.sender_nickname.clone(),
-                0,
-            ));
-            // Fill non-null nickname and sender_type only when missing
-            if entry.1.is_none() && model.sender_nickname.is_some() {
-                entry.1 = model.sender_nickname.clone();
-            }
-            if entry.0.is_none() && model.sender_type.is_some() {
-                entry.0 = model.sender_type.clone();
-            }
-            entry.2 += 1;
+        let mut result = Vec::with_capacity(rows.len());
+        for row in rows {
+            let sender_open_id: String = row.try_get_by("sender_open_id")?;
+            let sender_type: Option<String> = row.try_get_by("sender_type").ok().flatten();
+            let sender_nickname: Option<String> = row.try_get_by("sender_nickname").ok().flatten();
+            let count: i64 = row.try_get_by("cnt")?;
+            result.push((sender_open_id, sender_type, sender_nickname, count));
         }
-
-        let result: Vec<(String, Option<String>, Option<String>, i64)> = sender_map
-            .into_iter()
-            .map(|(sender_open_id, (sender_type, sender_nickname, count))| {
-                (sender_open_id, sender_type, sender_nickname, count)
-            })
-            .collect();
-
         Ok(result)
     }
 
@@ -460,5 +455,66 @@ impl Database {
         }
 
         Ok(stats)
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use crate::db::Database;
+
+    async fn fresh_db() -> Database {
+        Database::new(":memory:").await.expect("memory db must open")
+    }
+
+    /// 插一条 feishu_messages 行（仅必填列 + 可选的 type/nickname），减少测试样板。
+    async fn seed_msg(
+        db: &Database,
+        message_id: &str,
+        sender_open_id: &str,
+        sender_type: Option<&str>,
+        sender_nickname: Option<&str>,
+    ) {
+        let st = sender_type.map(|s| format!("'{s}'")).unwrap_or_else(|| "NULL".into());
+        let nick = sender_nickname.map(|s| format!("'{s}'")).unwrap_or_else(|| "NULL".into());
+        db.exec(&format!(
+            "INSERT INTO feishu_messages (bot_id, message_id, chat_id, chat_type, sender_open_id, msg_type, sender_type, sender_nickname) \
+             VALUES (1, '{message_id}', 'c', 'p2p', '{sender_open_id}', 'text', {st}, {nick})"
+        ))
+        .await
+        .expect("insert msg");
+    }
+
+    /// get_distinct_senders（重写为 GROUP BY）：按 sender_open_id 聚合计数，
+    /// sender_type/sender_nickname 取任一非空值（MAX 忽略 NULL）。
+    #[tokio::test]
+    async fn test_get_distinct_senders_groups_and_counts() {
+        let db = fresh_db().await;
+        // FK 链：feishu_messages.bot_id → agent_bots.id → project_directories.id，先铺好父行。
+        db.exec("INSERT INTO project_directories (path, git_worktree_enabled, auto_cleanup) VALUES ('/p', 0, 0)")
+            .await
+            .expect("insert project_directory");
+        db.exec("INSERT INTO agent_bots (bot_type, bot_name, app_id, app_secret, workspace_id) VALUES ('feishu','test','a','s',1)")
+            .await
+            .expect("insert agent_bot");
+        // senderA 两条：一条带昵称/类型，一条都为 NULL → 计数 2，MAX 取非空值。
+        seed_msg(&db, "m1", "A", Some("user"), Some("Alice")).await;
+        seed_msg(&db, "m2", "A", None, None).await;
+        // senderB 一条：昵称/类型均 NULL → 计数 1，两者为 None。
+        seed_msg(&db, "m3", "B", None, None).await;
+
+        let mut rows = db.get_distinct_senders().await.unwrap();
+        // HashMap 顺序不稳定，按 sender_open_id 排序后断言。
+        rows.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(rows.len(), 2, "应聚合出 2 个发送者");
+        let (sid_a, st_a, nick_a, cnt_a) = &rows[0];
+        assert_eq!(sid_a, "A");
+        assert_eq!(*cnt_a, 2, "senderA 应计数 2 条");
+        assert_eq!(st_a.as_deref(), Some("user"), "MAX 应取非空 sender_type");
+        assert_eq!(nick_a.as_deref(), Some("Alice"), "MAX 应取非空 sender_nickname");
+        let (sid_b, st_b, nick_b, cnt_b) = &rows[1];
+        assert_eq!(sid_b, "B");
+        assert_eq!(*cnt_b, 1, "senderB 应计数 1 条");
+        assert!(st_b.is_none() && nick_b.is_none(), "senderB 无非空类型/昵称");
     }
 }

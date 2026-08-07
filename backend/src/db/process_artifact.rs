@@ -129,6 +129,29 @@ impl Database {
             .all(&self.conn)
             .await
     }
+
+    /// 批量取多个 step_execution 的门禁，按 loop_step_execution_id 分组返回。
+    /// 执行历史批量 enrich 门禁摘要时调用，一次 IN 查询消除逐 step 的 N+1（091 性能优化）。
+    /// 每组内按 id 升序，与单条版 `list_loop_step_execution_gates` 口径一致。
+    pub async fn list_loop_step_execution_gates_by_step_ids(
+        &self,
+        loop_step_execution_ids: &[i64],
+    ) -> Result<std::collections::HashMap<i64, Vec<loop_step_execution_gates::Model>>, sea_orm::DbErr> {
+        use std::collections::HashMap;
+        if loop_step_execution_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let rows = loop_step_execution_gates::Entity::find()
+            .filter(loop_step_execution_gates::Column::LoopStepExecutionId.is_in(loop_step_execution_ids.to_vec()))
+            .order_by_asc(loop_step_execution_gates::Column::Id)
+            .all(&self.conn)
+            .await?;
+        let mut map: HashMap<i64, Vec<_>> = HashMap::new();
+        for row in rows {
+            map.entry(row.loop_step_execution_id).or_default().push(row);
+        }
+        Ok(map)
+    }
 }
 
 #[cfg(test)]
@@ -178,5 +201,29 @@ mod tests {
 
         let missing = db.get_loop_step_artifact_by_name(1, "Missing").await.unwrap();
         assert!(missing.is_none());
+    }
+
+    /// list_loop_step_execution_gates_by_step_ids：按 loop_step_execution_id 批量取闸门并分组，
+    /// 组内按 id 升序；未挂闸门的 step_execution 不出现；空入参返空（091 批量化新增）。
+    #[tokio::test]
+    async fn test_list_loop_step_execution_gates_by_step_ids_groups_and_orders() {
+        let db = fresh_db().await;
+        // FK 依赖：todo / loop / loop_step / loop_execution / 两个 loop_step_execution。
+        db.exec("INSERT INTO todos (id, title, prompt, status) VALUES (1, 't', 'p', 'pending')").await.unwrap();
+        db.exec("INSERT INTO loops (id, name) VALUES (1, 'l')").await.unwrap();
+        db.exec("INSERT INTO loop_steps (id, loop_id, name, todo_id) VALUES (1, 1, 's', 1)").await.unwrap();
+        db.exec("INSERT INTO loop_executions (id, loop_id, trigger_type, started_at, status) VALUES (1, 1, 'manual', '2024-01-01', 'running')").await.unwrap();
+        // se=10 挂闸门；se=20 不挂（验证未命中不出现在 map）。
+        db.exec("INSERT INTO loop_step_executions (id, loop_execution_id, step_id, todo_id, status) VALUES (10, 1, 1, 1, 'running')").await.unwrap();
+        db.exec("INSERT INTO loop_step_executions (id, loop_execution_id, step_id, todo_id, status) VALUES (20, 1, 1, 1, 'running')").await.unwrap();
+        // se=10 两个闸门（自增 id 升序），验证组内按 id 升序返回。
+        db.exec("INSERT INTO loop_step_execution_gates (loop_step_execution_id, gate_type, gate_name, config, status) VALUES (10, 'rating', 'g-older', '{}', 'pending')").await.unwrap();
+        db.exec("INSERT INTO loop_step_execution_gates (loop_step_execution_id, gate_type, gate_name, config, status) VALUES (10, 'rating', 'g-newer', '{}', 'pending')").await.unwrap();
+        let map = db.list_loop_step_execution_gates_by_step_ids(&[10, 20, 9999]).await.unwrap();
+        let rows = map.get(&10).expect("se=10 应有闸门");
+        assert_eq!(rows.len(), 2, "se=10 应有两个闸门");
+        assert!(rows[0].id < rows[1].id, "组内按 id 升序");
+        assert!(!map.contains_key(&20), "se=20 无闸门不应出现");
+        assert!(db.list_loop_step_execution_gates_by_step_ids(&[]).await.unwrap().is_empty(), "空入参应返回空 map");
     }
 }
