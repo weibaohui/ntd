@@ -6,6 +6,9 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::LazyLock;
+use std::time::{Duration, Instant};
+use tokio::sync::RwLock;
 
 use super::{AppError, AppState};
 use crate::models::ApiResponse;
@@ -1305,6 +1308,92 @@ fn paginate<T: Clone>(items: &[T], page: u64, page_size: u64) -> (u64, Vec<T>) {
     (total, page_data)
 }
 
+// ─── Session scan cache（091 性能优化）─────────────────────
+// scan_for_executors 会遍历多个执行器的 session 目录、逐文件解析 JSONL，是重磁盘 IO。
+// list_sessions / get_session_stats 在翻页、搜索、切页时反复触发它；前端无轮询，重复扫盘
+// 全来自这些交互。用 30s TTL 缓存 + 单飞锁（双重检查）把同一 executor 配置下的并发扫描收敛成一次。
+struct SessionsCacheEntry {
+    sessions: Vec<SessionInfo>,
+    expires_at: Instant,
+}
+
+static SESSIONS_CACHE: LazyLock<RwLock<HashMap<String, SessionsCacheEntry>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+
+/// 单飞锁：缓存过期时并发刷新只放行一个去扫盘，其余等锁后走双重检查命中（仿 DASHBOARD_REFRESH_LOCK）。
+static SESSIONS_SCAN_LOCK: LazyLock<tokio::sync::Mutex<()>> =
+    LazyLock::new(|| tokio::sync::Mutex::new(()));
+
+/// 按 (name, session_dir) 生成 executor 配置签名作为缓存键：配置变更（启停执行器/改目录）会落到
+/// 不同 key，避免读到旧配置的缓存；排序保证顺序无关。
+fn executors_signature(executors: &[crate::models::ExecutorConfig]) -> String {
+    // 收集 (name, session_dir) 引用对，排序后拼成稳定字符串。
+    let mut sig: Vec<(&str, &str)> = executors
+        .iter()
+        .map(|e| (e.name.as_str(), e.session_dir.as_str()))
+        .collect();
+    sig.sort_unstable();
+    sig.iter()
+        .map(|(n, d)| format!("{n}={d}"))
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
+/// 读取未过期的缓存项（快路径抽函数，保持 handler 与单飞段都 <30 行）。
+async fn sessions_cache_get_fresh(key: &str) -> Option<Vec<SessionInfo>> {
+    let cache = SESSIONS_CACHE.read().await;
+    let entry = cache.get(key)?;
+    if entry.expires_at > Instant::now() {
+        Some(entry.sessions.clone())
+    } else {
+        None
+    }
+}
+
+/// 取（缓存命中或单飞重扫）全量 sessions。30s TTL；扫描任务 panic 时若有旧值则 stale 回退。
+/// 入参取 owned Vec 便于 move 进 spawn_blocking 闭包。
+async fn cached_scan_sessions(
+    executors: Vec<crate::models::ExecutorConfig>,
+) -> Result<Vec<SessionInfo>, AppError> {
+    let key = executors_signature(&executors);
+    // 快路径：未过期直接命中，避开磁盘扫描。
+    if let Some(v) = sessions_cache_get_fresh(&key).await {
+        return Ok(v);
+    }
+    // 单飞：并发过期刷新只放行一个去扫盘。
+    let _permit = SESSIONS_SCAN_LOCK.lock().await;
+    // 双重检查：等锁期间可能已有并发请求完成扫描。
+    if let Some(v) = sessions_cache_get_fresh(&key).await {
+        return Ok(v);
+    }
+    // 取旧值备用：扫描 panic 时 stale-while-revalidate，返旧值比 5xx 更有用。
+    let stale = SESSIONS_CACHE
+        .read()
+        .await
+        .get(&key)
+        .map(|e| e.sessions.clone());
+    match tokio::task::spawn_blocking(move || scan_for_executors(&executors)).await {
+        Ok(sessions) => {
+            SESSIONS_CACHE.write().await.insert(
+                key.clone(),
+                SessionsCacheEntry {
+                    sessions: sessions.clone(),
+                    expires_at: Instant::now() + Duration::from_secs(30),
+                },
+            );
+            Ok(sessions)
+        }
+        Err(e) => {
+            if let Some(stale) = stale {
+                tracing::warn!("session scan task failed, returning stale cache: {e}");
+                Ok(stale)
+            } else {
+                Err(AppError::Internal(e.to_string()))
+            }
+        }
+    }
+}
+
 pub async fn list_sessions(
     State(state): State<AppState>,
     Query(query): Query<ListSessionsQuery>,
@@ -1315,93 +1404,102 @@ pub async fn list_sessions(
     let page = query.page.unwrap_or(1).max(1);
     let page_size = query.page_size.unwrap_or(20).clamp(1, 100);
 
-    let executors = state.db.get_enabled_executors().await.map_err(|e| AppError::Internal(e.to_string()))?;
+    let executors = state
+        .db
+        .get_enabled_executors()
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    // 091：scan_for_executors 是重磁盘扫描，30s TTL 缓存把翻页/搜索/切页的重复扫盘收敛成一次。
+    let mut sessions = cached_scan_sessions(executors).await?;
 
-    let result = tokio::task::spawn_blocking(move || {
-        let mut sessions = scan_for_executors(&executors);
+    // 过滤：全部为纯内存 retain，无需 spawn_blocking。
+    if let Some(ref status) = query.status {
+        sessions.retain(|s| &s.status == status);
+    }
+    if let Some(ref source) = query.source {
+        sessions.retain(|s| s.source == *source);
+    }
+    if let Some(ref executor) = query.executor {
+        sessions.retain(|s| s.executor == *executor);
+    }
+    if let Some(ref project) = query.project {
+        sessions.retain(|s| s.project_path.contains(project));
+    }
+    if let Some(ref search) = query.search {
+        let search_lower = search.to_lowercase();
+        sessions.retain(|s| {
+            s.first_prompt
+                .as_ref()
+                .map(|p| p.to_lowercase().contains(&search_lower))
+                .unwrap_or(false)
+        });
+    }
 
-        // Apply filters
-        if let Some(ref status) = query.status {
-            sessions.retain(|s| &s.status == status);
-        }
-        if let Some(ref source) = query.source {
-            sessions.retain(|s| s.source == *source);
-        }
-        if let Some(ref executor) = query.executor {
-            sessions.retain(|s| s.executor == *executor);
-        }
-        if let Some(ref project) = query.project {
-            sessions.retain(|s| s.project_path.contains(project));
-        }
-        if let Some(ref search) = query.search {
-            let search_lower = search.to_lowercase();
-            sessions.retain(|s| {
-                s.first_prompt.as_ref()
-                    .map(|p| p.to_lowercase().contains(&search_lower))
-                    .unwrap_or(false)
-            });
-        }
-
-        // 分页算术抽到 paginate 纯函数，便于单测覆盖 page=0 / 越界 / 末页不足等边界。
-        let (total, page_data) = paginate(&sessions, page, page_size);
-
-        SessionListResponse { sessions: page_data, total, page, page_size }
-    })
-    .await
-    .map_err(|e| AppError::Internal(e.to_string()))?;
-
-    Ok(ApiResponse::ok(result))
+    // 分页算术抽到 paginate 纯函数，便于单测覆盖 page=0 / 越界 / 末页不足等边界。
+    let (total, page_data) = paginate(&sessions, page, page_size);
+    Ok(ApiResponse::ok(SessionListResponse {
+        sessions: page_data,
+        total,
+        page,
+        page_size,
+    }))
 }
 
 pub async fn get_session_stats(
     State(state): State<AppState>,
 ) -> Result<ApiResponse<SessionStats>, AppError> {
-    let executors = state.db.get_enabled_executors().await.map_err(|e| AppError::Internal(e.to_string()))?;
+    let executors = state
+        .db
+        .get_enabled_executors()
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    // 091：与 list_sessions 共用 30s 缓存，stats 在缓存结果上聚合，避免重复扫盘。
+    let sessions = cached_scan_sessions(executors).await?;
+    Ok(ApiResponse::ok(compute_session_stats(&sessions)))
+}
 
-    let stats = tokio::task::spawn_blocking(move || {
-        let sessions = scan_for_executors(&executors);
-        let now = chrono::Utc::now();
-        // and_hms_opt(0,0,0) 对任何合法日期都返回 Some——午夜零点永远有效
-        #[allow(clippy::unwrap_used)]
-        let today_start = now.date_naive().and_hms_opt(0, 0, 0).unwrap();
+/// 在已扫描的 sessions 上聚合统计（纯函数，便于单测）。密集的数据归并，强行拆分会破坏
+/// 单一聚合的完整性，属可豁免的密集统计场景。
+fn compute_session_stats(sessions: &[SessionInfo]) -> SessionStats {
+    let now = chrono::Utc::now();
+    // and_hms_opt(0,0,0) 对任何合法日期都返回 Some——午夜零点永远有效
+    #[allow(clippy::unwrap_used)]
+    let today_start = now.date_naive().and_hms_opt(0, 0, 0).unwrap();
 
-        let mut by_source: HashMap<String, u64> = HashMap::new();
-        let mut by_executor: HashMap<String, u64> = HashMap::new();
-        let mut by_project: HashMap<String, u64> = HashMap::new();
-        let mut active_count = 0u64;
-        let mut today_count = 0u64;
-        let mut total_in = 0u64;
-        let mut total_out = 0u64;
-
-        for s in &sessions {
-            *by_source.entry(s.source.clone()).or_insert(0) += 1;
-            *by_executor.entry(s.executor.clone()).or_insert(0) += 1;
-            *by_project.entry(s.project_path.clone()).or_insert(0) += 1;
-            total_in += s.total_input_tokens;
-            total_out += s.total_output_tokens;
-            if s.status == "active" { active_count += 1; }
-            if let Some(ref created) = s.created_at {
-                if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(created) {
-                    if dt.naive_utc() >= today_start { today_count += 1; }
+    let mut by_source: HashMap<String, u64> = HashMap::new();
+    let mut by_executor: HashMap<String, u64> = HashMap::new();
+    let mut by_project: HashMap<String, u64> = HashMap::new();
+    let mut active_count = 0u64;
+    let mut today_count = 0u64;
+    let mut total_in = 0u64;
+    let mut total_out = 0u64;
+    for s in sessions {
+        *by_source.entry(s.source.clone()).or_insert(0) += 1;
+        *by_executor.entry(s.executor.clone()).or_insert(0) += 1;
+        *by_project.entry(s.project_path.clone()).or_insert(0) += 1;
+        total_in += s.total_input_tokens;
+        total_out += s.total_output_tokens;
+        if s.status == "active" {
+            active_count += 1;
+        }
+        if let Some(ref created) = s.created_at {
+            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(created) {
+                if dt.naive_utc() >= today_start {
+                    today_count += 1;
                 }
             }
         }
-
-        SessionStats {
-            total_sessions: sessions.len() as u64,
-            active_sessions: active_count,
-            today_sessions: today_count,
-            total_input_tokens: total_in,
-            total_output_tokens: total_out,
-            by_source,
-            by_executor,
-            by_project,
-        }
-    })
-    .await
-    .map_err(|e| AppError::Internal(e.to_string()))?;
-
-    Ok(ApiResponse::ok(stats))
+    }
+    SessionStats {
+        total_sessions: sessions.len() as u64,
+        active_sessions: active_count,
+        today_sessions: today_count,
+        total_input_tokens: total_in,
+        total_output_tokens: total_out,
+        by_source,
+        by_executor,
+        by_project,
+    }
 }
 
 pub async fn get_session_detail(
@@ -2669,5 +2767,124 @@ mod paginate_tests {
         let (total, page) = paginate(&items, 1, 10);
         assert_eq!(total, 0);
         assert!(page.is_empty());
+    }
+}
+
+// 091 session 扫描缓存：executors_signature 纯函数 + 缓存 TTL 命中/过期 + stats 聚合单测。
+// 单飞锁（SESSIONS_SCAN_LOCK）是机械的标准模式，与 DASHBOARD_REFRESH_LOCK 同构，不做并发单测。
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
+mod sessions_cache_tests {
+    use super::*;
+    use crate::models::ExecutorConfig;
+
+    // 构造 ExecutorConfig：缓存签名只读 name + session_dir，其余字段填零值占位。
+    fn exec_cfg(name: &str, session_dir: &str) -> ExecutorConfig {
+        ExecutorConfig {
+            id: 0,
+            name: name.into(),
+            path: String::new(),
+            enabled: true,
+            display_name: String::new(),
+            session_dir: session_dir.into(),
+            is_default: false,
+            default_model: None,
+            supports_models: false,
+            created_at: None,
+            updated_at: None,
+        }
+    }
+
+    #[test]
+    fn test_executors_signature_order_independent_and_content_based() {
+        // 相同执行器集合、顺序不同 → 同一签名（缓存键稳定，不因顺序抖动 miss）。
+        let a = vec![exec_cfg("claude-code", "/a"), exec_cfg("codex", "/b")];
+        let b = vec![exec_cfg("codex", "/b"), exec_cfg("claude-code", "/a")];
+        assert_eq!(executors_signature(&a), executors_signature(&b));
+        // session_dir 变更 → 签名不同（配置漂移后不会读到旧目录的缓存）。
+        assert_ne!(
+            executors_signature(&[exec_cfg("claude-code", "/a")]),
+            executors_signature(&[exec_cfg("claude-code", "/c")]),
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sessions_cache_get_fresh_returns_some_before_expiry() {
+        // 直接写一条未过期项：命中应返回 Some（快路径成立）。
+        let key = "test_fresh_unique_key_091";
+        SESSIONS_CACHE.write().await.insert(
+            key.into(),
+            SessionsCacheEntry {
+                sessions: vec![],
+                expires_at: Instant::now() + Duration::from_secs(60),
+            },
+        );
+        assert!(sessions_cache_get_fresh(key).await.is_some());
+        // 用唯一 key 并在用例末尾移除，避免污染并行跑的其他用例（全局 static）。
+        SESSIONS_CACHE.write().await.remove(key);
+    }
+
+    #[tokio::test]
+    async fn test_sessions_cache_get_fresh_returns_none_after_expiry() {
+        // 写一条已过期项：命中应返回 None（触发上层重扫）。
+        let key = "test_stale_unique_key_091";
+        SESSIONS_CACHE.write().await.insert(
+            key.into(),
+            SessionsCacheEntry {
+                sessions: vec![],
+                expires_at: Instant::now() - Duration::from_secs(1),
+            },
+        );
+        assert!(sessions_cache_get_fresh(key).await.is_none());
+        SESSIONS_CACHE.write().await.remove(key);
+    }
+
+    // 构造最小 SessionInfo：compute_session_stats 只读 source/status/tokens 等字段，其余填零值。
+    fn session(source: &str, status: &str, tokens: u64) -> SessionInfo {
+        SessionInfo {
+            session_id: String::new(),
+            source: source.into(),
+            project_path: "/p".into(),
+            status: status.into(),
+            executor: "claude-code".into(),
+            model: String::new(),
+            git_branch: None,
+            message_count: 0,
+            total_input_tokens: tokens,
+            total_output_tokens: tokens,
+            first_prompt: None,
+            created_at: None,
+            last_active_at: None,
+            file_size: 0,
+            version: None,
+            subagent_count: 0,
+        }
+    }
+
+    #[test]
+    fn test_compute_session_stats_aggregates_counts_and_tokens() {
+        let sessions = vec![
+            session("claude-code", "active", 100),
+            session("claude-code", "completed", 50),
+            session("codex", "active", 10),
+        ];
+        let stats = compute_session_stats(&sessions);
+        assert_eq!(stats.total_sessions, 3);
+        assert_eq!(stats.active_sessions, 2, "两个 active");
+        // created_at 均为 None → today_sessions 不计。
+        assert_eq!(stats.today_sessions, 0);
+        assert_eq!(*stats.by_source.get("claude-code").unwrap(), 2);
+        assert_eq!(*stats.by_source.get("codex").unwrap(), 1);
+        // 每条 input=output=tokens，求和即 100+50+10。
+        assert_eq!(stats.total_input_tokens, 160);
+        assert_eq!(stats.total_output_tokens, 160);
+    }
+
+    #[test]
+    fn test_compute_session_stats_empty() {
+        let stats = compute_session_stats(&[]);
+        assert_eq!(stats.total_sessions, 0);
+        assert_eq!(stats.active_sessions, 0);
+        assert!(stats.by_source.is_empty());
     }
 }
