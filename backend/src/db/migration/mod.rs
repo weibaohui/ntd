@@ -53,6 +53,8 @@ mod v88;
 mod v89;
 /// v90：为高频读路径补建性能索引（091 性能优化）。
 mod v90;
+/// v91：tasks 表新增「委派执行」相关列（需求 092 任务委派执行）。
+mod v91;
 
 pub use v2_v5::read_applied_versions;
 pub use v2_v5::drop_column_if_exists;
@@ -178,6 +180,8 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         Box::new(v89::V89AddExecutionRecordsWorkspaceId),
         // V90 在 V89 之后：为高频读路径补建性能索引（091 性能优化）。
         Box::new(v90::V90AddPerformanceIndexes),
+        // V91 在 V90 之后：tasks 表加 5 列支撑任务委派执行（需求 092）。
+        Box::new(v91::V91TaskDelegateExecution),
     ]
 }
 

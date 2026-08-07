@@ -5,7 +5,8 @@ use axum::extract::{Path, Query, State};
 use axum::Json;
 use axum::Router;
 use serde::{Deserialize, Serialize};
-use crate::handlers::{AppError, AppState};
+use crate::adapters::find_executor;
+use crate::handlers::{task_posts, AppError, AppState};
 use crate::db::entity::{loops, process_templates, tasks};
 use crate::models::ApiResponse;
 
@@ -18,7 +19,18 @@ use crate::models::ApiResponse;
 #[derive(Debug, Deserialize)]
 pub struct CreateTaskRequest {
     pub requirement: String,
-    pub loop_id: i64,
+    /// 工艺环路模式必填；委派模式不使用（改 Option 以兼容委派不绑环路）。
+    pub loop_id: Option<i64>,
+    /// 执行方式：缺省/非 `delegate` = 工艺环路；`delegate` = 委派。默认空串落到环路路径。
+    #[serde(default)]
+    pub execution_mode: String,
+    /// 委派对象类型：`executor` / `expert`（仅 delegate 模式）。
+    pub assignee_kind: Option<String>,
+    /// 委派处理人名（执行器名或专家名，仅 delegate 模式）。
+    pub assignee_name: Option<String>,
+    /// 自动接力开关；仅 `assignee_kind='expert'` 允许 true（前端禁用 + 后端 400 双重校验防绕过）。
+    #[serde(default)]
+    pub auto_continue: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -45,40 +57,145 @@ pub struct TaskItem {
     /// 口径与 NTD-004 一致；无执行或无待审批时为 0。
     pub pending_approval_count: i32,
     pub created_at: Option<String>,
+    // —— 需求 092：委派执行相关（loop 任务为默认值，delegate 任务带处理人/接力信息）——
+    /// 执行方式：`loop` / `delegate`。恒有值（DB 默认 'loop'）。
+    pub execution_mode: String,
+    /// 委派对象类型；仅 delegate 有值。
+    pub assignee_kind: Option<String>,
+    /// 委派处理人名；仅 delegate 有值。
+    pub assignee_name: Option<String>,
+    /// 自动接力开关（前端按此渲染接力状态）。i64→bool 转换收口在此处。
+    pub auto_continue: bool,
+    /// 接力已执行轮数（护栏计数，P2 接力状态展示用）。
+    pub continue_rounds: i64,
 }
 
-/// POST /api/v1/tasks
+/// 取需求首行作为任务标题，按**字符**截断（上限 60），超长补省略号。
+///
+/// 抽出共用：环路/委派两路径标题口径一致。chars 边界截断避免 CJK 多字节字符按字节切片 panic。
+fn task_title_from_requirement(requirement: &str) -> String {
+    let first_line = requirement.lines().next().unwrap_or(requirement).trim();
+    if first_line.chars().count() > 60 {
+        // chars().take(60) 保证在字符边界截断，不会落在多字节 UTF-8 中间。
+        format!("{}…", first_line.chars().take(60).collect::<String>())
+    } else {
+        first_line.to_string()
+    }
+}
+
+/// 服务端校验委派处理人真实存在（防伪造任意名触发执行）。
+/// expert 查 expert_manager（parking_lot 同步读），executor 查 find_executor；都不中→400。
+fn validate_assignee_exists(state: &AppState, kind: &str, name: &str) -> Result<(), AppError> {
+    let exists = match kind {
+        "expert" => state.expert_manager.get_expert_by_name(name).is_some(),
+        "executor" => find_executor(name).is_some(),
+        _ => false,
+    };
+    if !exists {
+        return Err(AppError::BadRequest(format!("处理人「{name}」不存在（{kind}）")));
+    }
+    Ok(())
+}
+
+/// POST /api/v1/workspaces/{ws}/tasks — 创建任务。
+///
+/// 按执行方式分流：`delegate` 走委派（建无环路 task + 讨论区首帖触发首次执行），
+/// 其余（缺省）走工艺环路（现状不变）。显式按字符串分流而非 enum，让旧请求（不带
+/// execution_mode）零改动落到环路路径。
 pub async fn create_task(
     State(state): State<AppState>,
-    Path(_ws): Path<i64>,
+    Path(ws): Path<i64>,
     Json(req): Json<CreateTaskRequest>,
 ) -> Result<impl axum::response::IntoResponse, AppError> {
-    let lp = state.db.get_loop(req.loop_id).await?.ok_or(AppError::NotFound)?;
-    // 取首行作为标题，按**字符**截断（上限 60 字符），避免 CJK 多字节字符上按字节切片 panic。
-    let title = req.requirement.lines().next().unwrap_or(&req.requirement).trim();
-    let title = if title.chars().count() > 60 {
-        // chars().take(60) 保证在字符边界截断，不会落在多字节 UTF-8 中间。
-        let truncated: String = title.chars().take(60).collect();
-        format!("{}…", truncated)
-    } else {
-        title.to_string()
-    };
-    let task = state.db.create_task(&title, lp.workspace_id.unwrap_or(1), lp.process_template_id.unwrap_or(0), Some(req.loop_id)).await?;
+    if req.execution_mode == "delegate" {
+        return create_delegate_task(&state, ws, req).await;
+    }
+    create_loop_task(&state, ws, req).await
+}
+
+/// 环路模式（现状）：校验 loop_id → 建 task 绑环路 → 通过 loop dispatcher 触发首执行。
+/// 从原 create_task 抽出，逻辑保持不变；仅 loop_id 因 CreateTaskRequest 改 Option 而显式解包。
+async fn create_loop_task(
+    state: &AppState,
+    _ws: i64,
+    req: CreateTaskRequest,
+) -> Result<(axum::http::StatusCode, ApiResponse<serde_json::Value>), AppError> {
+    let loop_id = req.loop_id.ok_or_else(|| {
+        AppError::BadRequest("工艺环路模式必须指定 loop_id".to_string())
+    })?;
+    let lp = state.db.get_loop(loop_id).await?.ok_or(AppError::NotFound)?;
+    let title = task_title_from_requirement(&req.requirement);
+    let task = state
+        .db
+        .create_task(&title, lp.workspace_id.unwrap_or(1), lp.process_template_id.unwrap_or(0), Some(loop_id))
+        .await?;
     state.db.update_task_description(task.id, &req.requirement).await?;
     // 需求不写入 step todo 的 prompt（避免污染模板），通过 trigger_meta 传递给 LoopRunner。
-    let _ = state.db.update_loop_status(req.loop_id, "enabled").await;
-    let dispatcher = state.loop_trigger_dispatcher.as_ref()
+    let _ = state.db.update_loop_status(loop_id, "enabled").await;
+    let dispatcher = state
+        .loop_trigger_dispatcher
+        .as_ref()
         .ok_or_else(|| AppError::Internal("loop dispatcher not ready".to_string()))?;
     let meta = serde_json::json!({"requirement": req.requirement, "source": "task"});
-    match dispatcher.dispatch_manual_with_meta(req.loop_id, meta).await {
+    match dispatcher.dispatch_manual_with_meta(loop_id, meta).await {
         Some(exec_id) => {
             state.db.update_loop_execution_task_id(exec_id, task.id).await?;
             Ok((axum::http::StatusCode::CREATED, ApiResponse::ok(serde_json::json!({
-                "task_id": task.id, "loop_id": req.loop_id, "execution_id": exec_id,
+                "task_id": task.id, "loop_id": loop_id, "execution_id": exec_id,
             }))))
         }
         None => Err(AppError::BadRequest("无法触发执行".to_string())),
     }
+}
+
+/// 委派模式：建无环路 task（execution_mode=delegate）→ 在讨论区落地含 @处理人 的首帖并触发首次执行。
+/// 首帖触发复用 task_posts::land_mention_post（与人工发帖同路径），零新执行引擎；结论回写沿用 060。
+async fn create_delegate_task(
+    state: &AppState,
+    ws: i64,
+    req: CreateTaskRequest,
+) -> Result<(axum::http::StatusCode, ApiResponse<serde_json::Value>), AppError> {
+    // 校验处理人类型与名称齐全：kind 必须是 executor/expert，name 非空。
+    let kind = req.assignee_kind.as_deref().unwrap_or("");
+    let name = req.assignee_name.as_deref().unwrap_or("").trim();
+    if name.is_empty() || !matches!(kind, "executor" | "expert") {
+        return Err(AppError::BadRequest("委派任务必须指定处理人（专家/执行器）".to_string()));
+    }
+    // 执行器无调度能力，禁止开自动接力（前端禁用 + 后端 400 双重校验防绕过）。
+    if kind == "executor" && req.auto_continue {
+        return Err(AppError::BadRequest("执行器不支持自动接力（请改选专家）".to_string()));
+    }
+    // 服务端校验处理人真实存在，防伪造任意名触发执行。
+    validate_assignee_exists(state, kind, name)?;
+
+    let title = task_title_from_requirement(&req.requirement);
+    // 委派任务归属 path 的 workspace（执行隔离 + 讨论帖归属）。
+    let task = state
+        .db
+        .create_delegate_task(&title, ws, kind, name, req.auto_continue)
+        .await?;
+    state.db.update_task_description(task.id, &req.requirement).await?;
+
+    // 首帖正文 = @处理人 + 需求原文：060 的 @ 解析会据此把处理人识别为执行器/专家并触发执行。
+    // 用「我」作人帖作者（与人工发帖一致），trigger_type=discussion（completion 走 discussion 回写）。
+    let first_post = format!("@{name} {}", req.requirement);
+    let (_human, agent_post) = task_posts::land_mention_post(
+        state,
+        &task,
+        &first_post,
+        None,
+        "我",
+        task_posts::TRIGGER_DISCUSSION,
+    )
+    .await?;
+    // execution_id 取自占位帖 source_execution_id；触发失败（agent_post 无 id）时为 null，
+    // 任务本身已创建成功（讨论区可见 failed 占位帖），故仍返回 201，由前端据 execution_id 提示。
+    let execution_id = agent_post
+        .as_ref()
+        .and_then(|v| v.get("source_execution_id").and_then(|x| x.as_i64()));
+    Ok((axum::http::StatusCode::CREATED, ApiResponse::ok(serde_json::json!({
+        "task_id": task.id, "loop_id": serde_json::Value::Null, "execution_id": execution_id,
+    }))))
 }
 
 /// 组装单条任务列表项。
@@ -116,6 +233,12 @@ fn build_task_item(
         latest_execution_requirement: latest.1,
         pending_approval_count,
         created_at: t.created_at,
+        // 委派字段直接从 task 透传；loop 任务 execution_mode='loop'、其余为空/0。
+        execution_mode: t.execution_mode,
+        assignee_kind: t.assignee_kind,
+        assignee_name: t.assignee_name,
+        auto_continue: t.auto_continue != 0,
+        continue_rounds: t.continue_rounds,
     }
 }
 
@@ -211,7 +334,16 @@ pub async fn get_task_detail(
         })
     }).collect();
     Ok(ApiResponse::ok(serde_json::json!({
-        "task": { "id": task.id, "title": task.title, "status": task.status, "workspace_id": task.workspace_id, "loop_id": task.loop_id },
+        "task": {
+            "id": task.id, "title": task.title, "status": task.status,
+            "workspace_id": task.workspace_id, "loop_id": task.loop_id,
+            // 委派执行方式与处理人（需求 092）：详情头部据此切换默认 Tab 与接力状态展示。
+            "execution_mode": task.execution_mode,
+            "assignee_kind": task.assignee_kind,
+            "assignee_name": task.assignee_name,
+            "auto_continue": task.auto_continue,
+            "continue_rounds": task.continue_rounds,
+        },
         "template": template.map(|t| {
             // 版本优先取环路的 process_template_version（执行时的快照），
             // 而非工艺模板表的最新版本——用户关注的是「执行当时的工艺版本」。
@@ -522,5 +654,81 @@ mod tests {
         let res: Value = serde_json::from_slice(&bytes).expect("parse body");
         let task_title = res["data"]["task_id"].as_i64();
         assert!(task_title.is_some(), "task_id 必须存在");
+    }
+
+    // —— 需求 092：任务委派执行 ——
+
+    /// 发 POST /tasks 的小工具，避免每个委派用例重复 Request builder 样板。
+    async fn post_task(app: &axum::Router, ws_id: i64, body: Value) -> (StatusCode, Value) {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/v1/workspaces/{ws_id}/tasks"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&body).expect("json")))
+                    .expect("request build"),
+            )
+            .await
+            .expect("create task request");
+        let status = resp.status();
+        let bytes = to_bytes(resp.into_body(), usize::MAX).await.expect("read body");
+        let val: Value = serde_json::from_slice(&bytes).expect("parse body");
+        (status, val)
+    }
+
+    /// 委派执行器 + 开自动接力 必须被拒（400）：执行器无调度能力，防绕过前端禁用。
+    /// 此分支在触发执行之前返回，故不会真实 spawn 执行器。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_create_delegate_rejects_executor_with_auto_continue() {
+        let (app, ws_id, _db) = build_app().await;
+        let body = serde_json::json!({
+            "requirement": "测试", "execution_mode": "delegate",
+            "assignee_kind": "executor", "assignee_name": "claude", "auto_continue": true,
+        });
+        let (status, _val) = post_task(&app, ws_id, body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    /// 委派缺处理人（assignee_kind/name）必须被拒（400）；在触发执行之前返回。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_create_delegate_rejects_missing_assignee() {
+        let (app, ws_id, _db) = build_app().await;
+        let body = serde_json::json!({
+            "requirement": "测试", "execution_mode": "delegate",
+        });
+        let (status, _val) = post_task(&app, ws_id, body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    /// 委派处理人不存在必须被拒（400）：服务端校验防伪造任意名触发执行。
+    /// 用 expert + expert_manager 里没有的名字，validate_assignee_exists 即返回。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_create_delegate_rejects_unknown_assignee() {
+        let (app, ws_id, _db) = build_app().await;
+        let body = serde_json::json!({
+            "requirement": "测试", "execution_mode": "delegate",
+            "assignee_kind": "expert", "assignee_name": "不存在的专家_zzz",
+        });
+        let (status, _val) = post_task(&app, ws_id, body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    /// DAO：create_delegate_task 写入委派字段正确。
+    /// 直接测 DAO 而非 handler，绕开 handler 内对讨论首帖的真实执行触发。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_dao_create_delegate_task_fields() {
+        let (_app, ws_id, db) = build_app().await;
+        let task = db
+            .create_delegate_task("委派标题", ws_id, "expert", "任务管家", true)
+            .await
+            .expect("create delegate task");
+        assert_eq!(task.execution_mode, "delegate");
+        assert_eq!(task.assignee_kind.as_deref(), Some("expert"));
+        assert_eq!(task.assignee_name.as_deref(), Some("任务管家"));
+        assert_eq!(task.auto_continue, 1);
+        assert_eq!(task.continue_rounds, 0, "新建任务接力计数从 0 起");
+        assert!(task.loop_id.is_none(), "委派任务不绑环路");
     }
 }

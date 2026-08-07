@@ -537,9 +537,32 @@ export const bundledApi = {
     return unwrap(await api.post('/api/v1/processes/recommend', { description }));
   },
 
-  /** 创建任务：推荐→创建task→复用/创建Loop→创建执行 */
-  async createTask(requirement: string, loopId: number, wsId: number): Promise<{ task_id: number; loop_id: number; execution_id: number }> {
-    return unwrap(await api.post(`/api/v1/workspaces/${wsId}/tasks`, { requirement, loop_id: loopId }));
+  /**
+   * 创建任务。
+   * - 工艺环路模式（默认）：传 loopId，后端按环路多环节执行。
+   * - 委派模式（需求 092）：传 executionMode='delegate' + assigneeKind + assigneeName（可开 autoContinue，
+   *   仅 expert 允许）；后端建无环路 task 并在讨论区落 @处理人 首帖触发首次执行。
+   * 响应 loop_id 委派模式为 null；execution_id 在委派触发失败时也可能为 null（任务本身仍创建成功）。
+   */
+  async createTask(
+    params: {
+      requirement: string;
+      loopId?: number;
+      executionMode?: 'loop' | 'delegate';
+      assigneeKind?: 'executor' | 'expert';
+      assigneeName?: string;
+      autoContinue?: boolean;
+    },
+    wsId: number,
+  ): Promise<{ task_id: number; loop_id: number | null; execution_id: number | null }> {
+    return unwrap(await api.post(`/api/v1/workspaces/${wsId}/tasks`, {
+      requirement: params.requirement,
+      loop_id: params.loopId,
+      execution_mode: params.executionMode,
+      assignee_kind: params.assigneeKind,
+      assignee_name: params.assigneeName,
+      auto_continue: params.autoContinue,
+    }));
   },
 
   /** 为已有任务创建新执行 */
@@ -548,8 +571,9 @@ export const bundledApi = {
   },
 
   /** 任务列表 */
-  // 返回类型与 tasks/constants.tsx 的 TaskItem 保持同名字段；pending_approval_count 为 063 新增（后端派生，恒 ≥ 0）。
-  async listTasks(wsId: number, status?: string): Promise<Array<{ id: number; title: string; description: string; status: string; template_name?: string; complexity?: string; loop_id?: number; workspace_id?: number; latest_execution_status?: string; latest_execution_requirement?: string; pending_approval_count?: number; created_at?: string }>> {
+  // 返回类型与 tasks/constants.tsx 的 TaskItem 保持同名字段；pending_approval_count 为 063 新增（后端派生，恒 ≥ 0）；
+  // execution_mode/assignee_*/auto_continue/continue_rounds 为 092 新增（委派任务字段，环路任务为默认值）。
+  async listTasks(wsId: number, status?: string): Promise<Array<{ id: number; title: string; description: string; status: string; template_name?: string; complexity?: string; loop_id?: number; workspace_id?: number; latest_execution_status?: string; latest_execution_requirement?: string; pending_approval_count?: number; created_at?: string; execution_mode?: string; assignee_kind?: string; assignee_name?: string; auto_continue?: boolean; continue_rounds?: number }>> {
     const params = status ? { status } : {};
     return unwrap(await api.get(`/api/v1/workspaces/${wsId}/tasks`, { params }));
   },

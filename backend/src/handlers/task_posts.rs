@@ -25,7 +25,8 @@ use crate::handlers::{AppError, AppState};
 use crate::models::{ApiResponse, ExecutionStatus};
 
 /// 讨论触发用的 trigger_type：completion.rs 据此回写智能体占位帖。
-const TRIGGER_DISCUSSION: &str = "discussion";
+/// 委派任务首帖也复用此值（首帖等同人工 @ 触发）；自动接力（P2）用 "discussion_auto"。
+pub(crate) const TRIGGER_DISCUSSION: &str = "discussion";
 
 /// 内联到 carrier prompt 的最近主楼层数；平衡「上下文充分」与「prompt 体积」。
 /// 被 @ 的 AI 既能看到即时上下文，又可用 ntd 命令拉取更多，故取较小的 5。
@@ -276,6 +277,7 @@ async fn trigger_discussion_execution(
     task: &tasks::Model,
     mentions: &[MentionDto],
     carrier_prompt: &str,
+    trigger_type: &str,
 ) -> Result<(i64, i64), AppError> {
     let executor_name = first_executor(mentions);
     let expert_name = first_expert(mentions);
@@ -294,7 +296,8 @@ async fn trigger_discussion_execution(
             &ws_path,
         )
         .await?;
-    // 构造执行请求：trigger_type=discussion 让完成回写走 discussion 分支；
+    // 构造执行请求：trigger_type 由调用方传入（discussion=人工/委派首帖，
+    // discussion_auto=自动接力），completion.rs 据此走对应回写分支；
     // expert_manager 注入让 @专家 时 inject_expert_context 能加载人设。
     let result = start_todo_execution(RunTodoExecutionRequest {
         db: state.db.clone(),
@@ -306,7 +309,7 @@ async fn trigger_discussion_execution(
         message: carrier_prompt.to_string(),
         req_executor: executor_name.map(|s| s.to_string()),
         req_model: None,
-        trigger_type: TRIGGER_DISCUSSION.to_string(),
+        trigger_type: trigger_type.to_string(),
         params: None,
         resume_session_id: None,
         resume_message: None,
@@ -499,6 +502,59 @@ async fn cancel_running_post_execution(state: &AppState, record_id: i64) {
     }
 }
 
+/// 在任务讨论区落地一条「含 @ 的人帖」，并（当 @ 到执行器/专家时）触发对应执行、写智能体占位帖。
+///
+/// 供 [`create_post`] handler（人工发帖）与 [`crate::handlers::tasks::create_task`]（委派任务
+/// 首帖）共用，避免两处各写一遍「解析 @ → 写人帖 → 建载体 todo → 触发执行 → 写占位帖」，
+/// 防止逻辑漂移。`trigger_type` 控制完成回写分支：人工/委派首帖传 [`TRIGGER_DISCUSSION`]，
+/// 自动接力（P2）将传 `discussion_auto`。
+///
+/// 入参 `content` 由调用方先 trim 判空；`parent_post_id` 决定是主楼层还是楼中楼。
+/// 返回 `(人帖 JSON, 智能体占位帖 Option)`——未 @ 到执行器/专家时第二项为 None（纯评论）。
+pub(crate) async fn land_mention_post(
+    state: &AppState,
+    task: &tasks::Model,
+    content: &str,
+    parent_post_id: Option<i64>,
+    author: &str,
+    trigger_type: &str,
+) -> Result<(serde_json::Value, Option<serde_json::Value>), AppError> {
+    // 解析 @token 为结构化提及（先专家后执行器）；纯文本无 @ 时为空，仅写人帖、不触发执行。
+    let tokens = extract_at_tokens(content);
+    let mentions = resolve_mentions(&tokens, state).await;
+    let mentions_json = serialize_mentions(&mentions);
+
+    // 人帖无条件落库（无论是否触发执行，用户的发言都要对讨论区可见）。
+    let human = state
+        .db
+        .create_task_post(NewPost {
+            task_id: task.id,
+            parent_post_id,
+            kind: KIND_HUMAN,
+            author_name: author,
+            executor: None,
+            expert_name: None,
+            content,
+            mentions_json: &mentions_json,
+            status: "sent",
+            source_execution_id: None,
+            source_todo_id: None,
+        })
+        .await
+        .map_err(AppError::from)?;
+
+    // 仅当 @ 到执行器或专家才触发执行；否则就是纯评论，不产生智能体帖。
+    let has_trigger = first_executor(&mentions).is_some() || first_expert(&mentions).is_some();
+    let agent_post = if has_trigger {
+        Some(create_agent_post(state, task, &mentions, &mentions_json, content, trigger_type).await)
+    } else {
+        None
+    };
+
+    let human_val = serde_json::to_value(&human).unwrap_or(serde_json::Value::Null);
+    Ok((human_val, agent_post))
+}
+
 /// POST .../tasks/{id}/posts — 创建人帖；含 @专家/@执行器 时同时触发执行并写占位帖。
 pub async fn create_post(
     State(state): State<AppState>,
@@ -516,40 +572,20 @@ pub async fn create_post(
     if let Some(pid) = req.parent_post_id {
         validate_reply_parent(&state, task_id, pid).await?;
     }
-    // 解析 @ 并解析为结构化提及（执行器/专家）。
-    let tokens = extract_at_tokens(content);
-    let mentions = resolve_mentions(&tokens, &state).await;
-    let mentions_json = serialize_mentions(&mentions);
-
-    // 先写人帖（无论是否触发执行，人帖都落库）。
-    let human = state
-        .db
-        .create_task_post(NewPost {
-            task_id,
-            parent_post_id: req.parent_post_id,
-            kind: KIND_HUMAN,
-            author_name: "我",
-            executor: None,
-            expert_name: None,
-            content,
-            mentions_json: &mentions_json,
-            status: "sent",
-            source_execution_id: None,
-            source_todo_id: None,
-        })
-        .await
-        .map_err(AppError::from)?;
-
-    // 仅当提及了执行器或专家才触发执行；否则就是纯人帖。
-    let has_trigger = first_executor(&mentions).is_some() || first_expert(&mentions).is_some();
-    let agent_post = if has_trigger {
-        Some(create_agent_post(&state, &task, &mentions, &mentions_json, content).await)
-    } else {
-        None
-    };
+    // 落人帖 +（若 @ 到执行器/专家）触发执行写占位帖；与委派首帖共用同一路径，零逻辑漂移。
+    // 人工发帖统一作者「我」、trigger_type=discussion（completion 走 discussion 回写分支）。
+    let (human_post, agent_post) = land_mention_post(
+        &state,
+        &task,
+        content,
+        req.parent_post_id,
+        "我",
+        TRIGGER_DISCUSSION,
+    )
+    .await?;
 
     Ok(ApiResponse::ok(serde_json::json!({
-        "human_post": human,
+        "human_post": human_post,
         "agent_post": agent_post,
     })))
 }
@@ -625,6 +661,7 @@ async fn create_agent_post(
     mentions: &[MentionDto],
     mentions_json: &str,
     post_content: &str,
+    trigger_type: &str,
 ) -> serde_json::Value {
     let author = agent_author(mentions);
     let executor = first_executor(mentions);
@@ -643,7 +680,7 @@ async fn create_agent_post(
     let recent = fetch_recent_main_posts(state.db.as_ref(), task.id).await;
     let history_text = format_discussion_history(&recent);
     let prompt = build_carrier_prompt(task, post_content, &history_text);
-    match trigger_discussion_execution(state, task, mentions, &prompt).await {
+    match trigger_discussion_execution(state, task, mentions, &prompt, trigger_type).await {
         Ok((todo_id, record_id)) => {
             // 占位帖：running，关联执行记录与载体 todo；executor/expert 来自 @ 解析。
             let placeholder = format!("{author} 正在干活…");
@@ -904,6 +941,12 @@ mod tests {
             created_by: "tester".to_string(),
             created_at: None,
             updated_at: None,
+            // 需求 092 新增字段：测试 helper 给环路默认值/空，不影响讨论触发逻辑。
+            execution_mode: "loop".to_string(),
+            assignee_kind: None,
+            assignee_name: None,
+            auto_continue: 0,
+            continue_rounds: 0,
         }
     }
 
