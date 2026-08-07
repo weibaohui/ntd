@@ -1,6 +1,8 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import * as db from '@/utils/database';
 import type { ExecutionRecord, ScheduledTodo, RunningBoardColumn } from '@/types';
+// 091：WS 重连全量 Sync 信号——替代被移除的运行看板 60s 兜底轮询。
+import { EXECUTION_SYNC_EVENT } from './useExecutionEvents';
 
 export interface RunningBoardState {
   records: ExecutionRecord[];
@@ -112,14 +114,24 @@ export function useAutoRefreshRunningBoard(refresh: () => Promise<void>): void {
   useEffect(() => {
     const handleRefresh = () => { refreshRef.current(); };
     const handleFinished = () => { setTimeout(() => refreshRef.current(), 1000); };
+    // 091：用户切回标签页时刷新一次——浏览器后台会节流/挂起 WS，切回瞬间重连可能尚未完成，
+    // 用可见性事件做一次单次纠偏，等价于「回来就主动刷新」，但只在状态切换时触发，非定时轮询。
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') refreshRef.current();
+    };
 
     window.addEventListener('reviewStatusChanged', handleRefresh);
     window.addEventListener('executionStarted', handleRefresh);
     window.addEventListener('executionFinished', handleFinished);
+    // 091：WS 重连后端推全量 Sync——补刷一次运行看板，纠正断线期间漏掉的执行态变化（替代 60s 轮询）。
+    window.addEventListener(EXECUTION_SYNC_EVENT, handleRefresh);
+    document.addEventListener('visibilitychange', handleVisibility);
     return () => {
       window.removeEventListener('reviewStatusChanged', handleRefresh);
       window.removeEventListener('executionStarted', handleRefresh);
       window.removeEventListener('executionFinished', handleFinished);
+      window.removeEventListener(EXECUTION_SYNC_EVENT, handleRefresh);
+      document.removeEventListener('visibilitychange', handleVisibility);
     };
   }, []);
 }

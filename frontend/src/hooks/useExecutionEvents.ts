@@ -3,6 +3,15 @@ import { useApp } from './useApp';
 import type { LogEntry, TodoItem, ExecutionStats } from '@/types';
 import { TODO_LIST_REFRESH_EVENT } from '@/constants';
 
+/**
+ * WS（重）连后端推全量 Sync 快照时广播的 window 事件名。
+ *
+ * 091：讨论帖、运行看板原本各挂一个 setInterval（4s / 60s）做断线兜底轮询，
+ * 现统一改为纯事件驱动——用这条「重连即全量同步」信号触发一次单次刷新，
+ * 纠正断线期间漏掉的执行态变化，替代定时轮询（事件而非轮询，无变化时不打请求）。
+ */
+export const EXECUTION_SYNC_EVENT = 'executionSync';
+
 // ─── 类型定义 ───────────────────────────────────────────────────
 
 interface ExecEventStarted {
@@ -198,6 +207,9 @@ function connectShared(dispatch: ReturnType<typeof useApp>['dispatch']) {
           });
           // 056：全局 todos 桶已删除，列表页改从服务端拉取——Sync 到达即通知列表刷新
           dispatchListRefreshDebounced();
+          // 091：广播重连/全量同步信号，让纯事件驱动的视图（讨论帖、运行看板）
+          // 在断线重连后补刷一次，替代被移除的兜底定时轮询。
+          window.dispatchEvent(new Event(EXECUTION_SYNC_EVENT));
           break;
         }
         case 'Started': {

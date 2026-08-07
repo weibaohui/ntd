@@ -49,8 +49,8 @@ export function buildCandidates(query: string, experts: ExpertMetadata[]): Menti
 
 /**
  * 把刚发出的帖子并入当前列表:主楼层追加到末尾,楼中楼挂到对应主楼层 replies。
- * 按已有的全部 id(主楼层 + 各自 replies)去重——轮询/SSE 可能已把刚发的帖拉回,
- * 不去重会产生重复帖与重复 React key。
+ * 按已有的全部 id(主楼层 + 各自 replies)去重——事件驱动的刷新可能在乐观并入后
+ * 又把刚发的帖随列表一起拉回，不去重会产生重复帖与重复 React key。
  */
 export function mergeAppended(posts: TaskPost[], appended: TaskPost[]): TaskPost[] {
   const existingIds = new Set<number>();

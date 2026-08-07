@@ -1,5 +1,5 @@
 // 任务讨论区 Tab：帖子流（主楼层 + 楼中楼）+ 输入器。
-// 数据/分页/轮询/SSE 副作用抽到 useDiscussionPosts；本组件只管输入态、发送/删除与渲染。
+// 数据/分页/WS 事件刷新副作用抽到 useDiscussionPosts；本组件只管输入态、发送/删除与渲染。
 
 import { useCallback, useEffect, useState } from 'react';
 import { Empty, Spin, Pagination, message } from 'antd';
@@ -44,7 +44,7 @@ export function DiscussionTab({ taskId, workspaceId, onRunningCountChange }: Dis
     setSending(true);
     try {
       const res = await bundledApi.createTaskPost(workspaceId, taskId, value, replyTo?.id ?? null);
-      // 乐观并入：主楼层追加末尾、楼中楼挂到对应楼层；total 相应增加。下次轮询/SSE 会与服务端对齐。
+      // 乐观并入：主楼层追加末尾、楼中楼挂到对应楼层；total 相应增加。下次事件刷新会与服务端对齐。
       const appended = [res.human_post, res.agent_post].filter(Boolean) as TaskPost[];
       setPosts((prev) => mergeAppended(prev, appended));
       // total 只计主楼层：楼中楼回复（parent_post_id 非空）不计入主楼层分页总数。

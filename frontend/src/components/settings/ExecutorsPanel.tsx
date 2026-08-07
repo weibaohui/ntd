@@ -127,13 +127,12 @@ export function ExecutorsPanel() {
     }
   };
 
-  // 091：正在运行 tab——初始加载 + 60s 兜底轮询；执行态变化由事件驱动刷新（见下方
-  // useAutoRefreshRunningBoard），去掉原来 10s 固定轮询在无变化时仍打满请求的问题。
+  // 091：正在运行 tab——切到该 tab 时做一次初始加载；执行态变化全由事件驱动刷新
+  // （见下方 useAutoRefreshRunningBoard，订阅 Started/Finished/ReviewStatusChanged，
+  //  以及 WS 重连 Sync + 切回标签页）。彻底移除原 60s 兜底定时轮询，无变化时不打请求。
   useEffect(() => {
     if (runningTab !== 'running') return;
     loadRunningRecords();
-    const timer = setInterval(loadRunningRecords, 60000);
-    return () => clearInterval(timer);
   }, [runningTab]);
 
   // 事件驱动刷新：executionStarted/Finished/ReviewStatusChanged 时立即重拉运行记录
