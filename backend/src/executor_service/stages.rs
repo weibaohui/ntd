@@ -238,7 +238,7 @@ pub(crate) async fn start_todo_or_cleanup(
         .start_todo_execution(prepared.request.todo_id, &prepared.task_id)
         .await
     {
-        cleanup_worktree_if_needed(worktree_ctx);
+        cleanup_worktree_if_needed(worktree_ctx).await;
         return Err(reject_start_todo_failure(
             &prepared.request.db,
             &prepared.request.tx,

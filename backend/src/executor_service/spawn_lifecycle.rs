@@ -86,7 +86,7 @@ pub(crate) async fn try_spawn_executor_child(
     match spawn_executor_child(runtime) {
         Ok(c) => Some(c),
         Err(e) => {
-            cleanup_worktree_if_needed(&runtime.worktree_ctx);
+            cleanup_worktree_if_needed(&runtime.worktree_ctx).await;
             handle_spawn_failure(
                 &runtime.db,
                 &runtime.tx,
@@ -547,7 +547,7 @@ pub(crate) async fn run_cancellation_path(
         workspace_id,
     )
     .await;
-    cleanup_worktree_if_needed(worktree_ctx);
+    cleanup_worktree_if_needed(worktree_ctx).await;
 }
 
 /// 超时分支：kill → drain → handle_timeout_branch → cleanup worktree。
@@ -592,7 +592,7 @@ pub(crate) async fn run_timeout_path(
         workspace_id,
     )
     .await;
-    cleanup_worktree_if_needed(worktree_ctx);
+    cleanup_worktree_if_needed(worktree_ctx).await;
 }
 
 /// 把「正常退出 → await readers → finalize flusher → emit progress →
@@ -623,7 +623,7 @@ pub(crate) async fn handle_completed_branch(
     let (logs_snapshot, result_str) =
         flush_and_extract_result(log_flusher, flush_timer, &ctx.db, ctx.record_id).await;
     persist_and_finalize_completion(&ctx, success, exit_code, &logs_snapshot, result_str).await;
-    cleanup_worktree_if_needed(&ctx.worktree_ctx);
+    cleanup_worktree_if_needed(&ctx.worktree_ctx).await;
 }
 
 /// 把 `ExitStatus` 翻译成「exit_code + success」。executor 子类自行决定什么

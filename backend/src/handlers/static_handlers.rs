@@ -140,22 +140,34 @@ pub async fn version_handler() -> impl IntoResponse {
 
 /// 查询 npm 最新版本号，用于前端版本检查提示。
 pub async fn version_latest_handler() -> impl IntoResponse {
-    let output = std::process::Command::new("npm")
-        .args(["view", "@weibaohui/ntd", "version"])
-        .output();
-
-    match output {
-        Ok(out) if out.status.success() => {
+    // npm view 是同步子进程（含网络往返），直接在 async 路径调用会占住 tokio worker；
+    // 挪进 spawn_blocking 交给阻塞线程池（091 性能优化）。
+    let join = tokio::task::spawn_blocking(|| {
+        std::process::Command::new("npm")
+            .args(["view", "@weibaohui/ntd", "version"])
+            .output()
+    })
+    .await;
+    match join {
+        // 任务正常返回且 npm 退出成功：取 stdout 首段即版本号。
+        Ok(Ok(out)) if out.status.success() => {
             let latest = String::from_utf8_lossy(&out.stdout).trim().to_string();
             ApiResponse::ok(serde_json::json!({ "latest": latest }))
         }
-        Ok(out) => {
+        // npm 退出了但 exit code 非成功：透传 stderr 给前端做提示。
+        Ok(Ok(out)) => {
             let err_msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
             tracing::warn!("npm view failed: {}", err_msg);
             ApiResponse::ok(serde_json::json!({ "latest": null, "error": err_msg }))
         }
-        Err(e) => {
+        // npm 二进制未启动等 IO 错误：latest 置空，前端降级为不提示更新。
+        Ok(Err(e)) => {
             tracing::warn!("Failed to run npm view: {}", e);
+            ApiResponse::ok(serde_json::json!({ "latest": null, "error": e.to_string() }))
+        }
+        // spawn_blocking 任务 panic / 被取消：同样降级，不让版本检查拖垮接口。
+        Err(e) => {
+            tracing::warn!("npm view task panicked: {}", e);
             ApiResponse::ok(serde_json::json!({ "latest": null, "error": e.to_string() }))
         }
     }
@@ -192,57 +204,73 @@ fn spawn_redeploy_sh_fallback(ntd_cmd: &str, marker_cleanup_path: &str, log_path
         .ok();
 }
 
-/// 执行 npm 升级并采用分离式自更新方案重新部署 daemon 服务。
-pub async fn version_upgrade_handler() -> impl IntoResponse {
+/// npm 升级前置准备的结果：通过 spawn_blocking 跑完所有同步子进程后，把后续重部署 spawn
+/// 所需的两个值带回 async 路径。
+struct UpgradePrep {
+    ntd_cmd: String,
+    marker_cleanup_path: String,
+}
+
+/// 把「取 npm prefix → npm install -g → 找 ntd 二进制 → 安全校验 → 写标记」整段同步阻塞逻辑
+/// 收敛成一个函数，供 spawn_blocking 调用。npm install 是长子进程（网络下载 + 解包），直接在
+/// async 路径调用会占住 tokio worker（4 核机 4 并发即冻死运行时），故整体挪进阻塞线程池
+/// （091 性能优化）。任一步失败返回错误消息，调用方据此短路。
+fn prepare_upgrade_blocking() -> Result<UpgradePrep, String> {
     let prefix = crate::npm_utils::get_npm_global_prefix();
     let npm_result = std::process::Command::new("npm")
         .args(["install", "-g", &format!("--prefix={}", prefix), "@weibaohui/ntd@latest"])
         .output();
 
-    match &npm_result {
+    // npm 子进程未启动等 IO 错误：直接上报，不进入后续校验。
+    let out = match &npm_result {
         Ok(out) => {
             tracing::info!(
                 "npm upgrade stdout: {}, stderr: {}",
                 String::from_utf8_lossy(&out.stdout),
                 String::from_utf8_lossy(&out.stderr)
             );
+            out
         }
         Err(e) => {
             tracing::error!("Failed to run npm: {}", e);
-            let err_resp: ApiResponse<serde_json::Value> = ApiResponse::err(1, &format!("npm upgrade failed: {}", e));
-            return err_resp;
+            return Err(format!("npm upgrade failed: {}", e));
         }
+    };
+    // npm 退出了但 exit code 非成功：把 stderr 透传给前端做诊断。
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        return Err(if stderr.is_empty() {
+            "npm upgrade failed".to_string()
+        } else {
+            format!("npm upgrade failed: {}", stderr.trim())
+        });
     }
 
-    if let Ok(out) = &npm_result {
-        if !out.status.success() {
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            let err_msg = if stderr.is_empty() {
-                "npm upgrade failed".to_string()
-            } else {
-                format!("npm upgrade failed: {}", stderr.trim())
-            };
-            let err_resp: ApiResponse<serde_json::Value> = ApiResponse::err(1, &err_msg);
-            return err_resp;
-        }
-    }
-
+    // 定位新装的 ntd 二进制并校验路径合法性，防 npm prefix 被污染注入 shell 元字符。
     let ntd_cmd = crate::npm_utils::find_ntd_binary(&prefix);
-
     if ntd_cmd == "ntd" {
         tracing::error!("Self-update: ntd binary not found");
-        let err_resp: ApiResponse<serde_json::Value> = ApiResponse::err(1, "无法更新：未找到 ntd 可执行文件路径");
-        return err_resp;
+        return Err("无法更新：未找到 ntd 可执行文件路径".to_string());
     }
     if !crate::daemon::common::is_safe_ntd_path(&ntd_cmd) {
-        tracing::error!("Refusing self-update: ntd path {:?} contains characters outside [A-Za-z0-9/_.-]", ntd_cmd);
-        let err_resp: ApiResponse<serde_json::Value> = ApiResponse::err(1, "无法更新：ntd 路径包含非法字符（可能 npm prefix 被污染）");
-        return err_resp;
+        tracing::error!(
+            "Refusing self-update: ntd path {:?} contains characters outside [A-Za-z0-9/_.-]",
+            ntd_cmd
+        );
+        return Err("无法更新：ntd 路径包含非法字符（可能 npm prefix 被污染）".to_string());
     }
 
+    // 写更新标记：daemon 重启后据此判断「本次重启由升级触发」，从而做收尾。
     std::fs::write(ntd_update_marker_path(), "").ok();
-    let marker_cleanup_path = ntd_update_marker_cleanup_path();
+    Ok(UpgradePrep {
+        ntd_cmd,
+        marker_cleanup_path: ntd_update_marker_cleanup_path(),
+    })
+}
 
+/// 平台相关的「分离式重部署」。各分支都用 .spawn() fork 后立即返回（systemd-run / sh -c /
+/// cmd 三选一），不阻塞调用方，因此可安全留在 async handler 内。
+fn spawn_platform_redeploy(ntd_cmd: &str, marker_cleanup_path: &str) {
     #[cfg(target_os = "linux")]
     {
         let script = format!(
@@ -256,19 +284,17 @@ pub async fn version_upgrade_handler() -> impl IntoResponse {
             Err(e) => {
                 tracing::warn!("Self-update: systemd-run failed ({}), falling back to sh -c", e);
                 let fallback_log = crate::daemon::redeploy_log_path().to_string_lossy().to_string();
-                spawn_redeploy_sh_fallback(&ntd_cmd, &marker_cleanup_path, &fallback_log);
+                spawn_redeploy_sh_fallback(ntd_cmd, marker_cleanup_path, &fallback_log);
             }
         }
     }
     #[cfg(not(any(target_os = "linux", windows)))]
     {
-        spawn_redeploy_sh_fallback(&ntd_cmd, &marker_cleanup_path, "/tmp/ntd-upgrade.log");
+        spawn_redeploy_sh_fallback(ntd_cmd, marker_cleanup_path, "/tmp/ntd-upgrade.log");
     }
-
     #[cfg(windows)]
     {
-        let quoted = crate::daemon::common::shell_quote_single(&ntd_cmd);
-        #[cfg(windows)]
+        let quoted = crate::daemon::common::shell_quote_single(ntd_cmd);
         use std::os::windows::process::CommandExt;
         std::process::Command::new("cmd")
             .args(["/C", &format!(
@@ -279,12 +305,28 @@ pub async fn version_upgrade_handler() -> impl IntoResponse {
             .spawn()
             .ok();
     }
+}
 
-    tracing::info!("Self-update: npm upgraded, forked child process. ntd path: {}", ntd_cmd);
+/// 执行 npm 升级并采用分离式自更新方案重新部署 daemon 服务。
+pub async fn version_upgrade_handler() -> impl IntoResponse {
+    // prepare_upgrade_blocking 内含 npm install 长子进程，挪进 spawn_blocking 避免占住
+    // tokio worker（091 性能优化）；其返回的错误消息直接转成 ApiResponse 短路返回。
+    let prep = match tokio::task::spawn_blocking(prepare_upgrade_blocking).await {
+        Ok(Ok(p)) => p,
+        Ok(Err(msg)) => return ApiResponse::err(1, &msg),
+        Err(e) => {
+            tracing::error!("Self-update: upgrade task panicked: {}", e);
+            return ApiResponse::err(1, &format!("npm upgrade failed: {}", e));
+        }
+    };
+    // 分离式重部署：fork 后立即返回，不阻塞 handler。
+    spawn_platform_redeploy(&prep.ntd_cmd, &prep.marker_cleanup_path);
+    tracing::info!("Self-update: npm upgraded, forked child process. ntd path: {}", prep.ntd_cmd);
     let response = ApiResponse::ok(serde_json::json!({
         "status": "upgrade_started",
         "message": "升级流程已启动，服务即将重启",
     }));
+    // 先把响应发出去再退出主进程：sleep 500ms 等 handler 返回，避免响应半途丢失。
     tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         tracing::info!("Self-update: main process exiting after response sent");
