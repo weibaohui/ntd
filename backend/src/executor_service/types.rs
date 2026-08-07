@@ -113,6 +113,9 @@ pub(crate) struct SpawnContext {
     pub feishu_receive_id_type: Option<String>,
     /// 工作空间 ID，用于 FeishuPushService 按 workspace 隔离推送目标
     pub workspace_id: Option<i64>,
+    /// 专家索引（需求 092 P2）：discussion_auto 接力回写时需要据此解析管家结论里的 @。
+    /// None 表示该执行路径无专家索引（与 RunTodoExecutionRequest.expert_manager 同源）。
+    pub expert_manager: Option<Arc<crate::expert::ExpertIndexManager>>,
 }
 
 /// select! 三种终态枚举，避免在三个分支里各重复「杀进程 + drain + finalize」

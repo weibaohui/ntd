@@ -7,26 +7,37 @@
 //!   → 写 running 占位帖」；执行完成时由 completion.rs 的 discussion 分支回写结论。
 //! - 执行系统是 Todo 中心的，必须借载体 Todo 承载 executor/prompt/expert_name。
 
+use std::sync::{Arc, RwLock};
+
 use axum::extract::{Path, Query, State};
 use axum::routing::get;
 use axum::Json;
 use axum::Router;
 use serde::{Deserialize, Serialize};
+use tokio::sync::broadcast;
 
-use crate::adapters::find_executor;
+use crate::adapters::{find_executor, ExecutorRegistry};
+use crate::config::Config;
 use crate::db::Database;
 use crate::db::entity::{task_posts, tasks};
 use crate::db::task_post::{
-    NewPost, KIND_AGENT, KIND_HUMAN, STATUS_FAILED, STATUS_RUNNING,
+    NewPost, KIND_AGENT, KIND_HUMAN, STATUS_FAILED, STATUS_RUNNING, STATUS_SUCCESS,
 };
-use crate::executor_service::RunTodoExecutionRequest;
+use crate::expert::ExpertIndexManager;
+use crate::executor_service::{run_todo_execution_boxed, ExecEvent, RunTodoExecutionRequest};
 use crate::handlers::execution::start_todo_execution;
 use crate::handlers::{AppError, AppState};
 use crate::models::{ApiResponse, ExecutionStatus};
+use crate::task_manager::TaskManager;
 
 /// 讨论触发用的 trigger_type：completion.rs 据此回写智能体占位帖。
 /// 委派任务首帖也复用此值（首帖等同人工 @ 触发）；自动接力（P2）用 "discussion_auto"。
 pub(crate) const TRIGGER_DISCUSSION: &str = "discussion";
+
+/// 自动接力专用 trigger_type（需求 092 P2）：管家调度触发的执行用此值。
+/// completion.rs 对 discussion / discussion_auto 同样走讨论回写，并由 delegate_relay
+/// 推进下一轮接力；与人工 discussion 区分，便于日志/统计与防递归识别。
+pub(crate) const TRIGGER_DISCUSSION_AUTO: &str = "discussion_auto";
 
 /// 内联到 carrier prompt 的最近主楼层数；平衡「上下文充分」与「prompt 体积」。
 /// 被 @ 的 AI 既能看到即时上下文，又可用 ntd 命令拉取更多，故取较小的 5。
@@ -122,11 +133,18 @@ fn serialize_mentions(mentions: &[MentionDto]) -> String {
 
 /// 解析 @token 为结构化提及：先专家后执行器；都不中则忽略（当普通文本）。
 /// 同名歧义按需求§10/设计§6.4「先专家后执行器」消歧——单 token 的判定交给 [`classify_mention`]。
-async fn resolve_mentions(tokens: &[String], state: &AppState) -> Vec<MentionDto> {
+///
+/// 入参只取 `expert_manager`（不耦合整个 AppState）：一是本函数仅用它查专家，二是
+/// 需求 092 P2 的 completion 自动接力要复用同一份解析逻辑（那边只有 Arc 组件、无 AppState），
+/// 拆参后人工发帖与自动接力共用，零解析逻辑漂移。
+pub(crate) async fn resolve_mentions(
+    tokens: &[String],
+    expert_manager: &crate::expert::ExpertIndexManager,
+) -> Vec<MentionDto> {
     let mut out: Vec<MentionDto> = Vec::new();
     for tok in tokens {
         // get_expert_by_name 是 parking_lot 同步读；命中结果交给纯函数分类，保持本函数薄。
-        let expert = state.expert_manager.get_expert_by_name(tok);
+        let expert = expert_manager.get_expert_by_name(tok);
         if let Some(m) = classify_mention(tok, expert.as_ref()) {
             out.push(m);
         }
@@ -252,10 +270,11 @@ fn truncate_chars(s: &str, max_chars: usize) -> String {
 
 /// 按 workspace_id 反查项目目录；查不到或失败返回空串（执行器降级用默认 workspace）。
 /// 任务表不存 workspace_path，必须经此查 workspace 表补齐执行所需的真实路径。
-async fn resolve_ws_path(state: &AppState, ws_id: i64) -> String {
-    state
-        .db
-        .get_project_directory_by_id(ws_id)
+///
+/// 入参只取 `db`（不耦合 AppState）：需求 092 P2 的自动接力在 completion 路径触发，那边
+/// 只有 Arc<Database>、无 AppState；拆参后人工 @ 触发与自动接力共用同一份路径解析。
+async fn resolve_ws_path(db: &Database, ws_id: i64) -> String {
+    db.get_project_directory_by_id(ws_id)
         .await
         .ok()
         .flatten()
@@ -283,7 +302,7 @@ async fn trigger_discussion_execution(
     let expert_name = first_expert(mentions);
     let ws_id = task.workspace_id.unwrap_or(1);
     // 任务表不存 workspace_path，按 workspace_id 反查项目目录取真实路径（执行需要）。
-    let ws_path = resolve_ws_path(state, ws_id).await;
+    let ws_path = resolve_ws_path(state.db.as_ref(), ws_id).await;
     let title = format!("讨论触发 @{}", agent_author(mentions));
     let todo_id = state
         .db
@@ -525,7 +544,7 @@ pub(crate) async fn land_mention_post(
 ) -> Result<(serde_json::Value, Option<serde_json::Value>), AppError> {
     // 解析 @token 为结构化提及（先专家后执行器）；纯文本无 @ 时为空，仅写人帖、不触发执行。
     let tokens = extract_at_tokens(content);
-    let mut mentions = resolve_mentions(&tokens, state).await;
+    let mut mentions = resolve_mentions(&tokens, &state.expert_manager).await;
     // 强制触发目标注入：assignee 已校验存在，确保即便其名含空格/标点也一定能命中触发。
     if let Some(m) = force_mention {
         if !mentions.iter().any(|x| x.kind == m.kind && x.name == m.name) {
@@ -772,6 +791,319 @@ async fn validate_reply_parent(
 }
 
 // ---------------------------------------------------------------------------
+// 自动接力（需求 092 P2：管家调度中枢）
+// ---------------------------------------------------------------------------
+//
+// 接力中枢规则（设计 §5.2）：assignee 管家专家是调度中枢。每次讨论类执行
+// （trigger=discussion / discussion_auto）完成、回写结论帖之后，若任务为 delegate +
+// auto_continue + 专家 assignee，按「本次执行者是否就是 assignee」分两个子分支：
+//   - 是管家（@专家帖的 expert_name == assignee）→ 解析其结论里的 @：
+//       含 @yyy → 触发 yyy 执行（接力下一跳）；不含 @ → 管家判定完成，写说明帖终止。
+//   - 不是管家（被@者完成）→ 唤醒 assignee 管家决策下一步。
+// 护栏：continue_rounds 每轮 +1，达 MAX_DELEGATE_ROUNDS 强制停。循环由此有界，不会无限递归。
+
+/// 自动接力轮数硬上限（护栏）。集中常量便于将来演进为可配置（需求 §3 暂不做成本上限）。
+pub(crate) const MAX_DELEGATE_ROUNDS: i64 = 10;
+
+/// 接力纯决策结果：把「读库 + 计数」与「触发执行/写帖」解耦，纯决策可单测覆盖全部分支。
+enum DelegateRelayAction {
+    /// 已达轮数上限 → 写「达上限」说明帖，停止接力。
+    HitLimit,
+    /// 管家判定完成（结论不含 @）→ 写「已完成」说明帖，循环自然终止。
+    Finished,
+    /// 管家结论含 @ → 触发被@者执行（接力下一跳）。
+    TriggerMention,
+    /// 被@者完成 → 唤醒 assignee 管家决策。
+    WakeAssignee,
+}
+
+/// 纯决策函数（无 IO）：据轮数 / 执行者身份 / 结论里的 @ 决定下一步动作。
+///
+/// 抽成纯函数是为了把护栏与分派逻辑从异步编排中剥离，单测可覆盖四条分支，无需真实
+/// 执行器（与 060 触发逻辑同策略，不做端到端）。`mentions` 仅在 x_is_assignee 分支有意义
+/// （被@者完成时调用方传空 Vec，直接走 WakeAssignee）。
+fn plan_delegate_relay(
+    rounds: i64,
+    max: i64,
+    x_is_assignee: bool,
+    mentions: &[MentionDto],
+) -> DelegateRelayAction {
+    if rounds > max {
+        return DelegateRelayAction::HitLimit;
+    }
+    if x_is_assignee {
+        // 管家本轮执行：结论含 @某人 则触发其执行；不含 @ 视为管家判定完成。
+        let has_target = mentions
+            .iter()
+            .any(|m| m.kind == "executor" || m.kind == "expert");
+        if has_target {
+            DelegateRelayAction::TriggerMention
+        } else {
+            DelegateRelayAction::Finished
+        }
+    } else {
+        // 被@者完成：唤醒管家决定下一步（重试 / 换人 / 收尾）。
+        DelegateRelayAction::WakeAssignee
+    }
+}
+
+/// completion 自动接力所需的执行句柄。
+///
+/// completion 路径（SpawnContext）只有 Arc 组件、没有 AppState；用 struct 收口这 6 个句柄，
+/// 避免 continue_delegated_task 出现 6+ 参数长列表（CLAUDE.md 函数长度 / 可读性）。
+/// 全部以引用借用，触发执行时按需 .clone() 出 owned Arc。
+pub(crate) struct DelegateRelayHandles<'a> {
+    pub db: &'a Arc<Database>,
+    pub executor_registry: &'a Arc<ExecutorRegistry>,
+    pub tx: &'a broadcast::Sender<ExecEvent>,
+    pub task_manager: &'a Arc<TaskManager>,
+    pub config: &'a Arc<RwLock<Config>>,
+    pub expert_manager: &'a Arc<ExpertIndexManager>,
+}
+
+/// 自动接力入口（completion 回写讨论帖后调用）：读占位帖 / 任务元信息 → 计数 → 决策 → 推进。
+///
+/// 失败容忍：任一读库 / 触发失败只 tracing::warn 后返回，不影响本次执行已落定的成功状态
+/// （与 auto_review / 060 回写降级哲学一致，帖子由前端轮询兜底）。
+pub(crate) async fn continue_delegated_task(
+    handles: &DelegateRelayHandles<'_>,
+    record_id: i64,
+    result_str: &str,
+) {
+    // 1. 占位帖：task_id 定位委派任务，expert_name 判断本次执行者身份。
+    let Some(post) = load_relay_post(handles.db, record_id).await else {
+        return;
+    };
+    // 2. 任务元信息 + 前置校验（仅 delegate + auto_continue + 专家 assignee 才接力）。
+    let Some(task) = load_delegate_task(handles.db, post.task_id).await else {
+        return;
+    };
+    let Some(assignee) = task.assignee_name.clone() else {
+        return;
+    };
+    // 3. 护栏计数 +1（顺序事件驱动，无并发）；判定本次执行者是否管家本人。
+    let new_rounds = match handles.db.increment_continue_rounds(post.task_id).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(error = %e, task_id = post.task_id, "increment continue_rounds failed");
+            return;
+        }
+    };
+    let x_is_assignee = post.expert_name.as_deref() == Some(assignee.as_str());
+    // 4. 仅管家本人执行时才解析其结论里的 @ 作为下一跳；被@者完成时无需解析。
+    let mentions = if x_is_assignee {
+        resolve_mentions(&extract_at_tokens(result_str), handles.expert_manager).await
+    } else {
+        Vec::new()
+    };
+    // 5. 纯决策 → 推进。
+    let action = plan_delegate_relay(new_rounds, MAX_DELEGATE_ROUNDS, x_is_assignee, &mentions);
+    execute_relay_action(handles, &task, &assignee, action, &mentions, result_str).await;
+}
+
+/// 取本次执行对应的占位帖（含 task_id / expert_name）；帖已删或查询失败返回 None。
+async fn load_relay_post(db: &Database, record_id: i64) -> Option<task_posts::Model> {
+    match db.get_task_post_by_source_execution(record_id).await {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!(error = %e, record_id, "load relay post failed");
+            None
+        }
+    }
+}
+
+/// 取任务并校验是「delegate + auto_continue + 专家 assignee」的接力任务；否则 None。
+/// 把前置条件收口在一处，让 continue_delegated_task 主干保持线性可读。
+async fn load_delegate_task(db: &Database, task_id: i64) -> Option<tasks::Model> {
+    let task = db.get_task(task_id).await.ok().flatten()?;
+    // 仅委派 + 开启自动接力 + 专家 assignee 才接力（执行器 P1 已禁用 auto_continue）。
+    let is_relay = task.execution_mode == "delegate"
+        && task.auto_continue != 0
+        && task.assignee_kind.as_deref() == Some("expert")
+        && task.assignee_name.is_some();
+    if is_relay { Some(task) } else { None }
+}
+
+/// 按纯决策结果推进：触发下一跳执行，或写终止说明帖。
+async fn execute_relay_action(
+    handles: &DelegateRelayHandles<'_>,
+    task: &tasks::Model,
+    assignee: &str,
+    action: DelegateRelayAction,
+    mentions: &[MentionDto],
+    result_str: &str,
+) {
+    match action {
+        DelegateRelayAction::HitLimit => {
+            let msg = format!(
+                "⚠️ 自动接力已达 {} 轮上限，停止调度。如需继续请在讨论区手动 @。",
+                MAX_DELEGATE_ROUNDS
+            );
+            insert_relay_note_post(handles, task, assignee, &msg).await;
+        }
+        DelegateRelayAction::Finished => {
+            insert_relay_note_post(handles, task, assignee, "✅ 任务已完成，管家停止调度。").await;
+        }
+        DelegateRelayAction::TriggerMention => {
+            // 管家结论含 @ → 触发被@者执行，喂入管家结论作为诉求上下文。
+            spawn_relay_execution(handles, task, mentions, result_str, TRIGGER_DISCUSSION_AUTO).await;
+        }
+        DelegateRelayAction::WakeAssignee => {
+            // 被@者完成 → 唤醒管家决策（@assignee，message=决策指令）。
+            let wake = wake_mention(assignee);
+            spawn_relay_execution(
+                handles,
+                task,
+                std::slice::from_ref(&wake),
+                &build_decision_directive(),
+                TRIGGER_DISCUSSION_AUTO,
+            )
+            .await;
+        }
+    }
+}
+
+/// 建载体 todo + 触发执行 + 写 running 占位帖（与 create_agent_post 同构，但走 completion 的
+/// Arc 句柄而非 AppState；trigger_type 由调用方传 discussion_auto）。
+///
+/// 豁免说明（>50 行）：线性管道——取执行器/专家 → 解析 ws_path → 拼 prompt/mentions →
+/// 建 carrier todo → 触发执行 → 取 record_id → 写占位帖；其中 RunTodoExecutionRequest 构造
+/// 是连续纯数据赋值（无分支），符合规范豁免场景 #1（纯数据构建）+ #2（线性管道），与
+/// trigger_discussion_execution 同一豁免理由。失败写 failed 帖 + 软删 carrier todo。
+async fn spawn_relay_execution(
+    handles: &DelegateRelayHandles<'_>,
+    task: &tasks::Model,
+    mentions: &[MentionDto],
+    directive: &str,
+    trigger_type: &str,
+) {
+    let executor_name = first_executor(mentions);
+    let expert_name = first_expert(mentions);
+    let author = agent_author(mentions);
+    let ws_id = task.workspace_id.unwrap_or(1);
+    let ws_path = resolve_ws_path(handles.db, ws_id).await;
+    // 复用 060 的 prompt 构建 + 历史注入，让接力执行与人工 @ 触发看到同等上下文。
+    let recent = fetch_recent_main_posts(handles.db, task.id).await;
+    let history = format_discussion_history(&recent);
+    let prompt = build_carrier_prompt(task, directive, &history);
+    let mentions_json = serialize_mentions(mentions);
+    let title = format!("接力触发 @{author}");
+    let todo_id = match handles
+        .db
+        .create_discussion_todo(title, prompt.clone(), executor_name, expert_name, ws_id, &ws_path)
+        .await
+    {
+        Ok(id) => id,
+        Err(e) => {
+            tracing::warn!(error = %e, task_id = task.id, "relay create carrier todo failed");
+            return;
+        }
+    };
+    let request = RunTodoExecutionRequest {
+        db: handles.db.clone(),
+        executor_registry: handles.executor_registry.clone(),
+        tx: handles.tx.clone(),
+        task_manager: handles.task_manager.clone(),
+        config: handles.config.clone(),
+        todo_id,
+        message: prompt,
+        req_executor: executor_name.map(str::to_string),
+        req_model: None,
+        trigger_type: trigger_type.to_string(),
+        params: None,
+        resume_session_id: None,
+        resume_message: None,
+        source_todo_id: Some(todo_id),
+        source_todo_title: Some(format!("接力帖-任务{}", task.id)),
+        loop_step_execution_id: None,
+        step_id: None,
+        feishu_bot_id: None,
+        feishu_receive_id: None,
+        feishu_receive_id_type: None,
+        workspace_path: if ws_path.is_empty() { None } else { Some(ws_path) },
+        workspace_id: Some(ws_id),
+        expert_manager: Some(handles.expert_manager.clone()),
+    };
+    // 共享字段打包：成功/失败两分支仅 content/status/关联 id 不同，spec 收口避免重复构造。
+    let spec = AgentPostSpec {
+        task_id: task.id,
+        author: &author,
+        executor: executor_name,
+        expert_name,
+        mentions_json: &mentions_json,
+    };
+    // 关键：必须用类型擦除的 `run_todo_execution_boxed`（见其文档注释）而非直接 await
+    // run_todo_execution。否则「接力 → run_todo_execution → finalize → 接力」coroutine 类型环
+    // 会让编译器报 cycle detected / 无法证明 Send。boxed 包装把具体 future 藏在函数体内，
+    // 调用方只拿到 `Pin<Box<dyn Future + Send>>` 不透明类型，环在此处终止。
+    // run_todo_execution 内部已 spawn 执行器、很快返回 record_id，await 的是「建好执行任务」。
+    let exec = run_todo_execution_boxed(request).await;
+    match exec.record_id {
+        Some(record_id) => {
+            // 占位帖：running，关联执行记录与载体 todo。
+            let placeholder = format!("{author} 正在干活…");
+            let np = spec.into_post(&placeholder, STATUS_RUNNING, Some(record_id), Some(todo_id));
+            if let Err(e) = handles.db.create_task_post(np).await {
+                tracing::warn!(error = %e, task_id = task.id, "relay insert placeholder failed");
+            }
+        }
+        None => {
+            // 启动失败：软删 carrier todo + 写 failed 帖留痕（不阻塞接力链路已落定的部分）。
+            let _ = handles.db.soft_delete_todo(todo_id).await;
+            let failed = format!("{author} 接力触发失败");
+            let np = spec.into_post(&failed, STATUS_FAILED, None, None);
+            if let Err(e) = handles.db.create_task_post(np).await {
+                tracing::warn!(error = %e, task_id = task.id, "relay insert failed-post failed");
+            }
+        }
+    }
+}
+
+/// 写一条接力终止说明帖（达上限 / 已完成）：以 assignee 管家身份发，无执行关联、mentions 空。
+async fn insert_relay_note_post(
+    handles: &DelegateRelayHandles<'_>,
+    task: &tasks::Model,
+    assignee: &str,
+    message: &str,
+) {
+    let np = NewPost {
+        task_id: task.id,
+        parent_post_id: None,
+        kind: KIND_AGENT,
+        author_name: assignee,
+        executor: None,
+        expert_name: Some(assignee),
+        content: message,
+        mentions_json: "[]",
+        status: STATUS_SUCCESS,
+        source_execution_id: None,
+        source_todo_id: None,
+    };
+    if let Err(e) = handles.db.create_task_post(np).await {
+        tracing::warn!(error = %e, task_id = task.id, "relay insert note post failed");
+    }
+}
+
+/// 构造「唤醒管家」用的专家提及（单条，name=assignee）。
+fn wake_mention(name: &str) -> MentionDto {
+    MentionDto {
+        kind: "expert".to_string(),
+        name: name.to_string(),
+        display: name.to_string(),
+    }
+}
+
+/// 唤醒管家时的决策指令（作为 carrier prompt 的「诉求」段）。
+/// 管家 persona 由 inject_expert_context 按 expert_name=assignee 注入，这里只给协调者角色的行为约束。
+fn build_decision_directive() -> String {
+    "（系统自动唤醒：你是本任务的任务管家 / 协调者。）\n\
+     请基于上述任务需求与最近的讨论、执行结论，决定下一步：\n\
+     - 若还有事要做，请 @ 合适的专家或执行器去执行（回复中含 @某人 即自动触发其执行）；\n\
+     - 若任务已全部完成，请直接给出最终结论，不要 @ 任何人（不含 @ 则任务结束）。"
+        .to_string()
+}
+
+// ---------------------------------------------------------------------------
 // 单元测试（纯函数部分）
 // ---------------------------------------------------------------------------
 
@@ -780,6 +1112,64 @@ async fn validate_reply_parent(
 mod tests {
     use super::*;
     use crate::expert::{ExpertMetadata, ExpertSource, ExpertType};
+
+    /// plan_delegate_relay：轮数超上限 → HitLimit（护栏熔断，优先级最高）。
+    #[test]
+    fn test_plan_delegate_relay_hit_limit() {
+        let action = plan_delegate_relay(11, 10, true, &[]);
+        assert!(matches!(action, DelegateRelayAction::HitLimit));
+    }
+
+    /// 管家本人执行 + 结论含 @执行器/专家 → TriggerMention（接力下一跳）。
+    #[test]
+    fn test_plan_delegate_relay_trigger_mention() {
+        let mentions = vec![MentionDto {
+            kind: "executor".to_string(),
+            name: "codex".into(),
+            display: "Codex".into(),
+        }];
+        let action = plan_delegate_relay(1, 10, true, &mentions);
+        assert!(matches!(action, DelegateRelayAction::TriggerMention));
+    }
+
+    /// 管家本人执行 + 结论不含 @ → Finished（循环自然终止）。
+    #[test]
+    fn test_plan_delegate_relay_finished_when_no_mention() {
+        let action = plan_delegate_relay(1, 10, true, &[]);
+        assert!(matches!(action, DelegateRelayAction::Finished));
+    }
+
+    /// 被@者完成（executor≠assignee）→ WakeAssignee（唤醒管家决策）。
+    #[test]
+    fn test_plan_delegate_relay_wake_assignee() {
+        let action = plan_delegate_relay(1, 10, false, &[]);
+        assert!(matches!(action, DelegateRelayAction::WakeAssignee));
+    }
+
+    /// 边界：rounds == max（未超）仍允许推进；> max 才熔断。
+    /// 体现「第 max 轮仍可触发一跳、max+1 轮强制停」的护栏语义。
+    #[test]
+    fn test_plan_delegate_relay_boundary_at_max() {
+        let with_mention = vec![MentionDto {
+            kind: "expert".to_string(),
+            name: "e".into(),
+            display: "e".into(),
+        }];
+        // rounds == max 不算超：管家含 @ → TriggerMention；无 @ → Finished。
+        assert!(matches!(
+            plan_delegate_relay(10, 10, true, &with_mention),
+            DelegateRelayAction::TriggerMention
+        ));
+        assert!(matches!(
+            plan_delegate_relay(10, 10, true, &[]),
+            DelegateRelayAction::Finished
+        ));
+        // rounds == max 但非管家 → 仍 WakeAssignee（护栏只管轮数，不管身份分支）。
+        assert!(matches!(
+            plan_delegate_relay(10, 10, false, &[]),
+            DelegateRelayAction::WakeAssignee
+        ));
+    }
 
     /// 基本 @token 抽取：英文、CJK、含下划线的名字都能切出。
     #[test]

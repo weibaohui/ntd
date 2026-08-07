@@ -99,6 +99,25 @@ impl Database {
         Ok(())
     }
 
+    /// 自动接力轮数 +1 并返回递增后的新值（需求 092 P2 护栏用）。
+    ///
+    /// 采用 read-modify-write 而非 SQL 自增表达式：接力是顺序事件驱动的（上一轮完成
+    /// 回调才触发下一轮），同一任务的 continue_rounds 不存在并发递增，故无需原子自增；
+    /// 同时与本文件 update_task_status / update_task_description 的写法保持一致。
+    /// 任务不存在时返回 0（调用方据此跳过接力）。
+    pub async fn increment_continue_rounds(&self, id: i64) -> Result<i64, sea_orm::DbErr> {
+        let existing = tasks::Entity::find_by_id(id).one(&self.conn).await?;
+        let Some(task) = existing else {
+            return Ok(0);
+        };
+        let new_rounds = task.continue_rounds + 1;
+        let mut am: tasks::ActiveModel = task.into();
+        am.continue_rounds = ActiveValue::Set(new_rounds);
+        am.updated_at = ActiveValue::Set(Some(utc_timestamp()));
+        am.update(&self.conn).await?;
+        Ok(new_rounds)
+    }
+
     /// 硬删除单个任务。
     pub async fn delete_task(&self, id: i64) -> Result<(), sea_orm::DbErr> {
         tasks::Entity::delete_by_id(id).exec(&self.conn).await?;
