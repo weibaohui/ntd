@@ -830,7 +830,9 @@ fn plan_delegate_relay(
     x_is_assignee: bool,
     mentions: &[MentionDto],
 ) -> DelegateRelayAction {
-    if rounds > max {
+    // 护栏用 >=：continue_rounds 递增到 max 当轮即熔断，最多 max 轮接力（需求 AC8「达到 10 强制停止」）。
+    // 若用 >，rounds==max 不熔断、会放行第 max+1 跳，实际跑 max+1 轮（CodeRabbit #5）。
+    if rounds >= max {
         return DelegateRelayAction::HitLimit;
     }
     if x_is_assignee {
@@ -1121,11 +1123,19 @@ mod tests {
     use super::*;
     use crate::expert::{ExpertMetadata, ExpertSource, ExpertType};
 
-    /// plan_delegate_relay：轮数超上限 → HitLimit（护栏熔断，优先级最高）。
+    /// plan_delegate_relay：轮数达上限（rounds == max）即熔断 → HitLimit（护栏优先级最高）。
     #[test]
     fn test_plan_delegate_relay_hit_limit() {
-        let action = plan_delegate_relay(11, 10, true, &[]);
-        assert!(matches!(action, DelegateRelayAction::HitLimit));
+        // 刚好达上限：max == max 应立即熔断（>= 语义；若实现成 > 会漏过这一跳跑到 max+1 轮）。
+        assert!(matches!(
+            plan_delegate_relay(10, 10, true, &[]),
+            DelegateRelayAction::HitLimit
+        ));
+        // 超上限同样熔断。
+        assert!(matches!(
+            plan_delegate_relay(11, 10, false, &[]),
+            DelegateRelayAction::HitLimit
+        ));
     }
 
     /// 管家本人执行 + 结论含 @执行器/专家 → TriggerMention（接力下一跳）。
@@ -1154,8 +1164,8 @@ mod tests {
         assert!(matches!(action, DelegateRelayAction::WakeAssignee));
     }
 
-    /// 边界：rounds == max（未超）仍允许推进；> max 才熔断。
-    /// 体现「第 max 轮仍可触发一跳、max+1 轮强制停」的护栏语义。
+    /// 边界：rounds == max-1（未达上限）仍允许推进；rounds == max 才熔断。
+    /// 体现「最后一跳在 max-1 触发、达 max 当轮即停」的护栏语义（>= 口径，最多 max 轮）。
     #[test]
     fn test_plan_delegate_relay_boundary_at_max() {
         let with_mention = vec![MentionDto {
@@ -1163,18 +1173,18 @@ mod tests {
             name: "e".into(),
             display: "e".into(),
         }];
-        // rounds == max 不算超：管家含 @ → TriggerMention；无 @ → Finished。
+        // rounds == max-1 未达上限：管家含 @ → TriggerMention；无 @ → Finished。
         assert!(matches!(
-            plan_delegate_relay(10, 10, true, &with_mention),
+            plan_delegate_relay(9, 10, true, &with_mention),
             DelegateRelayAction::TriggerMention
         ));
         assert!(matches!(
-            plan_delegate_relay(10, 10, true, &[]),
+            plan_delegate_relay(9, 10, true, &[]),
             DelegateRelayAction::Finished
         ));
-        // rounds == max 但非管家 → 仍 WakeAssignee（护栏只管轮数，不管身份分支）。
+        // rounds == max-1 但非管家 → WakeAssignee（护栏只管轮数，不管身份分支）。
         assert!(matches!(
-            plan_delegate_relay(10, 10, false, &[]),
+            plan_delegate_relay(9, 10, false, &[]),
             DelegateRelayAction::WakeAssignee
         ));
     }
