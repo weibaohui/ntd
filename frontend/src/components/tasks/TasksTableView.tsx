@@ -8,14 +8,15 @@ import { MoreOutlined, DeleteOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import type { TaskItem } from '@/components/tasks/constants';
 import {
-  PENDING_APPROVAL_LANE,
   STATUS_LABEL,
   PendingApprovalTag,
+  TASK_STATUS_FILTER_OPTIONS,
   statusColor,
   complexityColor,
   complexityLabel,
   formatDateShort,
   isPendingApproval,
+  matchesTaskStatusFilter,
 } from '@/components/tasks/constants';
 import bundledApi from '@/api/bundled';
 import { formatProcessText } from '@/utils/processText';
@@ -34,16 +35,6 @@ interface TasksTableViewProps {
   /** 列表数据被本组件修改（如批量删除成功）后，通知父组件刷新。 */
   onChanged: () => void;
 }
-
-/** 状态筛选项：all = 不筛；pending_approval 为 063 虚拟选项（按待审批数过滤而非匹配 status）。 */
-const STATUS_FILTER_OPTIONS = [
-  { value: 'all', label: '全部状态' },
-  { value: PENDING_APPROVAL_LANE, label: '待审批' },
-  { value: 'pending', label: '待执行' },
-  { value: 'running', label: '进行中' },
-  { value: 'success', label: '已完成' },
-  { value: 'failed', label: '失败' },
-];
 
 /**
  * 构造 Table 列定义。
@@ -232,10 +223,8 @@ export function TasksTableView({
   const visibleTasks = useMemo(() => {
     const kw = searchKeyword.trim().toLowerCase();
     return tasks.filter((task) => {
-      // 063：「待审批」是虚拟筛选项，按待审批数过滤；真实状态仍按 status 精确匹配。
-      if (statusFilter === PENDING_APPROVAL_LANE) {
-        if (!isPendingApproval(task)) return false;
-      } else if (statusFilter !== 'all' && task.status !== statusFilter) return false;
+      // 状态筛选走共享谓词（constants.tsx 唯一事实源，含 063「待审批」虚拟项口径）。
+      if (!matchesTaskStatusFilter(task, statusFilter)) return false;
       if (!kw) return true;
       const titleMatch = task.title.toLowerCase().includes(kw);
       const reqMatch = (task.latest_execution_requirement ?? '').toLowerCase().includes(kw);
@@ -296,7 +285,7 @@ export function TasksTableView({
         size="small"
         value={statusFilter}
         onChange={setStatusFilter}
-        options={STATUS_FILTER_OPTIONS}
+        options={TASK_STATUS_FILTER_OPTIONS}
         style={{ width: 120 }}
         data-testid="tasks-table-status-filter"
       />

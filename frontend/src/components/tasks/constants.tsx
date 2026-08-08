@@ -101,6 +101,32 @@ export function isPendingApproval(task: Pick<TaskItem, 'pending_approval_count'>
 }
 
 /**
+ * 状态筛选项（列表/卡片视图共享）。
+ * 集中定义的原因：两视图曾各持一份同构数组（063 加「待审批」时需同步改两处），
+ * 任一处漏改就会筛选项不一致且无编译报错——与 kanban/constants.ts 头部记录的
+ * TIME_OPTIONS 三处漂移历史同型，故收口为唯一事实源。
+ * pending_approval 为 063 虚拟选项：按待审批数过滤而非匹配 task.status。
+ */
+export const TASK_STATUS_FILTER_OPTIONS = [
+  { value: 'all', label: '全部状态' },
+  { value: PENDING_APPROVAL_LANE, label: '待审批' },
+  { value: 'pending', label: '待执行' },
+  { value: 'running', label: '进行中' },
+  { value: 'success', label: '已完成' },
+  { value: 'failed', label: '失败' },
+];
+
+/**
+ * 状态筛选谓词（与 TASK_STATUS_FILTER_OPTIONS 配套的共享实现）。
+ * 'all' 恒真；pending_approval 虚拟项按待审批数判定；其余按 task.status 精确匹配。
+ */
+export function matchesTaskStatusFilter(task: TaskItem, statusFilter: string): boolean {
+  if (statusFilter === 'all') return true;
+  if (statusFilter === PENDING_APPROVAL_LANE) return isPendingApproval(task);
+  return task.status === statusFilter;
+}
+
+/**
  * 看板分组：返回任务应落入的泳道 status。
  * 待审批任务只进「待审批」泳道、不再落入真实 status 泳道——
  * 一卡两列会让看板各列计数之和大于任务总数，审批完成后卡片“跳列”也更直观。

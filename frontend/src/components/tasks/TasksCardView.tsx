@@ -17,14 +17,14 @@ import { ThunderboltOutlined } from '@ant-design/icons';
 import bundledApi from '@/api/bundled';
 import type { TaskItem } from '@/components/tasks/constants';
 import {
-  PENDING_APPROVAL_LANE,
   STATUS_LABEL,
   PendingApprovalTag,
+  TASK_STATUS_FILTER_OPTIONS,
   statusColor,
   complexityColor,
   complexityLabel,
   formatDateShort,
-  isPendingApproval,
+  matchesTaskStatusFilter,
 } from '@/components/tasks/constants';
 
 const { Text, Paragraph } = Typography;
@@ -37,16 +37,6 @@ interface TasksCardViewProps {
   /** tab 可选（063）：点待审批标记时传 'exec'，详情直达执行历史 Tab。 */
   onSelectTask: (taskId: number | null, tab?: string) => void;
 }
-
-/** 状态筛选项；pending_approval 为 063 虚拟选项（按待审批数过滤而非匹配 status）。 */
-const STATUS_FILTER_OPTIONS = [
-  { value: 'all', label: '全部状态' },
-  { value: PENDING_APPROVAL_LANE, label: '待审批' },
-  { value: 'pending', label: '待执行' },
-  { value: 'running', label: '进行中' },
-  { value: 'success', label: '已完成' },
-  { value: 'failed', label: '失败' },
-];
 
 /** 复杂度筛选项。 */
 const COMPLEXITY_FILTER_OPTIONS = [
@@ -273,10 +263,8 @@ export function TasksCardView({
   const visibleTasks = useMemo(() => {
     const kw = searchKeyword.trim().toLowerCase();
     return tasks.filter((task) => {
-      // 状态过滤：all 跳过；063「待审批」虚拟项按待审批数过滤；其余匹配 task.status。
-      if (statusFilter === PENDING_APPROVAL_LANE) {
-        if (!isPendingApproval(task)) return false;
-      } else if (statusFilter !== 'all' && task.status !== statusFilter) return false;
+      // 状态过滤走共享谓词（constants.tsx 唯一事实源，含 063「待审批」虚拟项口径）。
+      if (!matchesTaskStatusFilter(task, statusFilter)) return false;
       // 复杂度过滤：all 跳过；未设置 complexity 的任务被过滤掉。
       if (complexityFilter !== 'all' && task.complexity !== complexityFilter) return false;
       // 关键词过滤：空跳过；匹配 title 或 latest_execution_requirement。
@@ -303,7 +291,7 @@ export function TasksCardView({
         size="small"
         value={statusFilter}
         onChange={setStatusFilter}
-        options={STATUS_FILTER_OPTIONS}
+        options={TASK_STATUS_FILTER_OPTIONS}
         style={{ width: 120 }}
         data-testid="tasks-card-status-filter"
       />

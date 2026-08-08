@@ -12,9 +12,11 @@ import { describe, it, expect } from 'vitest';
 import {
   PENDING_APPROVAL_LANE,
   TASK_LANES,
+  TASK_STATUS_FILTER_OPTIONS,
   isPendingApproval,
   laneOfTask,
   loopOptionLabel,
+  matchesTaskStatusFilter,
 } from './constants';
 import type { LoopLite, TaskItem } from './constants';
 
@@ -114,5 +116,39 @@ describe('待审批泳道与分组（063）', () => {
   it('test_laneOfTask_无待审批回退真实状态', () => {
     expect(laneOfTask(makeTask({ status: 'success', pending_approval_count: 0 }))).toBe('success');
     expect(laneOfTask(makeTask({ status: 'pending' }))).toBe('pending');
+  });
+});
+
+// 063 PR 评审收口：状态筛选项与过滤谓词为列表/卡片视图共享的唯一事实源。
+describe('状态筛选共享口径（063 评审收口）', () => {
+  const makeTask = (over: Partial<TaskItem>): TaskItem => ({
+    id: 1,
+    title: 't',
+    description: '',
+    status: 'running',
+    ...over,
+  });
+
+  // 筛选项必须包含「待审批」虚拟项——两视图渲染同一份数组，不会出现一处有一处无。
+  it('test_TASK_STATUS_FILTER_OPTIONS_含待审批虚拟项', () => {
+    const values = TASK_STATUS_FILTER_OPTIONS.map((o) => o.value);
+    expect(values).toContain(PENDING_APPROVAL_LANE);
+    expect(values).toEqual(['all', PENDING_APPROVAL_LANE, 'pending', 'running', 'success', 'failed']);
+  });
+
+  // all 不筛；真实状态精确匹配；待审批虚拟项按计数判定（含 0 与 undefined 边界）。
+  it('test_matchesTaskStatusFilter_all不筛选', () => {
+    expect(matchesTaskStatusFilter(makeTask({ status: 'failed' }), 'all')).toBe(true);
+  });
+
+  it('test_matchesTaskStatusFilter_真实状态精确匹配', () => {
+    expect(matchesTaskStatusFilter(makeTask({ status: 'running' }), 'running')).toBe(true);
+    expect(matchesTaskStatusFilter(makeTask({ status: 'running' }), 'failed')).toBe(false);
+  });
+
+  it('test_matchesTaskStatusFilter_待审批虚拟项按计数过滤', () => {
+    expect(matchesTaskStatusFilter(makeTask({ pending_approval_count: 2 }), PENDING_APPROVAL_LANE)).toBe(true);
+    expect(matchesTaskStatusFilter(makeTask({ pending_approval_count: 0 }), PENDING_APPROVAL_LANE)).toBe(false);
+    expect(matchesTaskStatusFilter(makeTask({}), PENDING_APPROVAL_LANE)).toBe(false);
   });
 });
