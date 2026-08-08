@@ -294,7 +294,10 @@ export function ExecHistoryTab({
   }
   return (
     <div className={styles.paneBody}>
-      <LoopExecutionsPanel loopId={loopId} workspaceId={workspaceId} loopName={loopName} autoExpandFirstPending />
+      {/* key={loopId}：切换任务（如浏览器前进/后退直达另一个任务的 exec Tab）时强制 remount，
+          避免面板内部 state（autoExpandedRef 守卫、expandedId）跨 loop 残留——
+          残留会导致新任务的待审批执行不再自动展开（PR #994 评审发现）。 */}
+      <LoopExecutionsPanel key={loopId} loopId={loopId} workspaceId={workspaceId} loopName={loopName} autoExpandFirstPending />
     </div>
   );
 }
