@@ -203,6 +203,21 @@ impl Database {
         Ok(1)
     }
 
+    /// 按 source_execution_id 取对应的智能体占位帖（需求 092 P2 自动接力用）。
+    ///
+    /// 一条讨论类执行只对应一条占位帖（trigger=discussion/discussion_auto）。completion
+    /// 回写后用此查询取回帖子的 task_id / expert_name / executor，供接力判断「本次执行者
+    /// 是否就是 assignee 管家」与定位所属委派任务。找不到（帖已删）返回 None，调用方跳过接力。
+    pub async fn get_task_post_by_source_execution(
+        &self,
+        record_id: i64,
+    ) -> Result<Option<task_posts::Model>, sea_orm::DbErr> {
+        task_posts::Entity::find()
+            .filter(task_posts::Column::SourceExecutionId.eq(record_id))
+            .one(&self.conn)
+            .await
+    }
+
     /// 硬删一条帖子（删 running 帖由调用方联动取消执行）。
     pub async fn delete_task_post(&self, id: i64) -> Result<u64, sea_orm::DbErr> {
         let res = task_posts::Entity::delete_by_id(id)
@@ -616,6 +631,54 @@ mod tests {
 
         // 不存在的 id：静默 no-op，不报错（兜底分支）。
         db.soft_delete_todo(999999).await.expect("noop on missing");
+    }
+
+    /// get_task_post_by_source_execution：按执行记录 id 反查占位帖。
+    /// 覆盖命中 / 未命中 / 与 source_execution_id=None 的人帖互不干扰（SQL NULL 不参与相等匹配，
+    /// 这是接力按 record 精确定位占位帖的前提）。
+    #[tokio::test]
+    async fn test_get_task_post_by_source_execution() {
+        let db = fresh_db().await;
+        let task_id = seed_task(&db).await;
+
+        // 占位帖带 source_execution_id=Some(42)（模拟 @ 触发 / 接力回写的 running 帖）。
+        let post = db
+            .create_task_post(NewPost {
+                task_id,
+                parent_post_id: None,
+                kind: KIND_AGENT,
+                author_name: "执行器A",
+                executor: Some("执行器A"),
+                expert_name: None,
+                content: "执行器A 正在干活…",
+                mentions_json: "[]",
+                status: STATUS_RUNNING,
+                source_execution_id: Some(42),
+                source_todo_id: None,
+            })
+            .await
+            .expect("create agent post");
+
+        // 命中：按 42 反查到刚建的占位帖。
+        let got = db
+            .get_task_post_by_source_execution(42)
+            .await
+            .expect("query")
+            .expect("post exists");
+        assert_eq!(got.id, post.id);
+        assert_eq!(got.source_execution_id, Some(42));
+
+        // 未命中：不存在的执行记录返回 None（帖已删 / 从未关联）。
+        assert!(db.get_task_post_by_source_execution(999).await.expect("query none").is_none());
+
+        // 区分：再建一条 source_execution_id=None 的普通人帖，按 42 仍只命中占位帖。
+        let _human = seed_main_post(&db, task_id, "普通人帖").await;
+        let only42 = db
+            .get_task_post_by_source_execution(42)
+            .await
+            .expect("query 42 again")
+            .expect("仍只命中占位帖");
+        assert_eq!(only42.id, post.id, "None 帖不应被 NULL 比较误中");
     }
 }
 

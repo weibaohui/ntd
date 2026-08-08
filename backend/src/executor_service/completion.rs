@@ -393,6 +393,7 @@ pub(crate) async fn finalize_normal_completion(
     feishu_receive_id: Option<String>,
     feishu_receive_id_type: Option<String>,
     workspace_id: Option<i64>,
+    expert_manager: Option<Arc<crate::expert::ExpertIndexManager>>,
 ) {
     // ===== 自动评审 (auto-review) =====
     // 仅在以下条件同时满足时启动:
@@ -459,12 +460,31 @@ pub(crate) async fn finalize_normal_completion(
         }
     }
 
-    // ===== 讨论帖回写 (discussion) =====
-    // 任务讨论区 @触发的执行（trigger_type == "discussion"）：把结论回写到对应的智能体
-    // 占位帖，并软删载体 todo（隐藏兜底）。回写失败只记 warn，不影响执行本身的成功落定
-    // （帖子可由前端轮询兜底）。与 auto_review/blackboard 同级的并列分支，按 trigger_type 分派。
-    if trigger_type == "discussion" {
+    // ===== 讨论帖回写 (discussion / discussion_auto) =====
+    // 任务讨论区 @触发的执行（trigger_type ∈ {discussion, discussion_auto}）：把结论回写到
+    // 对应的智能体占位帖，并软删载体 todo（隐藏兜底）。回写失败只记 warn，不影响执行本身的
+    // 成功落定（帖子可由前端轮询兜底）。与 auto_review/blackboard 同级的并列分支，按 trigger_type 分派。
+    if trigger_type == "discussion" || trigger_type == "discussion_auto" {
         writeback_discussion_post(&db, &executor, record_id, success, &result_str).await;
+    }
+
+    // ===== 自动接力 (delegate relay，需求 092 P2) =====
+    // 仅讨论类执行（discussion/discussion_auto）成功后、且本路径持有专家索引时，尝试接力。
+    // continue_delegated_task 内部会再校验「delegate + auto_continue + 专家 assignee」，
+    // 不满足则静默跳过（环路任务 / 手动单跑 / 执行器委派都直接返回，零副作用）。
+    if success && (trigger_type == "discussion" || trigger_type == "discussion_auto") {
+        if let Some(em) = expert_manager {
+            let handles = crate::handlers::task_posts::DelegateRelayHandles {
+                db: &db,
+                executor_registry: &executor_registry,
+                tx: &tx,
+                task_manager: &task_manager,
+                config: &config,
+                expert_manager: &em,
+            };
+            crate::handlers::task_posts::continue_delegated_task(&handles, record_id, &result_str)
+                .await;
+        }
     }
 }
 

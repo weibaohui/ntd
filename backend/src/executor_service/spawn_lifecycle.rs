@@ -503,6 +503,8 @@ async fn dispatch_completed(
             feishu_receive_id: runtime.feishu_receive_id,
             feishu_receive_id_type: runtime.feishu_receive_id_type,
             workspace_id: runtime.prepared.request.workspace_id,
+            // 092 P2：接力回写需要专家索引解析管家结论里的 @，从原 request 透传（Arc 浅克隆）。
+            expert_manager: runtime.prepared.request.expert_manager.clone(),
         },
     )
     .await;
@@ -677,6 +679,7 @@ pub(crate) async fn persist_and_finalize_completion(
         ctx.feishu_receive_id.clone(),
         ctx.feishu_receive_id_type.clone(),
         ctx.workspace_id,
+        ctx.expert_manager.clone(),
     )
     .await;
 }

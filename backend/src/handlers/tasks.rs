@@ -779,4 +779,45 @@ mod tests {
         assert_eq!(task.continue_rounds, 0, "新建任务接力计数从 0 起");
         assert!(task.loop_id.is_none(), "委派任务不绑环路");
     }
+
+    // ---- task_title_from_requirement 纯函数单测（无 IO，同步 #[test]）----
+    // 覆盖：正常短文本 / 多行只取首行 / trim / 60 字符截断边界 / CJK 多字节安全 / 空串降级。
+
+    #[test]
+    fn test_task_title_from_requirement_short_returns_trimmed() {
+        // 普通短文本：原样返回首行内容，仅 trim 首尾空白。
+        assert_eq!(super::task_title_from_requirement("  帮我写个脚本  "), "帮我写个脚本");
+    }
+
+    #[test]
+    fn test_task_title_from_requirement_takes_first_line_only() {
+        // 多行需求：标题只取首行，避免换行符污染任务列表的标题展示。
+        assert_eq!(
+            super::task_title_from_requirement("第一行标题\n第二行详情\n第三行"),
+            "第一行标题"
+        );
+    }
+
+    #[test]
+    fn test_task_title_from_requirement_truncation_boundary() {
+        // 恰好 60 字符：不截断（边界 —— count > 60 才截，等于 60 原样）。
+        let exactly_60 = "啊".repeat(60);
+        assert_eq!(super::task_title_from_requirement(&exactly_60), exactly_60);
+        assert_eq!(super::task_title_from_requirement(&exactly_60).chars().count(), 60);
+
+        // 61 字符：截到 60 个原字符 + 1 个「…」省略号。
+        let sixty_one = "啊".repeat(61);
+        let title = super::task_title_from_requirement(&sixty_one);
+        assert_eq!(title.chars().count(), 61, "60 个原字符 + 1 个省略号");
+        assert!(title.ends_with('…'), "超长应以省略号收尾");
+        // 关键：CJK 截断按字符而非字节，不会落在多字节 UTF-8 中间导致 panic。
+        assert!(title.chars().take(60).all(|c| c == '啊'));
+    }
+
+    #[test]
+    fn test_task_title_from_requirement_empty_and_whitespace() {
+        // 空串 / 纯空白：lines().next() 为 None 时回退原串，trim 后为空，不 panic。
+        assert_eq!(super::task_title_from_requirement(""), "");
+        assert_eq!(super::task_title_from_requirement("   \n  "), "");
+    }
 }

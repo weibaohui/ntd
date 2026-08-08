@@ -33,6 +33,11 @@ const { Text } = Typography;
 // 帖子页返回本任务-讨论 tab 时，URL 带 ?tab=discussion，Tabs 据此恢复选中态。
 const TAB_KEYS = ['overview', 'dag', 'exec', 'discussion'] as const;
 
+// 需求 092 P2：自动接力的轮数硬上限。必须与后端 MAX_DELEGATE_ROUNDS（completion 接力护栏）
+// 保持一致——前端只读 continue_rounds，不做护栏决策，仅据此展示进度与「已达上限」状态。
+// 集中为常量而非魔法数，便于双端口径变更时一处定位。
+const MAX_DELEGATE_ROUNDS = 10;
+
 // ====== 类型定义 ======
 
 interface TaskDetailPanelProps {
@@ -70,6 +75,40 @@ interface TaskDetailData {
 
 // ====== 子组件 ======
 
+/** 是否为「管家自动接力」任务：委派 + 开启自动接力 + 专家处理人（执行器 P1 已禁用接力）。 */
+function isAutoRelayTask(task: TaskDetailData['task']): boolean {
+  return task.execution_mode === 'delegate'
+    && !!task.auto_continue
+    && task.assignee_kind === 'expert';
+}
+
+/** 委派任务处理人展示文案：「专家/执行器 名称」；缺名回退「—」。 */
+function assigneeLabel(task: TaskDetailData['task']): string {
+  const kind = task.assignee_kind === 'expert' ? '专家'
+    : task.assignee_kind === 'executor' ? '执行器' : '处理人';
+  return task.assignee_name ? `${kind} ${task.assignee_name}` : '—';
+}
+
+/**
+ * 自动接力进度徽标（需求 092 P2）。仅管家接力任务显示，文案「管家调度中 N/MAX」：
+ * - 未达上限用 processing 蓝，直观表达「进行中」；
+ * - 达上限用 warning 橙，与后端 HitLimit 写的「已达上限」说明帖呼应，提示用户接管。
+ * 非接力任务（环路 / 手动单跑 / 执行器委派）返回 null，标题行不留空位。
+ */
+function RelayBadge({ task }: { task: TaskDetailData['task'] }) {
+  if (!isAutoRelayTask(task)) return null;
+  const rounds = task.continue_rounds ?? 0;
+  // >=：与后端 plan_delegate_relay 的 `rounds >= max` 护栏口径一致（设计 §5.2）。
+  // 计数在判定前已 +1，递增到 max(10) 当轮即被熔断（需求 AC8「达到 10 强制停止」），
+  // 故 rounds=10 时转橙，与后端 HitLimit 写的「已达上限」说明帖同步提示用户接管。
+  const atLimit = rounds >= MAX_DELEGATE_ROUNDS;
+  return (
+    <Tag color={atLimit ? 'warning' : 'processing'}>
+      管家调度中 {rounds}/{MAX_DELEGATE_ROUNDS}
+    </Tag>
+  );
+}
+
 /** 顶部条：标题 + 状态/复杂度 + 元信息 + 删除 + 再次执行。 */
 function DetailHeader({
   task, template, loopDetail, onExecute, onDelete,
@@ -90,11 +129,22 @@ function DetailHeader({
           {template?.complexity && (
             <Tag color={complexityColor(template.complexity)}>{complexityLabel(template.complexity)}</Tag>
           )}
+          {/* 管家自动接力任务的进度徽标（委派 + 自动接力 + 专家）。非此类任务返回 null。 */}
+          <RelayBadge task={task} />
         </div>
         <div className={styles.metaRow}>
-          <span>工艺：{template?.display_name ?? '—'}</span>
-          <span className={styles.metaDivider}>·</span>
-          <span>版本：{template?.version ?? '—'}</span>
+          {task.execution_mode === 'delegate' ? (
+            // 委派任务无工艺/版本概念，改展示处理人（专家/执行器 + 名称）。
+            <>
+              <span>处理人：{assigneeLabel(task)}</span>
+            </>
+          ) : (
+            <>
+              <span>工艺：{template?.display_name ?? '—'}</span>
+              <span className={styles.metaDivider}>·</span>
+              <span>版本：{template?.version ?? '—'}</span>
+            </>
+          )}
         </div>
       </div>
       <Space>

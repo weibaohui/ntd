@@ -124,6 +124,21 @@ pub async fn run_todo_execution(request: RunTodoExecutionRequest) -> ExecutionRe
     stages::dispatch_spawned_executor_task(spawned).await
 }
 
+/// 把 [`run_todo_execution`] 的 future 类型擦除为 `Pin<Box<dyn Future + Send>>`。
+///
+/// 存在意义（非可有可无）：completion 自动接力（需求 092 P2）会在 `finalize` 末段回调
+/// `continue_delegated_task → spawn_relay_execution → run_todo_execution`，而 `run_todo_execution`
+/// 内部又经 `dispatch → finalize` 回到接力，形成 coroutine 类型环。若接力处直接 `await`
+/// `run_todo_execution(...)`，编译器必须展开其 coroutine 类型，环即暴露、无法证明 Send
+/// （`error[E0391]: cycle detected`）。改调本包装：返回类型是 trait object，具体 coroutine
+/// 仅在本函数体内构造、不外泄到调用方的 coroutine 类型，环在此处终止。
+/// 适用前提：`run_todo_execution` 的 future 本身是 Send（它在 axum handler 中被 await，已满足）。
+pub fn run_todo_execution_boxed(
+    request: RunTodoExecutionRequest,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = ExecutionResult> + Send>> {
+    Box::pin(run_todo_execution(request))
+}
+
 /// Run a todo execution with parameter substitution.
 /// Replaces placeholders `{{key}}` in the message with corresponding values from params before execution.
 pub async fn run_todo_execution_with_params(
@@ -135,4 +150,27 @@ pub async fn run_todo_execution_with_params(
         request.message = crate::models::replace_placeholders(&request.message, &params);
     }
     run_todo_execution(request).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// run_todo_execution_boxed 的核心契约：返回类型擦除为 `Pin<Box<dyn Future + Send>>`。
+    /// 正是这条 Send 性质打破了「接力 → run_todo_execution → finalize → 接力」coroutine 类型环
+    /// （见其文档注释）。用编译期断言固化签名与 Send 约束——无需真实执行器即可验证此类型不变量；
+    /// 一旦有人改了返回类型（丢 `+ Send` / 改 `Output`），此处立即编译失败，锁死该包装的存在意义。
+    #[test]
+    fn run_todo_execution_boxed_returns_send_boxed_future() {
+        // 期望的返回类型：擦除后的 Send boxed future（与函数签名字面一致）。
+        type Ret = std::pin::Pin<Box<dyn std::future::Future<Output = ExecutionResult> + Send>>;
+
+        // 1) 该返回类型必须满足 Send：接力处 await 跨线程传递的硬性前提。
+        fn require_send<T: Send>() {}
+        require_send::<Ret>();
+
+        // 2) 函数指针精确匹配：run_todo_execution_boxed 的签名必须可赋值为
+        //    `fn(RunTodoExecutionRequest) -> Ret`，签名漂移则编译失败。
+        let _f: fn(RunTodoExecutionRequest) -> Ret = run_todo_execution_boxed;
+    }
 }
