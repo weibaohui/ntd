@@ -7,7 +7,8 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { Skeleton, message } from 'antd';
-import { XMarkdown } from '@ant-design/x-markdown';
+// 093：本页面虽是 lazy 页面，仍统一走懒加载包装，杜绝未来被静态引用时回潮。
+import { LazyXMarkdown } from '@/components/common/LazyXMarkdown';
 import { useTheme } from '@/hooks/useTheme';
 import { PageCard } from '@/components/common/PageCard';
 import { useViewState } from '@/hooks/useViewState';
@@ -113,7 +114,7 @@ export function WikiViewPage() {
               color: isDark ? '#e0e0e0' : '#333',
             }}
           >
-            <XMarkdown
+            <LazyXMarkdown
               content={content}
             />
           </div>

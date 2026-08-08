@@ -8,7 +8,9 @@
 // mock 掉 useTheme：MdEditor 内部只消费 themeMode，mock 后无需包 ThemeProvider，保持用例聚焦。
 
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+// 093：MdEditor 改为懒加载后，编辑器 DOM 不再随首次 render 同步出现，
+// 三个依赖编辑器节点的用例统一改为 waitFor 等 Suspense 就绪后再断言。
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 // mock useTheme，返回固定亮色模式，避免 ThemeProvider 依赖与 jsdom matchMedia 缺失问题
 vi.mock('@/hooks/useTheme', () => ({
@@ -21,22 +23,33 @@ import { PromptMdField, buildAppendedText } from './PromptMdField';
 const TEST_PARAMS = [{ key: '{{original_output}}', desc: '执行输出' }];
 
 describe('PromptMdField 渲染与编辑', () => {
-  it('渲染 MD 编辑器且受控值透传到内部 textarea', () => {
+  it('渲染 MD 编辑器且受控值透传到内部 textarea', async () => {
     const { container } = render(
       <PromptMdField value="初始提示词" onChange={() => {}} />,
     );
-    // .w-md-editor 是 @uiw/react-md-editor 的根容器 class，作为「已换成 MD 控件」的断言锚点
-    expect(container.querySelector('.w-md-editor')).not.toBeNull();
+    // .w-md-editor 是 @uiw/react-md-editor 的根容器 class，作为「已换成 MD 控件」的断言锚点；
+    // 093 懒加载后需等待动态 import 解析完成才会出现；
+    // jsdom 下首载 vendor chunk 实测约 1s，超出 waitFor 默认 1s 上限，显式放宽到 10s
+    await waitFor(
+      () => expect(container.querySelector('.w-md-editor')).not.toBeNull(),
+      { timeout: 10000 },
+    );
     // 受控值必须出现在内部 textarea 上，保证既有 prompt 文本原样回显
     const textarea = container.querySelector('textarea');
     expect(textarea).not.toBeNull();
     expect(textarea!.value).toBe('初始提示词');
   });
 
-  it('编辑内容时 onChange 原样透传新文本', () => {
+  it('编辑内容时 onChange 原样透传新文本', async () => {
     const onChange = vi.fn();
     const { container } = render(
       <PromptMdField value="" onChange={onChange} />,
+    );
+    // 093：懒加载下 textarea 异步就绪，先 waitFor 再取节点触发输入；
+    // 10s 超时理由同上（jsdom 首载 vendor chunk ~1s，留余量防 CI 抖动）
+    await waitFor(
+      () => expect(container.querySelector('textarea')).not.toBeNull(),
+      { timeout: 10000 },
     );
     const textarea = container.querySelector('textarea');
     // 模拟用户输入：fireEvent.change 触发 @uiw 内部 onChange → 组件 onChange
@@ -52,7 +65,7 @@ describe('PromptMdField 参数条', () => {
     expect(screen.queryByText('可用参数:')).toBeNull();
   });
 
-  it('点击参数在光标处插入而非尾部追加', () => {
+  it('点击参数在光标处插入而非尾部追加', async () => {
     const onChange = vi.fn();
     const { container } = render(
       <PromptMdField
@@ -61,8 +74,12 @@ describe('PromptMdField 参数条', () => {
         params={TEST_PARAMS}
       />,
     );
+    // 093：懒加载下 textarea 异步就绪，先 waitFor 再设置光标位置（10s 超时理由同上）
+    await waitFor(
+      () => expect(container.querySelector('textarea')).not.toBeNull(),
+      { timeout: 10000 },
+    );
     const textarea = container.querySelector('textarea');
-    expect(textarea).not.toBeNull();
     // 把光标移到 "hello " 与 "world" 之间（index 6），模拟用户在文本中间点击参数
     textarea!.selectionStart = 6;
     textarea!.selectionEnd = 6;

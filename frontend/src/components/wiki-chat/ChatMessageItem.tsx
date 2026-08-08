@@ -6,7 +6,9 @@
  */
 
 import { MessageOutlined } from '@ant-design/icons';
-import { XMarkdown } from '@ant-design/x-markdown';
+// 093：懒加载包装（default 与命名导出是同一组件，children 形态等价），
+// 切断 WikiChatFloatingWindow 静态链对 vendor-md-editor 的首屏锚定。
+import { LazyXMarkdown } from '@/components/common/LazyXMarkdown';
 import { LOG_TYPE_COLORS_LIGHT, LOG_TYPE_COLORS_DARK, LOG_TYPE_LABELS } from '@/constants';
 import type { LogEntry } from '@/types';
 
@@ -156,7 +158,7 @@ export function ChatMessageItem({ message, mobile = false, isDark }: ChatMessage
           wordBreak: 'break-word',
         }}
       >
-        <XMarkdown>{message.content}</XMarkdown>
+        <LazyXMarkdown>{message.content}</LazyXMarkdown>
         <div style={{ marginTop: 8, fontSize: mobile ? 12 : 11, color: colors.hintColor, display: 'flex', justifyContent: 'space-between' }}>
           <span>{message.success ? '✅ 执行成功' : '❌ 执行失败'}</span>
           {message.durationSecs != null && <span>用时 {message.durationSecs.toFixed(1)}s</span>}
