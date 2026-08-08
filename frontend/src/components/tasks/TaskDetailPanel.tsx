@@ -61,7 +61,7 @@ interface ExecInfo {
 }
 
 interface TaskDetailData {
-  task: { id: number; title: string; status: string; description?: string; workspace_id?: number; loop_id?: number };
+  task: { id: number; title: string; status: string; description?: string; workspace_id?: number; loop_id?: number; execution_mode?: string; assignee_kind?: string; assignee_name?: string; auto_continue?: boolean; continue_rounds?: number };
   template?: { display_name?: string; version?: string; complexity?: string };
   steps: StepInfo[];
   executions: ExecInfo[];
@@ -103,7 +103,10 @@ function DetailHeader({
             <Button icon={<DeleteOutlined />} danger size="small">删除</Button>
           </Popconfirm>
         )}
-        <Button icon={<ThunderboltOutlined />} type="primary" onClick={onExecute}>再次执行</Button>
+        {/* 委派任务无环路执行概念，「再次执行」走 loop 路径不适用；用户在讨论区 @ 继续推进。 */}
+        {task.execution_mode !== 'delegate' ? (
+          <Button icon={<ThunderboltOutlined />} type="primary" onClick={onExecute}>再次执行</Button>
+        ) : null}
       </Space>
     </div>
   );
@@ -138,7 +141,8 @@ export function TaskDetailPanel({
   const { activeTab, replaceUrl } = useViewState();
   const resolvedTab = activeTab && (TAB_KEYS as readonly string[]).includes(activeTab)
     ? activeTab
-    : 'overview';
+    // 委派任务无环路环节视图，执行发生在讨论区，默认落到「讨论」Tab。
+    : (detail?.task.execution_mode === 'delegate' ? 'discussion' : 'overview');
 
   // 拉取任务详情（含基本 loop 信息）。
   useEffect(() => {

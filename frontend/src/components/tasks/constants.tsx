@@ -93,6 +93,12 @@ export interface TaskItem {
   /** 该任务所有执行中未处理的待审批环节总数（063：后端派生下发，>0 即需用户去审批）。 */
   pending_approval_count?: number;
   created_at?: string;
+  // 需求 092：委派执行相关。loop 任务 execution_mode 缺省/为 'loop'，delegate 任务带处理人/接力信息。
+  execution_mode?: string;
+  assignee_kind?: string;
+  assignee_name?: string;
+  auto_continue?: boolean;
+  continue_rounds?: number;
 }
 
 /** 待审批判定：>0 即成立。抽成函数供三态视图与筛选共用，避免各处各写 >0 漂移口径。 */

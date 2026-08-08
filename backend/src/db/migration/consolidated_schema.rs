@@ -384,6 +384,9 @@ pub const CONSOLIDATED_SCHEMA: &[&str] = &[
             color TEXT DEFAULT '#1890ff',
             created_at TEXT
         )"#,
+    // tasks：需求 092 追加委派执行 5 列。追加列必须与 v91 的 ALTER 逐字一致，并按 SQLite
+    // ALTER ADD COLUMN 实际生成的「, coldef」单行格式接在原闭合括号缩进处（见 agent_bots
+    // 同款写法），否则 test_consolidated_schema_matches_incremental 会判 schema 漂移。
     r#"CREATE TABLE tasks (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL DEFAULT '',
@@ -395,7 +398,7 @@ pub const CONSOLIDATED_SCHEMA: &[&str] = &[
             created_by TEXT DEFAULT '',
             created_at TEXT,
             updated_at TEXT
-        )"#,
+        , execution_mode TEXT NOT NULL DEFAULT 'loop', assignee_kind TEXT, assignee_name TEXT, auto_continue INTEGER NOT NULL DEFAULT 0, continue_rounds INTEGER NOT NULL DEFAULT 0)"#,
     // task_posts：任务讨论帖表（需求 060，与 v88 迁移同构）。字段语义见 entity/task_posts.rs；
     // 外键均 ON DELETE CASCADE，删任务/删父帖时连带清理，避免孤儿帖。
     r#"CREATE TABLE task_posts (
