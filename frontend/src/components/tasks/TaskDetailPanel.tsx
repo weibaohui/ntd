@@ -384,6 +384,12 @@ export function TaskDetailPanel({
   const lpId = task.loop_id ?? detail.loop?.id ?? 0;
   const lpWsId = task.workspace_id ?? detail.loop?.workspace_id ?? null;
 
+  // 委派任务（创建时选「委派」而非「工艺环路」）未绑定环路，没有「执行环路」「执行历史」可展示：
+  // 此前这两个 Tab 会渲染成空状态（「暂无关联环路」「暂无执行环路」），对用户无意义且易误导。
+  // 这里按 execution_mode 条件组装——委派任务只保留「概览」「讨论」；判断口径与 Header 处理人、
+  // 隐藏「再次执行」、默认 Tab 落「讨论」等既有委派分支完全一致，不引入新概念。
+  const isDelegate = task.execution_mode === 'delegate';
+
   const tabItems = [
     {
       key: 'overview',
@@ -395,18 +401,22 @@ export function TaskDetailPanel({
         />
       ),
     },
-    {
-      key: 'dag',
-      label: `执行环路 (${loopDetail?.steps?.length ?? 0})`,
-      children: <DAGTab loopDetail={loopDetail} steps={detail.steps ?? []} onOpenTodo={onOpenTodo} />,
-    },
-    {
-      key: 'exec',
-      label: '执行历史',
-      children: (
-        <ExecHistoryTab loopId={lpId} workspaceId={lpWsId} loopName={loopDetail?.name ?? task.title} />
-      ),
-    },
+    // 「执行环路」「执行历史」强依赖 task.loop_id：仅工艺环路任务才纳入这两个 Tab。
+    // 委派任务展开为空数组，等价于这两项不出现（顺序仍夹在「概览」与「讨论」之间）。
+    ...(!isDelegate ? [
+      {
+        key: 'dag',
+        label: `执行环路 (${loopDetail?.steps?.length ?? 0})`,
+        children: <DAGTab loopDetail={loopDetail} steps={detail.steps ?? []} onOpenTodo={onOpenTodo} />,
+      },
+      {
+        key: 'exec',
+        label: '执行历史',
+        children: (
+          <ExecHistoryTab loopId={lpId} workspaceId={lpWsId} loopName={loopDetail?.name ?? task.title} />
+        ),
+      },
+    ] : []),
     {
       // 任务讨论区（需求 060）：论坛跟帖 + @专家/@执行器 触发执行后回帖。
       // forceRender：保证「讨论」Tab 非 active 时 DiscussionTab 仍挂载、持续上报 running 数，角标才可见。
@@ -423,6 +433,13 @@ export function TaskDetailPanel({
     },
   ];
 
+  // resolvedTab 依据 TAB_KEYS 白名单解析 URL ?tab=，而该白名单恒含 dag/exec；委派任务若 URL 残留 ?tab=dag，
+  // 解析出的 key 会指向已隐藏的 Tab，Ant Design Tabs 随即落到无选中态、内容区空白。就地校验 tabItems 是否
+  // 含该 key（不额外构造 key 数组），命中即回退默认 Tab，避免空白页。
+  const activeTabKey = tabItems.some((t) => t.key === resolvedTab)
+    ? resolvedTab
+    : (isDelegate ? 'discussion' : 'overview');
+
   return (
     <div className={styles.panel}>
       <DetailHeader
@@ -432,7 +449,7 @@ export function TaskDetailPanel({
       <div className={styles.tabsWrap}>
         <Tabs
           items={tabItems}
-          activeKey={resolvedTab}
+          activeKey={activeTabKey}
           onChange={(key) => replaceUrl('tasks', { id: task.id, tab: key })}
           style={{ height: '100%' }}
           tabBarExtraContent={loopLoading ? <Spin size="small" style={{ marginRight: 16 }} /> : undefined}
