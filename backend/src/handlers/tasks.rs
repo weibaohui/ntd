@@ -31,6 +31,10 @@ pub struct CreateTaskRequest {
     /// 自动接力开关；仅 `assignee_kind='expert'` 允许 true（前端禁用 + 后端 400 双重校验防绕过）。
     #[serde(default)]
     pub auto_continue: bool,
+    /// 本任务「接力轮数上限」覆盖（仅 delegate 模式有意义）。
+    /// `Some(n)`（1..=50，越界 400）→ 覆盖工作空间默认；`None`/缺省 → 沿用工作空间默认 → 兜底常量。
+    /// 注意：配置的是「上限」，不是「已跑计数」continue_rounds（后者后端单调递增、前端不可直传）。
+    pub delegate_max_rounds: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -159,12 +163,16 @@ async fn create_delegate_task(
     let kind = req.assignee_kind.as_deref().unwrap_or("");
     let name = req.assignee_name.as_deref().unwrap_or("").trim();
     validate_delegate_request(state, ws, kind, name, req.auto_continue).await?;
+    // 接力上限越界校验复用 task_posts 的集中口径（拒 -1 / 51 等），None 视为「用默认」放行。
+    task_posts::validate_delegate_max_rounds(req.delegate_max_rounds)?;
 
     let title = task_title_from_requirement(&req.requirement);
     // description 随首次 INSERT 写入（DAO 内），不再建后单独 update（#1 原子性）。
     let task = state
         .db
-        .create_delegate_task(&title, &req.requirement, ws, kind, name, req.auto_continue)
+        .create_delegate_task(
+            &title, &req.requirement, ws, kind, name, req.auto_continue, req.delegate_max_rounds,
+        )
         .await?;
     // 首帖触发首次执行：force_mention 用已校验的 assignee，失败时 warn 不阻断任务创建。
     let execution_id = land_delegate_first_post(state, &task, kind, name, &req.requirement).await;
@@ -335,33 +343,36 @@ pub async fn list_tasks(
     Ok(ApiResponse::ok(items))
 }
 
-/// GET /api/v1/tasks/{id}
-pub async fn get_task_detail(
-    State(state): State<AppState>,
-    Path((_ws, id)): Path<(i64, i64)>,
-) -> Result<impl axum::response::IntoResponse, AppError> {
-    let task = state.db.get_task(id).await?.ok_or(AppError::NotFound)?;
-    let template = if let Some(tid) = task.template_id { state.db.get_process_template_by_id(tid).await? } else { None };
-    let loop_ = if let Some(lid) = task.loop_id { state.db.get_loop(lid).await? } else { None };
-    // steps
-    let steps: Vec<_> = if let Some(ref lp) = loop_ {
-        state.db.list_loop_steps_by_loop(lp.id).await?.into_iter().map(|s| serde_json::json!({
-            "id":s.id,"name":s.name,"order_index":s.order_index,
-            "skill_names": serde_json::from_str::<serde_json::Value>(&s.skill_names).unwrap_or_default(),
-            "expected_artifacts": serde_json::from_str::<serde_json::Value>(&s.expected_artifacts).unwrap_or_default(),
-            "gate_config": serde_json::from_str::<serde_json::Value>(&s.gate_config).unwrap_or_default(),
-        })).collect()
-    } else { vec![] };
-    // executions
+/// 组装环路步骤 JSON（skill_names/expected_artifacts/gate_config 三列存的是 JSON 文本，需反序列化）。
+/// 抽出独立函数使 [`get_task_detail`] 保持在 50 行内；无环路时返回空数组。
+async fn build_loop_steps(
+    db: &crate::db::Database,
+    loop_: Option<&crate::db::entity::loops::Model>,
+) -> Result<Vec<serde_json::Value>, AppError> {
+    let Some(lp) = loop_ else { return Ok(vec![]) };
+    Ok(db.list_loop_steps_by_loop(lp.id).await?.into_iter().map(|s| serde_json::json!({
+        "id":s.id,"name":s.name,"order_index":s.order_index,
+        "skill_names": serde_json::from_str::<serde_json::Value>(&s.skill_names).unwrap_or_default(),
+        "expected_artifacts": serde_json::from_str::<serde_json::Value>(&s.expected_artifacts).unwrap_or_default(),
+        "gate_config": serde_json::from_str::<serde_json::Value>(&s.gate_config).unwrap_or_default(),
+    })).collect())
+}
+
+/// 组装任务最近 20 条执行记录 JSON（含每条的待审批环节数，前端据此在历史行标「待审批」）。
+/// 抽出独立函数使 [`get_task_detail`] 保持在 50 行内；用原始 SQL 查 loop_executions + 批量 pending 计数（防 N+1）。
+async fn build_task_executions(
+    db: &crate::db::Database,
+    task_id: i64,
+) -> Result<Vec<serde_json::Value>, AppError> {
     use sea_orm::{ConnectionTrait, DbBackend, Statement};
-    let exec_rows = state.db.conn.query_all(Statement::from_string(DbBackend::Sqlite,
+    let exec_rows = db.conn.query_all(Statement::from_string(DbBackend::Sqlite,
         format!("SELECT id, status, started_at, finished_at, total_steps, completed_steps, failed_steps, trigger_meta \
-                 FROM loop_executions WHERE task_id={} ORDER BY started_at DESC LIMIT 20", id)
+                 FROM loop_executions WHERE task_id={} ORDER BY started_at DESC LIMIT 20", task_id)
     )).await?;
-    // 统计每次执行的待审批环节数，前端据此在执行历史行上显示「待审批」引导标记（NTD-004）。
+    // 一次批量查待审批数再按 exec_id 映射，避免逐行 N+1（NTD-004）。
     let exec_ids: Vec<i64> = exec_rows.iter().map(|r| r.try_get_by::<i64,_>("id").unwrap_or(0)).collect();
-    let pending_counts = state.db.count_pending_approvals_by_execution_ids(&exec_ids).await?;
-    let executions: Vec<_> = exec_rows.iter().map(|r| {
+    let pending_counts = db.count_pending_approvals_by_execution_ids(&exec_ids).await?;
+    Ok(exec_rows.iter().map(|r| {
         let meta = r.try_get_by::<Option<String>,_>("trigger_meta").ok().flatten()
             .and_then(|m| serde_json::from_str::<serde_json::Value>(&m).ok());
         let requirement = meta.as_ref().and_then(|v| v.get("requirement").and_then(|r| r.as_str().map(|s| s.to_string())));
@@ -377,7 +388,25 @@ pub async fn get_task_detail(
             "requirement": requirement,
             "pending_approval_count": pending_counts.get(&exec_id).copied().unwrap_or(0),
         })
-    }).collect();
+    }).collect())
+}
+
+/// GET /api/v1/tasks/{id}
+pub async fn get_task_detail(
+    State(state): State<AppState>,
+    Path((_ws, id)): Path<(i64, i64)>,
+) -> Result<impl axum::response::IntoResponse, AppError> {
+    let task = state.db.get_task(id).await?.ok_or(AppError::NotFound)?;
+    let template = if let Some(tid) = task.template_id { state.db.get_process_template_by_id(tid).await? } else { None };
+    let loop_ = if let Some(lid) = task.loop_id { state.db.get_loop(lid).await? } else { None };
+    // steps / executions 构建抽出独立函数，保持本函数聚焦于「取数 + 组装顶层 JSON」。
+    let steps = build_loop_steps(&state.db, loop_.as_ref()).await?;
+    let executions = build_task_executions(&state.db, id).await?;
+    // 接力上限：effective（徽标 M / 触顶文案）+ fallback（徽标编辑器「清除覆盖后回退值」）。
+    // 两者同源 resolve 口径：effective 含任务覆盖，fallback 忽略任务覆盖，确保「显示 N/M」与「真实熔断」不漂移。
+    let delegate_max_rounds_effective = task_posts::resolve_delegate_max_rounds(&state.db, &task).await;
+    let delegate_max_rounds_fallback =
+        task_posts::resolve_delegate_max_rounds_fallback(&state.db, task.workspace_id).await;
     Ok(ApiResponse::ok(serde_json::json!({
         "task": {
             "id": task.id, "title": task.title, "status": task.status,
@@ -390,6 +419,13 @@ pub async fn get_task_detail(
             // 前端类型声明为 boolean，透传数字会让 typeof/严格比较在 P2 接力状态展示时踩雷。
             "auto_continue": task.auto_continue != 0,
             "continue_rounds": task.continue_rounds,
+            // 任务级覆盖原值（用于内联编辑回显/恢复默认判定；NULL=未覆盖）。
+            "delegate_max_rounds": task.delegate_max_rounds,
+            // 解析后的有效上限（徽标 M、触顶文案直接用）；与护栏决策同源。
+            "delegate_max_rounds_effective": delegate_max_rounds_effective,
+            // 「清除任务覆盖后」的回退值（工作空间默认或兜底常量）：徽标编辑器据此提示「留空=用工作空间默认（X 轮）」。
+            // 不能复用 effective：任务有覆盖时 effective 即覆盖值，会让「留空回退提示」误显成被清除的那个覆盖值。
+            "delegate_max_rounds_fallback": delegate_max_rounds_fallback,
         },
         "template": template.map(|t| {
             // 版本优先取环路的 process_template_version（执行时的快照），
@@ -494,10 +530,56 @@ pub async fn batch_delete_tasks(
     })))
 }
 
+/// PATCH 任务可变字段请求。当前仅 `delegate_max_rounds` 一项可改；独立结构便于将来扩展。
+#[derive(Debug, Deserialize)]
+pub struct UpdateTaskRequest {
+    /// `Some(n)`（1..=50）置任务级覆盖；`null`/缺省清除覆盖回退工作空间默认（即「恢复默认」）。
+    pub delegate_max_rounds: Option<i64>,
+}
+
+/// PATCH /api/v1/workspaces/{ws}/tasks/{id} — 更新单个任务可变字段（当前仅接力上限覆盖）。
+///
+/// 仅委派任务支持：接力上限是委派接力的专属概念，环路任务配它无意义，故 400 拒绝以免库里
+/// 存无效配置。返回更新后的有效上限（三级解析），前端据此刷新徽标 N/M，无需二次请求详情。
+pub async fn update_task(
+    State(state): State<AppState>,
+    Path((ws, id)): Path<(i64, i64)>,
+    Json(req): Json<UpdateTaskRequest>,
+) -> Result<ApiResponse<serde_json::Value>, AppError> {
+    let task = state.db.get_task(id).await?.ok_or(AppError::NotFound)?;
+    // 工作空间归属校验：path ws 与任务 workspace_id 不符则 404，防 URL 串用改他空间任务。
+    // 仅当任务 workspace_id 已落值时校验（存量 None 任务跳过，避免误拒）。
+    // 注：同文件 get_task_detail/delete_task 沿用旧的全局 id 口径未做此校验（存量遗留，ntd 为本地单用户
+    // 工具，非租户隔离边界）；本新端点先行收紧，全面 ws 化属另一次专项改造，不在本 PR 范围。
+    if let Some(w) = task.workspace_id {
+        if w != ws {
+            return Err(AppError::NotFound);
+        }
+    }
+    // 接力上限是委派接力的专属概念；环路任务配它无意义，直接拒，避免存无效配置。
+    if task.execution_mode != "delegate" {
+        return Err(AppError::BadRequest("仅委派任务支持配置接力上限".to_string()));
+    }
+    // 越界校验复用集中口径（与 create 同源），None 视为「清除覆盖/恢复默认」放行。
+    task_posts::validate_delegate_max_rounds(req.delegate_max_rounds)?;
+    // DAO 返回更新后的 Model，直接 resolve 有效值，免去一次冗余 get_task 重读
+    // （find→update 已拿到最新态；resolve 基于刚写入的 updated，所见即所写）。
+    let updated = state
+        .db
+        .update_delegate_max_rounds(id, req.delegate_max_rounds)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    let effective = task_posts::resolve_delegate_max_rounds(&state.db, &updated).await;
+    Ok(ApiResponse::ok(serde_json::json!({
+        "delegate_max_rounds": updated.delegate_max_rounds,
+        "delegate_max_rounds_effective": effective,
+    })))
+}
+
 pub fn task_routes() -> Router<AppState> {
     Router::new()
         .route("/api/v1/workspaces/{ws}/tasks", axum::routing::get(list_tasks).post(create_task))
-        .route("/api/v1/workspaces/{ws}/tasks/{id}", axum::routing::get(get_task_detail).delete(delete_task))
+        .route("/api/v1/workspaces/{ws}/tasks/{id}", axum::routing::get(get_task_detail).delete(delete_task).patch(update_task))
         .route("/api/v1/workspaces/{ws}/tasks/batch-delete", axum::routing::post(batch_delete_tasks))
         .route("/api/v1/workspaces/{ws}/tasks/{id}/executions", axum::routing::post(create_task_execution))
         .route("/api/v1/artifacts/{aid}/content", axum::routing::get(get_artifact_content))
@@ -725,6 +807,26 @@ mod tests {
         (status, val)
     }
 
+    /// 发 PATCH /tasks/{id} 的小工具，结构与 post_task 一致，仅 method/uri 不同。
+    async fn patch_task(app: &axum::Router, ws_id: i64, task_id: i64, body: Value) -> (StatusCode, Value) {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!("/api/v1/workspaces/{ws_id}/tasks/{task_id}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&body).expect("json")))
+                    .expect("request build"),
+            )
+            .await
+            .expect("patch task request");
+        let status = resp.status();
+        let bytes = to_bytes(resp.into_body(), usize::MAX).await.expect("read body");
+        let val: Value = serde_json::from_slice(&bytes).expect("parse body");
+        (status, val)
+    }
+
     /// 委派执行器 + 开自动接力 必须被拒（400）：执行器无调度能力，防绕过前端禁用。
     /// 此分支在触发执行之前返回，故不会真实 spawn 执行器。
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -762,13 +864,132 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
+    /// create 委派：接力上限越界（-1）必须 400。
+    /// 用 executor:claude（已注册）+ auto_continue:false 通过处理人校验，使命中范围校验分支。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_create_delegate_rejects_negative_max_rounds() {
+        let (app, ws_id, _db) = build_app().await;
+        let body = serde_json::json!({
+            "requirement": "测试", "execution_mode": "delegate",
+            "assignee_kind": "executor", "assignee_name": "claude",
+            "auto_continue": false, "delegate_max_rounds": -1,
+        });
+        let (status, _val) = post_task(&app, ws_id, body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    /// create 委派：接力上限超过 CAP(50) 必须 400。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_create_delegate_rejects_max_rounds_over_cap() {
+        let (app, ws_id, _db) = build_app().await;
+        let body = serde_json::json!({
+            "requirement": "测试", "execution_mode": "delegate",
+            "assignee_kind": "executor", "assignee_name": "claude",
+            "auto_continue": false, "delegate_max_rounds": 51,
+        });
+        let (status, _val) = post_task(&app, ws_id, body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    /// PATCH 接力上限：环路任务必须 400（接力上限是委派专属概念，环路配它无意义）。
+    /// 用 DAO 直建环路任务（create_task 默认 execution_mode='loop'），绕开环路触发。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_update_task_rejects_loop_task() {
+        let (app, ws_id, db) = build_app().await;
+        let task = db.create_task("环路任务", ws_id, 0, None).await.expect("create loop task");
+        let (status, _val) =
+            patch_task(&app, ws_id, task.id, serde_json::json!({"delegate_max_rounds": 8})).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    /// PATCH 接力上限：委派任务传合法值 → 200，返回有效值随覆盖变化；null=清除回退兜底。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_update_task_sets_and_returns_effective() {
+        let (app, ws_id, db) = build_app().await;
+        // DAO 直建委派任务，绕开 handler 首帖触发。
+        let task = db
+            .create_delegate_task("委派", "需求", ws_id, "expert", "专家A", true, None)
+            .await
+            .expect("create delegate");
+        // null=清除：本就 None，有效值仍为兜底 10（工作空间亦未配置）。
+        let (s0, v0) =
+            patch_task(&app, ws_id, task.id, serde_json::json!({"delegate_max_rounds": null})).await;
+        assert_eq!(s0, StatusCode::OK);
+        assert_eq!(v0["data"]["delegate_max_rounds_effective"].as_i64(), Some(10));
+        // 置 8 → raw 与有效值均为 8。
+        let (s1, v1) =
+            patch_task(&app, ws_id, task.id, serde_json::json!({"delegate_max_rounds": 8})).await;
+        assert_eq!(s1, StatusCode::OK);
+        assert_eq!(v1["data"]["delegate_max_rounds"].as_i64(), Some(8));
+        assert_eq!(v1["data"]["delegate_max_rounds_effective"].as_i64(), Some(8));
+    }
+
+    /// PATCH 接力上限：边界下限 1 合法 → 200，有效值=1（哪怕只允许 1 轮，护栏口径仍成立）。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_update_task_accepts_lower_bound_one() {
+        let (app, ws_id, db) = build_app().await;
+        let task = db
+            .create_delegate_task("委派", "需求", ws_id, "expert", "专家A", true, None)
+            .await
+            .expect("create delegate");
+        let (status, val) =
+            patch_task(&app, ws_id, task.id, serde_json::json!({"delegate_max_rounds": 1})).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(val["data"]["delegate_max_rounds_effective"].as_i64(), Some(1));
+    }
+
+    /// PATCH 接力上限：边界上限 CAP(50) 合法 → 200，有效值=50（含上界，>50 才拒）。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_update_task_accepts_upper_bound_cap() {
+        let (app, ws_id, db) = build_app().await;
+        let task = db
+            .create_delegate_task("委派", "需求", ws_id, "expert", "专家A", true, None)
+            .await
+            .expect("create delegate");
+        let (status, val) =
+            patch_task(&app, ws_id, task.id, serde_json::json!({"delegate_max_rounds": 50})).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(val["data"]["delegate_max_rounds_effective"].as_i64(), Some(50));
+    }
+
+    /// PATCH 跨工作空间：任务属于 ws_id，用其它 ws 的 URL PATCH 必须 404（归属校验防串改）。
+    /// 印证 update_task 的 ws 收紧：仅当任务 workspace_id 与 path ws 一致才放行。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_update_task_rejects_wrong_workspace() {
+        let (app, ws_id, db) = build_app().await;
+        let task = db
+            .create_delegate_task("委派", "需求", ws_id, "expert", "专家A", true, Some(5))
+            .await
+            .expect("create delegate");
+        // 任务 workspace_id=ws_id；用一个显然不同的 ws 发 PATCH → 归属校验拦 404。
+        let (status, _val) =
+            patch_task(&app, ws_id + 999, task.id, serde_json::json!({"delegate_max_rounds": 8})).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    /// PATCH 接力上限：越界（51 > CAP）必须 400，且不改动既有覆盖值。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_update_task_rejects_over_cap_keeps_value() {
+        let (app, ws_id, db) = build_app().await;
+        let task = db
+            .create_delegate_task("委派", "需求", ws_id, "expert", "专家A", true, Some(5))
+            .await
+            .expect("create delegate");
+        let (status, _val) =
+            patch_task(&app, ws_id, task.id, serde_json::json!({"delegate_max_rounds": 51})).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        // 越界被拒：既有覆盖 5 不应被改写。
+        let after = db.get_task(task.id).await.expect("get").expect("task");
+        assert_eq!(after.delegate_max_rounds, Some(5), "越界请求不应改动既有值");
+    }
+
     /// DAO：create_delegate_task 写入委派字段正确。
     /// 直接测 DAO 而非 handler，绕开 handler 内对讨论首帖的真实执行触发。
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_dao_create_delegate_task_fields() {
         let (_app, ws_id, db) = build_app().await;
         let task = db
-            .create_delegate_task("委派标题", "委派需求原文", ws_id, "expert", "任务管家", true)
+            .create_delegate_task("委派标题", "委派需求原文", ws_id, "expert", "任务管家", true, None)
             .await
             .expect("create delegate task");
         assert_eq!(task.description, "委派需求原文", "description 随首次 INSERT 写入");
@@ -777,6 +998,7 @@ mod tests {
         assert_eq!(task.assignee_name.as_deref(), Some("任务管家"));
         assert_eq!(task.auto_continue, 1);
         assert_eq!(task.continue_rounds, 0, "新建任务接力计数从 0 起");
+        assert!(task.delegate_max_rounds.is_none(), "未传覆盖时落 NULL（沿用工作空间默认）");
         assert!(task.loop_id.is_none(), "委派任务不绑环路");
     }
 

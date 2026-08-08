@@ -31,6 +31,9 @@ export function DefaultResponseConfigPanel({ workspaceId, onChanged }: DefaultRe
   const [historyChats, setHistoryChats] = useState<FeishuHistoryChat[]>([]);
   const [histChatId, setHistChatId] = useState('');
   const [histChatName, setHistChatName] = useState('');
+  // 接力上限「系统兜底」提示值：仅当工作空间未配置(raw=null)时，effective 才等于兜底常量，
+  // 此时取它做 InputNumber placeholder；已配置时不覆盖，确保「留空→回退」提示恒指兜底常量，不硬编码 10。
+  const [defaultMaxHint, setDefaultMaxHint] = useState<number>(10);
 
   useEffect(() => {
     loadSettings();
@@ -56,7 +59,11 @@ export function DefaultResponseConfigPanel({ workspaceId, onChanged }: DefaultRe
           default_response_todo_id: s.default_response_todo_id,
           default_response_loop_id: s.default_response_loop_id,
           default_response_executor: s.default_response_executor,
+          // raw 覆盖值：null 表示未配置（InputNumber 显示空，提示走系统默认）。
+          delegate_max_rounds: s.delegate_max_rounds,
         });
+        // 仅未配置时 effective 才等于兜底常量，用它做「留空回退」提示，不硬编码 10。
+        if (s.delegate_max_rounds == null) setDefaultMaxHint(s.delegate_max_rounds_effective ?? 10);
       })
       .catch((err: any) => message.error('加载设置失败: ' + (err?.message || String(err))))
       .finally(() => setLoading(false));
@@ -83,6 +90,8 @@ export function DefaultResponseConfigPanel({ workspaceId, onChanged }: DefaultRe
         default_response_todo_id: values.default_response_type === 'todo' ? values.default_response_todo_id : undefined,
         default_response_loop_id: values.default_response_type === 'loop' ? values.default_response_loop_id : 0,
         default_response_executor: values.default_response_type === 'executor' ? values.default_response_executor : undefined,
+        // null=清除回退系统兜底；N(1..=50)=置工作空间默认，任务级未覆盖时以此为准。
+        delegate_max_rounds: values.delegate_max_rounds ?? null,
       });
       message.success('设置已保存');
       loadSettings();
@@ -222,6 +231,23 @@ export function DefaultResponseConfigPanel({ workspaceId, onChanged }: DefaultRe
               />
             </Form.Item>
           )}
+
+          {/* 委派接力上限（需求 092）：工作空间级默认，任务级可单独覆盖。 */}
+          <Form.Item
+            name="delegate_max_rounds"
+            label="委派接力上限"
+            tooltip="该工作空间内委派任务「自动接力轮数上限」的默认值；单个任务可在详情页覆盖。"
+            extra={`留空使用系统默认（${defaultMaxHint} 轮）；任务级未覆盖时以此默认为准。`}
+          >
+            <InputNumber
+              min={1}
+              max={50}
+              placeholder={`默认 ${defaultMaxHint} 轮`}
+              addonAfter="轮"
+              style={{ width: '100%' }}
+              data-testid="ws-delegate-max-rounds"
+            />
+          </Form.Item>
 
           <Form.Item>
             <Space>

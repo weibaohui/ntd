@@ -9,10 +9,10 @@
 import { useEffect, useState, useCallback } from 'react';
 import {
   Tabs, Tag, Button, Typography, Spin, Space, Badge,
-  message, Modal, Input, Empty, Popconfirm,
+  message, Modal, Input, InputNumber, Popover, Empty, Popconfirm,
 } from 'antd';
 import {
-  ThunderboltOutlined, DeleteOutlined,
+  ThunderboltOutlined, DeleteOutlined, EditOutlined,
 } from '@ant-design/icons';
 import bundledApi from '@/api/bundled';
 import * as dbLoops from '@/utils/database/loops';
@@ -32,11 +32,6 @@ const { Text } = Typography;
 // Tabs key 白名单：?tab= query 的合法值，非法值一律回退到「概览」。
 // 帖子页返回本任务-讨论 tab 时，URL 带 ?tab=discussion，Tabs 据此恢复选中态。
 const TAB_KEYS = ['overview', 'dag', 'exec', 'discussion'] as const;
-
-// 需求 092 P2：自动接力的轮数硬上限。必须与后端 MAX_DELEGATE_ROUNDS（completion 接力护栏）
-// 保持一致——前端只读 continue_rounds，不做护栏决策，仅据此展示进度与「已达上限」状态。
-// 集中为常量而非魔法数，便于双端口径变更时一处定位。
-const MAX_DELEGATE_ROUNDS = 10;
 
 // ====== 类型定义 ======
 
@@ -66,7 +61,7 @@ interface ExecInfo {
 }
 
 interface TaskDetailData {
-  task: { id: number; title: string; status: string; description?: string; workspace_id?: number; loop_id?: number; execution_mode?: string; assignee_kind?: string; assignee_name?: string; auto_continue?: boolean; continue_rounds?: number };
+  task: { id: number; title: string; status: string; description?: string; workspace_id?: number; loop_id?: number; execution_mode?: string; assignee_kind?: string; assignee_name?: string; auto_continue?: boolean; continue_rounds?: number; delegate_max_rounds?: number | null; delegate_max_rounds_effective?: number; delegate_max_rounds_fallback?: number };
   template?: { display_name?: string; version?: string; complexity?: string };
   steps: StepInfo[];
   executions: ExecInfo[];
@@ -90,34 +85,135 @@ function assigneeLabel(task: TaskDetailData['task']): string {
 }
 
 /**
- * 自动接力进度徽标（需求 092 P2）。仅管家接力任务显示，文案「管家调度中 N/MAX」：
- * - 未达上限用 processing 蓝，直观表达「进行中」；
- * - 达上限用 warning 橙，与后端 HitLimit 写的「已达上限」说明帖呼应，提示用户接管。
- * 非接力任务（环路 / 手动单跑 / 执行器委派）返回 null，标题行不留空位。
+ * 自动接力进度徽标（需求 092）。仅管家接力任务显示，文案「管家调度中 N/M」：
+ * - M（上限）来自后端三级解析的有效值 delegate_max_rounds_effective，前端不再硬编码 10；
+ * - 未达上限用 processing 蓝，达上限用 warning 橙（与后端 HitLimit 说明帖呼应，提示接管）；
+ * - 点击 ✎ 弹出 [RelayMaxEditor] 内联调整该任务的上限覆盖（运行时可改）。
+ * 非接力任务返回 null。本组件不放 hooks：纯条件渲染，避免「early return 在 hook 之前」违规。
  */
-function RelayBadge({ task }: { task: TaskDetailData['task'] }) {
+function RelayBadge({
+  task, onUpdateMax,
+}: {
+  task: TaskDetailData['task'];
+  onUpdateMax: (max: number | null) => Promise<void>;
+}) {
   if (!isAutoRelayTask(task)) return null;
+  return <RelayMaxEditor task={task} onUpdateMax={onUpdateMax} />;
+}
+
+/**
+ * 徽标内联编辑器：Tag 本体 + Popover（InputNumber 调上限 + 「恢复默认」）。
+ * 打开时以当前 raw 覆盖(delegate_max_rounds)回显，null 显示空（=用默认）；确定/恢复均经
+ * onUpdateMax 落库并重拉详情，effective 随之刷新，徽标 M 实时同步。
+ */
+function RelayMaxEditor({
+  task, onUpdateMax,
+}: {
+  task: TaskDetailData['task'];
+  onUpdateMax: (max: number | null) => Promise<void>;
+}) {
   const rounds = task.continue_rounds ?? 0;
+  // effective 兜底 10 仅为类型安全：后端恒返回该字段，缺失属异常态。
+  const effectiveMax = task.delegate_max_rounds_effective ?? 10;
+  // 「清除任务覆盖后」的回退值（工作空间默认或兜底常量）：placeholder / 留空提示读它。
+  // 不能用 effective：任务已有覆盖时 effective 即覆盖值本身，提示「留空=用工作空间默认（N 轮）」会误显成
+  // 即将被清除的那个覆盖值，与「清除后实际回退到工作空间默认」矛盾（Spec 评审发现）。
+  const fallbackMax = task.delegate_max_rounds_fallback ?? effectiveMax;
   // >=：与后端 plan_delegate_relay 的 `rounds >= max` 护栏口径一致（设计 §5.2）。
-  // 计数在判定前已 +1，递增到 max(10) 当轮即被熔断（需求 AC8「达到 10 强制停止」），
-  // 故 rounds=10 时转橙，与后端 HitLimit 写的「已达上限」说明帖同步提示用户接管。
-  const atLimit = rounds >= MAX_DELEGATE_ROUNDS;
+  const atLimit = rounds >= effectiveMax;
+  // Popover 受控开关 + 输入态：每次打开以最新 raw 回显，避免上一次残留值误导。
+  const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState<number | null>(task.delegate_max_rounds ?? null);
+  const [saving, setSaving] = useState(false);
+
+  // 落库并刷新：仅当 onUpdateMax 成功 resolve 才关 Popover；失败时 onUpdateMax 会向上抛错，
+  // 跳过 setOpen(false)，编辑器保持打开供改值重试（错误提示已由 handleUpdateMax 的 catch 弹出）。
+  // 此处 catch 兜住错误只复位 saving，避免 onClick 内产生未处理 promise rejection。
+  const submit = async (value: number | null) => {
+    setSaving(true);
+    try {
+      await onUpdateMax(value);
+      setOpen(false);
+    } catch {
+      // 不关 Popover：让用户在原值基础上修正后重试（message.error 已在 handleUpdateMax 弹过）。
+    } finally {
+      setSaving(false);
+    }
+  };
+  // 是否已有覆盖（决定「恢复默认」可点）；确定仅在「填了且与当前覆盖不同」时可点。
+  const hasOverride = task.delegate_max_rounds != null;
+  const confirmDisabled = editing == null || editing === task.delegate_max_rounds;
+
   return (
-    <Tag color={atLimit ? 'warning' : 'processing'}>
-      管家调度中 {rounds}/{MAX_DELEGATE_ROUNDS}
-    </Tag>
+    <Popover
+      trigger="click"
+      placement="bottom"
+      open={open}
+      onOpenChange={(o) => {
+        setOpen(o);
+        // 每次打开重置输入为当前 raw 覆盖，关闭再开不会带上次未提交的脏值。
+        if (o) setEditing(task.delegate_max_rounds ?? null);
+      }}
+      title="调整接力轮数上限"
+      content={
+        <Space direction="vertical" style={{ width: 240 }}>
+          <InputNumber
+            min={1}
+            max={50}
+            value={editing}
+            onChange={(v) => setEditing(v ?? null)}
+            placeholder={`默认 ${fallbackMax} 轮`}
+            style={{ width: '100%' }}
+            data-testid="relay-max-input"
+          />
+          <Space>
+            <Button
+              size="small"
+              type="primary"
+              loading={saving}
+              disabled={confirmDisabled}
+              onClick={() => editing != null && submit(editing)}
+              data-testid="relay-max-confirm"
+            >
+              确定
+            </Button>
+            <Button
+              size="small"
+              disabled={!hasOverride || saving}
+              onClick={() => submit(null)}
+              data-testid="relay-max-reset"
+            >
+              恢复默认
+            </Button>
+          </Space>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            留空=用工作空间默认（{fallbackMax} 轮）；达上限后停止自动接力。
+          </Text>
+        </Space>
+      }
+    >
+      <Tag
+        color={atLimit ? 'warning' : 'processing'}
+        style={{ cursor: 'pointer' }}
+        data-testid="relay-badge"
+      >
+        管家调度中 {rounds}/{effectiveMax} <EditOutlined style={{ marginLeft: 4 }} />
+      </Tag>
+    </Popover>
   );
 }
 
 /** 顶部条：标题 + 状态/复杂度 + 元信息 + 删除 + 再次执行。 */
 function DetailHeader({
-  task, template, loopDetail, onExecute, onDelete,
+  task, template, loopDetail, onExecute, onDelete, onUpdateMax,
 }: {
   task: TaskDetailData['task'];
   template?: TaskDetailData['template'];
   loopDetail: LoopDetail | null;
   onExecute: () => void;
   onDelete: () => void;
+  // 接力上限内联编辑落库（透传给 RelayBadge）；仅管家接力任务的徽标会用。
+  onUpdateMax: (max: number | null) => Promise<void>;
 }) {
   return (
     <div className={styles.headerBar}>
@@ -130,7 +226,7 @@ function DetailHeader({
             <Tag color={complexityColor(template.complexity)}>{complexityLabel(template.complexity)}</Tag>
           )}
           {/* 管家自动接力任务的进度徽标（委派 + 自动接力 + 专家）。非此类任务返回 null。 */}
-          <RelayBadge task={task} />
+          <RelayBadge task={task} onUpdateMax={onUpdateMax} />
         </div>
         <div className={styles.metaRow}>
           {task.execution_mode === 'delegate' ? (
@@ -261,6 +357,25 @@ export function TaskDetailPanel({
     finally { setTriggering(false); }
   };
 
+  // 内联调整某任务的接力上限覆盖（需求 092）：落库后重拉详情，effective 随之刷新，徽标 M 同步。
+  // 定义在 early return 之前并用 useCallback，避免「条件 hook」违规；用 taskId 而非 detail.task，
+  // 保证 detail 未就绪时也不会引用空对象。
+  const handleUpdateMax = useCallback(async (max: number | null) => {
+    try {
+      await bundledApi.updateTask(workspaceId, taskId, { delegate_max_rounds: max });
+      const raw = await bundledApi.getTaskDetail(workspaceId, taskId) as TaskDetailData;
+      setDetail(raw);
+      message.success(max == null ? '已恢复默认上限' : `上限已设为 ${max} 轮`);
+      onTriggered?.();
+    } catch (e) {
+      // updateTask 400 时后端返回中文 message（越界/非委派），拦截器已透传，先弹给用户可见提示。
+      message.error(e instanceof Error ? e.message : '更新接力上限失败');
+      // 再向上抛错：RelayMaxEditor.submit 据此判定失败、跳过关 Popover 的语句，让用户在原
+      // Popover 内改值重试。否则 PATCH 失败却关弹层，用户须重新点开 ✎，体验割裂（评审发现）。
+      throw e;
+    }
+  }, [workspaceId, taskId, onTriggered]);
+
   // 加载态。
   if (loading) return <Spin style={{ display: 'block', margin: '40px auto' }} />;
   if (!detail) return <Empty description="暂无任务详情" style={{ marginTop: 48 }} />;
@@ -312,7 +427,7 @@ export function TaskDetailPanel({
     <div className={styles.panel}>
       <DetailHeader
         task={task} template={template} loopDetail={loopDetail}
-        onExecute={openReqModal} onDelete={handleDelete}
+        onExecute={openReqModal} onDelete={handleDelete} onUpdateMax={handleUpdateMax}
       />
       <div className={styles.tabsWrap}>
         <Tabs

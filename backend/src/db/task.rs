@@ -30,6 +30,9 @@ impl Database {
     ///
     /// `description` 随首次 INSERT 一并写入（而非建后再 UPDATE）：委派创建之后还要发讨论首帖
     /// 触发执行，若 description 单独 update，中间任一步失败会留下「空描述任务」（CodeRabbit #1）。
+    // 8 个参数均为建任务所需的独立字段，函数体是纯字段映射（→ ActiveModel），强行收敛成 struct
+    // 反而割裂调用点与 DB 列的一一对应，故豁免 too_many_arguments（线性数据构建，符合豁免场景 #1）。
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_delegate_task(
         &self,
         title: &str,
@@ -38,6 +41,8 @@ impl Database {
         assignee_kind: &str,
         assignee_name: &str,
         auto_continue: bool,
+        // 接力轮数上限覆盖:None=沿用工作空间默认 → 兜底常量(三级解析见 resolve_delegate_max_rounds)。
+        delegate_max_rounds: Option<i64>,
     ) -> Result<tasks::Model, sea_orm::DbErr> {
         let now = utc_timestamp();
         let am = tasks::ActiveModel {
@@ -57,9 +62,33 @@ impl Database {
             auto_continue: ActiveValue::Set(if auto_continue { 1 } else { 0 }),
             // 接力计数从 0 起，由 completion 接力分支递增（P2）。
             continue_rounds: ActiveValue::Set(0),
+            // 任务级上限覆盖随建写入；None 表示沿用工作空间默认（三级可配，见 resolve_delegate_max_rounds）。
+            delegate_max_rounds: ActiveValue::Set(delegate_max_rounds),
             ..Default::default()
         };
         am.insert(&self.conn).await
+    }
+
+    /// 更新单个委派任务的「接力轮数上限」覆盖（需求 092 护栏配置化）。
+    ///
+    /// - `Some(n)`（n≥1，由 handler 校验 1..=50）→ 置为 n，覆盖工作空间默认。
+    /// - `None` → 置 NULL，回退工作空间默认 → 兜底常量（即「恢复默认」）。
+    ///
+    /// 任务不存在时静默返回（与 update_task_status 同口径，调用方已先校验存在性）。
+    pub async fn update_delegate_max_rounds(
+        &self, id: i64, max: Option<i64>,
+    ) -> Result<Option<tasks::Model>, sea_orm::DbErr> {
+        let existing = tasks::Entity::find_by_id(id).one(&self.conn).await?;
+        // 返回更新后的 Model：调用方据此直接 resolve 有效值，免去一次冗余 get_task 重读。
+        // （find 已取到行，update 再回写最新态——无需调用方二次查库。）
+        if let Some(c) = existing {
+            let mut am: tasks::ActiveModel = c.into();
+            am.delegate_max_rounds = ActiveValue::Set(max);
+            am.updated_at = ActiveValue::Set(Some(utc_timestamp()));
+            let updated = am.update(&self.conn).await?;
+            return Ok(Some(updated));
+        }
+        Ok(None)
     }
 
     pub async fn get_task(&self, id: i64) -> Result<Option<tasks::Model>, sea_orm::DbErr> {
@@ -152,7 +181,7 @@ mod tests {
         let db = fresh_db().await;
         // 委派任务建表即写 continue_rounds=0，是接力的真实载体，用它验证最贴近生产路径。
         let task = db
-            .create_delegate_task("接力任务T", "接力需求原文", 1, "expert", "专家A", true)
+            .create_delegate_task("接力任务T", "接力需求原文", 1, "expert", "专家A", true, None)
             .await
             .expect("create delegate task");
         assert_eq!(task.continue_rounds, 0, "新建委派任务初始计数应为 0");
@@ -181,5 +210,32 @@ mod tests {
             .await
             .expect("missing task should not error");
         assert_eq!(r, 0, "任务不存在时返回 0，调用方据此跳过接力");
+    }
+
+    /// update_delegate_max_rounds：置值后再清空，回读校验落库正确。
+    #[tokio::test]
+    async fn test_update_delegate_max_rounds_set_then_clear() {
+        let db = fresh_db().await;
+        let task = db
+            .create_delegate_task("T", "D", 1, "expert", "专家A", true, None)
+            .await
+            .expect("create");
+        // 初始 None（沿用工作空间默认）。
+        assert_eq!(
+            db.get_task(task.id).await.unwrap().unwrap().delegate_max_rounds,
+            None
+        );
+        // 置值覆盖。
+        db.update_delegate_max_rounds(task.id, Some(8)).await.expect("set");
+        assert_eq!(
+            db.get_task(task.id).await.unwrap().unwrap().delegate_max_rounds,
+            Some(8)
+        );
+        // None 清空（恢复默认）。
+        db.update_delegate_max_rounds(task.id, None).await.expect("clear");
+        assert_eq!(
+            db.get_task(task.id).await.unwrap().unwrap().delegate_max_rounds,
+            None
+        );
     }
 }

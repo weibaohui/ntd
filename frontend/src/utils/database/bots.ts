@@ -62,6 +62,10 @@ export interface WorkspaceSettings {
   // 工作空间级共识 prompt（需求 022）：该 workspace 下所有 todo 执行时作为前置 prompt 注入。
   // null 表示未配置；空串 "" 表示显式清空。
   system_prompt: string | null;
+  // 工作空间级「委派接力轮数上限」默认（需求 092）：null=未配置；任务级未覆盖时以此为准。
+  delegate_max_rounds: number | null;
+  // 解析后的有效上限（raw null → 终极兜底常量 10）：表单 placeholder/提示读它，前端不硬编码 10。
+  delegate_max_rounds_effective: number;
   updated_at: string | null;
 }
 
@@ -73,6 +77,9 @@ export interface UpdateWorkspaceSettingsParams {
   // 工作空间级共识 prompt：传入则覆写，不传则保持原值。
   // 用户清空时前端传空串 ""。
   system_prompt?: string;
+  // 工作空间级接力上限默认（需求 092）：传 N（1..=50）=置默认；null=清除回退兜底（「恢复默认」）。
+  // 注：settings 表单恒整表保存，故 null 即清除（区别于其它字段的「不传=保持」语义）。
+  delegate_max_rounds?: number | null;
 }
 
 // ============================================================================

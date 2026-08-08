@@ -6,7 +6,7 @@
 // 提交成功后调 onCreated，宿主关闭 Modal 并刷新列表。
 
 import { useEffect, useState } from 'react';
-import { Modal, Input, Select, Form, Radio, Segmented, Switch, Typography, message } from 'antd';
+import { Modal, Input, InputNumber, Select, Form, Radio, Segmented, Switch, Typography, message } from 'antd';
 import { ThunderboltOutlined } from '@ant-design/icons';
 import bundledApi from '@/api/bundled';
 import type { LoopLite } from '@/components/tasks/constants';
@@ -15,6 +15,7 @@ import { getAllExperts } from '@/utils/database/experts';
 import { EXECUTORS_FOR_PICKER } from '@/utils/executors';
 import { getExpertDisplayName } from '@/types/expert';
 import type { ExpertMetadata } from '@/types/expert';
+import { getWorkspaceSettings } from '@/utils/database/bots';
 
 const { Text } = Typography;
 
@@ -26,6 +27,8 @@ interface CreateTaskFormValues {
   assigneeKind?: 'executor' | 'expert';
   assigneeName?: string;
   autoContinue?: boolean;
+  // 接力轮数上限覆盖：null=沿用工作空间默认（提交 omit）；N=任务级覆盖（1..=50）。
+  delegateMaxRounds?: number | null;
 }
 
 interface CreateTaskModalProps {
@@ -62,10 +65,14 @@ export function CreateTaskModal({
   // 监听执行方式与处理人类型，驱动条件渲染与联动（未初始化时用兜底值）。
   const executionMode = Form.useWatch('executionMode', form) ?? 'loop';
   const assigneeKind = Form.useWatch('assigneeKind', form) ?? 'expert';
+  // 监听自动接力开关：仅 expert + 开启时才需配置/展示「最大轮数」字段。
+  const autoContinue = Form.useWatch('autoContinue', form) ?? false;
   // 专家候选：打开 Modal 时拉一次（执行器候选是静态 EXECUTORS_FOR_PICKER，无需拉取）。
   const [experts, setExperts] = useState<ExpertMetadata[]>([]);
   // 专家下拉加载态：加载中给 Select 转圈，失败时弹 message.error（而非只 console.warn）。
   const [expertsLoading, setExpertsLoading] = useState(false);
+  // 工作空间「接力上限默认」有效值：用作「最大轮数」placeholder 与开关 tooltip，前端不硬编码 10。
+  const [wsDefaultMaxRounds, setWsDefaultMaxRounds] = useState<number>(10);
   useEffect(() => {
     if (!open) return;
     // 失败时若只 console.warn，用户只看到空下拉「暂无可用专家」，无从判断是真空还是加载失败（CodeRabbit #8）。
@@ -79,6 +86,15 @@ export function CreateTaskModal({
       })
       .finally(() => setExpertsLoading(false));
   }, [open]);
+
+  // 取工作空间「接力上限默认」有效值（raw null → 后端已回退兜底 10），仅用于 placeholder/tooltip；
+  // 失败回退本地兜底 10，不阻断创建（创建本身不依赖此值，留空即用默认）。
+  useEffect(() => {
+    if (!open) return;
+    getWorkspaceSettings(workspaceId)
+      .then((s) => setWsDefaultMaxRounds(s.delegate_max_rounds_effective ?? 10))
+      .catch(() => setWsDefaultMaxRounds(10));
+  }, [open, workspaceId]);
 
   // open 变为 false 时重置表单字段，避免下次打开残留上次输入。
   useEffect(() => {
@@ -102,6 +118,8 @@ export function CreateTaskModal({
                 assigneeKind: values.assigneeKind,
                 assigneeName: values.assigneeName,
                 autoContinue: values.assigneeKind === 'expert' ? values.autoContinue : false,
+                // 仅在用户填了上限时下发覆盖；null/undefined → createTask omit → 后端用工作空间默认。
+                delegateMaxRounds: values.delegateMaxRounds ?? undefined,
               },
               workspaceId,
             )
@@ -241,7 +259,7 @@ export function CreateTaskModal({
             <Form.Item
               name="autoContinue"
               label="自动接力"
-              tooltip="开启后，每次执行完成由该专家自主决定下一步（管家模式），直到完成或达 10 轮上限。仅专家支持。"
+              tooltip={`开启后，每次执行完成由该专家自主决定下一步（管家模式），直到完成或达 ${wsDefaultMaxRounds} 轮上限。仅专家支持。`}
               valuePropName="checked"
             >
               <Switch disabled={assigneeKind === 'executor'} data-testid="create-task-auto-continue" />
@@ -250,6 +268,24 @@ export function CreateTaskModal({
               <Text type="secondary" style={{ fontSize: 12 }}>
                 执行器不支持自动接力（如需托管调度，请改选专家）
               </Text>
+            ) : null}
+            {/* 接力轮数上限覆盖：仅专家 + 自动接力开启时才需配（否则无接力可言）。
+                preserve=false 保证关闭开关/切执行器时字段卸载即清值，避免残留上限被误提交。 */}
+            {assigneeKind === 'expert' && autoContinue ? (
+              <Form.Item
+                name="delegateMaxRounds"
+                label="最大轮数"
+                tooltip="达此轮数上限后停止自动接力；留空则沿用工作空间默认。"
+                preserve={false}
+              >
+                <InputNumber
+                  min={1}
+                  max={50}
+                  placeholder={`默认 ${wsDefaultMaxRounds} 轮（工作空间配置）`}
+                  style={{ width: '100%' }}
+                  data-testid="create-task-max-rounds"
+                />
+              </Form.Item>
             ) : null}
           </>
         )}

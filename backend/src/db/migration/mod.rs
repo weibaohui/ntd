@@ -55,6 +55,8 @@ mod v89;
 mod v90;
 /// v91：tasks 表新增「委派执行」相关列（需求 092 任务委派执行）。
 mod v91;
+/// v92：tasks/workspace_settings 各加 delegate_max_rounds 列（需求 092 护栏配置化）。
+mod v92;
 
 pub use v2_v5::read_applied_versions;
 pub use v2_v5::drop_column_if_exists;
@@ -182,6 +184,9 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         Box::new(v90::V90AddPerformanceIndexes),
         // V91 在 V90 之后：tasks 表加 5 列支撑任务委派执行（需求 092）。
         Box::new(v91::V91TaskDelegateExecution),
+        // V92 在 V91 之后：tasks/workspace_settings 各加 delegate_max_rounds 列，
+        // 把接力上限从写死常量改为「任务覆盖 → 工作空间默认 → 兜底」三级可配置。
+        Box::new(v92::V92DelegateMaxRounds),
     ]
 }
 

@@ -398,7 +398,7 @@ pub const CONSOLIDATED_SCHEMA: &[&str] = &[
             created_by TEXT DEFAULT '',
             created_at TEXT,
             updated_at TEXT
-        , execution_mode TEXT NOT NULL DEFAULT 'loop', assignee_kind TEXT, assignee_name TEXT, auto_continue INTEGER NOT NULL DEFAULT 0, continue_rounds INTEGER NOT NULL DEFAULT 0)"#,
+        , execution_mode TEXT NOT NULL DEFAULT 'loop', assignee_kind TEXT, assignee_name TEXT, auto_continue INTEGER NOT NULL DEFAULT 0, continue_rounds INTEGER NOT NULL DEFAULT 0, delegate_max_rounds INTEGER)"#,
     // task_posts：任务讨论帖表（需求 060，与 v88 迁移同构）。字段语义见 entity/task_posts.rs；
     // 外键均 ON DELETE CASCADE，删任务/删父帖时连带清理，避免孤儿帖。
     r#"CREATE TABLE task_posts (
@@ -505,7 +505,7 @@ pub const CONSOLIDATED_SCHEMA: &[&str] = &[
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 workspace_id INTEGER NOT NULL UNIQUE,
                 default_response_todo_id INTEGER, updated_at TEXT
-            , default_response_type TEXT, default_response_loop_id INTEGER, default_response_executor TEXT, system_prompt TEXT)"#,
+            , default_response_type TEXT, default_response_loop_id INTEGER, default_response_executor TEXT, system_prompt TEXT, delegate_max_rounds INTEGER)"#,
     r#"CREATE TABLE workspace_slash_commands (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 workspace_id INTEGER NOT NULL,

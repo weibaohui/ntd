@@ -24,6 +24,9 @@ pub struct Model {
     /// 内容包括产物目录、认证信息、基本文件路径等共识信息。
     /// None 表示未配置（读取时跳过拼接）；空串 "" 表示显式清空。
     pub system_prompt: Option<String>,
+    /// 工作空间级「委派接力轮数上限」默认（需求 092 护栏配置化）。
+    /// NULL=未配置 → 回退终极兜底常量 MAX_DELEGATE_ROUNDS；任务级 delegate_max_rounds 可再覆盖之。
+    pub delegate_max_rounds: Option<i64>,
     pub updated_at: Option<String>,
 }
 
