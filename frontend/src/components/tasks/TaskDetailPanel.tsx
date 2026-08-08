@@ -98,7 +98,10 @@ function assigneeLabel(task: TaskDetailData['task']): string {
 function RelayBadge({ task }: { task: TaskDetailData['task'] }) {
   if (!isAutoRelayTask(task)) return null;
   const rounds = task.continue_rounds ?? 0;
-  const atLimit = rounds >= MAX_DELEGATE_ROUNDS;
+  // 严格 >：与后端 plan_delegate_relay 的 `rounds > max` 护栏口径一致（设计 §5.2）。
+  // 计数在判定前已 +1，故达上限时 DB 里是 11（第 11 跳被熔断）——此时才转橙；
+  // 若用 >= 会在 rounds=10（仍被允许推进的最后一跳）提前变橙，与后端语义不符。
+  const atLimit = rounds > MAX_DELEGATE_ROUNDS;
   return (
     <Tag color={atLimit ? 'warning' : 'processing'}>
       管家调度中 {rounds}/{MAX_DELEGATE_ROUNDS}

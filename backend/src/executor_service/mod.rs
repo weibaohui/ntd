@@ -151,3 +151,26 @@ pub async fn run_todo_execution_with_params(
     }
     run_todo_execution(request).await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// run_todo_execution_boxed 的核心契约：返回类型擦除为 `Pin<Box<dyn Future + Send>>`。
+    /// 正是这条 Send 性质打破了「接力 → run_todo_execution → finalize → 接力」coroutine 类型环
+    /// （见其文档注释）。用编译期断言固化签名与 Send 约束——无需真实执行器即可验证此类型不变量；
+    /// 一旦有人改了返回类型（丢 `+ Send` / 改 `Output`），此处立即编译失败，锁死该包装的存在意义。
+    #[test]
+    fn run_todo_execution_boxed_returns_send_boxed_future() {
+        // 期望的返回类型：擦除后的 Send boxed future（与函数签名字面一致）。
+        type Ret = std::pin::Pin<Box<dyn std::future::Future<Output = ExecutionResult> + Send>>;
+
+        // 1) 该返回类型必须满足 Send：接力处 await 跨线程传递的硬性前提。
+        fn require_send<T: Send>() {}
+        require_send::<Ret>();
+
+        // 2) 函数指针精确匹配：run_todo_execution_boxed 的签名必须可赋值为
+        //    `fn(RunTodoExecutionRequest) -> Ret`，签名漂移则编译失败。
+        let _f: fn(RunTodoExecutionRequest) -> Ret = run_todo_execution_boxed;
+    }
+}

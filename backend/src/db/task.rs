@@ -134,3 +134,52 @@ impl Database {
         Ok(res.rows_affected)
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::*;
+
+    /// 全新内存库（跑完所有迁移 + 种子）。
+    async fn fresh_db() -> Database {
+        Database::new(":memory:").await.expect("memory db must open")
+    }
+
+    /// increment_continue_rounds：从 0（委派任务初始）递增到 1、2，
+    /// 校验 read-modify-write 正确落库且每次返回递增后的新值。
+    #[tokio::test]
+    async fn test_increment_continue_rounds_increments_and_persists() {
+        let db = fresh_db().await;
+        // 委派任务建表即写 continue_rounds=0，是接力的真实载体，用它验证最贴近生产路径。
+        let task = db
+            .create_delegate_task("接力任务T", 1, "expert", "专家A", true)
+            .await
+            .expect("create delegate task");
+        assert_eq!(task.continue_rounds, 0, "新建委派任务初始计数应为 0");
+
+        // 第一轮 +1 → 1，并实际落库（get 回读校验，排除「只返回新值但没写库」的假阳性）。
+        let r1 = db.increment_continue_rounds(task.id).await.expect("increment #1");
+        assert_eq!(r1, 1);
+        assert_eq!(
+            db.get_task(task.id).await.expect("get").expect("task").continue_rounds,
+            1,
+            "递增后 DB 中应为 1"
+        );
+
+        // 第二轮 +1 → 2，验证不是幂等的「总是返回固定值」。
+        let r2 = db.increment_continue_rounds(task.id).await.expect("increment #2");
+        assert_eq!(r2, 2);
+    }
+
+    /// 任务不存在边界：返回 Ok(0)，调用方据此跳过接力（不报错、不 panic）。
+    /// 全新内存库无任何任务，999_999 必然缺失。
+    #[tokio::test]
+    async fn test_increment_continue_rounds_missing_task_returns_zero() {
+        let db = fresh_db().await;
+        let r = db
+            .increment_continue_rounds(999_999)
+            .await
+            .expect("missing task should not error");
+        assert_eq!(r, 0, "任务不存在时返回 0，调用方据此跳过接力");
+    }
+}
