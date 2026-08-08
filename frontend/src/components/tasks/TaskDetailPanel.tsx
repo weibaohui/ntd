@@ -16,10 +16,6 @@ import { OverviewTab, DAGTab, ExecHistoryTab } from './TaskDetailTabs';
 import { DiscussionTab } from './discussion/DiscussionTab';
 import styles from './TaskDetailPanel.module.css';
 
-// Tabs key 白名单：?tab= query 的合法值，非法值一律回退到「概览」。
-// 帖子页返回本任务-讨论 tab 时，URL 带 ?tab=discussion，Tabs 据此恢复选中态。
-const TAB_KEYS = ['overview', 'dag', 'exec', 'discussion'] as const;
-
 interface TaskDetailPanelProps {
   taskId: number;
   workspaceId: number;
@@ -63,11 +59,6 @@ export function TaskDetailPanel({
   const { task, template } = t.detail;
   const lpId = task.loop_id ?? t.detail.loop?.id ?? 0;
   const lpWsId = task.workspace_id ?? t.detail.loop?.workspace_id ?? null;
-
-  // resolvedTab 依据 TAB_KEYS 白名单解析 URL ?tab=；委派任务默认落「讨论」，其余落「概览」。
-  const resolvedTab = activeTab && (TAB_KEYS as readonly string[]).includes(activeTab)
-    ? activeTab
-    : (task.execution_mode === 'delegate' ? 'discussion' : 'overview');
 
   // 声明式列出全部 4 个 Tab 的内容定义；具体展示哪些由 visibleTaskTabs 按执行方式过滤。
   // 「内容定义」与「显隐规则」解耦：显隐属纯逻辑，抽到 helpers.ts 可单测，组件只管渲染。
@@ -118,9 +109,10 @@ export function TaskDetailPanel({
   const visibleKeys = visibleTaskTabs(task.execution_mode);
   const tabItems = allTabs.filter((tab) => (visibleKeys as readonly string[]).includes(tab.key));
 
-  // 解析当前生效 Tab：URL ?tab= 偏好若被隐藏（如委派任务残留 ?tab=dag）或非法，回退默认 Tab。
-  // resolvedTab 已据 TAB_KEYS 白名单做过首轮兜底，这里再做「可见集合」收口，避免 activeKey 落空。
-  const activeTabKey = resolveTaskActiveTab(resolvedTab, task.execution_mode);
+  // 解析当前生效 Tab：URL ?tab= 偏好若非法或被隐藏（如委派任务残留 ?tab=dag），回退默认 Tab。
+  // 白名单校验与执行方式回退统一由 resolveTaskActiveTab 承担（按可见集合校验 + 回退默认），
+  // 组件不再重复首轮兜底；activeTab 为 null（无 ?tab）时传 undefined 即走回退分支。
+  const activeTabKey = resolveTaskActiveTab(activeTab ?? undefined, task.execution_mode);
 
   // 打开再次执行 Modal：以任务描述（或缺省标题）预填输入框。
   const openReqModal = () => {

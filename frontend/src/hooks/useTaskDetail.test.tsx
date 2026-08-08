@@ -166,4 +166,51 @@ describe('useTaskDetail', () => {
     expect(mockMessage.success).toHaveBeenCalledWith('已删除');
     expect(onLoopChanged).toHaveBeenCalled();
   });
+
+  // ===== 失败分支：CLAUDE.md 要求测试覆盖预期的错误处理分支 =====
+
+  it('test_useTaskDetail_拉详情失败_提示错误并结束加载态', async () => {
+    // 覆盖首个 effect 的 catch：getTaskDetail 抛错时 detail 保持 null、loading 由 finally 复位。
+    mockApi.getTaskDetail.mockRejectedValue(new Error('boom'));
+
+    const { result } = renderHook(() => useTaskDetail(1, 2, {}));
+
+    // loading 归 false 意味着 finally 已跑，而 finally 排在 catch 之后，
+    // 此时 message.error 必已调用；用 loading 作等待锚比直接等 message.error 更稳。
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(mockMessage.error).toHaveBeenCalledWith('加载任务详情失败');
+    expect(result.current.detail).toBeNull();
+  });
+
+  it('test_useTaskDetail_再次执行失败_返回失败且不刷新详情', async () => {
+    // 覆盖 handleNewExec 的 catch：createTaskExecution 失败时返回 false，组件据此保持 Modal 打开。
+    const { result } = renderHook(() => useTaskDetail(1, 2, {}));
+    await waitFor(() => expect(result.current.detail).not.toBeNull());
+    vi.clearAllMocks();
+    // 仅让建执行失败：refresh 在 await createTaskExecution 之后，失败即不会走到，故不应重拉详情。
+    mockApi.createTaskExecution.mockRejectedValueOnce(new Error('fail'));
+
+    let ok = true;
+    await act(async () => { ok = await result.current.handleNewExec('新需求'); });
+
+    expect(ok).toBe(false);
+    expect(mockMessage.error).toHaveBeenCalledWith('创建失败');
+    // 失败路径跳过 refresh：详情不重拉。
+    expect(mockApi.getTaskDetail).not.toHaveBeenCalled();
+  });
+
+  it('test_useTaskDetail_删除环路失败_提示错误且不回调', async () => {
+    // 覆盖 handleDelete 的 catch：deleteLoop 失败时提示错误、不通知宿主刷新列表。
+    const onLoopChanged = vi.fn();
+    const { result } = renderHook(() => useTaskDetail(1, 2, { onLoopChanged }));
+    await waitFor(() => expect(result.current.loopDetail).not.toBeNull());
+    vi.clearAllMocks();
+    mockLoops.deleteLoop.mockRejectedValueOnce(new Error('referenced'));
+
+    await act(() => result.current.handleDelete());
+
+    expect(mockMessage.error).toHaveBeenCalledWith('删除失败，环路可能正在被引用');
+    // 删除未成功，不应触发宿主刷新列表。
+    expect(onLoopChanged).not.toHaveBeenCalled();
+  });
 });

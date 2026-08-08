@@ -81,6 +81,10 @@ function RelayBadge({
  * 徽标内联编辑器：Tag 本体 + Popover（InputNumber 调上限 + 「恢复默认」）。
  * 打开时以当前 raw 覆盖(delegate_max_rounds)回显，null 显示空（=用默认）；确定/恢复均经
  * onUpdateMax 落库并重拉详情，effective 随之刷新，徽标 M 实时同步。
+ *
+ * 【函数长度豁免】函数体超 50 行，主体为声明式 Popover/Tag 的 JSX 渲染（CLAUDE.md
+ * 「纯数据构建」类豁免）；少量受控态（open/editing/saving）与 submit 事件处理与该 JSX
+ * 紧耦合，抽成独立子组件须在父子间传递 6+ 个受控 setter，反而增加传参与跳转阅读成本。
  */
 function RelayMaxEditor({
   task, onUpdateMax,
@@ -176,7 +180,12 @@ function RelayMaxEditor({
   );
 }
 
-/** 顶部条：标题 + 状态/复杂度 + 元信息 + 删除 + 再次执行。 */
+/**
+ * 顶部条：标题 + 状态/复杂度 + 元信息 + 删除 + 再次执行。
+ *
+ * 【函数长度豁免】函数体超 50 行纯属声明式 JSX（CLAUDE.md「纯数据构建」类豁免）——
+ * 逐行平移自原 TaskDetailPanel，无分支逻辑，拆分只会割裂「顶部条」这一整体视觉单元。
+ */
 export function DetailHeader({
   task, template, loopDetail, onExecute, onDelete, onUpdateMax,
 }: DetailHeaderProps) {
