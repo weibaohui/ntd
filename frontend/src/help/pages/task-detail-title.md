@@ -85,5 +85,5 @@ stateDiagram-v2
 
 - **前端入口**：`frontend/src/components/tasks/TaskDetailPage.tsx` 的 `TaskDetailPage`（`useState` `detailTitle` 初始 `'任务 #${taskId}'`，`TaskDetailPanel` 的 `onTitleReady={(title) => setDetailTitle(`任务 #${taskId}: ${title}`)}`）；`TaskDetailPanel` 在 `useEffect` 内 `bundledApi.getTaskDetail` `.then` 后调 `onTitleReady(d.task.title)`
 - **后端入口**：`backend/src/handlers/tasks.rs` 的 `get_task_detail`（路由 `GET /api/v1/workspaces/{ws}/tasks/{id}`），返回 `{task: {id, title, status, workspace_id, loop_id}, template, loop, steps, executions}`
-- **注意**：标题初始值是 `'任务 #{taskId}'`（只有 id），API 成功且有 `d.task.title` 时才回调更新为 `'任务 #{taskId}: ${title}'`；`onTitleReady` 判定 `d.task?.title` 存在才调（空标题不回调，保持占位）；`getTaskDetail` 失败时 `message.error` 并保持初始标题，不回调；`TasksPage` 内嵌态的 `PageCard` title 固定为 `'任务详情'`（不动态更新），动态标题只在 `TaskDetailPage` 独立路由态生效
+- **注意**：标题初始值是 `'任务 #{taskId}'`（只有 id），API 成功且有 `d.task.title` 时才回调更新为 `'任务 #{taskId}: ${title}'`；`onTitleReady` 判定 `d.task?.title` 存在才调（空标题不回调，保持占位）；`getTaskDetail` 失败时 `message.error` 并保持初始标题，不回调；062 起 `TasksPage` 内嵌态与 `TaskDetailPage` 独立路由态都走 `detailTitle` 动态标题（`title={detailTitle ?? '任务 #<id>'}`），切换任务/返回列表时重置为占位，避免新任务数据未加载时闪现旧标题
 - **扩展**：若需标题显示更多元信息（如状态），在 `onTitleReady` 签名改为 `(task: {id, title, status}) => void`，`TaskDetailPanel` 传完整 `task` 对象；后端 `get_task_detail` 返回的 `task` 字段已包含 `status`

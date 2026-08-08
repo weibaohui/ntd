@@ -4,6 +4,8 @@
 
 任务（列表） → 顶栏 `Segmented` 视图切换控件（列表 `UnorderedListOutlined` / 看板 `AppstoreOutlined` / 卡片 `LayoutOutlined`）
 
+> 063 起三态视图的待审批透出差异：**看板**为 5 列泳道（首列「待审批」虚拟泳道，`pending_approval_count > 0` 的任务只进该列）；**列表**为独立「待审批」可排序列；**卡片**为头部红色「N 待审批」标记。列表/卡片的状态筛选下拉均含「待审批」虚拟项（筛选项与过滤谓词收口在 `constants.tsx` 的 `TASK_STATUS_FILTER_OPTIONS` + `matchesTaskStatusFilter`，两视图共享唯一事实源）。
+
 ## 数据流图（前端 → 后端）
 
 ```mermaid
@@ -67,6 +69,12 @@ classDiagram
     +loading: boolean
     +onSelectTask: function
   }
+  class TaskItem_063 {
+    +pending_approval_count?: number
+  }
+  TasksKanbanView --> TaskItem_063 : laneOfTask 待审批优先入首列
+  TasksCardView --> TaskItem_063 : 头部红色标记
+  TasksTableView --> TaskItem_063 : 独立待审批列
   class TasksCardView {
     +tasks: TaskItem[]
     +searchKeyword: string
@@ -91,7 +99,7 @@ stateDiagram-v2
   card --> list: 点列表 Segmented
   card --> kanban: 点看板 Segmented
   note right of list: localStorage 同步更新\n为 ntd_tasks_view
-  note right of kanban: 看板不做 keyword filter\n不传 searchKeyword
+  note right of kanban: 看板不做 keyword filter\n不传 searchKeyword\n063：5 列泳道，首列待审批
   note right of card: 三态共享同一份 tasks\n切换不触发后端请求
 ```
 

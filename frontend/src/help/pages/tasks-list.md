@@ -7,6 +7,7 @@
 任务列表页（`TasksPage`）是「任务」命名空间的列表态入口，由顶栏 `PageCard` 全屏挂载。
 顶栏从左到右摆放：搜索框（`searchKeyword`，三态共享）→ 时间窗分段（`hours`，`showAll` 形态，`null` = 不过滤）→ 刷新按钮 → 视图切换 `Segmented`（列表/看板/卡片）→ 新建按钮。
 三态视图共享同一份任务数据（`tasks`，由 `reload` 拉取全量），时间过滤与搜索过滤在页级 `useMemo` 统一完成，三态视图 props 零改动即可复用。
+列表接口为每个任务派生下发 `pending_approval_count`（该任务所有执行中未处理的人工审批环节总数）：**有待审批的任务在列表（独立「待审批」列）、看板（首列「待审批」泳道）、卡片（头部红色标记）三态下都醒目标出**，点击标记直达详情「执行历史」Tab 并自动展开待审批执行（063）。
 视图模式持久化到 `localStorage`（键 `ntd_tasks_view`），时间窗不持久化（管理视角默认收窄会让老任务消失）。
 点击任务行通过 `useViewState.pushUrl('tasks', { id })` 写入 URL hash `#/tasks?id=<id>`，SPA 内同步 `setSelectedTaskId` 立即进入详情态全屏。
 浏览器前进/后退监听 `popstate`，从 URL hash 同步 `selectedTaskId`，保证路由与组件态一致。
@@ -24,7 +25,9 @@ flowchart LR
   db_list -->|"SELECT * FROM tasks<br/>WHERE workspace_id=?<br/>ORDER BY id DESC"| tasks_tbl[(tasks 表)]
   list_tasks -->|"批量取模板/环路<br/>fetch_latest_execution"| loop_exec_tbl[(loop_executions 表)]
   loop_exec_tbl -->|"trigger_meta.requirement<br/>started_at 倒序取首行"| list_tasks
-  list_tasks -->|"组装 TaskItem[]<br/>含 template_name/version/complexity<br/>latest_execution_status/requirement"| Page
+  list_tasks -->|"批量统计待审批<br/>count_pending_approvals_by_task_ids"| approvals[(loop_step_executions 表)]
+  approvals -->|"approval_status='pending'<br/>OR status='pending_approval'<br/>GROUP BY task_id"| list_tasks
+  list_tasks -->|"组装 TaskItem[]<br/>含 template_name/version/complexity<br/>latest_execution_status/requirement<br/>pending_approval_count（063）"| Page
   listLoops -->|"GET /api/v1/workspaces/{ws}/loops"| list_loops["handlers::loop_::list_loops"]
   list_loops --> loops_tbl[(loops 表)]
   list_loops -->|"过滤 process_template_id 非空<br/>映射 LoopLite[]"| Page
