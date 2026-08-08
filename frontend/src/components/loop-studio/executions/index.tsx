@@ -9,7 +9,7 @@
 // 子组件 TokenSummaryBar / BlackboardDrawer / StepExecList 仅在本目录内自用，
 // 外部 caller 需要时直接 import 对应文件，不再 re-export。
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { App as AntApp, Button, Empty, Skeleton, Tag, Tooltip, Pagination } from 'antd';
 import {
   ReadOutlined,
@@ -31,11 +31,17 @@ interface Props {
   loopName: string;
   onTotalChange?: (total: number) => void;
   onExecutionTrace?: (tracedStepIds: number[], sequenceMap: Record<number, number>) => void;
+  /**
+   * 063：首屏加载后自动展开第一条 pending_approval_count>0 的执行行，
+   * 供任务列表「待审批」标记跳转后一步到位看到审批按钮。
+   * 仅初始触发一次；缺省 false，Loop 侧既有调用点行为不变。
+   */
+  autoExpandFirstPending?: boolean;
 }
 
 const DEFAULT_PAGE_LIMIT = 5;
 
-export function LoopExecutionsPanel({ loopId, workspaceId, loopName: _loopName, onTotalChange, onExecutionTrace }: Props) {
+export function LoopExecutionsPanel({ loopId, workspaceId, loopName: _loopName, onTotalChange, onExecutionTrace, autoExpandFirstPending }: Props) {
   const { message } = AntApp.useApp();
   const [items, setItems] = useState<LoopExecutionDto[]>([]);
   const [total, setTotal] = useState(0);
@@ -68,48 +74,9 @@ export function LoopExecutionsPanel({ loopId, workspaceId, loopName: _loopName, 
     }
   }, [loopId, workspaceId, handleOpenBlackboard, message]);
 
-  // 加载一页执行记录
-  const loadPage = useCallback((p: number) => {
-    setLoading(true);
-    dbLoops.listExecutions(workspaceId ?? 0, loopId, { page: p, limit: DEFAULT_PAGE_LIMIT })
-      .then((res) => {
-        setItems(res.items);
-        setTotal(res.total);
-        onTotalChange?.(res.total);
-        setPage(p);
-      })
-      .catch(() => {
-        setItems([]);
-      })
-      .finally(() => setLoading(false));
-  }, [loopId, workspaceId]);
-
-  useEffect(() => { loadPage(1); }, [loadPage]);
-
-  // 实际的刷新逻辑：拉取列表 + 展开详情
-  const doRefresh = useCallback(() => {
-    dbLoops.listExecutions(workspaceId ?? 0, loopId, { page, limit: DEFAULT_PAGE_LIMIT })
-      .then((res) => {
-        setItems(res.items);
-        setTotal(res.total);
-        onTotalChange?.(res.total);
-        if (expandedId !== null) {
-          return dbLoops.getExecution(workspaceId ?? 0, loopId, expandedId);
-        }
-        return null;
-      })
-      .then((detail) => {
-        if (detail) {
-          setExpandedDetail(detail);
-        }
-      })
-      .catch(() => {});
-  }, [page, loopId, workspaceId, expandedId]);
-
-  // WebSocket 事件触发刷新（后端写入完成后才发事件，无需延迟）
-  useExecutionEvents(useCallback(() => {
-    doRefresh();
-  }, [doRefresh]));
+  // 063 自动展开守卫：ref 而非 state——置位不需要触发重渲染，
+  // 且能保证「仅首屏触发一次」，WebSocket 刷新（doRefresh）不再自动展开打扰用户。
+  const autoExpandedRef = useRef(false);
 
   // 展开行: 拉取该 execution 的 step 详情
   const handleExpand = useCallback(async (execId: number) => {
@@ -142,6 +109,65 @@ export function LoopExecutionsPanel({ loopId, workspaceId, loopName: _loopName, 
       setExpandedLoading(false);
     }
   }, [expandedId, loopId, message, onExecutionTrace]);
+
+  // 加载一页执行记录
+  const loadPage = useCallback((p: number) => {
+    setLoading(true);
+    dbLoops.listExecutions(workspaceId ?? 0, loopId, { page: p, limit: DEFAULT_PAGE_LIMIT })
+      .then((res) => {
+        setItems(res.items);
+        setTotal(res.total);
+        onTotalChange?.(res.total);
+        setPage(p);
+      })
+      .catch(() => {
+        setItems([]);
+      })
+      .finally(() => setLoading(false));
+    // 依赖刻意不含 handleExpand：handleExpand 随 expandedId 变化会重建，
+    // 若被 loadPage 依赖，展开行会连带触发 loadPage(1) 把列表重置回第 1 页（回归）。
+  }, [loopId, workspaceId]);
+
+  useEffect(() => { loadPage(1); }, [loadPage]);
+
+  // 063：首屏数据到达后自动展开首条待审批执行，让「待审批」跳转一步到位看到审批按钮。
+  // 独立 effect 监听 items 而非写进 loadPage.then：避免 loadPage 依赖 handleExpand 引发的上述回归。
+  // autoExpandedRef 守卫保证仅触发一次——WebSocket 刷新更新 items 时不会重复展开/收起打扰用户。
+  // 仅在当前页（首页）内查找：待审批执行按时间倒序大概率在首页，不跨页拉取（YAGNI）。
+  useEffect(() => {
+    if (!autoExpandFirstPending || autoExpandedRef.current) return;
+    const firstPending = items.find((e) => e.pending_approval_count > 0);
+    if (firstPending) {
+      // 先置守卫再异步展开：防止展开过程中 items 被刷新再次命中本分支。
+      autoExpandedRef.current = true;
+      handleExpand(firstPending.id);
+    }
+  }, [items, autoExpandFirstPending, handleExpand]);
+
+  // 实际的刷新逻辑：拉取列表 + 展开详情
+  const doRefresh = useCallback(() => {
+    dbLoops.listExecutions(workspaceId ?? 0, loopId, { page, limit: DEFAULT_PAGE_LIMIT })
+      .then((res) => {
+        setItems(res.items);
+        setTotal(res.total);
+        onTotalChange?.(res.total);
+        if (expandedId !== null) {
+          return dbLoops.getExecution(workspaceId ?? 0, loopId, expandedId);
+        }
+        return null;
+      })
+      .then((detail) => {
+        if (detail) {
+          setExpandedDetail(detail);
+        }
+      })
+      .catch(() => {});
+  }, [page, loopId, workspaceId, expandedId]);
+
+  // WebSocket 事件触发刷新（后端写入完成后才发事件，无需延迟）
+  useExecutionEvents(useCallback(() => {
+    doRefresh();
+  }, [doRefresh]));
 
 
   return (

@@ -41,6 +41,9 @@ pub struct TaskItem {
     pub complexity: Option<String>,
     pub latest_execution_status: Option<String>,
     pub latest_execution_requirement: Option<String>,
+    /// 该任务所有执行中未处理的待审批环节总数（063：列表透出，派生不落库）。
+    /// 口径与 NTD-004 一致；无执行或无待审批时为 0。
+    pub pending_approval_count: i32,
     pub created_at: Option<String>,
 }
 
@@ -87,6 +90,7 @@ fn build_task_item(
     template: Option<&process_templates::Model>,
     version: Option<String>,
     latest: (Option<String>, Option<String>),
+    pending_approval_count: i32,
 ) -> TaskItem {
     TaskItem {
         id: t.id,
@@ -110,6 +114,7 @@ fn build_task_item(
         complexity: template.map(|p| p.complexity.clone()),
         latest_execution_status: latest.0,
         latest_execution_requirement: latest.1,
+        pending_approval_count,
         created_at: t.created_at,
     }
 }
@@ -138,6 +143,9 @@ pub async fn list_tasks(
     // 一次批量取所有 task 的最近一次执行（status + trigger_meta），消除逐 task 的 N+1（091 性能优化）。
     let task_ids: Vec<i64> = tasks.iter().map(|t| t.id).collect();
     let latest_by_task = state.db.get_latest_execution_by_task_ids(&task_ids).await?;
+    // 063：同批 task_ids 再查一次待审批计数（单条 SQL 按 task 分组），
+    // 让列表/看板/卡片不进详情即可感知「该任务有 N 条环节等我审批」。
+    let pending_by_task = state.db.count_pending_approvals_by_task_ids(&task_ids).await?;
     let mut items = Vec::with_capacity(tasks.len());
     for t in tasks {
         let template = t.template_id.and_then(|tid| templates_by_id.get(&tid).copied());
@@ -152,7 +160,9 @@ pub async fn list_tasks(
         let latest_requirement = latest
             .and_then(|m| serde_json::from_str::<serde_json::Value>(&m.trigger_meta).ok())
             .and_then(|v| v.get("requirement").and_then(|r| r.as_str().map(|s| s.to_string())));
-        items.push(build_task_item(t, template, version, (latest_status, latest_requirement)));
+        // 无待审批记录的任务缺省 0，保证字段恒为非负整数，前端无需判空。
+        let pending_approval_count = pending_by_task.get(&t.id).copied().unwrap_or(0);
+        items.push(build_task_item(t, template, version, (latest_status, latest_requirement), pending_approval_count));
     }
     Ok(ApiResponse::ok(items))
 }

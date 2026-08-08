@@ -919,6 +919,54 @@ impl Database {
         Ok(map)
     }
 
+    /// 按 task 批量统计待审批环节数，返回 task_id → count 映射（063 任务待审批透出）。
+    ///
+    /// 与 count_pending_approvals_by_execution_ids 的差别仅在分组维度（task vs execution）：
+    /// 任务列表需要「该任务是否还有要我处理的审批」，因此统计范围是该 task **所有执行**
+    /// 的未处理审批总数（与 Loop 列表 count_pending_approvals_for_loop 同口径）——
+    /// 若只统计最近一次执行，旧执行滞留的审批会被新执行掩盖，用户永远收不到提醒。
+    ///
+    /// 待审批口径沿用 NTD-004：approval_status='pending' OR status='pending_approval'，
+    /// 两条暂停路径互斥产生，OR 条件不会重复计数。
+    pub async fn count_pending_approvals_by_task_ids(
+        &self,
+        task_ids: &[i64],
+    ) -> Result<std::collections::HashMap<i64, i32>, sea_orm::DbErr> {
+        use sea_orm::{ConnectionTrait, Statement};
+        let mut map = std::collections::HashMap::new();
+        // 空入参短路：避免拼出 IN () 的非法 SQL，与兄弟方法的防御模式一致。
+        if task_ids.is_empty() {
+            return Ok(map);
+        }
+        // 任务 id 来自内部调用方（list_tasks 收集的内存 id），非用户输入，直接拼接无注入面。
+        let ids_str: String = task_ids
+            .iter()
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "SELECT le.task_id, COUNT(*) AS n \
+             FROM loop_step_executions lse \
+             INNER JOIN loop_executions le ON le.id = lse.loop_execution_id \
+             WHERE le.task_id IN ({}) \
+               AND (lse.approval_status = 'pending' OR lse.status = 'pending_approval') \
+             GROUP BY le.task_id",
+            ids_str
+        );
+        let rows = self
+            .conn
+            .query_all(Statement::from_string(DbBackend::Sqlite, sql))
+            .await?;
+        for row in rows {
+            // task_id 列可空（历史数据）：WHERE IN 已排除 NULL，但防御性跳过保持健壮。
+            if let Ok(Some(task_id)) = row.try_get_by::<Option<i64>, _>("task_id") {
+                let n: i32 = row.try_get_by("n").unwrap_or(0);
+                map.insert(task_id, n);
+            }
+        }
+        Ok(map)
+    }
+
     /// 终态化 loop execution: 设置 status、finished_at 并按需累加 completed/failed 计数。
     ///
     /// 计数更新由调用方传入,因为 runner 在每个阶段结束时增量更新,效率更高。
@@ -2638,6 +2686,134 @@ mod loop_approval_tests {
             .await
             .expect("count");
         assert_eq!(counts.get(&exec_id).copied().unwrap_or(0), 0);
+    }
+
+    /// 造一条带 task_id 的 pending_approval 环节执行（063 测试辅助），
+    /// 返回 (task_id, step_execution_id)。复用 seed 的四级外键建法，仅在 loop_executions
+    /// 上额外挂 task_id（列可空，INSERT 时需先建 tasks 行满足 FK）。
+    async fn seed_pending_step_execution_with_task(db: &Database) -> (i64, i64) {
+        db.exec("INSERT INTO todos (title, prompt, status) VALUES ('t', 'p', 'pending')")
+            .await
+            .expect("insert todo");
+        let todo_id = max_id(db, "todos").await;
+        db.exec("INSERT INTO loops (name) VALUES ('L')")
+            .await
+            .expect("insert loop");
+        let loop_id = max_id(db, "loops").await;
+        db.exec(&format!(
+            "INSERT INTO loop_steps (loop_id, name, todo_id, enabled) VALUES ({loop_id}, 's', {todo_id}, 1)"
+        ))
+        .await
+        .expect("insert step");
+        let step_id = max_id(db, "loop_steps").await;
+        // loop_executions.task_id 有 FK→tasks，先建 task 行再引用（与既有 task 测试同模式）。
+        db.exec("INSERT INTO tasks (title, description, status, created_by) VALUES ('T','d','running','test')")
+            .await
+            .expect("insert task");
+        let task_id = max_id(db, "tasks").await;
+        db.exec(&format!(
+            "INSERT INTO loop_executions (loop_id, trigger_type, status, started_at, task_id) \
+             VALUES ({loop_id}, 'manual', 'running', datetime('now'), {task_id})"
+        ))
+        .await
+        .expect("insert loop_execution");
+        let exec_id = max_id(db, "loop_executions").await;
+        db.exec(&format!(
+            "INSERT INTO loop_step_executions (loop_execution_id, step_id, todo_id, status, sequence_index) \
+             VALUES ({exec_id}, {step_id}, {todo_id}, 'pending_approval', 1)"
+        ))
+        .await
+        .expect("insert step_execution");
+        let se_id = max_id(db, "loop_step_executions").await;
+        (task_id, se_id)
+    }
+
+    /// 按 task 统计：同一 task 多条执行各挂 1 条待审批时应累加，
+    /// 避免旧执行滞留的审批被新执行掩盖（063 口径决策）。
+    #[tokio::test]
+    async fn test_count_pending_approvals_by_task_ids_aggregates_across_executions() {
+        let db = fresh_db().await;
+        let (task_id, _se1) = seed_pending_step_execution_with_task(&db).await;
+        // 同一 task 再跑一次执行（复用同一 loop/step/todo），同样停在待审批。
+        let loop_id: i64 = db
+            .conn
+            .query_one(Statement::from_string(DbBackend::Sqlite, "SELECT MAX(id) AS m FROM loops"))
+            .await
+            .expect("query loop id")
+            .expect("loop row exists")
+            .try_get_by("m")
+            .expect("loop id readable");
+        let step_id = max_id(&db, "loop_steps").await;
+        let todo_id = max_id(&db, "todos").await;
+        db.exec(&format!(
+            "INSERT INTO loop_executions (loop_id, trigger_type, status, started_at, task_id) \
+             VALUES ({loop_id}, 'manual', 'running', datetime('now'), {task_id})"
+        ))
+        .await
+        .expect("insert second execution");
+        let exec2 = max_id(&db, "loop_executions").await;
+        db.exec(&format!(
+            "INSERT INTO loop_step_executions (loop_execution_id, step_id, todo_id, status, sequence_index) \
+             VALUES ({exec2}, {step_id}, {todo_id}, 'pending_approval', 1)"
+        ))
+        .await
+        .expect("insert second step_execution");
+
+        let counts = db
+            .count_pending_approvals_by_task_ids(&[task_id])
+            .await
+            .expect("count");
+        assert_eq!(
+            counts.get(&task_id).copied().unwrap_or(0),
+            2,
+            "同一 task 两条执行的待审批应累加"
+        );
+    }
+
+    /// 按 task 统计同样覆盖两条暂停路径（NTD-004 口径）：旧评分路径写 approval_status='pending'，
+    /// 工艺路径只写 status='pending_approval'，两者都必须被计入。
+    #[tokio::test]
+    async fn test_count_pending_approvals_by_task_ids_covers_both_paths() {
+        let db = fresh_db().await;
+        // seed 产生的是工艺路径（仅 status='pending_approval'）。
+        let (task_id, se_id) = seed_pending_step_execution_with_task(&db).await;
+        // 追加旧评分路径标记：approval_status='pending'；与 status 同时命中时 OR 不重复计数。
+        db.set_step_execution_approval_status(se_id, "pending")
+            .await
+            .expect("set approval_status");
+
+        let counts = db
+            .count_pending_approvals_by_task_ids(&[task_id])
+            .await
+            .expect("count");
+        assert_eq!(
+            counts.get(&task_id).copied().unwrap_or(0),
+            1,
+            "两条路径条件同时命中应按一行计一次"
+        );
+    }
+
+    /// 边界：空入参返回空 map（避免拼出 IN () 非法 SQL）；无待审批的 task 不出现在 map。
+    #[tokio::test]
+    async fn test_count_pending_approvals_by_task_ids_empty_and_absent() {
+        let db = fresh_db().await;
+        assert!(
+            db.count_pending_approvals_by_task_ids(&[])
+                .await
+                .expect("count")
+                .is_empty(),
+            "空入参应返回空 map"
+        );
+        let (_task_id, se_id) = seed_pending_step_execution_with_task(&db).await;
+        // 审批完成后不再计入；map 中不应出现该 task。
+        db.approve_step_execution(se_id, 100, "success", None)
+            .await
+            .expect("approve");
+        let counts = db
+            .count_pending_approvals_by_task_ids(&[1])
+            .await
+            .expect("count");
+        assert!(counts.is_empty(), "审批完成后 task 不应出现在 map");
     }
 }
 

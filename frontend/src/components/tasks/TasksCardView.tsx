@@ -18,10 +18,13 @@ import bundledApi from '@/api/bundled';
 import type { TaskItem } from '@/components/tasks/constants';
 import {
   STATUS_LABEL,
+  PendingApprovalTag,
+  TASK_STATUS_FILTER_OPTIONS,
   statusColor,
   complexityColor,
   complexityLabel,
   formatDateShort,
+  matchesTaskStatusFilter,
 } from '@/components/tasks/constants';
 
 const { Text, Paragraph } = Typography;
@@ -31,17 +34,9 @@ interface TasksCardViewProps {
   loading: boolean;
   searchKeyword: string;
   workspaceId: number;
-  onSelectTask: (taskId: number | null) => void;
+  /** tab 可选（063）：点待审批标记时传 'exec'，详情直达执行历史 Tab。 */
+  onSelectTask: (taskId: number | null, tab?: string) => void;
 }
-
-/** 状态筛选项。 */
-const STATUS_FILTER_OPTIONS = [
-  { value: 'all', label: '全部状态' },
-  { value: 'pending', label: '待执行' },
-  { value: 'running', label: '进行中' },
-  { value: 'success', label: '已完成' },
-  { value: 'failed', label: '失败' },
-];
 
 /** 复杂度筛选项。 */
 const COMPLEXITY_FILTER_OPTIONS = [
@@ -62,11 +57,14 @@ function TaskCard({
   task,
   workspaceId,
   onSelect,
+  onApprove,
   onTriggered,
 }: {
   task: TaskItem;
   workspaceId: number;
   onSelect: () => void;
+  /** 063：点待审批标记直达详情执行历史 Tab（与卡片本体点进概览区分开）。 */
+  onApprove: () => void;
   onTriggered: () => void;
 }) {
   // 再次执行 Modal 开关 + 输入态。
@@ -151,6 +149,8 @@ function TaskCard({
         <Tag color={statusColor(task.status)} style={{ fontSize: 11, margin: 0 }}>
           {STATUS_LABEL[task.status] ?? task.status}
         </Tag>
+        {/* 063：待审批标记与状态 Tag 同行展示，不进详情即可感知。 */}
+        <PendingApprovalTag count={task.pending_approval_count ?? 0} onApprove={onApprove} />
         <Text type="secondary" style={{ fontSize: 11, marginLeft: 'auto' }}>
           {formatDateShort(task.created_at)}
         </Text>
@@ -263,8 +263,8 @@ export function TasksCardView({
   const visibleTasks = useMemo(() => {
     const kw = searchKeyword.trim().toLowerCase();
     return tasks.filter((task) => {
-      // 状态过滤：all 跳过；其余匹配 task.status。
-      if (statusFilter !== 'all' && task.status !== statusFilter) return false;
+      // 状态过滤走共享谓词（constants.tsx 唯一事实源，含 063「待审批」虚拟项口径）。
+      if (!matchesTaskStatusFilter(task, statusFilter)) return false;
       // 复杂度过滤：all 跳过；未设置 complexity 的任务被过滤掉。
       if (complexityFilter !== 'all' && task.complexity !== complexityFilter) return false;
       // 关键词过滤：空跳过；匹配 title 或 latest_execution_requirement。
@@ -291,7 +291,7 @@ export function TasksCardView({
         size="small"
         value={statusFilter}
         onChange={setStatusFilter}
-        options={STATUS_FILTER_OPTIONS}
+        options={TASK_STATUS_FILTER_OPTIONS}
         style={{ width: 120 }}
         data-testid="tasks-card-status-filter"
       />
@@ -361,6 +361,7 @@ export function TasksCardView({
             task={task}
             workspaceId={workspaceId}
             onSelect={() => onSelectTask(task.id)}
+            onApprove={() => onSelectTask(task.id, 'exec')}
             onTriggered={() => onSelectTask(task.id)}
           />
         ))}
