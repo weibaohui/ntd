@@ -19,7 +19,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Button, message as antdMessage } from 'antd';
 import type { MessageInstance } from 'antd/es/message/interface';
 import { CaretDownOutlined, CaretUpOutlined } from '@ant-design/icons';
-import XMarkdown from '@ant-design/x-markdown';
+// 093：懒加载包装，避免 x-markdown 依赖树进入首屏静态图。
+import { LazyXMarkdown } from '@/components/common/LazyXMarkdown';
 import { CopyButton } from '@/components/CopyButton';
 
 // 折叠状态在 localStorage 中的 key 前缀；按 recordId 区分避免互相串扰
@@ -200,7 +201,7 @@ export function CollapsibleConclusion({
           className="conclusion-content"
           data-testid="conclusion-content"
         >
-          <XMarkdown content={result} />
+          <LazyXMarkdown content={result} />
         </div>
       )}
     </div>

@@ -10,7 +10,8 @@ import {
   RightOutlined,
   MessageOutlined,
 } from '@ant-design/icons';
-import XMarkdown from '@ant-design/x-markdown';
+// 093：改走共享懒加载包装，切断「首屏静态链 → vendor-md-editor(1.18MB)」的依赖边。
+import { LazyXMarkdown } from '@/components/common/LazyXMarkdown';
 import type { LogEntry, ChatMessage } from '@/types';
 // 策略模式实现：解析日志为聊天消息
 import { parseLogsToMessages } from '@/utils/logParserStrategy';
@@ -115,7 +116,7 @@ function CollapsibleCard({
 function ThinkingBlock({ content, timestamp }: { content: string; timestamp?: string }) {
   return (
     <CollapsibleCard type="thinking" timestamp={timestamp}>
-      <XMarkdown content={content} />
+      <LazyXMarkdown content={content} />
     </CollapsibleCard>
   );
 }
@@ -174,7 +175,7 @@ function ToolBlock({
 function ResultBlock({ content, timestamp }: { content: string; timestamp?: string }) {
   return (
     <CollapsibleCard type="output" timestamp={timestamp}>
-      <XMarkdown content={content} />
+      <LazyXMarkdown content={content} />
     </CollapsibleCard>
   );
 }
@@ -216,7 +217,7 @@ function ChatBubble({ message }: { message: ChatMessage }) {
       </div>
       <div className="chat-bubble">
         <div className="chat-bubble-content">
-          <XMarkdown content={content} />
+          <LazyXMarkdown content={content} />
         </div>
         {timestamp && <div className="chat-bubble-time">{formatTimeFull(timestamp)}</div>}
       </div>

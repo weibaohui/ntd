@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import XMarkdown from '@ant-design/x-markdown';
+// 093：懒加载包装，避免 x-markdown 依赖树进入首屏静态图。
+import { LazyXMarkdown } from '@/components/common/LazyXMarkdown';
 
 /** 可展开的 Prompt 内容展示组件 */
 export function PromptDisplay({ content }: { content: string }) {
@@ -33,7 +34,7 @@ export function PromptDisplay({ content }: { content: string }) {
             overflow: 'auto',
           }}
         >
-          <XMarkdown content={content} />
+          <LazyXMarkdown content={content} />
         </div>
       )}
     </div>

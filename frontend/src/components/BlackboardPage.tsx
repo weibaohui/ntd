@@ -27,7 +27,8 @@ import { Button, Skeleton, message, Modal, Form, InputNumber, Space, Progress, I
 import { ReloadOutlined, SettingOutlined, UnorderedListOutlined, MenuOutlined, DeleteOutlined } from '@ant-design/icons';
 import { PageCard } from '@/components/common/PageCard';
 import { TfiBlackboard } from 'react-icons/tfi';
-import { XMarkdown } from '@ant-design/x-markdown';
+// 093：本页面虽是 lazy 页面，仍统一走懒加载包装，杜绝未来被静态引用时回潮。
+import { LazyXMarkdown } from '@/components/common/LazyXMarkdown';
 import { useTheme } from '@/hooks/useTheme';
 import { useViewState } from '@/hooks/useViewState';
 import { useIsMobile } from '@/hooks/useIsMobile';
@@ -1238,7 +1239,7 @@ function BlackboardContent(props: BlackboardContentProps) {
         color: isDark ? '#e0e0e0' : '#333',
       }}
     >
-      <XMarkdown
+      <LazyXMarkdown
         // 强制纯文本：XMarkdown 默认会注入 inline style，
         // className 包一层让主题色与外层容器保持一致
         className={isDark ? 'x-markdown-dark' : 'x-markdown-light'}

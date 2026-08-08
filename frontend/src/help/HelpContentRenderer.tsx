@@ -5,9 +5,17 @@
 // 2. XMarkdown 的 components prop 按 HTML tagName 映射，code 组件接收 lang/block props。
 // 3. 拦截 ```mermaid 代码块，交给 MermaidDiagram 渲染；其他代码块走默认渲染。
 
-import XMarkdown from '@ant-design/x-markdown';
+// 093：运行时组件改懒加载包装（HelpPage 被 App.tsx 静态引用，是首屏链之一）；
+// 下方 type 导入在构建期擦除，不产生运行时依赖边，可保留。
+import { lazy, Suspense } from 'react';
+import { LazyXMarkdown } from '@/components/common/LazyXMarkdown';
 import type { ComponentProps } from '@ant-design/x-markdown/lib/XMarkdown/interface';
-import { MermaidDiagram } from './MermaidDiagram';
+
+// 093：MermaidDiagram 依赖 merslim → dagre（~270KB vendor-flow chunk 的首屏锚定来源）。
+// mermaid 图只在帮助内容含 ```mermaid 围栏时才需要，懒加载后帮助页首屏不再背负布局库。
+const MermaidDiagram = lazy(() =>
+  import('./MermaidDiagram').then((m) => ({ default: m.MermaidDiagram })),
+);
 
 interface HelpContentRendererProps {
   /** md 源码。 */
@@ -33,14 +41,20 @@ export function HelpContentRenderer({ source }: HelpContentRendererProps) {
         ? children.join('')
         : String(children ?? '');
     if (lang === 'mermaid') {
-      return <MermaidDiagram chart={text} />;
+      // Suspense 兜底用原始 mermaid 源码的 <pre>：本地 embedded 场景 chunk 加载仅毫秒级，
+      // 纯文本兜底保证加载一瞬内容可读，且与图表容器高度接近、布局不跳动。
+      return (
+        <Suspense fallback={<pre>{text}</pre>}>
+          <MermaidDiagram chart={text} />
+        </Suspense>
+      );
     }
     // 非 mermaid 代码块：用原生 <code> 渲染，保留 lang 用于语法高亮
     return <code className={props.className}>{children}</code>;
   }
 
   return (
-    <XMarkdown
+    <LazyXMarkdown
       content={source}
       components={{ code: CodeRenderer }}
     />
