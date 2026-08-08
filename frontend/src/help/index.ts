@@ -51,6 +51,7 @@ export const HELP_PAGES: HelpPage[] = [
     features: [
       { id: 'tasks-create', title: '新建任务', docFile: 'tasks-create.md' },
       { id: 'tasks-view-switch', title: '视图切换（列表/看板/卡片）', docFile: 'tasks-view-switch.md' },
+      { id: 'tasks-pending-approval', title: '待审批透出与直达审批', docFile: 'tasks-pending-approval.md' },
       { id: 'tasks-search', title: '搜索任务', docFile: 'tasks-search.md' },
       { id: 'tasks-time-filter', title: '时间窗过滤', docFile: 'tasks-time-filter.md' },
       { id: 'tasks-batch-delete', title: '批量删除任务', docFile: 'tasks-batch-delete.md' },
@@ -65,6 +66,7 @@ export const HELP_PAGES: HelpPage[] = [
       { id: 'task-detail-back', title: '返回列表', docFile: 'task-detail-back.md' },
       { id: 'task-detail-title', title: '动态详情标题', docFile: 'task-detail-title.md' },
       { id: 'task-detail-dag', title: '查看任务 DAG / 执行历史', docFile: 'task-detail-dag.md' },
+      { id: 'task-detail-discussion', title: '讨论区（论坛跟帖 + @触发执行）', docFile: 'task-detail-discussion.md' },
       { id: 'task-detail-open-todo', title: 'DAG 节点跳转事项', docFile: 'task-detail-open-todo.md' },
     ],
   },
