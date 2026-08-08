@@ -188,28 +188,37 @@ pub async fn events_handler(State(state): State<AppState>, ws: WebSocketUpgrade)
             .filter_map(|r| r.task_id.clone().map(|tid| (tid, r)))
             .collect();
         let record_ids: Vec<i64> = record_map.values().map(|r| r.id).collect();
-        let logs_map = state
-            .db
-            .get_all_execution_logs_for_records(&record_ids)
-            .await
-            .unwrap_or_else(|e| {
-                tracing::error!("[ws-events] 查询执行日志失败，Sync 降级为空日志: {e}");
-                std::collections::HashMap::new()
-            });
         // reconnect 时每个任务只回传最近 RECONNECT_LOG_CAP 条日志，避免长跑任务的全量日志
         // 把首帧撑爆（既卡 serde 序列化，也卡 WS 推送）。完整历史前端通过 REST 分页按需拉取（091）。
         const RECONNECT_LOG_CAP: usize = 200;
+        // 093：尾部摘要与全量条数拆成两个定向查询——窗口函数只读尾部 cap 行 + GROUP BY 聚合计数，
+        // 替代旧实现「全量读进内存再 split_off 丢弃 99%」；长跑任务（数万行）重连不再全表扫。
+        // 两个查询各自独立降级（WS 已升级无法回 HTTP 错误，沿用 056 决策的 error 日志 + 空 map），
+        // 互不影响：尾部查询失败时前端只见空日志，计数查询失败时只见 log_total=0。
+        let tails_map = state
+            .db
+            .get_tail_execution_logs_for_records(&record_ids, RECONNECT_LOG_CAP as i64)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::error!("[ws-events] 查询尾部执行日志失败，Sync 降级为空日志: {e}");
+                std::collections::HashMap::new()
+            });
+        let counts_map = state
+            .db
+            .count_execution_logs_for_records(&record_ids)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::error!("[ws-events] 统计执行日志条数失败，Sync 降级为 0: {e}");
+                std::collections::HashMap::new()
+            });
         // 收集「task_id → 最近 N 条日志」，统一交给 spawn_blocking 做 CPU 密集的 JSON 序列化，
         // 不占住 WS 升级后的 async 任务（091 性能优化）。
         let logs_to_serialize = running_tasks
             .iter()
             .filter_map(|t| {
                 let record = record_map.get(&t.task_id)?;
-                // logs_map 按 id 升序，取尾部即最近 N 条。
-                let mut logs = logs_map.get(&record.id).cloned().unwrap_or_default();
-                if logs.len() > RECONNECT_LOG_CAP {
-                    logs = logs.split_off(logs.len() - RECONNECT_LOG_CAP);
-                }
+                // tails_map 已在 SQL 层截尾并按 id 升序归位，语义与旧内存截尾完全一致。
+                let logs = tails_map.get(&record.id).cloned().unwrap_or_default();
                 Some((t.task_id.clone(), logs))
             })
             .collect::<Vec<_>>();
@@ -225,11 +234,11 @@ pub async fn events_handler(State(state): State<AppState>, ws: WebSocketUpgrade)
             if let Some(json) = serialized.get(&task.task_id) {
                 task.logs = json.clone();
             }
-            // 091：log_total 用 logs_map 的「全量」条数（logs_map 未被 RECONNECT_LOG_CAP 截断），
+            // 091/093：log_total 来自 COUNT(*) 聚合计数（原 logs_map 全量条数），
             // 告知前端「还有更多历史」——前端只收到最近 N 条，但能据此提示「共 M 条」，
             // 完整历史走执行记录详情页分页。无对应 record（DB 查询降级）时记 0。
             if let Some(record) = record_map.get(&task.task_id) {
-                task.log_total = logs_map.get(&record.id).map(|v| v.len() as i64).unwrap_or(0);
+                task.log_total = counts_map.get(&record.id).copied().unwrap_or(0);
             }
         }
         let sync_event = ExecEvent::Sync { tasks: running_tasks };
