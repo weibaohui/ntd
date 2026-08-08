@@ -552,6 +552,8 @@ export const bundledApi = {
       assigneeKind?: 'executor' | 'expert';
       assigneeName?: string;
       autoContinue?: boolean;
+      // 接力轮数上限覆盖（仅 delegate 模式）：N=任务级覆盖；undefined=沿用工作空间默认（omit 不下发）。
+      delegateMaxRounds?: number | null;
     },
     wsId: number,
   ): Promise<{ task_id: number; loop_id: number | null; execution_id: number | null }> {
@@ -562,7 +564,25 @@ export const bundledApi = {
       assignee_kind: params.assigneeKind,
       assignee_name: params.assigneeName,
       auto_continue: params.autoContinue,
+      // 仅在显式传入时下发，避免把 undefined 序列化成 null（后端 null=清除会误清；这里 undefined=omit）。
+      ...(params.delegateMaxRounds !== undefined
+        ? { delegate_max_rounds: params.delegateMaxRounds }
+        : {}),
     }));
+  },
+
+  /**
+   * 更新任务可变字段（需求 092）：当前仅「接力轮数上限覆盖」。
+   * - delegate_max_rounds=N（1..=50）→ 置任务级覆盖；
+   * - null → 清除覆盖，回退工作空间默认 → 兜底常量（「恢复默认」）。
+   * 仅委派任务支持；返回更新后的 raw 覆盖与有效上限。
+   */
+  async updateTask(
+    wsId: number,
+    taskId: number,
+    params: { delegate_max_rounds: number | null },
+  ): Promise<{ delegate_max_rounds: number | null; delegate_max_rounds_effective: number }> {
+    return unwrap(await api.patch(`/api/v1/workspaces/${wsId}/tasks/${taskId}`, params));
   },
 
   /** 为已有任务创建新执行 */

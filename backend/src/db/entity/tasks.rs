@@ -26,8 +26,12 @@ pub struct Model {
     /// 自动接力开关（0 关 / 1 开）；仅 `assignee_kind='expert'` 时允许为 1。
     /// 用 i64 与 SQLite INTEGER 列对齐，由 handler 层按 0/1 转 bool，避免 bool 映射歧义。
     pub auto_continue: i64,
-    /// 自动接力已执行轮数（护栏计数；达 `MAX_DELEGATE_ROUNDS` 上限强制停止）。
+    /// 自动接力已执行轮数（护栏计数；达「有效上限」强制停止，上限三级可配，见 task_posts.rs）。
     pub continue_rounds: i64,
+    /// 本任务接力轮数「上限阈值」覆盖（NULL=回退工作空间默认 → 兜底常量；三级解析
+    /// 见 `resolve_delegate_max_rounds`）。注意区别于 continue_rounds：本字段是用户可调的
+    /// 上限，后者是后端单调递增的「已跑计数」，前端不可直传（设计 §护栏不可绕过）。
+    pub delegate_max_rounds: Option<i64>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

@@ -1,12 +1,14 @@
-// 092-任务委派执行 P2：详情页「管家调度中 N/10」徽标验证。
+// 092-任务委派执行 P2：详情页「管家调度中 N/M」徽标验证。
 // 验证点（对应需求 092 验收标准 7）：委派 + 专家 + 自动接力任务，详情头部展示调度进度徽标。
 //
 // 策略说明：
 // - 走真实「新建任务」提交流程（非纯 UI 联动），因为徽标依赖后端落库的委派字段——
 //   委派任务一经创建即带 execution_mode=delegate + auto_continue=1 + continue_rounds=0，
-//   详情头部据此渲染徽标「管家调度中 0/10」。提交会用当前选中工作空间建任务，
+//   详情头部据此渲染徽标「管家调度中 0/M」。提交会用当前选中工作空间建任务，
 //   天然规避「种子任务所在工作空间与默认选中不一致」的可达性问题。
 // - 徽标在创建瞬间（continue_rounds=0）即可见；专家首跑尚未完成，故断言 N=0。
+// - **M 为三级解析的有效上限**（护栏配置化，092）：任务未覆盖 + 工作空间未配置时 M=兜底 10；
+//   本用例不预设工作空间默认，故断言用 /\d+/ 容纳 M 随配置变化，避免与配置化用例并发时误判。
 // - afterAll 删除本次创建的任务：finalize 接力入口会据此跳过（任务不存在 → 不再推进），
 //   避免专家结论里若含 @ 触发失控接力链路，污染开发库。
 
@@ -76,11 +78,12 @@ test.describe('092 委派自动接力徽标', () => {
     await row.waitFor({ state: 'visible', timeout: 15000 });
     await row.click();
 
-    // 详情头部出现后，断言管家调度徽标：文案「管家调度中 N/10」，N 为已完成的接力轮数。
-    // 创建瞬间首跑尚未完成 → N=0；用正则容纳「首跑恰好完成一轮」的竞态，避免误判。
-    const badge = page.locator('.ant-tag', { hasText: /管家调度中\s*\d+\s*\/\s*10/ });
+    // 详情头部出现后，断言管家调度徽标：文案「管家调度中 N/M」，N 为已完成的接力轮数，
+    // M 为三级解析的有效上限（护栏配置化）。创建瞬间首跑尚未完成 → N=0；
+    // 用 /\d+/ 容纳 M 随工作空间/任务配置变化，避免与配置化用例并发时硬编码 10 误判。
+    const badge = page.locator('.ant-tag', { hasText: /管家调度中\s*\d+\s*\/\s*\d+/ });
     await expect(badge).toBeVisible({ timeout: 15000 });
-    await expect(badge).toHaveText(/管家调度中\s*0\s*\/\s*10/);
+    await expect(badge).toHaveText(/管家调度中\s*0\s*\/\s*\d+/);
 
     // 截图留档（test-results 由 Playwright 管理且已 gitignore，不入库）。
     await page.screenshot({ path: 'test-results/092-delegate-relay-badge.png' });

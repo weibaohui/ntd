@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tokio::time::sleep;
 
-use crate::handlers::{workspace_guard, AppError, AppState};
+use crate::handlers::{task_posts, workspace_guard, AppError, AppState};
 use crate::models::ApiResponse;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -821,26 +821,44 @@ pub async fn get_workspace_settings(
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    match settings {
-        Some(s) => Ok(ApiResponse::ok(serde_json::json!({
-            "workspace_id": s.workspace_id,
-            "default_response_type": s.default_response_type,
-            "default_response_todo_id": s.default_response_todo_id,
-            "default_response_loop_id": s.default_response_loop_id,
-            "default_response_executor": s.default_response_executor,
-            "system_prompt": s.system_prompt,
-            "updated_at": s.updated_at,
-        }))),
-        None => Ok(ApiResponse::ok(serde_json::json!({
-            "workspace_id": workspace_id,
-            "default_response_type": "todo",
-            "default_response_todo_id": null,
-            "default_response_loop_id": null,
-            "default_response_executor": null,
-            "system_prompt": null,
-            "updated_at": null,
-        }))),
-    }
+    // 合并 Some/None 两分支：None 时回退到与「未配置」等价的默认展示口径，避免两段近乎重复的 json!。
+    // 各字段从 Model 取值或回退默认；relay 上限额外算 effective（raw NULL → 兜底常量）。
+    let (resp_type, todo_id, loop_id, executor, prompt, raw_max, updated_at) = match settings {
+        Some(s) => (
+            s.default_response_type,
+            s.default_response_todo_id,
+            s.default_response_loop_id,
+            s.default_response_executor,
+            s.system_prompt,
+            s.delegate_max_rounds,
+            s.updated_at,
+        ),
+        None => (
+            "todo".to_string(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ),
+    };
+    // effective：raw 为 NULL（未配置）或非法 0 时回退终极兜底常量；前端 placeholder/提示读它，永不硬编码 10。
+    let max_effective = raw_max
+        .filter(|&x| x > 0)
+        .unwrap_or(crate::handlers::task_posts::MAX_DELEGATE_ROUNDS);
+    Ok(ApiResponse::ok(serde_json::json!({
+        "workspace_id": workspace_id,
+        "default_response_type": resp_type,
+        "default_response_todo_id": todo_id,
+        "default_response_loop_id": loop_id,
+        "default_response_executor": executor,
+        "system_prompt": prompt,
+        // raw：用户显式配置的上限（NULL=未配置）；effective：解析后实际生效值。
+        "delegate_max_rounds": raw_max,
+        "delegate_max_rounds_effective": max_effective,
+        "updated_at": updated_at,
+    })))
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -852,6 +870,11 @@ pub struct UpdateWorkspaceSettingsRequest {
     /// 工作空间级共识 prompt（需求 022）。
     /// Some(含空串) 覆写；None 不动。用户清空时前端传空串。
     pub system_prompt: Option<String>,
+    /// 工作空间级「委派接力轮数上限」默认（需求 092）。
+    /// 语义与任务 PATCH 一致：null=清除回退兜底常量；N（1..=50）=置默认。
+    /// 注：本字段是 settings 表单唯一需要「恢复默认」动作的字段，故 null=清除而非增量跳过
+    /// （区别于同 struct 其它字段 None=skip）；表单恒整表保存，不会因漏传而误清。
+    pub delegate_max_rounds: Option<i64>,
 }
 
 /// 更新工作空间的设置
@@ -878,6 +901,15 @@ pub async fn update_workspace_settings(
         req.default_response_loop_id,
         req.default_response_executor,
         req.system_prompt,
+    )
+    .await
+    .map_err(|e| AppError::Internal(e.to_string()))?;
+    // relay 上限走独立 DAO（未并入 upsert，免波及 11 处无关调用点）；越界复用集中口径，null=清除。
+    task_posts::validate_delegate_max_rounds(req.delegate_max_rounds)?;
+    crate::db::workspace_setting::update_workspace_delegate_max_rounds(
+        &state.db,
+        workspace_id,
+        req.delegate_max_rounds,
     )
     .await
     .map_err(|e| AppError::Internal(e.to_string()))?;
