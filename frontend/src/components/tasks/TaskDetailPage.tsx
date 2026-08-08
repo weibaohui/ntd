@@ -8,7 +8,9 @@
 
 import { useState } from 'react';
 import { OrderedListOutlined } from '@ant-design/icons';
-import { useApp } from '@/hooks/useApp';
+// 093：本组件只消费 todo 域状态，用细粒度 useTodos 替代合并版 useApp，
+// 执行态（进度/统计推送）变化不再触发本组件重渲染。
+import { useTodos } from '@/hooks/useTodoContext';
 import { PageCard } from '@/components/common/PageCard';
 import { TaskDetailPanel } from './TaskDetailPanel';
 
@@ -32,7 +34,7 @@ interface TaskDetailPageProps {
 export function TaskDetailPage({
   taskId, onBack, onSelectTodo, onLoopChanged,
 }: TaskDetailPageProps) {
-  const { state } = useApp();
+  const { state } = useTodos();
   const wsId = state.selectedWorkspace ?? 0;
   const [detailTitle, setDetailTitle] = useState<string>(`任务 #${taskId}`);
 

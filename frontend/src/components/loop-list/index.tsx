@@ -13,7 +13,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { message } from 'antd';
 import { RetweetOutlined } from '@ant-design/icons';
 import * as dbLoops from '@/utils/database/loops';
-import { useApp } from '@/hooks/useApp';
+// 093：本组件只消费 todo 域状态，用细粒度 useTodos 替代合并版 useApp，
+// 执行态（进度/统计推送）变化不再触发本组件重渲染。
+import { useTodos } from '@/hooks/useTodoContext';
 import { PageCard } from '@/components/common/PageCard';
 import { WorkspaceLoopConfigPage } from '@/components/settings/workspace/WorkspaceLoopConfigPage';
 import { LoopListView } from './LoopListView';
@@ -73,7 +75,7 @@ export function LoopListPage({
   onLoopChanged,
   loopUpdateCount = 0,
 }: LoopListPageProps) {
-  const { state } = useApp();
+  const { state } = useTodos();
   const workspaceId = state.selectedWorkspace;
   const [searchKeyword, setSearchKeyword] = useState('');
 

@@ -4,7 +4,9 @@
 // 避免主 todos 列表为它 JOIN 放大；空引用时整体不渲染。
 
 import { useEffect, useState } from 'react';
-import { useApp } from '@/hooks/useApp';
+// 093：本组件只消费 todo 域状态，用细粒度 useTodos 替代合并版 useApp，
+// 执行态（进度/统计推送）变化不再触发本组件重渲染。
+import { useTodos } from '@/hooks/useTodoContext';
 import { useViewState } from '@/hooks/useViewState';
 import { getReferencingLoops } from '@/utils/database/todos';
 import { ReferencingLoops } from '@/components/common/ReferencingLoops';
@@ -15,7 +17,7 @@ interface ReferencingLoopsSectionProps {
 }
 
 export function ReferencingLoopsSection({ todoId }: ReferencingLoopsSectionProps) {
-  const { state } = useApp();
+  const { state } = useTodos();
   // 028：环路详情独立路由 /#/loops/:id，用 pushUrl 让 history.back 回到事项详情
   const { pushUrl } = useViewState();
   // null = 尚未加载完成（不渲染，避免闪烁）；空数组 = 无引用（不渲染）

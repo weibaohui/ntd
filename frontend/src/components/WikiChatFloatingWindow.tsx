@@ -9,7 +9,9 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { Button, Tooltip, Drawer, Modal, message } from 'antd';
 import { MessageOutlined, CloseOutlined } from '@ant-design/icons';
 import { useTheme } from '@/hooks/useTheme';
-import { useApp } from '@/hooks/useApp';
+// 093：本组件只消费 todo 域状态，用细粒度 useTodos 替代合并版 useApp，
+// 执行态（进度/统计推送）变化不再触发本组件重渲染。
+import { useTodos } from '@/hooks/useTodoContext';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { getLastExecutor, setLastExecutor } from '@/constants';
 import { chatWithWiki } from '@/utils/database/blackboard';
@@ -36,7 +38,7 @@ interface WikiChatFloatingWindowProps {
 
 /** 全局 Wiki 对话漂浮窗口主组件 */
 export function WikiChatFloatingWindow({ defaultMode = 'minimized', forceMode, onClose }: WikiChatFloatingWindowProps) {
-  const { state, dispatch } = useApp();
+  const { state, dispatch } = useTodos();
   const { themeMode } = useTheme();
   const isDark = themeMode === 'dark';
   const isMobile = useIsMobile();

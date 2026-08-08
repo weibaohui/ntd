@@ -10,7 +10,9 @@ import {
 } from '@ant-design/icons';
 import { PageCard } from '@/components/common/PageCard';
 import { TimeRangeSegmented } from '@/components/common/TimeRangeSegmented';
-import { useApp } from '@/hooks/useApp';
+// 093：本组件只消费 todo 域状态，用细粒度 useTodos 替代合并版 useApp，
+// 执行态（进度/统计推送）变化不再触发本组件重渲染。
+import { useTodos } from '@/hooks/useTodoContext';
 import { useViewState, type BoardMode } from '@/hooks/useViewState';
 import { KanbanBoard } from './KanbanBoard';
 import { RunningBoard } from './running-board';
@@ -26,7 +28,7 @@ import type { RecentCompletedTodo, Tag, ExecutionRecord, ProjectDirectory } from
 // 本文件不再内联 TIME_OPTIONS，避免与 kanban/constants 的历史重复问题重演。
 
 export function MemorialBoard() {
-  const { state, dispatch } = useApp();
+  const { state, dispatch } = useTodos();
   const { boardMode, replaceUrl, pushUrl } = useViewState();
   const handleBoardModeChange = (mode: BoardMode) => {
     replaceUrl('memorial', { mode });
