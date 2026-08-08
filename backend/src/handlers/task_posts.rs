@@ -510,7 +510,10 @@ async fn cancel_running_post_execution(state: &AppState, record_id: i64) {
 /// 自动接力（P2）将传 `discussion_auto`。
 ///
 /// 入参 `content` 由调用方先 trim 判空；`parent_post_id` 决定是主楼层还是楼中楼。
-/// 返回 `(人帖 JSON, 智能体占位帖 Option)`——未 @ 到执行器/专家时第二项为 None（纯评论）。
+/// `force_mention`：调用方已服务端校验存在的强制触发目标（委派首帖用）；传 Some 时直接注入
+/// mentions，绕过文本 @ 解析——避免 assignee 名字含空格/标点时 extract_at_tokens 截断 token、
+/// 首帖 @ 不命中导致静默不触发执行（人工发帖传 None，仍走文本解析）。
+/// 返回 `(人帖 JSON, 智能体占位帖 Option)`——未 @ 到执行器/专家且无 force 时第二项为 None（纯评论）。
 pub(crate) async fn land_mention_post(
     state: &AppState,
     task: &tasks::Model,
@@ -518,10 +521,17 @@ pub(crate) async fn land_mention_post(
     parent_post_id: Option<i64>,
     author: &str,
     trigger_type: &str,
+    force_mention: Option<MentionDto>,
 ) -> Result<(serde_json::Value, Option<serde_json::Value>), AppError> {
     // 解析 @token 为结构化提及（先专家后执行器）；纯文本无 @ 时为空，仅写人帖、不触发执行。
     let tokens = extract_at_tokens(content);
-    let mentions = resolve_mentions(&tokens, state).await;
+    let mut mentions = resolve_mentions(&tokens, state).await;
+    // 强制触发目标注入：assignee 已校验存在，确保即便其名含空格/标点也一定能命中触发。
+    if let Some(m) = force_mention {
+        if !mentions.iter().any(|x| x.kind == m.kind && x.name == m.name) {
+            mentions.insert(0, m);
+        }
+    }
     let mentions_json = serialize_mentions(&mentions);
 
     // 人帖无条件落库（无论是否触发执行，用户的发言都要对讨论区可见）。
@@ -581,6 +591,7 @@ pub async fn create_post(
         req.parent_post_id,
         "我",
         TRIGGER_DISCUSSION,
+        None,
     )
     .await?;
 

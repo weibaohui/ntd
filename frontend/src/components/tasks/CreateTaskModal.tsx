@@ -64,10 +64,20 @@ export function CreateTaskModal({
   const assigneeKind = Form.useWatch('assigneeKind', form) ?? 'expert';
   // 专家候选：打开 Modal 时拉一次（执行器候选是静态 EXECUTORS_FOR_PICKER，无需拉取）。
   const [experts, setExperts] = useState<ExpertMetadata[]>([]);
+  // 专家下拉加载态：加载中给 Select 转圈，失败时弹 message.error（而非只 console.warn）。
+  const [expertsLoading, setExpertsLoading] = useState(false);
   useEffect(() => {
-    if (open) {
-      getAllExperts().then(setExperts).catch((e) => console.warn('专家列表加载失败', e));
-    }
+    if (!open) return;
+    // 失败时若只 console.warn，用户只看到空下拉「暂无可用专家」，无从判断是真空还是加载失败（CodeRabbit #8）。
+    setExpertsLoading(true);
+    getAllExperts()
+      .then(setExperts)
+      .catch((e) => {
+        console.warn('专家列表加载失败', e);
+        message.error('专家列表加载失败，请稍后重试');
+        setExperts([]);
+      })
+      .finally(() => setExpertsLoading(false));
   }, [open]);
 
   // open 变为 false 时重置表单字段，避免下次打开残留上次输入。
@@ -99,8 +109,13 @@ export function CreateTaskModal({
               { requirement: values.requirement, loopId: values.loopId },
               workspaceId,
             );
-      // 委派触发失败时 execution_id 为 null（任务仍建好），文案兼容两种情况。
-      message.success(result.execution_id ? `任务已创建，执行 #${result.execution_id}` : '任务已创建');
+      // 委派首帖触发失败时后端仍建好任务（execution_id=null），但不能用 success 误报「已开跑」：
+      // 改用 warning 明确告知「任务建好但执行没起来，需手动 @」，避免用户空等（CodeRabbit #9）。
+      if (values.executionMode === 'delegate' && !result.execution_id) {
+        message.warning('任务已创建，但首次执行未能触发，请到讨论区手动 @ 处理人');
+      } else {
+        message.success(result.execution_id ? `任务已创建，执行 #${result.execution_id}` : '任务已创建');
+      }
       onCreated();
     } catch (err) {
       // validateFields 失败时不报错；只有 API 失败才报错。
@@ -201,6 +216,9 @@ export function CreateTaskModal({
                   { label: '专家', value: 'expert' },
                   { label: '执行器', value: 'executor' },
                 ]}
+                // 切换处理人类型时清空已选处理人：专家名与执行器名是不同命名空间，
+                // 保留旧值会把专家名当执行器名（或反之）提交，后端校验必失败（CodeRabbit #10）。
+                onChange={() => form.setFieldValue('assigneeName', undefined)}
               />
             </Form.Item>
             <Form.Item
@@ -213,6 +231,8 @@ export function CreateTaskModal({
                 options={assigneeOptions}
                 showSearch
                 optionFilterProp="label"
+                // 仅专家候选需异步加载，执行器是静态列表；加载中转圈提示用户等待。
+                loading={assigneeKind === 'expert' && expertsLoading}
                 notFoundContent={assigneeKind === 'expert' ? '暂无可用专家' : '暂无可用执行器'}
                 data-testid="create-task-assignee"
               />

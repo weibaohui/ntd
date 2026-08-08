@@ -155,47 +155,92 @@ async fn create_delegate_task(
     ws: i64,
     req: CreateTaskRequest,
 ) -> Result<(axum::http::StatusCode, ApiResponse<serde_json::Value>), AppError> {
-    // 校验处理人类型与名称齐全：kind 必须是 executor/expert，name 非空。
+    // kind/name 先解出，供校验与首帖复用。
     let kind = req.assignee_kind.as_deref().unwrap_or("");
     let name = req.assignee_name.as_deref().unwrap_or("").trim();
+    validate_delegate_request(state, ws, kind, name, req.auto_continue).await?;
+
+    let title = task_title_from_requirement(&req.requirement);
+    // description 随首次 INSERT 写入（DAO 内），不再建后单独 update（#1 原子性）。
+    let task = state
+        .db
+        .create_delegate_task(&title, &req.requirement, ws, kind, name, req.auto_continue)
+        .await?;
+    // 首帖触发首次执行：force_mention 用已校验的 assignee，失败时 warn 不阻断任务创建。
+    let execution_id = land_delegate_first_post(state, &task, kind, name, &req.requirement).await;
+    Ok((axum::http::StatusCode::CREATED, ApiResponse::ok(serde_json::json!({
+        "task_id": task.id, "loop_id": serde_json::Value::Null, "execution_id": execution_id,
+    }))))
+}
+
+/// 委派创建的前置校验：workspace 存在 + 处理人字段齐全 + 执行器禁接力 + 处理人真实存在。
+/// 收口在一处，让 create_delegate_task 主干保持「校验 → 建任务 → 发首帖」线性可读。
+async fn validate_delegate_request(
+    state: &AppState,
+    ws: i64,
+    kind: &str,
+    name: &str,
+    auto_continue: bool,
+) -> Result<(), AppError> {
+    // 校验 path 的 workspace 真实存在：loop 路径靠 get_loop 兜底归属，委派路径无 loop 依托，
+    // 必须显式校验，避免为不存在的 ws 建任务、执行落到未定义目录（CodeRabbit #2）。
+    if state.db.get_project_directory_by_id(ws).await?.is_none() {
+        return Err(AppError::NotFound);
+    }
+    // 处理人类型与名称齐全：kind 必须是 executor/expert，name 非空。
     if name.is_empty() || !matches!(kind, "executor" | "expert") {
         return Err(AppError::BadRequest("委派任务必须指定处理人（专家/执行器）".to_string()));
     }
     // 执行器无调度能力，禁止开自动接力（前端禁用 + 后端 400 双重校验防绕过）。
-    if kind == "executor" && req.auto_continue {
+    if kind == "executor" && auto_continue {
         return Err(AppError::BadRequest("执行器不支持自动接力（请改选专家）".to_string()));
     }
     // 服务端校验处理人真实存在，防伪造任意名触发执行。
     validate_assignee_exists(state, kind, name)?;
+    Ok(())
+}
 
-    let title = task_title_from_requirement(&req.requirement);
-    // 委派任务归属 path 的 workspace（执行隔离 + 讨论帖归属）。
-    let task = state
-        .db
-        .create_delegate_task(&title, ws, kind, name, req.auto_continue)
-        .await?;
-    state.db.update_task_description(task.id, &req.requirement).await?;
-
-    // 首帖正文 = @处理人 + 需求原文：060 的 @ 解析会据此把处理人识别为执行器/专家并触发执行。
-    // 用「我」作人帖作者（与人工发帖一致），trigger_type=discussion（completion 走 discussion 回写）。
-    let first_post = format!("@{name} {}", req.requirement);
-    let (_human, agent_post) = task_posts::land_mention_post(
+/// 落委派首帖并触发首次执行，返回 execution_id（触发失败/未启动为 None）。
+///
+/// 失败容忍：land_mention_post 任一步出错只 warn 返回 None，不阻断任务创建（#1 补偿）——
+/// 任务已建好、description 已落库，用户可在讨论区手动 @ 恢复；若改成返回错误，用户会以为全失败、
+/// 重试时重复建任务。
+async fn land_delegate_first_post(
+    state: &AppState,
+    task: &tasks::Model,
+    kind: &str,
+    name: &str,
+    requirement: &str,
+) -> Option<i64> {
+    // 首帖正文 = @处理人 + 需求原文（人工可见的诉求上下文）。
+    let first_post = format!("@{name} {requirement}");
+    // force_mention：assignee 已校验存在，强制作为触发目标，绕过文本 @ 解析——
+    // 避免其名含空格/标点时 extract_at_tokens 截断、首帖静默不触发（CodeRabbit #3）。
+    let force = task_posts::MentionDto {
+        kind: kind.to_string(),
+        name: name.to_string(),
+        display: name.to_string(),
+    };
+    match task_posts::land_mention_post(
         state,
-        &task,
+        task,
         &first_post,
         None,
         "我",
         task_posts::TRIGGER_DISCUSSION,
+        Some(force),
     )
-    .await?;
-    // execution_id 取自占位帖 source_execution_id；触发失败（agent_post 无 id）时为 null，
-    // 任务本身已创建成功（讨论区可见 failed 占位帖），故仍返回 201，由前端据 execution_id 提示。
-    let execution_id = agent_post
-        .as_ref()
-        .and_then(|v| v.get("source_execution_id").and_then(|x| x.as_i64()));
-    Ok((axum::http::StatusCode::CREATED, ApiResponse::ok(serde_json::json!({
-        "task_id": task.id, "loop_id": serde_json::Value::Null, "execution_id": execution_id,
-    }))))
+    .await
+    {
+        Ok((_human, agent)) => agent
+            .as_ref()
+            .and_then(|v| v.get("source_execution_id").and_then(|x| x.as_i64())),
+        Err(e) => {
+            // AppError 仅 derive Debug（无 Display），故用 ?e 走 Debug 形式记录（与 worktree.rs 同口径）。
+            tracing::warn!(error = ?e, task_id = task.id, "delegate first post failed");
+            None
+        }
+    }
 }
 
 /// 组装单条任务列表项。
@@ -341,7 +386,9 @@ pub async fn get_task_detail(
             "execution_mode": task.execution_mode,
             "assignee_kind": task.assignee_kind,
             "assignee_name": task.assignee_name,
-            "auto_continue": task.auto_continue,
+            // i64(0/1) → bool，与列表接口 build_task_item 口径一致（CodeRabbit #4）：
+            // 前端类型声明为 boolean，透传数字会让 typeof/严格比较在 P2 接力状态展示时踩雷。
+            "auto_continue": task.auto_continue != 0,
             "continue_rounds": task.continue_rounds,
         },
         "template": template.map(|t| {
@@ -721,9 +768,10 @@ mod tests {
     async fn test_dao_create_delegate_task_fields() {
         let (_app, ws_id, db) = build_app().await;
         let task = db
-            .create_delegate_task("委派标题", ws_id, "expert", "任务管家", true)
+            .create_delegate_task("委派标题", "委派需求原文", ws_id, "expert", "任务管家", true)
             .await
             .expect("create delegate task");
+        assert_eq!(task.description, "委派需求原文", "description 随首次 INSERT 写入");
         assert_eq!(task.execution_mode, "delegate");
         assert_eq!(task.assignee_kind.as_deref(), Some("expert"));
         assert_eq!(task.assignee_name.as_deref(), Some("任务管家"));

@@ -27,9 +27,13 @@ impl Database {
     /// 环路模式已被 handlers/tests 多处调用，给它塞一排 Option 委派参数会污染所有调用点、
     /// 还要每处判空；委派路径字段语义独立，单列方法更清晰，也符合「小函数单一职责」。
     /// 两者最终都落到 tasks::ActiveModel，仅写入字段不同。
+    ///
+    /// `description` 随首次 INSERT 一并写入（而非建后再 UPDATE）：委派创建之后还要发讨论首帖
+    /// 触发执行，若 description 单独 update，中间任一步失败会留下「空描述任务」（CodeRabbit #1）。
     pub async fn create_delegate_task(
         &self,
         title: &str,
+        description: &str,
         workspace_id: i64,
         assignee_kind: &str,
         assignee_name: &str,
@@ -42,6 +46,8 @@ impl Database {
             // 委派任务不绑工艺模板/环路；template_id 沿用 0（与环路默认口径一致），loop_id 留空。
             template_id: ActiveValue::Set(Some(0)),
             loop_id: ActiveValue::Set(None),
+            // 需求原文随建写入（见函数注释：避免建后再 update 的原子性缺口）。
+            description: ActiveValue::Set(description.to_string()),
             created_at: ActiveValue::Set(Some(now.clone())),
             updated_at: ActiveValue::Set(Some(now)),
             execution_mode: ActiveValue::Set("delegate".to_string()),
