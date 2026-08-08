@@ -433,11 +433,10 @@ export function TaskDetailPanel({
     },
   ];
 
-  // 实际渲染的 Tab key 集合（委派任务不含 dag/exec）。resolvedTab 依据 TAB_KEYS 白名单解析 URL ?tab=，
-  // 而该白名单恒含 dag/exec；委派任务若 URL 残留 ?tab=dag，解析出的 key 会指向已隐藏的 Tab，Ant Design
-  // Tabs 随即落到无选中态、内容区空白。此处校验命中即回退默认 Tab，避免空白页。
-  const visibleTabKeys: string[] = tabItems.map((t) => t.key);
-  const activeTabKey = visibleTabKeys.includes(resolvedTab)
+  // resolvedTab 依据 TAB_KEYS 白名单解析 URL ?tab=，而该白名单恒含 dag/exec；委派任务若 URL 残留 ?tab=dag，
+  // 解析出的 key 会指向已隐藏的 Tab，Ant Design Tabs 随即落到无选中态、内容区空白。就地校验 tabItems 是否
+  // 含该 key（不额外构造 key 数组），命中即回退默认 Tab，避免空白页。
+  const activeTabKey = tabItems.some((t) => t.key === resolvedTab)
     ? resolvedTab
     : (isDelegate ? 'discussion' : 'overview');
 
