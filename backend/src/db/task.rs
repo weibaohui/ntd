@@ -152,7 +152,7 @@ mod tests {
         let db = fresh_db().await;
         // 委派任务建表即写 continue_rounds=0，是接力的真实载体，用它验证最贴近生产路径。
         let task = db
-            .create_delegate_task("接力任务T", 1, "expert", "专家A", true)
+            .create_delegate_task("接力任务T", "接力需求原文", 1, "expert", "专家A", true)
             .await
             .expect("create delegate task");
         assert_eq!(task.continue_rounds, 0, "新建委派任务初始计数应为 0");
