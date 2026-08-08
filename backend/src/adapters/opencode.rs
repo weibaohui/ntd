@@ -205,6 +205,19 @@ impl CodeExecutor for OpencodeExecutor {
         self.base.model.lock().clone()
     }
 
+    /// NTD-012：pipeline 路径下同步 step 生命周期标记。
+    /// EventPipeline 命中 step_start/step_finish 后旧 `parse_output_line` 被跳过，
+    /// 本钩子把已解析事件回授给执行器，保持 `check_success` 的非零退出码容忍语义。
+    /// 语义与旧 handler 逐字对齐：step_start 重置、step_finish 置位。
+    fn on_pipeline_event(&self, event: &crate::execution_events::ExecutionEvent) {
+        use crate::execution_events::ExecutionEvent as E;
+        match event {
+            E::StepStart { .. } => *self.has_successful_finish.lock() = false,
+            E::StepFinish { .. } => *self.has_successful_finish.lock() = true,
+            _ => {}
+        }
+    }
+
     fn check_success(&self, exit_code: i32) -> bool {
         if exit_code == 0 {
             return true;

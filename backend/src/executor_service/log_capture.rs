@@ -126,6 +126,10 @@ pub(crate) fn parse_and_broadcast(
     tx: &broadcast::Sender<ExecEvent>,
     task_id: &str,
     workspace_id: Option<i64>,
+    // NTD-012：pipeline 命中后旧 parse_output_line 被跳过，执行器的流式副作用
+    // （如 kilo 系的 has_successful_finish）随之失效；每个新事件在广播前回授给
+    // 执行器，让其内部状态与事件流保持同步（零重复解析）。
+    executor: &dyn crate::adapters::CodeExecutor,
 ) -> Vec<ParsedLogEntry> {
     let line_trimmed = line.trim();
     if line_trimmed.is_empty() {
@@ -146,6 +150,9 @@ pub(crate) fn parse_and_broadcast(
 
     let mut results = Vec::new();
     for event in &new_events {
+        // NTD-012：先回授再按类型广播——即使某类事件不转发（如 Info/Progress），
+        // 执行器也能观察到完整的生命周期序列（StepStart 重置依赖这一点）。
+        executor.on_pipeline_event(event);
         match event {
             ExecutionEvent::Info { message } => {
                 // 空的或纯 JSON 行作为 info，不转发
@@ -196,6 +203,8 @@ fn try_parse_stderr_with_pipeline(
     tx: &broadcast::Sender<ExecEvent>,
     task_id: &str,
     workspace_id: Option<i64>,
+    // NTD-012：与 stdout 路径同理，stderr 经 pipeline 产出的事件也要回授执行器。
+    executor: &dyn crate::adapters::CodeExecutor,
 ) -> Vec<ParsedLogEntry> {
     let line_trimmed = line.trim();
     if line_trimmed.is_empty() {
@@ -213,7 +222,11 @@ fn try_parse_stderr_with_pipeline(
 
     pipeline.events()[len_before..]
         .iter()
-        .map(|event| emit_broadcast_event(event, tx, task_id, workspace_id))
+        .map(|event| {
+            // NTD-012：stderr 事件同样回授执行器（部分执行器版本把 step_finish 打到 stderr）
+            executor.on_pipeline_event(event);
+            emit_broadcast_event(event, tx, task_id, workspace_id)
+        })
         .collect()
 }
 
@@ -249,7 +262,7 @@ where
                 }
                 // 优先尝试用 EventPipeline 解析
                 let parsed_list =
-                    try_parse_stderr_with_pipeline(&mut pipeline, &line, &tx, &task_id, workspace_id);
+                    try_parse_stderr_with_pipeline(&mut pipeline, &line, &tx, &task_id, workspace_id, executor.as_ref());
 
                 if !parsed_list.is_empty() {
                     for parsed in parsed_list {
@@ -344,7 +357,7 @@ where
         while let Ok(Some(line)) = reader.next_line().await {
             // 优先尝试用 EventPipeline 解析
             let parsed_list =
-                parse_and_broadcast(&mut pipeline, &line, &tx_clone, &tid, wid);
+                parse_and_broadcast(&mut pipeline, &line, &tx_clone, &tid, wid, executor_clone.as_ref());
 
             if !parsed_list.is_empty() {
                 for parsed in parsed_list {
@@ -746,5 +759,40 @@ mod tests {
         assert_eq!(stats.tool_calls, 5); // overridden
         assert_eq!(stats.conversation_turns, 0);
         assert_eq!(stats.thinking_count, 0);
+    }
+
+    /// NTD-012 回归：pipeline 处理 step_finish 后必须回授执行器生命周期状态。
+    ///
+    /// 还原真实运行时组合：KiloExtractor 完整解析 step-finish（pipeline 恒命中、
+    /// 旧 parse_output_line 被跳过）→ 若缺少回授，has_successful_finish 不置位，
+    /// check_success(144) 把成功任务误判为失败。修复后事件回授置位 flag。
+    #[test]
+    fn test_parse_and_broadcast_syncs_executor_success_flag() {
+        use crate::adapters::kilo::KiloExecutor;
+        use crate::execution_events::impls::kilo::KiloExtractor;
+
+        let executor = KiloExecutor::new("kilo".to_string());
+        let mut pipeline = EventPipeline::with_extractor(KiloExtractor::new());
+        let (tx, _rx) = broadcast::channel(16);
+
+        // 修复前的事实：未走任何解析时，非零退出码判定为失败
+        assert!(!executor.check_success(144), "step_finish 未到达前应判失败");
+
+        let finish_line = r#"{"type":"step-finish","timestamp":1700000000002,"part":{"type":"step-finish","reason":"stop","tokens":{"total":200,"input":150,"output":50,"reasoning":0,"cache":{"read":10,"write":5}},"cost":0.0025}}"#;
+        let out = parse_and_broadcast(&mut pipeline, finish_line, &tx, "t1", None, &executor);
+        assert!(!out.is_empty(), "KiloExtractor 应完整解析 step-finish（pipeline 命中）");
+        assert!(
+            executor.check_success(144),
+            "step_finish 经 pipeline 回授后置位 flag，非零退出码应判成功（NTD-012）"
+        );
+
+        // step-start 重置语义同样经回授生效（与旧 handler 逐字对齐）
+        let start_line = r#"{"type":"step-start","timestamp":1777471473403,"sessionID":"ses_abc123"}"#;
+        let out2 = parse_and_broadcast(&mut pipeline, start_line, &tx, "t1", None, &executor);
+        assert!(!out2.is_empty());
+        assert!(
+            !executor.check_success(144),
+            "新一轮 step_start 应重置 flag（回授覆盖重置路径）"
+        );
     }
 }
