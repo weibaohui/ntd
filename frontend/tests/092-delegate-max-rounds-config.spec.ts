@@ -10,23 +10,31 @@
 // - afterAll 删除本次创建的任务，避免专家结论若含 @ 触发失控接力污染开发库。
 
 import { test, expect } from '@playwright/test';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 
 const BASE = process.env.E2E_BASE_URL ?? 'http://localhost:18088';
 const DEV_DB = process.env.HOME + '/.ntd/data.dev.db';
 const MARKER = 'E2E护栏配置化任务';
 
 // 按标题前缀硬删任务（连带讨论帖/载体 todo），开发库自洽优先于精确归属。
+// 用 execFileSync 传 [db, sql] 参数数组而非 execSync 拼 shell 字符串：DEV_DB 取自环境变量，
+// 经 shell 拼接存在命令注入面（OpenGrep SAST 报错）；execFileSync 不经 shell，参数原样传给 sqlite3。
 function cleanupSeededTasks() {
   try {
-    const ids: string = execSync(
-      `sqlite3 "${DEV_DB}" "SELECT IFNULL(GROUP_CONCAT(id),'') FROM tasks WHERE title LIKE '%${MARKER}%';"`,
-    ).toString().trim();
+    // 先查出待删任务 id 列表（GROUP_CONCAT 拼成 "1,2,3"）；无则空串直接返回。
+    const ids: string = execFileSync('sqlite3', [
+      DEV_DB,
+      `SELECT IFNULL(GROUP_CONCAT(id),'') FROM tasks WHERE title LIKE '%${MARKER}%';`,
+    ]).toString().trim();
     if (!ids) return;
-    execSync(`sqlite3 "${DEV_DB}" "DELETE FROM task_posts WHERE task_id IN (${ids});"`);
-    execSync(`sqlite3 "${DEV_DB}" "DELETE FROM execution_records WHERE source_todo_id IN (SELECT id FROM todos WHERE title LIKE '%${MARKER}%');"`);
-    execSync(`sqlite3 "${DEV_DB}" "DELETE FROM todos WHERE title LIKE '%${MARKER}%';"`);
-    execSync(`sqlite3 "${DEV_DB}" "DELETE FROM tasks WHERE id IN (${ids});"`);
+    // 按外键依赖顺序删除：task_posts（引用 tasks）→ execution_records（引用载体 todo）→ todos → tasks。
+    execFileSync('sqlite3', [DEV_DB, `DELETE FROM task_posts WHERE task_id IN (${ids});`]);
+    execFileSync('sqlite3', [
+      DEV_DB,
+      `DELETE FROM execution_records WHERE source_todo_id IN (SELECT id FROM todos WHERE title LIKE '%${MARKER}%');`,
+    ]);
+    execFileSync('sqlite3', [DEV_DB, `DELETE FROM todos WHERE title LIKE '%${MARKER}%';`]);
+    execFileSync('sqlite3', [DEV_DB, `DELETE FROM tasks WHERE id IN (${ids});`]);
   } catch (e) {
     console.warn('[092-config cleanup] 清理种子任务失败（开发库残留，通常可忽略）：', e);
   }
@@ -101,11 +109,18 @@ test.describe('092 接力上限配置化', () => {
     // PATCH + 详情重拉后，徽标 M=5（N 可能因后台执行变化，故只断言 /5）。
     await expect(badge).toHaveText(/\/\s*5\b/, { timeout: 10000 });
 
-    // 再次点开，「恢复默认」→ M 回退到默认（不再为 5）。
+    // 再次点开，「恢复默认」→ M 回退到工作空间默认（= hint 显示的 fallback 值）。
     await badge.click();
     await expect(page.locator('[data-testid="relay-max-reset"]')).toBeVisible({ timeout: 5000 });
+    // Spec#2：覆盖已置 5（badge M=5），但编辑器「留空=用工作空间默认（X 轮）」提示须显示 fallback
+    // （清除覆盖后的真实回退值），不能误显成即将被清除的覆盖值 5——校验 fallback 与 effective 分离。
+    const hintText = await page.locator('.ant-popover').getByText(/工作空间默认/).innerText();
+    const fallbackNum = hintText.match(/工作空间默认（(\d+) 轮/)?.[1];
+    expect(fallbackNum, '应能从 hint 解析出回退轮数').toMatch(/^\d+$/);
     await page.locator('[data-testid="relay-max-reset"]').click();
-    await expect(badge).not.toHaveText(/\/\s*5\b/, { timeout: 10000 });
+    // 恢复后 M 精确等于工作空间默认（fallbackNum）。原 not/5/ 断言在工作空间默认恰为 5 时会误失败，
+    // 且「不是 5」也无法证明回退到了正确值；改为精确匹配，无论默认值是几都对。
+    await expect(badge).toHaveText(new RegExp(`\\/\\s*${fallbackNum}\\b`), { timeout: 10000 });
 
     await page.screenshot({ path: 'test-results/092-delegate-max-rounds-config.png' });
   });

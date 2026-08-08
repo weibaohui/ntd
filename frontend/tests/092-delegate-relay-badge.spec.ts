@@ -79,11 +79,12 @@ test.describe('092 委派自动接力徽标', () => {
     await row.click();
 
     // 详情头部出现后，断言管家调度徽标：文案「管家调度中 N/M」，N 为已完成的接力轮数，
-    // M 为三级解析的有效上限（护栏配置化）。创建瞬间首跑尚未完成 → N=0；
-    // 用 /\d+/ 容纳 M 随工作空间/任务配置变化，避免与配置化用例并发时硬编码 10 误判。
+    // M 为三级解析的有效上限（护栏配置化）。建任务后后台即开始接力，N 可能在详情加载前已递增，
+    // 故不硬断言 N=0（仅校验 N/M 均为数字），避免时序性 flaky（评审发现）。
     const badge = page.locator('.ant-tag', { hasText: /管家调度中\s*\d+\s*\/\s*\d+/ });
     await expect(badge).toBeVisible({ timeout: 15000 });
-    await expect(badge).toHaveText(/管家调度中\s*0\s*\/\s*\d+/);
+    // 显式断言 N、M 均为数字（与上面 locator 的 hasText 同口径，做一次明确断言）。
+    await expect(badge).toHaveText(/管家调度中\s*\d+\s*\/\s*\d+/);
 
     // 截图留档（test-results 由 Playwright 管理且已 gitignore，不入库）。
     await page.screenshot({ path: 'test-results/092-delegate-relay-badge.png' });

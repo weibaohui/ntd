@@ -205,7 +205,7 @@ mod tests {
 
     /// update_workspace_delegate_max_rounds：无既有行时新建一行并写入上限。
     #[tokio::test]
-    async fn test_update_ws_delegate_max_rounds_inserts_when_absent() {
+    async fn test_update_workspace_delegate_max_rounds_inserts_when_absent() {
         let db = Database::new(":memory:").await.unwrap();
         update_workspace_delegate_max_rounds(&db, 7, Some(15))
             .await
@@ -218,7 +218,7 @@ mod tests {
 
     /// 既有行：置值后再传 None 清空（回退兜底），不影响其他列。
     #[tokio::test]
-    async fn test_update_ws_delegate_max_rounds_set_then_clear() {
+    async fn test_update_workspace_delegate_max_rounds_set_then_clear() {
         let db = Database::new(":memory:").await.unwrap();
         // 先建行并写入 system_prompt，验证单字段更新不误伤其他列。
         upsert_workspace_settings(&db, 1, None, None, None, None, Some("共识".to_string()))

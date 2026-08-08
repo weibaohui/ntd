@@ -77,15 +77,18 @@ impl Database {
     /// 任务不存在时静默返回（与 update_task_status 同口径，调用方已先校验存在性）。
     pub async fn update_delegate_max_rounds(
         &self, id: i64, max: Option<i64>,
-    ) -> Result<(), sea_orm::DbErr> {
+    ) -> Result<Option<tasks::Model>, sea_orm::DbErr> {
         let existing = tasks::Entity::find_by_id(id).one(&self.conn).await?;
+        // 返回更新后的 Model：调用方据此直接 resolve 有效值，免去一次冗余 get_task 重读。
+        // （find 已取到行，update 再回写最新态——无需调用方二次查库。）
         if let Some(c) = existing {
             let mut am: tasks::ActiveModel = c.into();
             am.delegate_max_rounds = ActiveValue::Set(max);
             am.updated_at = ActiveValue::Set(Some(utc_timestamp()));
-            am.update(&self.conn).await?;
+            let updated = am.update(&self.conn).await?;
+            return Ok(Some(updated));
         }
-        Ok(())
+        Ok(None)
     }
 
     pub async fn get_task(&self, id: i64) -> Result<Option<tasks::Model>, sea_orm::DbErr> {

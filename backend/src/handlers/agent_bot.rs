@@ -843,10 +843,10 @@ pub async fn get_workspace_settings(
             None,
         ),
     };
-    // effective：raw 为 NULL（未配置）或非法 0 时回退终极兜底常量；前端 placeholder/提示读它，永不硬编码 10。
-    let max_effective = raw_max
-        .filter(|&x| x > 0)
-        .unwrap_or(crate::handlers::task_posts::MAX_DELEGATE_ROUNDS);
+    // effective：复用 task_posts 的统一口径（合法区间 1..=CAP 才采纳，否则兜底常量）。
+    // 既消除「此处再手写一遍 filter(>0).unwrap_or(常量)」的重复，又顺带获得 >CAP 脏数据钳制，
+    // 与 resolve / 徽标展示共用同一收敛逻辑，前端 placeholder/提示读它，永不硬编码 10。
+    let max_effective = crate::handlers::task_posts::workspace_effective_max(raw_max);
     Ok(ApiResponse::ok(serde_json::json!({
         "workspace_id": workspace_id,
         "default_response_type": resp_type,
@@ -893,6 +893,9 @@ pub async fn update_workspace_settings(
         workspace_guard::verify_loop_belongs_to_ws(&state.db, loop_id, workspace_id).await?;
     }
 
+    // relay 上限越界校验前置到任何写入之前：否则先 upsert 其它 settings、随后才发现越界返回 400，
+    // 会留下「其它字段已写、relay 未写」的部分写不一致（评审发现）。null=清除放行，仅拦越界值。
+    task_posts::validate_delegate_max_rounds(req.delegate_max_rounds)?;
     crate::db::workspace_setting::upsert_workspace_settings(
         &state.db,
         workspace_id,
@@ -904,8 +907,11 @@ pub async fn update_workspace_settings(
     )
     .await
     .map_err(|e| AppError::Internal(e.to_string()))?;
-    // relay 上限走独立 DAO（未并入 upsert，免波及 11 处无关调用点）；越界复用集中口径，null=清除。
-    task_posts::validate_delegate_max_rounds(req.delegate_max_rounds)?;
+    // relay 上限走独立 DAO（未并入 upsert，免波及 executor_service / feishu_listener 等 11 处无关调用点）；
+    // 越界已在上面统一拦截，此处 null=清除回退兜底常量。
+    // 两次写均落在同一张 workspace_settings 行上：依「后端规范 09-事务规范 §3 隐式事务」，
+    // 单表写无需显式事务（SeaORM 每条 auto-commit）；最坏情况是中途失败留下 stale 的 relay-max，
+    // 而设置页是整表保存、用户可随时重存，影响极低——不值得为折叠它而改 11 处无关签名。
     crate::db::workspace_setting::update_workspace_delegate_max_rounds(
         &state.db,
         workspace_id,

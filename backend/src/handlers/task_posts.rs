@@ -825,28 +825,51 @@ pub(crate) fn validate_delegate_max_rounds(max: Option<i64>) -> Result<(), AppEr
     Ok(())
 }
 
+/// 把单个「原始上限值」收敛为有效值：仅当落在合法闭区间 `1..=CAP` 才采纳，否则回退兜底常量。
+///
+/// 集中「过滤非法 + 回退兜底」口径，供工作空间级 effective 计算（见
+/// `agent_bot::get_workspace_settings`）与三级解析的兜底层复用，避免两处各写一遍
+/// `filter(>0).unwrap_or(常量)` 而漂移。同时过滤**上界 CAP**：直写库可能写入 >50 的脏值，
+/// resolve 作为护栏源头必须把它当无效，否则一个越界脏值会让上限静默放大、护栏形同虚设。
+pub(crate) fn workspace_effective_max(raw: Option<i64>) -> i64 {
+    raw.filter(|&x| (1..=DELEGATE_MAX_ROUNDS_CAP).contains(&x))
+        .unwrap_or(MAX_DELEGATE_ROUNDS)
+}
+
 /// 三级解析某委派任务的「接力轮数有效上限」：任务覆盖 → 工作空间默认 → 终极兜底常量。
 ///
 /// 收口在一处，护栏决策与详情展示共用同一口径，避免各路径分散解析导致漂移。DB 读失败时
 /// graceful-degrade 回退兜底（`.ok()` 吞错），不阻塞接力主流程（仿 pre_spawn prompt 注入降级）。
+/// 任务级与工作空间级都用 `1..=CAP` 区间过滤：直写库的越界脏值（0 / 负 / >CAP）一律视为无效、
+/// 回退下一级，绝不把会让护栏失效的值透传为 effective。
 pub(crate) async fn resolve_delegate_max_rounds(db: &Database, task: &tasks::Model) -> i64 {
-    // 一级：任务自身覆盖优先（过滤 0 这种非法值，落空则进下一级）。
-    if let Some(m) = task.delegate_max_rounds.filter(|&x| x > 0) {
+    // 一级：任务自身覆盖优先（越界脏值视为无效，落空进兜底层）。
+    if let Some(m) = task
+        .delegate_max_rounds
+        .filter(|&x| (1..=DELEGATE_MAX_ROUNDS_CAP).contains(&x))
+    {
         return m;
     }
-    // 二级：工作空间默认（无行 / NULL / 读失败都落空 → 进三级）。
-    if let Some(ws_id) = task.workspace_id {
-        if let Some(m) = crate::db::workspace_setting::get_workspace_settings(db, ws_id)
+    // 二级 + 三级：忽略任务覆盖，解析 工作空间默认 → 兜底常量。
+    resolve_delegate_max_rounds_fallback(db, task.workspace_id).await
+}
+
+/// 三级解析的「兜底层」：忽略任务级覆盖，仅解析 工作空间默认 → 终极兜底常量。
+///
+/// 供任务详情徽标编辑器计算「清除任务覆盖后会回退到几」——即留空/恢复默认后的真实落点。
+/// 注意不能复用 [`resolve_delegate_max_rounds`]：后者会先取任务覆盖，而这里要的正是
+/// 「假设任务覆盖不存在」的值，否则编辑器会把「当前覆盖值」误当成「清除后的回退值」展示。
+pub(crate) async fn resolve_delegate_max_rounds_fallback(db: &Database, ws_id: Option<i64>) -> i64 {
+    // 工作空间默认：无行 / NULL / 越界 / DB 读失败 → workspace_effective_max 内部统一回退兜底常量。
+    if let Some(ws_id) = ws_id {
+        let raw = crate::db::workspace_setting::get_workspace_settings(db, ws_id)
             .await
             .ok()
             .flatten()
-            .and_then(|s| s.delegate_max_rounds)
-            .filter(|&x| x > 0)
-        {
-            return m;
-        }
+            .and_then(|s| s.delegate_max_rounds);
+        return workspace_effective_max(raw);
     }
-    // 三级：终极兜底常量。
+    // 任务无 workspace_id（委派任务理论不应如此，防御性兜底）：直接终极兜底常量。
     MAX_DELEGATE_ROUNDS
 }
 
@@ -1631,6 +1654,68 @@ mod tests {
             resolve_delegate_max_rounds(&db, &t).await,
             20,
             "覆盖值 0 非法 → 回退工作空间默认(20)，绝不返回 0"
+        );
+    }
+
+    /// workspace_effective_max：纯函数边界——None/0/负/>CAP 一律回退兜底常量；1..=50 原样返回。
+    /// 重点覆盖「直写库脏数据」防护：>50 的值不能作为 effective 透传（会让护栏静默放大）。
+    #[test]
+    fn test_workspace_effective_max_bounds() {
+        // 合法闭区间原样返回。
+        assert_eq!(workspace_effective_max(Some(1)), 1);
+        assert_eq!(workspace_effective_max(Some(50)), 50);
+        // 未配置 / 非法下界 → 兜底常量。
+        assert_eq!(workspace_effective_max(None), MAX_DELEGATE_ROUNDS);
+        assert_eq!(workspace_effective_max(Some(0)), MAX_DELEGATE_ROUNDS);
+        assert_eq!(workspace_effective_max(Some(-5)), MAX_DELEGATE_ROUNDS);
+        // 越界上界（脏数据）→ 兜底常量，绝不透传 >CAP 值放大护栏。
+        assert_eq!(workspace_effective_max(Some(51)), MAX_DELEGATE_ROUNDS);
+        assert_eq!(workspace_effective_max(Some(100)), MAX_DELEGATE_ROUNDS);
+    }
+
+    /// resolve：任务覆盖为越界上界（>CAP，脏数据）时应跳过，回退工作空间默认，
+    /// 而非把 100 透传成 effective（会让护栏形同虚设）。handler 本会拦 51，但 resolve 须对直写库鲁棒。
+    #[tokio::test]
+    async fn test_resolve_delegate_max_rounds_skips_over_cap_override() {
+        let db = Database::new(":memory:").await.expect("memory db");
+        // 工作空间默认 12；任务覆盖直写 100（绕开 handler 校验，模拟脏数据）。
+        crate::db::workspace_setting::update_workspace_delegate_max_rounds(&db, 1, Some(12))
+            .await
+            .expect("set ws");
+        let t = db
+            .create_delegate_task("T", "D", 1, "expert", "专家A", true, Some(100))
+            .await
+            .expect("create");
+        assert_eq!(
+            resolve_delegate_max_rounds(&db, &t).await,
+            12,
+            "覆盖值 100 越界 → 回退工作空间默认(12)，绝不返回 100"
+        );
+    }
+
+    /// resolve_delegate_max_rounds_fallback：忽略任务覆盖，只取 工作空间默认 → 兜底。
+    /// 徽标编辑器据此展示「清除覆盖后的真实回退值」，须与 effective（含任务覆盖）明确区分。
+    #[tokio::test]
+    async fn test_resolve_fallback_ignores_task_override() {
+        let db = Database::new(":memory:").await.expect("memory db");
+        crate::db::workspace_setting::update_workspace_delegate_max_rounds(&db, 1, Some(15))
+            .await
+            .expect("set ws");
+        // 任务有覆盖(7)，但 fallback 必须忽略它，返回工作空间默认(15)。
+        let t = db
+            .create_delegate_task("T", "D", 1, "expert", "专家A", true, Some(7))
+            .await
+            .expect("create");
+        assert_eq!(
+            resolve_delegate_max_rounds_fallback(&db, t.workspace_id).await,
+            15,
+            "fallback 忽略任务覆盖(7)，回退工作空间默认(15)"
+        );
+        // 工作空间也无配置(ws 2) → 兜底常量。
+        assert_eq!(
+            resolve_delegate_max_rounds_fallback(&db, Some(2)).await,
+            MAX_DELEGATE_ROUNDS,
+            "工作空间未配置 → 兜底常量 10"
         );
     }
 }

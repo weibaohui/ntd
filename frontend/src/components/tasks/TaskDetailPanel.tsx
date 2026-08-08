@@ -61,7 +61,7 @@ interface ExecInfo {
 }
 
 interface TaskDetailData {
-  task: { id: number; title: string; status: string; description?: string; workspace_id?: number; loop_id?: number; execution_mode?: string; assignee_kind?: string; assignee_name?: string; auto_continue?: boolean; continue_rounds?: number; delegate_max_rounds?: number | null; delegate_max_rounds_effective?: number };
+  task: { id: number; title: string; status: string; description?: string; workspace_id?: number; loop_id?: number; execution_mode?: string; assignee_kind?: string; assignee_name?: string; auto_continue?: boolean; continue_rounds?: number; delegate_max_rounds?: number | null; delegate_max_rounds_effective?: number; delegate_max_rounds_fallback?: number };
   template?: { display_name?: string; version?: string; complexity?: string };
   steps: StepInfo[];
   executions: ExecInfo[];
@@ -115,6 +115,10 @@ function RelayMaxEditor({
   const rounds = task.continue_rounds ?? 0;
   // effective 兜底 10 仅为类型安全：后端恒返回该字段，缺失属异常态。
   const effectiveMax = task.delegate_max_rounds_effective ?? 10;
+  // 「清除任务覆盖后」的回退值（工作空间默认或兜底常量）：placeholder / 留空提示读它。
+  // 不能用 effective：任务已有覆盖时 effective 即覆盖值本身，提示「留空=用工作空间默认（N 轮）」会误显成
+  // 即将被清除的那个覆盖值，与「清除后实际回退到工作空间默认」矛盾（Spec 评审发现）。
+  const fallbackMax = task.delegate_max_rounds_fallback ?? effectiveMax;
   // >=：与后端 plan_delegate_relay 的 `rounds >= max` 护栏口径一致（设计 §5.2）。
   const atLimit = rounds >= effectiveMax;
   // Popover 受控开关 + 输入态：每次打开以最新 raw 回显，避免上一次残留值误导。
@@ -122,12 +126,16 @@ function RelayMaxEditor({
   const [editing, setEditing] = useState<number | null>(task.delegate_max_rounds ?? null);
   const [saving, setSaving] = useState(false);
 
-  // 落库并刷新：成功关 Popover；失败抛错由调用方 message.error，不关 Popover 便于改后重试。
+  // 落库并刷新：仅当 onUpdateMax 成功 resolve 才关 Popover；失败时 onUpdateMax 会向上抛错，
+  // 跳过 setOpen(false)，编辑器保持打开供改值重试（错误提示已由 handleUpdateMax 的 catch 弹出）。
+  // 此处 catch 兜住错误只复位 saving，避免 onClick 内产生未处理 promise rejection。
   const submit = async (value: number | null) => {
     setSaving(true);
     try {
       await onUpdateMax(value);
       setOpen(false);
+    } catch {
+      // 不关 Popover：让用户在原值基础上修正后重试（message.error 已在 handleUpdateMax 弹过）。
     } finally {
       setSaving(false);
     }
@@ -154,7 +162,7 @@ function RelayMaxEditor({
             max={50}
             value={editing}
             onChange={(v) => setEditing(v ?? null)}
-            placeholder={`默认 ${effectiveMax} 轮`}
+            placeholder={`默认 ${fallbackMax} 轮`}
             style={{ width: '100%' }}
             data-testid="relay-max-input"
           />
@@ -179,7 +187,7 @@ function RelayMaxEditor({
             </Button>
           </Space>
           <Text type="secondary" style={{ fontSize: 12 }}>
-            留空=用工作空间默认（{effectiveMax} 轮）；达上限后停止自动接力。
+            留空=用工作空间默认（{fallbackMax} 轮）；达上限后停止自动接力。
           </Text>
         </Space>
       }
@@ -360,8 +368,11 @@ export function TaskDetailPanel({
       message.success(max == null ? '已恢复默认上限' : `上限已设为 ${max} 轮`);
       onTriggered?.();
     } catch (e) {
-      // updateTask 400 时后端返回中文 message（越界/非委派），拦截器已透传，直接展示。
+      // updateTask 400 时后端返回中文 message（越界/非委派），拦截器已透传，先弹给用户可见提示。
       message.error(e instanceof Error ? e.message : '更新接力上限失败');
+      // 再向上抛错：RelayMaxEditor.submit 据此判定失败、跳过关 Popover 的语句，让用户在原
+      // Popover 内改值重试。否则 PATCH 失败却关弹层，用户须重新点开 ✎，体验割裂（评审发现）。
+      throw e;
     }
   }, [workspaceId, taskId, onTriggered]);
 
