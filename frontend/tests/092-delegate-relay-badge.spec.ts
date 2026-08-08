@@ -29,8 +29,10 @@ function cleanupSeededTasks() {
     execSync(`sqlite3 "${DEV_DB}" "DELETE FROM execution_records WHERE source_todo_id IN (SELECT id FROM todos WHERE title LIKE '%${MARKER}%');"`);
     execSync(`sqlite3 "${DEV_DB}" "DELETE FROM todos WHERE title LIKE '%${MARKER}%';"`);
     execSync(`sqlite3 "${DEV_DB}" "DELETE FROM tasks WHERE id IN (${ids});"`);
-  } catch {
-    // 清理失败不影响测试结论（仅开发库残留），静默吞掉。
+  } catch (e) {
+    // 清理失败不影响测试结论（仅开发库残留），但记录原因便于排查
+    // （如 sqlite3 未安装 / 库被占用 / 表已无残留），避免空 catch 吞错。
+    console.warn('[092 cleanup] 清理种子任务失败（开发库残留，通常可忽略）：', e);
   }
 }
 

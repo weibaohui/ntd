@@ -623,8 +623,11 @@ pub async fn create_post(
 /// 补偿「执行在占位帖插入前就结束」的竞态：completion.rs 的 discussion 回写按
 /// `source_execution_id` 找占位帖，占位帖还没插入时会错过（返回 0）。这里在插入占位帖
 /// 之后复查 record 状态，若已非 running 则手动 finalize 回写，避免占位帖永久停在 running。
-async fn compensate_finished_execution(state: &AppState, record_id: i64) {
-    let Ok(Some(rec)) = state.db.get_execution_record(record_id).await else {
+/// 签名只取 `&Database`（它只用 `db`）而非 `&AppState`：这样 completion 接力路径
+/// （`spawn_relay_execution` 手里只有 `DelegateRelayHandles` 的 Arc 句柄、没有 AppState）
+/// 也能复用同一补偿逻辑，避免 060 人工触发与 092 接力两处各写一遍竞态补偿。
+async fn compensate_finished_execution(db: &Database, record_id: i64) {
+    let Ok(Some(rec)) = db.get_execution_record(record_id).await else {
         return;
     };
     // 仍 running：正常等 completion 回调即可，无需补偿。
@@ -634,8 +637,7 @@ async fn compensate_finished_execution(state: &AppState, record_id: i64) {
     let success = matches!(rec.status, ExecutionStatus::Success);
     // result/executor 从执行记录取，与 completion.rs 正常回写路径一致。
     let result = rec.result.unwrap_or_default();
-    if let Err(e) = state
-        .db
+    if let Err(e) = db
         .finalize_discussion_post(record_id, success, &result, rec.executor.as_deref())
         .await
     {
@@ -719,7 +721,7 @@ async fn create_agent_post(
             // 补偿极快完成的执行：trigger 与 insert 占位帖之间若执行已结束，completion.rs 的
             // discussion 回写会错过（此时占位帖刚插入）→ 占位帖永久 running。插入后复查 record，
             // 已结束则手动回写。
-            compensate_finished_execution(state, record_id).await;
+            compensate_finished_execution(state.db.as_ref(), record_id).await;
             post_val
         }
         Err(e) => {
@@ -1046,6 +1048,12 @@ async fn spawn_relay_execution(
             if let Err(e) = handles.db.create_task_post(np).await {
                 tracing::warn!(error = %e, task_id = task.id, "relay insert placeholder failed");
             }
+            // 竞态补偿：run_todo_execution 是 fire-and-forget（spawn 后立刻返回 record_id），
+            // 与 060 的 create_agent_post 同构——若执行在「返回 record_id」与「占位帖插入」之间
+            // 已结束，completion 的 discussion 回写会错过此刻还不存在的占位帖 → 永久 running。
+            // 插入后复查 record 状态，已结束则手动回写。（此竞态下接力轮被跳过，遵循失败容忍
+            // 哲学：用户可在讨论区手动 @ 推进，不阻断已落定的执行成功。）
+            compensate_finished_execution(handles.db.as_ref(), record_id).await;
         }
         None => {
             // 启动失败：软删 carrier todo + 写 failed 帖留痕（不阻塞接力链路已落定的部分）。
