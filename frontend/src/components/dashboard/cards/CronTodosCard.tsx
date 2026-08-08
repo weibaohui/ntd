@@ -5,7 +5,9 @@ import { ClockCircleOutlined } from '@ant-design/icons';
 import { getSchedulerTodos } from '@/utils/database/todos';
 import { formatRelativeTime } from '@/utils/datetime';
 import { useCardData } from '@/components/dashboard/useCardData';
-import { useApp } from '@/hooks/useApp';
+// 093：本组件只消费 todo 域状态，用细粒度 useTodos 替代合并版 useApp，
+// 执行态（进度/统计推送）变化不再触发本组件重渲染。
+import { useTodos } from '@/hooks/useTodoContext';
 import { CardShell } from './CardShell';
 
 // 下次触发时间渲染成相对时间(如「2 小时后」);缺失则该 todo 未真正排程。
@@ -19,7 +21,7 @@ function NextRunTag({ next }: { next: string | null | undefined }) {
 }
 
 export function CronTodosCard() {
-  const { state } = useApp();
+  const { state } = useTodos();
   const wsId = state.selectedWorkspace ?? 0;
   // v1 纯 workspace-scoped：scheduler todos 按 workspace 隔离
   const { data, loading, error } = useCardData(() => getSchedulerTodos(wsId), [wsId]);

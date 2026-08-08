@@ -11,7 +11,9 @@ import {
   HistoryOutlined,
 } from '@ant-design/icons';
 import * as dbLoops from '@/utils/database/loops';
-import { useApp } from '@/hooks/useApp';
+// 093：本组件只消费 todo 域状态，用细粒度 useTodos 替代合并版 useApp，
+// 执行态（进度/统计推送）变化不再触发本组件重渲染。
+import { useTodos } from '@/hooks/useTodoContext';
 import type { LoopExecutionDetail, LoopDetail } from '@/types/loop';
 import { StepExecList } from '@/components/loop-studio/executions/StepExecList';
 import { BlackboardDrawer } from '@/components/loop-studio/executions/BlackboardDrawer';
@@ -36,8 +38,9 @@ export function LoopKanban({ searchText: externalSearch, hours: externalHours, o
   const searchText = externalSearch ?? internalSearch;
   const hours = externalHours ?? internalHours;
 
+  // AntApp.useApp() 是 antd 的 message 上下文 API，与项目自建 useApp/useTodos 无关，勿混淆。
   const { message } = AntApp.useApp();
-  const { state } = useApp();
+  const { state } = useTodos();
 
   const { executions, loading } = useLoopExecutions(state.selectedWorkspace ?? null, hours);
   const wsId = state.selectedWorkspace ?? 0;

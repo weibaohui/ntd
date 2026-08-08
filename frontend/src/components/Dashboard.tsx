@@ -21,7 +21,9 @@ import {
 } from '@ant-design/icons';
 import { PageCard } from '@/components/common/PageCard';
 import dayjs from 'dayjs';
-import { useApp } from '@/hooks/useApp';
+// 093：细粒度 hooks 替代合并版 useApp——todo 域与执行域分开订阅，uiState 变化不再触发重渲染。
+import { useTodos } from '@/hooks/useTodoContext';
+import { useExecution } from '@/hooks/useExecutionContext';
 import { useViewState } from '@/hooks/useViewState';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import * as db from '@/utils/database';
@@ -43,9 +45,13 @@ type DashboardTabKey = (typeof DASHBOARD_TABS)[number];
 type IconType = ComponentType<{ style?: CSSProperties }>;
 
 export function Dashboard() {
-  const { state } = useApp();
+  // 093：todo 域（tags）与执行域（runningTasks）分开订阅——Dashboard 真实需要两域，
+  // 但不再订阅与本组件无关的 uiState；antd 的 App.useApp() 是 message API，与本 hook 无关。
+  const { state: todoState } = useTodos();
+  const { state: execState } = useExecution();
   const { message } = App.useApp();
-  const { tags, runningTasks } = state;
+  const { tags } = todoState;
+  const { runningTasks } = execState;
   const { activeTab, pushUrl } = useViewState();
   // Dashboard 是全局运营视图，不依赖当前选中的 workspace；
   // 数据由 /api/v1/stats/dashboard 全库聚合返回。
@@ -85,8 +91,8 @@ export function Dashboard() {
       setStats(data);
       // 056：按最近执行记录的 todo_id 集合拉 brief 反查标题（替代全量 todos）
       const todoIds = [...new Set((data.recent_executions ?? []).map(r => r.todo_id))];
-      if (todoIds.length > 0 && state.selectedWorkspace != null) {
-        const briefs = await db.getTodoBriefs(state.selectedWorkspace, { ids: todoIds }).catch((e) => {
+      if (todoIds.length > 0 && todoState.selectedWorkspace != null) {
+        const briefs = await db.getTodoBriefs(todoState.selectedWorkspace, { ids: todoIds }).catch((e) => {
           console.error('最近执行记录的 todo 标题反查失败:', e);
           return [];
         });

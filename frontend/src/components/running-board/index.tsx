@@ -6,7 +6,9 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Tabs, Skeleton, Card, Button } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
-import { useApp } from '@/hooks/useApp';
+// 093：本组件只消费 todo 域状态，用细粒度 useTodos 替代合并版 useApp，
+// 执行态（进度/统计推送）变化不再触发本组件重渲染。
+import { useTodos } from '@/hooks/useTodoContext';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { useViewState } from '@/hooks/useViewState';
 import { RunningRecordDrawer } from '@/components/RunningRecordDrawer';
@@ -29,7 +31,7 @@ export interface RunningBoardProps {
 }
 
 export function RunningBoard({ searchText, hours }: RunningBoardProps = {}) {
-  const { state } = useApp();
+  const { state } = useTodos();
   const { selectTodo } = useViewState();
   const isMobile = useIsMobile();
   const [activeKey, setActiveKey] = useState<RunningBoardColumn>('running');

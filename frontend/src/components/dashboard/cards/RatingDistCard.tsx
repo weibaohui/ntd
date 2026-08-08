@@ -4,7 +4,9 @@ import { Progress } from 'antd';
 import { StarOutlined } from '@ant-design/icons';
 import { getRecentCompletedTodos } from '@/utils/database/executions';
 import { useCardData } from '@/components/dashboard/useCardData';
-import { useApp } from '@/hooks/useApp';
+// 093：本组件只消费 todo 域状态，用细粒度 useTodos 替代合并版 useApp，
+// 执行态（进度/统计推送）变化不再触发本组件重渲染。
+import { useTodos } from '@/hooks/useTodoContext';
 import { CardShell } from './CardShell';
 
 interface RatingBuckets {
@@ -50,7 +52,7 @@ function RatingBar({ label, count, total, color }: RatingBarProps) {
 }
 
 export function RatingDistCard() {
-  const { state } = useApp();
+  const { state } = useTodos();
   const wsId = state.selectedWorkspace ?? 0;
   const { data, loading, error } = useCardData(() => getRecentCompletedTodos(wsId), [wsId]);
   const buckets = bucketize((data ?? []).map((t) => t.rating));

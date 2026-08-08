@@ -10,7 +10,9 @@ import {
 import { CopyButton } from '@/components/CopyButton';
 import XMarkdown from '@ant-design/x-markdown';
 import { ExecutorBadge } from '@/components/ExecutorBadge';
-import { useApp } from '@/hooks/useApp';
+// 093：本组件只消费 todo 域状态，用细粒度 useTodos 替代合并版 useApp，
+// 执行态（进度/统计推送）变化不再触发本组件重渲染。
+import { useTodos } from '@/hooks/useTodoContext';
 import { useViewState } from '@/hooks/useViewState';
 import { useTodoById } from '@/hooks/useTodoById';
 import { formatLocalDateTime } from '@/utils/datetime';
@@ -133,7 +135,7 @@ export interface RunningRecordDrawerProps {
 }
 
 export function RunningRecordDrawer({ record, open, onClose, onRefresh }: RunningRecordDrawerProps) {
-  const { state } = useApp();
+  const { state } = useTodos();
   const { selectTodo } = useViewState();
   const [stopping, setStopping] = useState(false);
 

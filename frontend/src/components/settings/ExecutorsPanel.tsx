@@ -11,7 +11,9 @@ import { InstallExecutorButton } from '@/components/settings/InstallExecutorButt
 import { getExecutorInstallPrompt } from '@/components/settings/executorInstallPrompts';
 import * as db from '@/utils/database';
 import type { ExecutorConfig, ExecutionRecord, TodoBrief } from '@/types';
-import { useApp } from '@/hooks/useApp';
+// 093：本组件只消费 todo 域状态，用细粒度 useTodos 替代合并版 useApp，
+// 执行态（进度/统计推送）变化不再触发本组件重渲染。
+import { useTodos } from '@/hooks/useTodoContext';
 import { useAutoRefreshRunningBoard } from '@/hooks/useRunningBoard';
 import { SessionManager } from '@/components/SessionManager';
 
@@ -95,7 +97,7 @@ export function ExecutorsPanel() {
   const [usageStatsSaving, setUsageStatsSaving] = useState(false);
 
   // 正在运行 tab 相关状态
-  const { state } = useApp();
+  const { state } = useTodos();
   // 056：运行记录的 todo 标题按 id 集轻量反查（替代原全局全量桶）
   const [recordTodos, setRecordTodos] = useState<TodoBrief[]>([]);
   const [runningTab, setRunningTab] = useState<'executors' | 'running' | 'sessions'>('executors');

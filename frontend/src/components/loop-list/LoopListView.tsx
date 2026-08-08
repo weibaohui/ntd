@@ -10,7 +10,9 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Table } from 'antd';
-import { useApp } from '@/hooks/useApp';
+// 093：本组件只消费 todo 域状态，用细粒度 useTodos 替代合并版 useApp，
+// 执行态（进度/统计推送）变化不再触发本组件重渲染。
+import { useTodos } from '@/hooks/useTodoContext';
 import { useBatchActions } from '@/components/todo-list/useBatchActions';
 import { useResizableColumns } from '@/hooks/useResizableColumns';
 import type { Tag as TagType } from '@/types';
@@ -56,7 +58,7 @@ export function LoopListView({
   onToggleStatus,
   onRefresh,
 }: LoopListViewProps) {
-  const { state } = useApp();
+  const { state } = useTodos();
   const workspaceId = state.selectedWorkspace;
   // 行选中态：仅持有 id 列表，由 Table 的 rowSelection 受控
   const [selectedIds, setSelectedIds] = useState<number[]>([]);

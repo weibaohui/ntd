@@ -3,8 +3,10 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { TodoListPage } from './TodoListPage';
 import type { TodoCenterItem } from '@/types';
 
-vi.mock('@/hooks/useApp', () => ({
-  useApp: () => ({
+// 093：组件已从合并版 useApp 迁移到细粒度 useTodos，mock 目标同步切换；
+// mock 形状不变（useTodos 同样返回 { state, dispatch }，本组件只读 state）。
+vi.mock('@/hooks/useTodoContext', () => ({
+  useTodos: () => ({
     state: {
       selectedWorkspace: 1,
       tags: [],

@@ -11,7 +11,9 @@ import {
   DesktopOutlined,
 } from '@ant-design/icons';
 import { PageCard } from '@/components/common/PageCard';
-import { useApp } from '@/hooks/useApp';
+// 093：本组件只消费 todo 域状态，用细粒度 useTodos 替代合并版 useApp，
+// 执行态（进度/统计推送）变化不再触发本组件重渲染。
+import { useTodos } from '@/hooks/useTodoContext';
 import { useViewState } from '@/hooks/useViewState';
 import * as db from '@/utils/database';
 import type { Config, SlashCommandRule } from '@/types';
@@ -27,7 +29,7 @@ import { DEFAULT_EXECUTION_TIMEOUT_SECS } from '@/constants';
 
 /** 设置页，负责加载并保存系统配置以及各类管理面板。 */
 export function SettingsPage() {
-  const { state, dispatch } = useApp();
+  const { state, dispatch } = useTodos();
   const { tags } = state;
   const isMobile = useIsMobile();
 
