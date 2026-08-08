@@ -63,9 +63,11 @@ test('056 事项搜索页含防抖下推服务端口径', async ({ page }) => {
   await clickFeatureAndExpect(page, '事项（列表）', '搜索过滤', '防抖');
 });
 
-test('导航页概念卡渲染（任务卡含待审批描述）', async ({ page }) => {
+test('导航页概念卡渲染', async ({ page }) => {
   await page.goto(`${BASE}/#/onboarding`, { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(2500);
-  await expect(page.locator('text=任务').first()).toBeVisible({ timeout: 8000 });
-  await expect(page.locator('text=待审批').first()).toBeVisible({ timeout: 8000 });
+  // 概念层只承载大功能概念：6 张概念卡齐全即可，不含 UI 级功能细节。
+  for (const label of ['工艺', '环路', '事项', '任务', '执行器', '专家']) {
+    await expect(page.locator(`text=${label}`).first()).toBeVisible({ timeout: 8000 });
+  }
 });
