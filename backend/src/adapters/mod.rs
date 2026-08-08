@@ -357,6 +357,16 @@ pub trait CodeExecutor: Send + Sync {
     /// 解析输出行，返回解析后的日志条目
     fn parse_output_line(&self, line: &str) -> Option<ParsedLogEntry>;
 
+    /// NTD-012：pipeline 命中时回授结构化事件，维持执行器内部生命周期状态。
+    ///
+    /// 背景：stdout 每行先试 EventPipeline，命中即跳过旧 `parse_output_line`。
+    /// kilo/mimo/opencode/zhanlu 的 step_finish 副作用（has_successful_finish 标记）
+    /// 不再触发，非零退出码容忍（check_success）随之失效，成功任务被误判失败。
+    /// 本钩子在事件广播前把已解析好的 ExecutionEvent 回授给执行器——比重新调
+    /// parse_output_line 便宜（无二次 JSON 解析，也不产生重复日志条目）。
+    /// 默认空实现：不依赖流式副作用状态的执行器（claude_code/codex/hermes 等）无需理会。
+    fn on_pipeline_event(&self, _event: &crate::execution_events::ExecutionEvent) {}
+
     /// 解析 stderr 行，返回解析后的日志条目。返回 None 表示作为普通 stderr 处理。
     ///
     /// 默认返回 `None`，与 main 一致；具体 executor 若希望复用关键字分类（"error"

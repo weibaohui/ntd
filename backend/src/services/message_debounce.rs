@@ -1035,8 +1035,9 @@ fn process_executor_stdout_line(
         return;
     }
     // 非私聊场景：走标准流程，调用 parse_and_broadcast 发送 Output 事件
+    // NTD-012：传入 executor 让 pipeline 事件回授（step_finish 成功标记等生命周期状态同步）
     let parsed_list = log_capture::parse_and_broadcast(
-        pipeline, line, tx, task_id, workspace_id,
+        pipeline, line, tx, task_id, workspace_id, executor.as_ref(),
     );
     if !parsed_list.is_empty() {
         result.logs.extend(parsed_list);
