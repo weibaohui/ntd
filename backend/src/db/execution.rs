@@ -787,37 +787,129 @@ impl Database {
             .all(&self.conn)
             .await?;
 
+        // 093：metadata 解析收敛到 parsed_log_entry_from_parts，不再在此重复一份
         let logs: Vec<ParsedLogEntry> = entries
             .into_iter()
-            .map(|m| {
-                let (usage, tool_name, tool_input_json) = m
-                    .metadata
-                    .as_deref()
-                    .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
-                    .map(|v| {
-                        (
-                            v.get("usage")
-                                .and_then(|u| serde_json::from_value(u.clone()).ok()),
-                            v.get("tool_name")
-                                .and_then(|n| n.as_str().map(String::from)),
-                            v.get("tool_input_json")
-                                .and_then(|t| t.as_str().map(String::from)),
-                        )
-                    })
-                    .unwrap_or((None, None, None));
-
-                ParsedLogEntry {
-                    timestamp: m.timestamp,
-                    log_type: m.log_type,
-                    content: m.content,
-                    usage,
-                    tool_name,
-                    tool_input_json,
-                }
-            })
+            .map(|m| Self::parsed_log_entry_from_parts(m.timestamp, m.log_type, m.content, m.metadata.as_deref()))
             .collect();
 
         Ok((logs, total))
+    }
+
+    /// 把 execution_logs 行的四个字段组装成 `ParsedLogEntry`（093 抽取的共享映射）。
+    ///
+    /// metadata 列是 JSON 串 `{"usage":..,"tool_name":..,"tool_input_json":..}`，
+    /// 解析失败（历史脏数据 / 缺字段）一律降级为 None 而非报错——日志是只读展示数据，
+    /// 单行 metadata 损坏不应拖垮整页查询。
+    fn parsed_log_entry_from_parts(
+        timestamp: String,
+        log_type: String,
+        content: String,
+        metadata: Option<&str>,
+    ) -> ParsedLogEntry {
+        // metadata 只读不消费，用 &str 避免调用方为传参克隆一份 JSON 串
+        let (usage, tool_name, tool_input_json) = metadata
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+            .map(|v| {
+                (
+                    v.get("usage")
+                        .and_then(|u| serde_json::from_value(u.clone()).ok()),
+                    v.get("tool_name")
+                        .and_then(|n| n.as_str().map(String::from)),
+                    v.get("tool_input_json")
+                        .and_then(|t| t.as_str().map(String::from)),
+                )
+            })
+            .unwrap_or((None, None, None));
+        ParsedLogEntry { timestamp, log_type, content, usage, tool_name, tool_input_json }
+    }
+
+    /// 093：批量统计多个 record 的日志总行数（WS 重连 Sync 的 `log_total` 数据源）。
+    ///
+    /// 单条 GROUP BY 聚合替代旧实现「全量读回再 Vec::len」：长跑任务数万行日志时，
+    /// 重连不再需要把整表读进内存只为计数。
+    pub async fn count_execution_logs_for_records(
+        &self,
+        record_ids: &[i64],
+    ) -> Result<std::collections::HashMap<i64, i64>, sea_orm::DbErr> {
+        if record_ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        // in_clause 生成参数化占位符，杜绝字符串拼接注入面
+        let (placeholders, values) = Self::in_clause(record_ids);
+        let sql = format!(
+            "SELECT record_id, COUNT(*) AS cnt FROM execution_logs \
+             WHERE record_id IN ({placeholders}) GROUP BY record_id"
+        );
+        let rows = self
+            .conn
+            .query_all(sea_orm::Statement::from_sql_and_values(
+                sea_orm::DbBackend::Sqlite,
+                sql,
+                values,
+            ))
+            .await?;
+        // COUNT(*) 在无匹配行时该 record 不出现在结果集——调用方以 get().unwrap_or(0) 读
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                Some((
+                    r.try_get_by::<i64, _>("record_id").ok()?,
+                    r.try_get_by::<i64, _>("cnt").ok()?,
+                ))
+            })
+            .collect())
+    }
+
+    /// 093：批量取多个 record 的「尾部 cap 条」日志（WS 重连 Sync 的日志摘要数据源）。
+    ///
+    /// 窗口函数单查询完成「每个 record 各取最新 cap 条」，避免按 record 逐条查询的 N+1；
+    /// 外层按 record_id, id ASC 归序，与旧实现「内存截尾后升序」语义完全一致，前端无感知。
+    /// cap 参数化（生产传 RECONNECT_LOG_CAP=200，测试用小值验证边界）。
+    pub async fn get_tail_execution_logs_for_records(
+        &self,
+        record_ids: &[i64],
+        cap: i64,
+    ) -> Result<std::collections::HashMap<i64, Vec<ParsedLogEntry>>, sea_orm::DbErr> {
+        if record_ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let (placeholders, mut values) = Self::in_clause(record_ids);
+        // cap 拼在 WHERE rn <= ? 处，作为最后一个绑定值
+        values.push(cap.into());
+        let sql = format!(
+            "SELECT id, record_id, timestamp, log_type, content, metadata FROM ( \
+               SELECT id, record_id, timestamp, log_type, content, metadata, \
+                      ROW_NUMBER() OVER (PARTITION BY record_id ORDER BY id DESC) AS rn \
+               FROM execution_logs WHERE record_id IN ({placeholders}) \
+             ) WHERE rn <= ? ORDER BY record_id, id ASC"
+        );
+        let rows = self
+            .conn
+            .query_all(sea_orm::Statement::from_sql_and_values(
+                sea_orm::DbBackend::Sqlite,
+                sql,
+                values,
+            ))
+            .await?;
+        let mut map: std::collections::HashMap<i64, Vec<ParsedLogEntry>> =
+            std::collections::HashMap::with_capacity(record_ids.len());
+        for r in &rows {
+            // 单行字段读取失败时跳过该行而不是整批失败——日志是展示数据，可用性优先
+            let (Ok(record_id), Ok(timestamp), Ok(log_type), Ok(content), Ok(metadata)) = (
+                r.try_get_by::<i64, _>("record_id"),
+                r.try_get_by::<String, _>("timestamp"),
+                r.try_get_by::<String, _>("log_type"),
+                r.try_get_by::<String, _>("content"),
+                r.try_get_by::<Option<String>, _>("metadata"),
+            ) else {
+                continue;
+            };
+            map.entry(record_id)
+                .or_default()
+                .push(Self::parsed_log_entry_from_parts(timestamp, log_type, content, metadata.as_deref()));
+        }
+        Ok(map)
     }
 
     /// 获取所有执行日志（用于 WebSocket 同步等场景，请谨慎使用）
@@ -831,50 +923,10 @@ impl Database {
         Ok(logs)
     }
 
-    /// 批量获取多个 record_id 的所有执行日志（避免 WebSocket 同步时的 N+1 查询）
-    pub async fn get_all_execution_logs_for_records(
-        &self,
-        record_ids: &[i64],
-    ) -> Result<std::collections::HashMap<i64, Vec<ParsedLogEntry>>, sea_orm::DbErr> {
-        if record_ids.is_empty() {
-            return Ok(std::collections::HashMap::new());
-        }
-        let entries = execution_logs::Entity::find()
-            .filter(execution_logs::Column::RecordId.is_in(record_ids.iter().copied()))
-            .order_by_asc(execution_logs::Column::Id)
-            .all(&self.conn)
-            .await?;
-
-        let mut map: std::collections::HashMap<i64, Vec<ParsedLogEntry>> =
-            std::collections::HashMap::with_capacity(record_ids.len());
-        for m in entries {
-            let (usage, tool_name, tool_input_json) = m
-                .metadata
-                .as_deref()
-                .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
-                .map(|v| {
-                    (
-                        v.get("usage")
-                            .and_then(|u| serde_json::from_value(u.clone()).ok()),
-                        v.get("tool_name")
-                            .and_then(|n| n.as_str().map(String::from)),
-                        v.get("tool_input_json")
-                            .and_then(|t| t.as_str().map(String::from)),
-                    )
-                })
-                .unwrap_or((None, None, None));
-
-            map.entry(m.record_id).or_default().push(ParsedLogEntry {
-                timestamp: m.timestamp,
-                log_type: m.log_type,
-                content: m.content,
-                usage,
-                tool_name,
-                tool_input_json,
-            });
-        }
-        Ok(map)
-    }
+    // 093：原 `get_all_execution_logs_for_records`（全量读回 + 内存截尾）已删除。
+    // WS 重连 Sync 路径改用 `count_execution_logs_for_records`（聚合计数）
+    // + `get_tail_execution_logs_for_records`（窗口函数取尾部 cap 条）组合，
+    // 长跑任务重连不再全量读表。全量读取场景请显式使用分页 `get_execution_logs`。
 
     /// 根据 session_id 获取所有执行记录（按 started_at 排序）
     pub async fn get_execution_records_by_session(
@@ -1836,6 +1888,75 @@ mod center_aggregate_tests {
         ))
         .await
         .expect("insert exec");
+    }
+
+    /// 093：插一条执行日志，content 可指定（断言尾部内容用），metadata 给 NULL 走默认降级路径。
+    async fn seed_log(db: &Database, record_id: i64, content: &str) {
+        db.exec(&format!(
+            "INSERT INTO execution_logs (record_id, timestamp, log_type, content) \
+             VALUES ({record_id}, '2026-07-08T09:00:00Z', 'info', '{content}')"
+        ))
+        .await
+        .expect("insert log");
+    }
+
+    /// count_execution_logs_for_records：GROUP BY 聚合计数（093 WS 重连 log_total 数据源）。
+    /// 覆盖：多 record 各自计数、无日志 record 不出现、空入参返空。
+    #[tokio::test]
+    async fn test_count_execution_logs_for_records_groups_by_record() {
+        let db = fresh_db().await;
+        let t = seed_todo(&db, "T").await;
+        seed_exec(&db, t, "running", "manual").await; // record id=1
+        seed_exec(&db, t, "running", "manual").await; // record id=2
+        for i in 0..3 {
+            seed_log(&db, 1, &format!("r1-{i}")).await;
+        }
+        seed_log(&db, 2, "r2-0").await;
+        let map = db.count_execution_logs_for_records(&[1, 2, 9999]).await.unwrap();
+        assert_eq!(map.get(&1).copied(), Some(3));
+        assert_eq!(map.get(&2).copied(), Some(1));
+        // COUNT 聚合对无匹配行的 record 不产出分组——调用方以 unwrap_or(0) 读
+        assert!(!map.contains_key(&9999), "无日志的 record 不应出现在聚合结果中");
+        assert!(
+            db.count_execution_logs_for_records(&[]).await.unwrap().is_empty(),
+            "空入参应返回空 map"
+        );
+    }
+
+    /// get_tail_execution_logs_for_records：窗口函数取尾部 cap 条（093 WS 重连日志摘要源）。
+    /// 覆盖：cap=2 取尾部 2 条且按 id 升序、跨 record 互不串扰、metadata JSON 正常解析。
+    #[tokio::test]
+    async fn test_get_tail_execution_logs_for_records_returns_tail_asc() {
+        let db = fresh_db().await;
+        let t = seed_todo(&db, "T").await;
+        seed_exec(&db, t, "running", "manual").await; // record id=1
+        seed_exec(&db, t, "running", "manual").await; // record id=2
+        for i in 0..5 {
+            seed_log(&db, 1, &format!("r1-{i}")).await;
+        }
+        seed_log(&db, 2, "r2-only").await;
+        // 给尾部将命中的一行补上 metadata，验证 JSON 解析经共享 helper 走通
+        db.exec(
+            "UPDATE execution_logs SET metadata = '{\"tool_name\":\"Bash\"}' \
+             WHERE record_id = 1 AND content = 'r1-4'",
+        )
+        .await
+        .expect("update metadata");
+
+        let map = db.get_tail_execution_logs_for_records(&[1, 2], 2).await.unwrap();
+        let r1 = map.get(&1).expect("record 1 应有尾部日志");
+        // 5 行取尾 2：r1-3、r1-4；外层按 id ASC 归序，与旧内存截尾语义一致
+        let contents: Vec<&str> = r1.iter().map(|l| l.content.as_str()).collect();
+        assert_eq!(contents, ["r1-3", "r1-4"], "应取尾部 2 条且升序");
+        assert_eq!(r1[1].tool_name.as_deref(), Some("Bash"), "metadata 应被解析");
+        // record 2 仅 1 行，cap 超过总量时返回全部
+        let r2 = map.get(&2).expect("record 2 应有日志");
+        assert_eq!(r2.len(), 1, "cap 超过总量应返回全部");
+        assert_eq!(r2[0].content, "r2-only", "跨 record 不应串扰");
+        assert!(
+            db.get_tail_execution_logs_for_records(&[], 2).await.unwrap().is_empty(),
+            "空入参应返回空 map"
+        );
     }
 
     /// get_execution_records_by_ids：按 id 批量取执行记录并按 id 索引；
