@@ -57,6 +57,8 @@ mod v90;
 mod v91;
 /// v92：tasks/workspace_settings 各加 delegate_max_rounds 列（需求 092 护栏配置化）。
 mod v92;
+/// v93：todos.updated_at 排序索引（093 优化专项：列表 ORDER BY 不再全表扫 + filesort）。
+mod v93;
 
 pub use v2_v5::read_applied_versions;
 pub use v2_v5::drop_column_if_exists;
@@ -187,6 +189,9 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         // V92 在 V91 之后：tasks/workspace_settings 各加 delegate_max_rounds 列，
         // 把接力上限从写死常量改为「任务覆盖 → 工作空间默认 → 兜底」三级可配置。
         Box::new(v92::V92DelegateMaxRounds),
+        // V93 在 V92 之后：todos.updated_at 排序索引；配套 hours 过滤参数化后
+        // 列表查询「排序 + 时间窗」都走该索引 range scan。
+        Box::new(v93::V93AddTodosUpdatedAtIndex),
     ]
 }
 

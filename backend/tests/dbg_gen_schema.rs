@@ -43,7 +43,8 @@ async fn gen_consolidated_schema() {
         .collect();
 
     let mut out = String::new();
-    out.push_str("//! 合并版最终 schema（v1-v87 全部应用后的状态），供全新库一次性建表（bootstrap）。\n");
+    // 版本号不写死：生成时刻的最新版本即真相，避免头部注释随迁移增长而漂移失真
+    out.push_str("//! 合并版最终 schema（全部迁移应用后的状态），供全新库一次性建表（bootstrap）。\n");
     out.push_str("//! 自动生成：全新库跑完增量迁移后 dump sqlite_master。\n");
     out.push_str("//! 改动任何迁移后需重新生成：`cargo test --test dbg_gen_schema -- --ignored`\n\n");
     out.push_str("pub const CONSOLIDATED_SCHEMA: &[&str] = &[\n");
@@ -59,7 +60,12 @@ async fn gen_consolidated_schema() {
     }
     out.push_str("];\n");
 
-    let path = "/Users/weibh/projects/rust/nothing-todo/backend/src/db/migration/consolidated_schema.rs";
+    // 路径必须相对 CARGO_MANIFEST_DIR（backend/ 目录）推导：原硬编码绝对路径只在
+    // 原作者机器存在，其他人跑生成器会直接 panic（本分支实测）。
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/db/migration/consolidated_schema.rs"
+    );
     fs::write(path, &out).expect("write consolidated_schema.rs");
     eprintln!("GEN OK: {} tables, {} indexes, {} bytes -> {path}", tables.len(), indexes.len(), out.len());
 }

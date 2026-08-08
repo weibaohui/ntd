@@ -543,10 +543,11 @@ impl Database {
             }
         }
         if let Some(h) = hours.filter(|&h| h > 0) {
-            // hours 已验证 > 0 的 u32，format! 是构建 SQL 时间表达式的唯一途径
-            sql.push_str(&format!(
-                " AND REPLACE(REPLACE(updated_at, 'T', ' '), 'Z', '') >= datetime('now', '-{h} hours')"
-            ));
+            // 093：cutoff 在 Rust 侧算好走参数绑定，裸列比较让 idx_todos_updated_at 生效；
+            // 旧写法在列上套 REPLACE 函数，索引恒失效且 datetime('now') 每行求值。
+            // 生产数据统一 T/Z ISO（应用层毫秒 / 触发器秒级），字符串序=时间序（设计 §1.3）。
+            sql.push_str(" AND updated_at >= ?");
+            values.push(crate::models::utc_timestamp_minus_hours(h).into());
         }
         sql.push_str(" ORDER BY updated_at DESC");
         let rows = self
@@ -624,9 +625,9 @@ impl Database {
             cond = cond.and(todos::Column::WorkspaceId.eq(wid));
         }
         if let Some(h) = hours.filter(|&h| h > 0) {
-            cond = cond.and(sea_orm::sea_query::Expr::cust(format!(
-                "REPLACE(REPLACE(updated_at, 'T', ' '), 'Z', '') >= datetime('now', '-{h} hours')"
-            )));
+            // 093：同上——参数化裸列比较，走 idx_todos_updated_at range scan；
+            // NULL updated_at 行在两种写法下都被排除（NULL 比较结果为 NULL），语义不变。
+            cond = cond.and(todos::Column::UpdatedAt.gte(crate::models::utc_timestamp_minus_hours(h)));
         }
         // 先计数再钳页码（CodeRabbit#2）：大 OFFSET 是外部可触发的慢查询
         let total: i64 = todos::Entity::find()
@@ -2650,15 +2651,18 @@ mod todo_center_tests {
         let db = fresh_db().await;
         let recent = seed_todo(&db, "最近").await;
         let old = seed_todo(&db, "老旧").await;
-        // seed_todo 最小列集不带 updated_at（生产由触发器写入），测试显式赋值
+        // seed_todo 最小列集不带 updated_at（生产由触发器写入），测试显式赋值。
+        // 093：格式必须与生产触发器一致（%Y-%m-%dT%H:%M:%SZ 的 T/Z ISO）——
+        // hours 过滤已参数化为 `updated_at >= ?` 裸列比较，datetime('now') 的
+        // 空格分隔格式会在字符串比较中误判（' ' < 'T'），不再被容忍。
         db.exec(&format!(
-            "UPDATE todos SET updated_at = datetime('now') WHERE id = {recent}"
+            "UPDATE todos SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = {recent}"
         ))
         .await
         .unwrap();
-        // 把 old 的 updated_at 改到 10 天前
+        // 把 old 的 updated_at 改到 10 天前（同样用 ISO 格式）
         db.exec(&format!(
-            "UPDATE todos SET updated_at = datetime('now', '-240 hours') WHERE id = {old}"
+            "UPDATE todos SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now','-240 hours') WHERE id = {old}"
         ))
         .await
         .unwrap();
