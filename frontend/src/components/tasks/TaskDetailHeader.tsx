@@ -20,6 +20,31 @@ import styles from './TaskDetailPanel.module.css';
 
 const { Text } = Typography;
 
+// ====== Props 类型（03-组件编写规范 §2：具名 <Component>Props interface）======
+
+/** 接力徽标入参：任务数据（读取接力态）+ 上限落库回调（透传给内联编辑器）。 */
+interface RelayBadgeProps {
+  task: TaskDetailData['task'];
+  onUpdateMax: (max: number | null) => Promise<void>;
+}
+
+/** 徽标内联编辑器入参：与 RelayBadge 一致（task + 落库回调）。 */
+interface RelayMaxEditorProps {
+  task: TaskDetailData['task'];
+  onUpdateMax: (max: number | null) => Promise<void>;
+}
+
+/** 顶部条入参：任务 / 工艺元数据 + 环路详情 + 删除 / 再次执行 / 调上限回调。 */
+interface DetailHeaderProps {
+  task: TaskDetailData['task'];
+  template?: TaskDetailData['template'];
+  loopDetail: LoopDetail | null;
+  onExecute: () => void;
+  onDelete: () => void;
+  // 接力上限内联编辑落库（透传给 RelayBadge）；仅管家接力任务的徽标会用。
+  onUpdateMax: (max: number | null) => Promise<void>;
+}
+
 // ====== 纯函数 ======
 
 /** 是否为「管家自动接力」任务：委派 + 开启自动接力 + 专家处理人（执行器 P1 已禁用接力）。 */
@@ -47,10 +72,7 @@ function assigneeLabel(task: TaskDetailData['task']): string {
  */
 function RelayBadge({
   task, onUpdateMax,
-}: {
-  task: TaskDetailData['task'];
-  onUpdateMax: (max: number | null) => Promise<void>;
-}) {
+}: RelayBadgeProps) {
   if (!isAutoRelayTask(task)) return null;
   return <RelayMaxEditor task={task} onUpdateMax={onUpdateMax} />;
 }
@@ -62,10 +84,7 @@ function RelayBadge({
  */
 function RelayMaxEditor({
   task, onUpdateMax,
-}: {
-  task: TaskDetailData['task'];
-  onUpdateMax: (max: number | null) => Promise<void>;
-}) {
+}: RelayMaxEditorProps) {
   const rounds = task.continue_rounds ?? 0;
   // effective 兜底 10 仅为类型安全：后端恒返回该字段，缺失属异常态。
   const effectiveMax = task.delegate_max_rounds_effective ?? 10;
@@ -160,15 +179,7 @@ function RelayMaxEditor({
 /** 顶部条：标题 + 状态/复杂度 + 元信息 + 删除 + 再次执行。 */
 export function DetailHeader({
   task, template, loopDetail, onExecute, onDelete, onUpdateMax,
-}: {
-  task: TaskDetailData['task'];
-  template?: TaskDetailData['template'];
-  loopDetail: LoopDetail | null;
-  onExecute: () => void;
-  onDelete: () => void;
-  // 接力上限内联编辑落库（透传给 RelayBadge）；仅管家接力任务的徽标会用。
-  onUpdateMax: (max: number | null) => Promise<void>;
-}) {
+}: DetailHeaderProps) {
   return (
     <div className={styles.headerBar}>
       <div className={styles.headerMain}>

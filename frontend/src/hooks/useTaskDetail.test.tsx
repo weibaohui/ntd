@@ -84,33 +84,34 @@ describe('useTaskDetail', () => {
     expect(mockLoops.getLoop).not.toHaveBeenCalled();
   });
 
-  it('test_useTaskDetail_再次执行_建执行后刷新详情并关Modal', async () => {
+  it('test_useTaskDetail_再次执行_建执行后刷新详情并返回成功', async () => {
     const onTriggered = vi.fn();
     const { result } = renderHook(() => useTaskDetail(1, 2, { onTriggered }));
     await waitFor(() => expect(result.current.detail).not.toBeNull());
 
     // 隔离：初次加载的调用清零，只观测 handleNewExec 触发的调用。
     vi.clearAllMocks();
-    // 填需求（handleNewExec 校验非空）。
-    await act(() => { result.current.setNewRequirement('新需求'); });
-    await act(() => result.current.handleNewExec());
+    // 需求以入参传入（Modal 输入态由组件持有）；返回 true 表示成功。
+    let ok = false;
+    await act(async () => { ok = await result.current.handleNewExec('新需求'); });
 
     // createTaskExecution 入参顺序：(workspaceId, taskId, requirement)。
     expect(mockApi.createTaskExecution).toHaveBeenCalledWith(2, 1, '新需求');
     // 刷新详情：getTaskDetail 再被调一次。
     expect(mockApi.getTaskDetail).toHaveBeenCalledWith(2, 1);
-    // 成功后清空输入、通知宿主。
-    expect(result.current.newRequirement).toBe('');
+    expect(ok).toBe(true);
     expect(onTriggered).toHaveBeenCalled();
   });
 
-  it('test_useTaskDetail_再次执行_空需求警告且不建执行', async () => {
+  it('test_useTaskDetail_再次执行_空需求警告不建执行且返回失败', async () => {
     const { result } = renderHook(() => useTaskDetail(1, 2, {}));
     await waitFor(() => expect(result.current.detail).not.toBeNull());
     vi.clearAllMocks();
 
-    await act(() => result.current.handleNewExec());
-    // 空需求被校验拦截，不触发 createTaskExecution。
+    let ok = true;
+    await act(async () => { ok = await result.current.handleNewExec(''); });
+    // 空需求被校验拦截，不触发 createTaskExecution，并返回 false。
+    expect(ok).toBe(false);
     expect(mockApi.createTaskExecution).not.toHaveBeenCalled();
     expect(mockMessage.warning).toHaveBeenCalledWith('请输入需求');
   });
@@ -164,18 +165,5 @@ describe('useTaskDetail', () => {
     expect(mockLoops.deleteLoop).toHaveBeenCalledWith(2, 7);
     expect(mockMessage.success).toHaveBeenCalledWith('已删除');
     expect(onLoopChanged).toHaveBeenCalled();
-  });
-
-  it('test_useTaskDetail_openReqModal_以任务描述预填', async () => {
-    const { result } = renderHook(() => useTaskDetail(1, 2, {}));
-    await waitFor(() => expect(result.current.detail).not.toBeNull());
-
-    await act(() => result.current.openReqModal());
-    // 预填取 description ?? title；loopTask 无 description，回退标题。
-    expect(result.current.newRequirement).toBe('环路任务');
-    expect(result.current.reqModalOpen).toBe(true);
-    // closeReqModal 关闭。
-    await act(() => result.current.closeReqModal());
-    expect(result.current.reqModalOpen).toBe(false);
   });
 });

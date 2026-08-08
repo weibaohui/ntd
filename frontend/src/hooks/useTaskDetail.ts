@@ -6,8 +6,9 @@
 // - 数据层可 renderHook + mock 单测（见 useTaskDetail.test.tsx）；
 // - 组件回归声明式渲染，只消费 state + 调动作。
 //
-// 行为与原组件逐行等价：竞态守卫（alive 标志）、错误处理、副作用依赖、eslint-disable
-// 注释全部原样保留，本次为纯结构抽取，不改逻辑。
+// 职责边界：本 hook 只管「任务数据 + 对任务的变更」；Modal 开关 / 输入文案等纯 UI 态
+// 留在组件，故再次执行以 handleNewExec(requirement) 入参形式接收需求、返回是否成功，
+// 由组件决定关 Modal 与清输入。refresh 仅内部复用，不对外暴露（YAGNI）。
 // 复用既有模式：参照 src/hooks/useRunningBoard.ts（alive 竞态守卫 + 导出 state 接口）。
 
 import { useState, useEffect, useCallback } from 'react';
@@ -24,22 +25,15 @@ export interface TaskDetailState {
   detail: TaskDetailData | null;
   loopDetail: LoopDetail | null;
   loopLoading: boolean;
-  // —— 再次执行 Modal 态：开关 / 输入文案 / 提交中 ——
-  reqModalOpen: boolean;
-  newRequirement: string;
+  // —— 再次执行：提交 loading 态 ——
   triggering: boolean;
-  setNewRequirement: (v: string) => void;
-  openReqModal: () => void;
-  closeReqModal: () => void;
   // —— 动作 ——
-  /** 提交新执行（createTaskExecution → 刷新详情 → 通知宿主）。 */
-  handleNewExec: () => Promise<void>;
+  /** 提交新执行：接收需求文本，成功返回 true（组件据此关 Modal），空/失败返回 false。 */
+  handleNewExec: (requirement: string) => Promise<boolean>;
   /** 删除环路（deleteLoop → 通知宿主刷新）。 */
   handleDelete: () => Promise<void>;
   /** 内联调整接力上限覆盖（updateTask → 刷新详情；失败向上抛错让 Popover 不关）。 */
   handleUpdateMax: (max: number | null) => Promise<void>;
-  /** 重拉任务详情（内部由 create/update 复用，亦供外部按需刷新）。 */
-  refresh: () => Promise<void>;
 }
 
 /** useTaskDetail 的宿主回调（来自 TaskDetailPanel 的 props，透传进来）。 */
@@ -58,6 +52,14 @@ interface UseTaskDetailCallbacks {
  * 数据流：先拉任务详情（get_task_detail）→ 若 task.loop_id 存在再拉完整 LoopDetail。
  * 两个 effect 各自用 `alive` 闭包标志丢弃 unmount / 切换后晚到的响应，防竞态写脏 state。
  *
+ * 【函数长度豁免说明】本 hook 体量超 50 行（5 个 state + 2 effect + 4 useCallback），
+ * 不符合 CLAUDE.md 四类豁免场景，但刻意不拆，理由命中豁免总原则「强行拆分将导致数据
+ * 碎片化」：detail / loopDetail / refreshing 等状态构成一个紧耦合的「任务详情状态机」，
+ * 删除 / 再次执行 / 调上限都读写同一份 detail，拆成多个子 hook 须在线程间传递共享
+ * setter 与回调，反而增加阅读与传参成本。与既有 src/hooks/useRunningBoard.ts 同形态
+ * （同为数据+动作聚合 hook，亦超 50 行），保持一致。行为零变更：竞态守卫、effect 依赖、
+ * 错误处理（含 handleUpdateMax 的 throw e）全部自原组件逐项保留。
+ *
  * @param taskId      任务 id
  * @param workspaceId 工作空间 id（拉详情 / 拉环路 / 删除均需）
  * @param cb          宿主回调（标题上报 / 刷新列表 / 删除通知）
@@ -74,11 +76,10 @@ export function useTaskDetail(
   const [loopDetail, setLoopDetail] = useState<LoopDetail | null>(null);
   const [loopLoading, setLoopLoading] = useState(false);
   const [triggering, setTriggering] = useState(false);
-  const [reqModalOpen, setReqModalOpen] = useState(false);
-  const [newRequirement, setNewRequirement] = useState('');
 
   // 重拉任务详情：create/update 成功后复用，保证 detail 与后端同步。
   // 刻意不调 onTitleReady：标题仅在首次拉取时上报，避免重复触发外层标题更新。
+  // 仅内部使用，不进 TaskDetailState（无外部消费者，避免无谓的公开面）。
   const refresh = useCallback(async () => {
     const raw = await bundledApi.getTaskDetail(workspaceId, taskId) as TaskDetailData;
     setDetail(raw);
@@ -130,31 +131,24 @@ export function useTaskDetail(
     }
   }, [loopDetail, workspaceId, onLoopChanged]);
 
-  // 打开再次执行 Modal：以任务描述（或缺省标题）预填输入框。
-  const openReqModal = useCallback(() => {
-    if (detail) setNewRequirement(detail.task.description ?? detail.task.title);
-    setReqModalOpen(true);
-  }, [detail]);
-
-  const closeReqModal = useCallback(() => setReqModalOpen(false), []);
-
-  // 提交新执行：createTaskExecution 成功后关 Modal、清输入、重拉详情、通知宿主刷新列表。
-  const handleNewExec = useCallback(async () => {
-    if (!newRequirement.trim()) { message.warning('请输入需求'); return; }
+  // 提交新执行：接收需求文本（Modal 输入态由组件持有），成功返回 true。
+  // 成功后重拉详情 + 通知宿主刷新；Modal 关闭 / 输入清空交由组件在 true 时处理。
+  const handleNewExec = useCallback(async (requirement: string): Promise<boolean> => {
+    if (!requirement.trim()) { message.warning('请输入需求'); return false; }
     setTriggering(true);
     try {
-      await bundledApi.createTaskExecution(workspaceId, taskId, newRequirement);
+      await bundledApi.createTaskExecution(workspaceId, taskId, requirement);
       message.success('新执行已创建');
-      setReqModalOpen(false);
-      setNewRequirement('');
       await refresh();
       onTriggered?.();
+      return true;
     } catch {
       message.error('创建失败');
+      return false;
     } finally {
       setTriggering(false);
     }
-  }, [newRequirement, workspaceId, taskId, refresh, onTriggered]);
+  }, [workspaceId, taskId, refresh, onTriggered]);
 
   // 内联调整某任务的接力上限覆盖（需求 092）：落库后重拉详情，effective 随之刷新。
   // 用 taskId/workspaceId（而非 detail.task），保证 detail 未就绪时也不引用空对象。
@@ -173,9 +167,7 @@ export function useTaskDetail(
   }, [workspaceId, taskId, refresh, onTriggered]);
 
   return {
-    loading, detail, loopDetail, loopLoading,
-    reqModalOpen, newRequirement, triggering,
-    setNewRequirement, openReqModal, closeReqModal,
-    handleNewExec, handleDelete, handleUpdateMax, refresh,
+    loading, detail, loopDetail, loopLoading, triggering,
+    handleNewExec, handleDelete, handleUpdateMax,
   };
 }

@@ -46,6 +46,10 @@ export function TaskDetailPanel({
   // 讨论区 running 帖数量（DiscussionTab 上报），用于「讨论」Tab 角标。
   // 纯展示态，不进 hook（与任务数据无关）；声明在 early return 之前以满足 hooks 顺序规则。
   const [discussionRunning, setDiscussionRunning] = useState(0);
+  // 再次执行 Modal 的 UI 态（开关 / 输入文案）：纯 UI，由组件持有；提交动作委托 hook。
+  // 同样声明在 early return 之前，保证 loading 提前 return 时 hooks 顺序稳定。
+  const [reqModalOpen, setReqModalOpen] = useState(false);
+  const [newRequirement, setNewRequirement] = useState('');
   const { dirs: projectDirs } = useProjectDirectories();
   // URL ?tab= 驱动 Tabs 选中态（对齐 Settings 页模式）：帖子页返回任务-讨论 tab 时
   // 返回 URL 带 ?tab=discussion，此处解析出 activeTab 落到对应 Tab；非法值回退「概览」。
@@ -118,11 +122,24 @@ export function TaskDetailPanel({
   // resolvedTab 已据 TAB_KEYS 白名单做过首轮兜底，这里再做「可见集合」收口，避免 activeKey 落空。
   const activeTabKey = resolveTaskActiveTab(resolvedTab, task.execution_mode);
 
+  // 打开再次执行 Modal：以任务描述（或缺省标题）预填输入框。
+  const openReqModal = () => {
+    setNewRequirement(t.detail?.task.description ?? t.detail?.task.title ?? '');
+    setReqModalOpen(true);
+  };
+  // 提交新执行：成功才关 Modal + 清输入；空需求 / 失败保持打开供修正（与原行为一致）。
+  const handleOk = async () => {
+    if (await t.handleNewExec(newRequirement)) {
+      setReqModalOpen(false);
+      setNewRequirement('');
+    }
+  };
+
   return (
     <div className={styles.panel}>
       <DetailHeader
         task={task} template={template} loopDetail={t.loopDetail}
-        onExecute={t.openReqModal} onDelete={t.handleDelete} onUpdateMax={t.handleUpdateMax}
+        onExecute={openReqModal} onDelete={t.handleDelete} onUpdateMax={t.handleUpdateMax}
       />
       <div className={styles.tabsWrap}>
         <Tabs
@@ -136,13 +153,13 @@ export function TaskDetailPanel({
 
       <Modal
         title="输入这次的需求"
-        open={t.reqModalOpen}
-        onCancel={t.closeReqModal}
-        onOk={t.handleNewExec}
+        open={reqModalOpen}
+        onCancel={() => setReqModalOpen(false)}
+        onOk={handleOk}
         confirmLoading={t.triggering}
         okText="开始执行"
       >
-        <Input.TextArea value={t.newRequirement} onChange={(e) => t.setNewRequirement(e.target.value)} rows={4} />
+        <Input.TextArea value={newRequirement} onChange={(e) => setNewRequirement(e.target.value)} rows={4} />
       </Modal>
     </div>
   );
