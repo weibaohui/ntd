@@ -2,7 +2,7 @@
 // 验证点：
 // 1. 委派任务（execution_mode=delegate）详情只展示「概览」「讨论」两 Tab，无「执行环路」「执行历史」；
 // 2. 工艺环路任务（execution_mode=loop）详情仍展示全部 4 个 Tab（设计 §4「4 个 Tab 齐全」）；
-// 3. 委派任务 URL 残留 ?tab=dag 时，不出现内容区空白——自动回退到默认 Tab（讨论）。
+// 3. 委派任务 URL 残留 ?tab=dag 或 ?tab=exec 时，都不出现内容区空白——自动回退到默认 Tab（讨论）。
 //
 // 运行前提：make dev 已起（18088）。
 // 数据独立（前端规范 11-测试规范 §4「测试必须独立可运行，不依赖外部状态」）：
@@ -18,25 +18,23 @@ const BASE = 'http://localhost:18088';
 const DEV_DB = path.join(process.env.HOME ?? '', '.ntd', 'data.dev.db');
 // 委派 fixture 所属工作空间：与 dev 库现有 loop 任务一致，便于在同一 ws 内校验。
 const WS_ID = 3;
-// 唯一标记：afterAll 按此前缀精确清理本 spec 插入的行，绝不动到既有数据。
-const FIXTURE_TITLE = '093-pw-fixture-delegate';
+// 每次运行唯一的 fixture 标记：CI 多 worker / 多次跑时，不同 run 不会共享或误删彼此的记录。
+const FIXTURE_TITLE = `093-pw-fixture-delegate-${process.pid}-${Date.now()}`;
 
 let delegateTaskId = 0;
 let loopTaskId = 0;
 
 test.beforeAll(() => {
   // 插入委派任务 fixture：execution_mode=delegate，loop_id 默认 NULL → 不应出现环路相关 Tab。
-  execSync(
-    `sqlite3 "${DEV_DB}" "INSERT INTO tasks ` +
-      `(title, description, status, workspace_id, execution_mode, assignee_kind, assignee_name, ` +
-      `auto_continue, continue_rounds, created_at, updated_at) ` +
-      `VALUES ('${FIXTURE_TITLE}', 'Playwright 验证委派任务', 'pending', ${WS_ID}, ` +
-      `'delegate', 'executor', 'codex', 0, 0, datetime('now'), datetime('now'));"`,
-  );
-  // 读回自增 id，供用例导航。
+  // 同一 sqlite3 连接内用 last_insert_rowid() 取回本 run 刚插入行的 id，避免按标题反查在并发 run 间错拿。
   delegateTaskId = Number(
     execSync(
-      `sqlite3 "${DEV_DB}" "SELECT id FROM tasks WHERE title='${FIXTURE_TITLE}' ORDER BY id DESC LIMIT 1;"`,
+      `sqlite3 "${DEV_DB}" "INSERT INTO tasks ` +
+        `(title, description, status, workspace_id, execution_mode, assignee_kind, assignee_name, ` +
+        `auto_continue, continue_rounds, created_at, updated_at) ` +
+        `VALUES ('${FIXTURE_TITLE}', 'Playwright 验证委派任务', 'pending', ${WS_ID}, ` +
+        `'delegate', 'executor', 'codex', 0, 0, datetime('now'), datetime('now')); ` +
+        `SELECT last_insert_rowid();"`,
     )
       .toString()
       .trim(),
@@ -52,8 +50,10 @@ test.beforeAll(() => {
 });
 
 test.afterAll(() => {
-  // 仅清理本 spec 插入的 fixture（按标题精确匹配），其余数据原样保留。
-  execSync(`sqlite3 "${DEV_DB}" "DELETE FROM tasks WHERE title='${FIXTURE_TITLE}';"`);
+  // 仅删除本 run 创建的那一行（按 id），绝不按标题批量删，避免误伤并发 run 的 fixture。
+  if (delegateTaskId) {
+    execSync(`sqlite3 "${DEV_DB}" "DELETE FROM tasks WHERE id=${delegateTaskId};"`);
+  }
 });
 
 // 等待任务详情 Tab 栏渲染完成，返回各 Tab 的可见文本。逐个 innerText 收集，避免 Badge/图标节点干扰。
@@ -97,18 +97,22 @@ test('工艺环路任务详情：仍展示全部 4 个 Tab', async ({ page }) =>
   expect(texts.some((t) => t.includes('执行历史'))).toBe(true);
 });
 
-test('委派任务 URL 残留 ?tab=dag：回退默认 Tab，内容区不空白', async ({ page }) => {
-  // resolvedTab 会把 ?tab=dag 解析为 'dag'（TAB_KEYS 白名单含该项），但委派任务已隐藏该 Tab。
-  // 若无 activeKey 兜底，Tabs 会落到无选中态、内容区空白；此处验证兜底回退到「讨论」。
-  await page.goto(`${BASE}/#/tasks/${delegateTaskId}?tab=dag`);
-  await page.waitForSelector('.ant-tabs-tab', { timeout: 15000 });
+// 委派任务已隐藏 dag/exec 两 Tab，URL 残留其中任一都应回退默认 Tab、不出现空白。
+// 两 Tab 走同一套兜底逻辑，这里各跑一次以覆盖「只误放行其中一个」的回归。
+for (const hiddenTab of ['dag', 'exec'] as const) {
+  test(`委派任务 URL 残留 ?tab=${hiddenTab}：回退默认 Tab，内容区不空白`, async ({ page }) => {
+    // resolvedTab 会把 ?tab=<hiddenTab> 解析成对应 key（TAB_KEYS 白名单含 dag/exec），但委派任务已隐藏该 Tab。
+    // 若无 activeKey 兜底，Tabs 会落到无选中态、内容区空白；此处验证兜底回退到「讨论」。
+    await page.goto(`${BASE}/#/tasks/${delegateTaskId}?tab=${hiddenTab}`);
+    await page.waitForSelector('.ant-tabs-tab', { timeout: 15000 });
 
-  // 激活的 Tab 应回退为「讨论」（委派任务默认 Tab）。
-  const activeTab = page.locator('.ant-tabs-tab-active');
-  await expect(activeTab).toBeVisible();
-  const activeText = (await activeTab.innerText()) ?? '';
-  expect(activeText).toContain('讨论');
+    // 激活的 Tab 应回退为「讨论」（委派任务默认 Tab）。
+    const activeTab = page.locator('.ant-tabs-tab-active');
+    await expect(activeTab).toBeVisible();
+    const activeText = (await activeTab.innerText()) ?? '';
+    expect(activeText).toContain('讨论');
 
-  // 内容区不空白：讨论 Tab forceRender 挂载，发送按钮可见（DiscussionComposer 已渲染）。
-  await expect(page.getByRole('button', { name: '发送' })).toBeVisible({ timeout: 10000 });
-});
+    // 内容区不空白：讨论 Tab forceRender 挂载，发送按钮可见（DiscussionComposer 已渲染）。
+    await expect(page.getByRole('button', { name: '发送' })).toBeVisible({ timeout: 10000 });
+  });
+}
