@@ -1365,9 +1365,42 @@ pub fn utc_timestamp() -> String {
     chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()
 }
 
+/// 093：返回「hours 小时前」的 UTC cutoff，格式与 `utc_timestamp` 完全一致。
+///
+/// 用途：列表 hours 过滤从 `REPLACE(REPLACE(updated_at,...)>= datetime('now',...)`
+/// （列上套函数使索引失效）改为 `updated_at >= ?` 参数绑定裸列比较。
+/// 存储侧格式考据（生产统一 T/Z ISO，见 093 设计文档 §1.3）：
+/// 应用层写入走 `utc_timestamp()`（毫秒精度），触发器兜底走 `%Y-%m-%dT%H:%M:%SZ`
+/// （秒级精度）；两种形态与本 cutoff 做字符串比较在秒级等价于时间比较，
+/// 毫秒边界误差 <1s，对 hours 级过滤可忽略。
+pub fn utc_timestamp_minus_hours(hours: u32) -> String {
+    (chrono::Utc::now() - chrono::Duration::hours(i64::from(hours)))
+        .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+        .to_string()
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod tests {
+    /// 093：cutoff helper 的格式契约（与 utc_timestamp 同格式）与时间偏移正确性。
+    #[test]
+    fn test_utc_timestamp_minus_hours_format_and_offset() {
+        let cutoff = super::utc_timestamp_minus_hours(24);
+        // 格式形状必须与 utc_timestamp 一致（毫秒精度 T/Z ISO），否则与存量数据比较失真
+        let re = regex::Regex::new(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$").unwrap();
+        assert!(re.is_match(&cutoff), "cutoff 格式应为毫秒级 ISO：{cutoff}");
+        // 与「现在」做字符串比较应恒小（同格式 ISO 字符串序 = 时间序），且差值≈24h
+        let now = super::utc_timestamp();
+        assert!(cutoff < now, "24 小时前的 cutoff 应小于当前时间戳");
+        // 解析回时间类型验证差值在容差内（防格式对了但偏移算错）
+        let parsed = chrono::DateTime::parse_from_rfc3339(&cutoff).unwrap();
+        let delta = chrono::Utc::now() - parsed.with_timezone(&chrono::Utc);
+        assert!(
+            delta.num_hours() >= 23 && delta.num_hours() <= 25,
+            "偏移应在 24h±1h 容差内，实际 {delta}"
+        );
+    }
+
     use super::*;
 
     #[test]

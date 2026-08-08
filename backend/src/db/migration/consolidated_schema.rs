@@ -1,4 +1,4 @@
-//! 合并版最终 schema（v1-v90 全部应用后的状态），供全新库一次性建表（bootstrap）。
+//! 合并版最终 schema（全部迁移应用后的状态），供全新库一次性建表（bootstrap）。
 //! 自动生成：全新库跑完增量迁移后 dump sqlite_master。
 //! 改动任何迁移后需重新生成：`cargo test --test dbg_gen_schema -- --ignored`
 
@@ -384,23 +384,6 @@ pub const CONSOLIDATED_SCHEMA: &[&str] = &[
             color TEXT DEFAULT '#1890ff',
             created_at TEXT
         )"#,
-    // tasks：需求 092 追加委派执行 5 列。追加列必须与 v91 的 ALTER 逐字一致，并按 SQLite
-    // ALTER ADD COLUMN 实际生成的「, coldef」单行格式接在原闭合括号缩进处（见 agent_bots
-    // 同款写法），否则 test_consolidated_schema_matches_incremental 会判 schema 漂移。
-    r#"CREATE TABLE tasks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT NOT NULL DEFAULT '',
-            description TEXT NOT NULL DEFAULT '',
-            status TEXT NOT NULL DEFAULT 'pending',
-            workspace_id INTEGER,
-            template_id INTEGER,
-            loop_id INTEGER,
-            created_by TEXT DEFAULT '',
-            created_at TEXT,
-            updated_at TEXT
-        , execution_mode TEXT NOT NULL DEFAULT 'loop', assignee_kind TEXT, assignee_name TEXT, auto_continue INTEGER NOT NULL DEFAULT 0, continue_rounds INTEGER NOT NULL DEFAULT 0, delegate_max_rounds INTEGER)"#,
-    // task_posts：任务讨论帖表（需求 060，与 v88 迁移同构）。字段语义见 entity/task_posts.rs；
-    // 外键均 ON DELETE CASCADE，删任务/删父帖时连带清理，避免孤儿帖。
     r#"CREATE TABLE task_posts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 task_id INTEGER NOT NULL,
@@ -419,6 +402,18 @@ pub const CONSOLIDATED_SCHEMA: &[&str] = &[
                 FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
                 FOREIGN KEY (parent_post_id) REFERENCES task_posts(id) ON DELETE CASCADE
             )"#,
+    r#"CREATE TABLE tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL DEFAULT '',
+            description TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'pending',
+            workspace_id INTEGER,
+            template_id INTEGER,
+            loop_id INTEGER,
+            created_by TEXT DEFAULT '',
+            created_at TEXT,
+            updated_at TEXT
+        , execution_mode TEXT NOT NULL DEFAULT 'loop', assignee_kind TEXT, assignee_name TEXT, auto_continue INTEGER NOT NULL DEFAULT 0, continue_rounds INTEGER NOT NULL DEFAULT 0, delegate_max_rounds INTEGER)"#,
     r#"CREATE TABLE todo_tags (
             todo_id INTEGER,
             tag_id INTEGER,
@@ -525,15 +520,18 @@ pub const CONSOLIDATED_SCHEMA: &[&str] = &[
     r#"CREATE INDEX idx_execution_records_task_id ON execution_records(task_id)"#,
     r#"CREATE INDEX idx_execution_records_todo_finished ON execution_records(todo_id, finished_at DESC)"#,
     r#"CREATE INDEX idx_execution_records_todo_id ON execution_records(todo_id)"#,
+    r#"CREATE INDEX idx_execution_records_workspace_id ON execution_records(workspace_id)"#,
     r#"CREATE INDEX idx_executors_name ON executors(name)"#,
     r#"CREATE UNIQUE INDEX idx_feishu_bindings_active ON feishu_project_bindings(bot_id, chat_id) WHERE chat_id != '__pending__' AND enabled = 1"#,
     r#"CREATE INDEX idx_feishu_bindings_bot_id ON feishu_project_bindings(bot_id)"#,
     r#"CREATE INDEX idx_feishu_bindings_record_id ON feishu_project_bindings(latest_record_id)"#,
+    r#"CREATE INDEX idx_feishu_messages_bot_chat ON feishu_messages(bot_id, chat_id, created_at DESC)"#,
     r#"CREATE INDEX idx_feishu_messages_chat_id ON feishu_messages(chat_id)"#,
     r#"CREATE INDEX idx_feishu_messages_created_at ON feishu_messages(created_at)"#,
     r#"CREATE INDEX idx_loop_executions_loop_id ON loop_executions(loop_id)"#,
     r#"CREATE INDEX idx_loop_executions_started_at ON loop_executions(started_at DESC)"#,
     r#"CREATE INDEX idx_loop_executions_status ON loop_executions(status)"#,
+    r#"CREATE INDEX idx_loop_executions_task_id ON loop_executions(task_id)"#,
     r#"CREATE INDEX idx_loop_hooks_loop_id ON loop_hooks(loop_id)"#,
     r#"CREATE INDEX idx_loop_hooks_source_stage ON loop_hooks(source_step_id)"#,
     r#"CREATE INDEX idx_loop_phase_executions_exec ON loop_phase_executions(loop_execution_id)"#,
@@ -543,11 +541,15 @@ pub const CONSOLIDATED_SCHEMA: &[&str] = &[
     r#"CREATE INDEX idx_loop_step_artifacts_exec ON loop_step_artifacts(loop_step_execution_id)"#,
     r#"CREATE INDEX idx_loop_step_artifacts_name ON loop_step_artifacts(loop_step_execution_id, name)"#,
     r#"CREATE INDEX idx_loop_step_execution_gates_exec ON loop_step_execution_gates(loop_step_execution_id)"#,
+    r#"CREATE INDEX idx_loop_step_executions_loop_exec ON loop_step_executions(loop_execution_id, sequence_index)"#,
     r#"CREATE INDEX idx_loop_steps_loop_id ON loop_steps(loop_id)"#,
     r#"CREATE INDEX idx_loop_steps_loop_order ON loop_steps(loop_id, order_index)"#,
+    r#"CREATE INDEX idx_loop_steps_todo_id ON loop_steps(todo_id)"#,
     r#"CREATE INDEX idx_loop_tags_loop_id ON loop_tags(loop_id)"#,
+    r#"CREATE INDEX idx_loops_process_template_id ON loops(process_template_id)"#,
     r#"CREATE INDEX idx_loops_status ON loops(status)"#,
     r#"CREATE INDEX idx_loops_updated_at ON loops(updated_at DESC)"#,
+    r#"CREATE INDEX idx_loops_workspace_id ON loops(workspace_id)"#,
     r#"CREATE INDEX idx_process_template_versions_guid
              ON process_template_versions(guid)"#,
     r#"CREATE INDEX idx_process_templates_category ON process_templates(category)"#,
@@ -555,13 +557,16 @@ pub const CONSOLIDATED_SCHEMA: &[&str] = &[
     r#"CREATE INDEX idx_process_templates_workspace ON process_templates(workspace_id)"#,
     r#"CREATE INDEX idx_project_directories_path ON project_directories(path)"#,
     r#"CREATE INDEX idx_skill_invocations_executor ON skill_invocations(executor)"#,
+    r#"CREATE INDEX idx_skill_invocations_invoked_at ON skill_invocations(invoked_at)"#,
     r#"CREATE INDEX idx_skill_invocations_skill_name ON skill_invocations(skill_name)"#,
     r#"CREATE INDEX idx_skill_invocations_todo_id ON skill_invocations(todo_id)"#,
     r#"CREATE INDEX idx_step_tags_step_id ON step_tags(step_id)"#,
     r#"CREATE INDEX idx_steps_source_todo ON steps(source_todo_id)"#,
     r#"CREATE INDEX idx_sync_records_created_at ON sync_records(created_at DESC)"#,
-    // task_posts 按 task 取帖子流是高频点查，必须走索引（需求 060）。
+    r#"CREATE INDEX idx_task_posts_source_execution_id ON task_posts(source_execution_id)"#,
     r#"CREATE INDEX idx_task_posts_task_id ON task_posts(task_id)"#,
+    r#"CREATE INDEX idx_task_posts_task_parent ON task_posts(task_id, parent_post_id, id)"#,
+    r#"CREATE INDEX idx_tasks_workspace_id ON tasks(workspace_id)"#,
     r#"CREATE INDEX idx_todo_tags_todo_id ON todo_tags(todo_id)"#,
     r#"CREATE UNIQUE INDEX idx_todos_action_type_key_workspace ON todos (action_type, action_key, workspace_id) WHERE action_type IS NOT NULL AND action_key IS NOT NULL"#,
     r#"CREATE INDEX idx_todos_archived_at ON todos(archived_at)"#,
@@ -572,24 +577,12 @@ pub const CONSOLIDATED_SCHEMA: &[&str] = &[
     r#"CREATE INDEX idx_todos_status ON todos(status)"#,
     r#"CREATE INDEX idx_todos_task_id ON todos(task_id)"#,
     r#"CREATE INDEX idx_todos_todo_type ON todos(todo_type)"#,
+    r#"CREATE INDEX idx_todos_updated_at ON todos(updated_at DESC)"#,
+    r#"CREATE INDEX idx_todos_workspace_id ON todos(workspace_id)"#,
     r#"CREATE INDEX idx_usage_daily_stats_date ON usage_daily_stats(date)"#,
     r#"CREATE INDEX idx_usage_daily_stats_stats_type ON usage_daily_stats(stats_type)"#,
     r#"CREATE INDEX idx_usage_executor_daily_stats_date ON usage_executor_daily_stats(date)"#,
     r#"CREATE INDEX idx_usage_executor_daily_stats_executor ON usage_executor_daily_stats(executor)"#,
     r#"CREATE INDEX idx_usage_model_breakdowns_daily_stat_id ON usage_model_breakdowns(daily_stat_id)"#,
     r#"CREATE UNIQUE INDEX uk_process_templates_guid ON process_templates(guid)"#,
-    // —— V90 性能索引（091 性能优化）：服务高频读路径，SQL 不带 IF NOT EXISTS，
-    // 与增量迁移 V90 的 `CREATE INDEX IF NOT EXISTS ...` 经 SQLite 规范化后一致。
-    r#"CREATE INDEX idx_execution_records_workspace_id ON execution_records(workspace_id)"#,
-    r#"CREATE INDEX idx_feishu_messages_bot_chat ON feishu_messages(bot_id, chat_id, created_at DESC)"#,
-    r#"CREATE INDEX idx_loop_executions_task_id ON loop_executions(task_id)"#,
-    r#"CREATE INDEX idx_loop_step_executions_loop_exec ON loop_step_executions(loop_execution_id, sequence_index)"#,
-    r#"CREATE INDEX idx_loop_steps_todo_id ON loop_steps(todo_id)"#,
-    r#"CREATE INDEX idx_loops_process_template_id ON loops(process_template_id)"#,
-    r#"CREATE INDEX idx_loops_workspace_id ON loops(workspace_id)"#,
-    r#"CREATE INDEX idx_skill_invocations_invoked_at ON skill_invocations(invoked_at)"#,
-    r#"CREATE INDEX idx_task_posts_source_execution_id ON task_posts(source_execution_id)"#,
-    r#"CREATE INDEX idx_task_posts_task_parent ON task_posts(task_id, parent_post_id, id)"#,
-    r#"CREATE INDEX idx_tasks_workspace_id ON tasks(workspace_id)"#,
-    r#"CREATE INDEX idx_todos_workspace_id ON todos(workspace_id)"#,
 ];
