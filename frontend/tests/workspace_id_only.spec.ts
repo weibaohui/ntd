@@ -2,9 +2,9 @@
 //
 // 验证目标：
 // 1. WorkspaceSelect 的 antd Select option value 是数字（id），不是路径字符串。
-// 2. 触发 LoopFormModal 保存时，POST /api/v1/workspaces/${workspace_id}/loops 请求体里包含 workspace_id（number），
-//    不再带 workspace_path 字段。
-// 3. Loop 详情页 / 编辑 modal 拿到的 LoopDto 里 workspace_id 是 number。
+// 2. Loop 详情页 / 编辑 modal 拿到的 LoopDto 里 workspace_id 是 number。
+// 注：原目标「LoopFormModal 保存时 POST /loops 请求体带 workspace_id」已随 044 移除 loop 直接新建入口而废弃
+//（环路现仅由工艺 install/upgrade 产生，见 App.tsx「列表页不再有新建环路入口」），对应用例已删。
 //
 // 数据源：dev server 后端的 sqlite db，使用 API 直接插入一条 workspace 与一条 loop 做断言基础。
 // 若 dev server 未启动，case 用 test.skip 跳过，避免硬失败。
@@ -18,9 +18,14 @@ async function fetchSeed(api: Awaited<ReturnType<typeof request.newContext>>) {
   // 拉取 project_directories
   const dirsResp = await api.get(`${BASE}/api/v1/project-directories`);
   const dirs = (await dirsResp.json()).data as Array<{ id: number; path: string; name: string | null }>;
-  // 拉取 loops
-  const loopsResp = await api.get(`${BASE}/api/v1/workspaces/${workspace_id}/loops`);
-  const loops = (await loopsResp.json()).data as Array<{ id: number; workspace_id: number | null }>;
+  // 拉取 loops：loops 按 workspace 隔离，且 dirs[0]（后端按 path 排序）未必含 loop，
+  // 故遍历各工作空间取首个非空 loops，避免盲取导致整组用例空跳。
+  let loops: Array<{ id: number; workspace_id: number | null }> = [];
+  for (const d of dirs) {
+    const loopsResp = await api.get(`${BASE}/api/v1/workspaces/${d.id}/loops`);
+    loops = (await loopsResp.json()).data as Array<{ id: number; workspace_id: number | null }>;
+    if (loops.length > 0) break;
+  }
   return { dirs, loops };
 }
 
@@ -66,62 +71,5 @@ test.describe('workspace_id 破坏式改造验证', () => {
       expect(matched, `菜单项 "${text}" 应能匹配到某个 dir 的 id/name/path`).toBe(true);
     }
     await api.dispose();
-  });
-
-  test('新建 loop 提交体携带 workspace_id（number），不携带 workspace_path', async ({ page }) => {
-    await page.goto(BASE);
-    await page.waitForLoadState('networkidle');
-
-    // 通过 API 拿第一个目录 id 作为目标工作空间
-    const api = await request.newContext();
-    const { dirs } = await fetchSeed(api);
-    await api.dispose();
-    if (dirs.length === 0) test.skip(true, 'dev server 上没有 project_directory，跳过');
-    const targetDir = dirs[0];
-
-    // 拦截 POST /api/v1/workspaces/${workspace_id}/loops 以捕获请求体
-    const createReq = page.waitForRequest(
-      r => r.url().endsWith('/api/v1/workspaces/${workspace_id}/loops') && r.method() === 'POST',
-      { timeout: 15000 },
-    );
-
-    // 打开 Loop 新建 modal —— 通过左侧导航的环路 → 新建按钮
-    // 简化路径：直接点击新建按钮；如找不到则跳过
-    const newButton = page.locator('button').filter({ hasText: /^新建$|^新建环路$/ }).first();
-    if (await newButton.count() === 0) test.skip(true, '未找到「新建」按钮，跳过');
-    await newButton.click();
-    await page.waitForTimeout(500);
-
-    // 填写名称（必填）
-    const nameInput = page.locator('input[placeholder="名称必填"], input').first();
-    // 简化：用 placeholder 精确匹配
-    const nameField = page.getByPlaceholder('名称').first();
-    if (await nameField.count() > 0) {
-      await nameField.fill('playwright_workspace_id_test');
-    }
-
-    // 在 WorkspaceSelect 下拉里选择第一个工作空间
-    const wsSelect = page.locator('.ant-select').filter({ hasText: /选择工作空间|工作空间/ }).first();
-    if (await wsSelect.count() === 0) test.skip(true, '未找到 WorkspaceSelect，跳过');
-    await wsSelect.click();
-    await page.waitForTimeout(300);
-    const firstOption = page.locator('.ant-select-item-option').first();
-    if (await firstOption.count() === 0) test.skip(true, 'WorkspaceSelect 没有可选项，跳过');
-    await firstOption.click();
-
-    // 点击保存
-    const saveButton = page.locator('button').filter({ hasText: /^创建$|^保存$/ }).first();
-    if (await saveButton.count() === 0) test.skip(true, '未找到保存按钮，跳过');
-    await saveButton.click();
-
-    // 断言请求体
-    const req = await createReq.catch(() => null);
-    if (!req) test.skip(true, '未拦截到 POST /api/v1/workspaces/${workspace_id}/loops 请求，跳过');
-    const body = req!.postDataJSON() as Record<string, unknown>;
-    expect(body).toHaveProperty('workspace_id');
-    expect(typeof body.workspace_id).toBe('number');
-    expect(body.workspace_id).toBe(targetDir.id);
-    // 不应携带 workspace_path（破坏式后已删字段）
-    expect(body).not.toHaveProperty('workspace_path');
   });
 });

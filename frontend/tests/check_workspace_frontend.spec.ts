@@ -31,14 +31,14 @@ test.describe('Workspace Frontend Panels (阶段7-11)', () => {
   });
 
   test('workspace slash commands CRUD via API', async ({ page }) => {
+    // workspaceId 必须先声明再使用（原代码在首次引用之后才 const，触发 TDZ ReferenceError）
+    const workspaceId = 1;
     // 1. 创建一个 todo
     const todoResp = await page.request.post(`${BASE}/api/v1/workspaces/${workspaceId}/todos`, {
       data: { title: '测试 Slash 命令', prompt: '测试' },
     });
     expect(todoResp.ok()).toBeTruthy();
     const todoId = (await todoResp.json()).data.id;
-
-    const workspaceId = 1;
 
     // 2. 创建 slash command
     const createResp = await page.request.post(`${BASE}/api/v1/workspaces/${workspaceId}/slash-commands`, {
@@ -61,14 +61,14 @@ test.describe('Workspace Frontend Panels (阶段7-11)', () => {
   });
 
   test('workspace settings panel', async ({ page }) => {
+    // workspaceId 必须先声明再使用（同上，原代码 TDZ）
+    const workspaceId = 1;
     // 1. 创建 todo
     const todoResp = await page.request.post(`${BASE}/api/v1/workspaces/${workspaceId}/todos`, {
       data: { title: '默认响应 Todo', prompt: '测试' },
     });
     expect(todoResp.ok()).toBeTruthy();
     const todoId = (await todoResp.json()).data.id;
-
-    const workspaceId = 1;
 
     // 2. 更新 workspace settings
     const updateResp = await page.request.put(`${BASE}/api/v1/workspaces/${workspaceId}/settings`, {

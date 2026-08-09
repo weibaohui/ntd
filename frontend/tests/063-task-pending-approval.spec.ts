@@ -83,10 +83,26 @@ function cleanup(): void {
   `], { encoding: 'utf-8' });
 }
 
-/** 固定任务页视图模式后打开任务页。 */
+/**
+ * 固定任务页视图模式后打开任务页。
+ *
+ * 关键修复：同时把 selected_workspace 钉到 WS(=1)。
+ * 应用启动时 useTodoContext 的 getInitialWorkspace 会读 localStorage 的 selected_workspace
+ * 决定请求哪个 workspace 的任务列表；该值会被其他 e2e 用例（或上一次手动操作）残留成非 1 的 id，
+ * 导致本用例种子落到 ws=1、浏览器却请求 ws=N，列表/看板/卡片三态都看不到任务、待审批标记自然不渲染。
+ * 种子与接口断言（063-1）都按 WS=1 走，这里必须把浏览器也钉回 WS 保持一致。
+ */
 async function gotoTasks(page: import('@playwright/test').Page, mode: 'list' | 'kanban' | 'card') {
   await page.goto(`${BASE}/#/tasks`, { waitUntil: 'domcontentloaded' });
-  await page.evaluate((m) => localStorage.setItem('ntd_tasks_view', m), mode);
+  // page.evaluate 的回调会被序列化到浏览器执行，无法闭包捕获外层 WS，必须随 arg 显式传入。
+  await page.evaluate(
+    ({ m, ws }) => {
+      localStorage.setItem('ntd_tasks_view', m);
+      // 钉住工作空间：种子任务在 WS，浏览器请求必须命中同一 workspace 才能看到该任务。
+      localStorage.setItem('selected_workspace', String(ws));
+    },
+    { m: mode, ws: WS },
+  );
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(2000);
 }

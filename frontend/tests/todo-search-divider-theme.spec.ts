@@ -11,7 +11,9 @@
 
 import { test, expect, chromium, type Page } from '@playwright/test';
 
-const DEV_URL = process.env.E2E_BASE_URL || 'http://localhost:5173';
+// dev 用 embedded 模式（rust-embed 打进后端）监听 18088；旧的 5173 是 vite dev server
+// 端口，make dev 不启动它。E2E_BASE_URL 保留以便外部覆盖（如 CI 换端口）。
+const DEV_URL = process.env.E2E_BASE_URL || 'http://localhost:18088';
 
 // 解析 rgb()/rgba() 字符串为对象，便于做亮度判定
 function parseRgb(rgbStr: string): { r: number; g: number; b: number } | null {

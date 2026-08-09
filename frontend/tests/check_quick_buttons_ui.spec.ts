@@ -1,4 +1,4 @@
-import { test, expect, type APIRequestContext } from '@playwright/test';
+import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
 
 const BASE = 'http://localhost:18088';
 const NAME = 'PW_UI测试按钮';
@@ -25,30 +25,47 @@ interface ResumeRecord {
   executor?: string | null;
 }
 
+// ADR-7 后 quick-buttons 嵌套到 workspace 下；dev 默认 workspace id = 1
+const WS = 1;
+const QB_BASE = `${BASE}/api/v1/workspaces/${WS}/quick-buttons`;
+
 async function listButtons(request: APIRequestContext): Promise<QB[]> {
-  return ((await (await request.get(`${BASE}/api/v1/quick-buttons`)).json()).data) as QB[];
+  return ((await (await request.get(QB_BASE)).json()).data) as QB[];
 }
 
 async function deleteByName(request: APIRequestContext, name: string) {
   for (const b of await listButtons(request)) {
-    if (b.button_name === name) await request.delete(`${BASE}/api/v1/quick-buttons/${b.id}`);
+    if (b.button_name === name) await request.delete(`${QB_BASE}/${b.id}`);
   }
 }
 
 // 动态找一个可 resume 的执行记录，拼出帖子页 URL；找不到返回 null（调用方 test.skip）。
 // 不写死 todo/record ID——干净库或数据变动时优雅跳过，而非在 goto 处硬失败。
 async function findResumablePostUrl(request: APIRequestContext): Promise<string | null> {
-  const res = await request.get(`${BASE}/api/v1/workspaces/1/executions`, {
+  const res = await request.get(`${BASE}/api/v1/workspaces/${WS}/executions`, {
     params: { status: 'success', limit: 50 },
   });
   if (!res.ok()) return null;
   const records = ((await res.json()).data?.records ?? []) as ResumeRecord[];
   for (const r of records) {
     if (r.session_id && r.executor && RESUMABLE_EXECUTORS.has(r.executor.toLowerCase())) {
-      return `${BASE}/#/items?panel=post&id=${r.todo_id}&record=${r.id}`;
+      // 028 hash 路由重构：帖子页改用 path 段 /#/todos/:id/posts/:rid（旧 ?panel=post&id&record 已失效）
+      return `${BASE}/#/todos/${r.todo_id}/posts/${r.id}`;
     }
   }
   return null;
+}
+
+// 锁定 SPA 当前工作空间为 ws1（测试种子数据所在）。
+// dev 库 project_directories[0] 是 id=3（便利贴项目），SPA 启动时 useApp 会把工作空间
+// 默认成 dirs[0]；若不显式锁定，帖子页按 ws3 拉取会话数据，找不到本测试在 ws1 找到的
+// resumable 记录，ReplyInput（及快捷话术条）就不渲染，导致后续 waitFor 全部超时。
+// addInitScript 在页面首次脚本执行前注入 localStorage，保证 useTodoContext 的
+// getInitialWorkspace() 第一帧就读到 ws1，绕过 dirs[0] 兜底分支。
+async function pinWs1(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    localStorage.setItem('selected_workspace', '1');
+  });
 }
 
 // 驱动真实浏览器走完核心 UI 交互：加号 → 新建 → 点按钮把话术填入回复输入框。
@@ -65,6 +82,7 @@ test.describe('快捷话术按钮 UI', () => {
   test('加号 → 新建 → 点按钮填入回复输入框', async ({ page, request }) => {
     const url = await findResumablePostUrl(request);
     test.skip(!url, '无可 resume 的执行记录，跳过（需 dev 库有 success + resumable executor 的会话）');
+    await pinWs1(page);
     await page.goto(url!);
 
     // 先确认 ReplyInput 渲染：回复输入框可见 = 帖子页加载完成且该会话可 resume
@@ -103,6 +121,7 @@ test('移动端窄屏渲染 + Modal 不溢出', async ({ page, request }) => {
   const url = await findResumablePostUrl(request);
   test.skip(!url, '无可 resume 的执行记录，跳过移动端 UI 测试');
   await page.setViewportSize({ width: 375, height: 812 });
+  await pinWs1(page);
   await page.goto(url!);
   // 回复输入框可见 = ReplyInput（含快捷按钮条）已渲染
   await page.getByPlaceholder('输入回复内容...').waitFor({ state: 'visible', timeout: 20000 });

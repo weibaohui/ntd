@@ -4,6 +4,10 @@ const BASE = 'http://localhost:18088';
 
 test.describe('Workspace API (阶段5-6)', () => {
   test('workspace slash commands CRUD', async ({ page }) => {
+    // workspaceId 必须先于首次引用声明，否则触发 TDZ ReferenceError
+    // （原写法在第 8 行就用了它、声明却埋在第 19 行，整个用例直接抛错无法跑任何断言）。
+    const workspaceId = 1;
+
     // 1. 创建一个 todo 作为 slash command 目标
     const todoResp = await page.request.post(`${BASE}/api/v1/workspaces/${workspaceId}/todos`, {
       data: {
@@ -15,8 +19,6 @@ test.describe('Workspace API (阶段5-6)', () => {
     const todoData = await todoResp.json();
     const todoId = todoData.data.id;
     console.log('创建 todo 成功, id:', todoId);
-
-    const workspaceId = 1;
 
     // 2. 创建 workspace slash command
     const createResp = await page.request.post(`${BASE}/api/v1/workspaces/${workspaceId}/slash-commands`, {

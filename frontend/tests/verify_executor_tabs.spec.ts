@@ -25,8 +25,12 @@ test('执行器页面有执行器/正在运行/会话三个tab', async ({ page }
   // 点击"正在运行" tab
   await tabRunning.click();
   await page.waitForTimeout(500);
-  await expect(page.locator('text=刷新')).toBeVisible();
-  await expect(page.locator('text=批量停止')).toBeVisible();
+  // antd v6 不卸载非激活 tab，会话 tab 的「刷新」按钮仍留在 DOM 中，
+  // 全局 text=刷新 会命中 4 个节点（2 个按钮 × button+内层 span）触发 strict-mode 误报。
+  // 限定到 .ant-tabs-tabpane-active（当前即「正在运行」面板），只匹配本 tab 的工具条按钮。
+  // 批量停止 同理用正则匹配（按钮文案是动态的「批量停止 (N)」）。
+  await expect(page.locator('.ant-tabs-tabpane-active').getByRole('button', { name: '刷新' })).toBeVisible();
+  await expect(page.locator('.ant-tabs-tabpane-active').getByRole('button', { name: /批量停止/ })).toBeVisible();
 
   // 点击"会话" tab
   await tabSessions.click();

@@ -38,11 +38,24 @@ test('专家详情卡片：手机端 profession 横向不竖排', async ({ page 
   await expect(profession).toBeVisible();
 
   // 修复前：header 横排，文字列被挤到几像素宽，profession 逐字换行成竖排。
-  // 修复后：header 纵向堆叠，文字列占满整行宽度，profession 横向展示。
+  // 修复后：header 纵向堆叠，文字列占满整行宽度，profession 横向展示（实测列宽≈175px）。
+  //
+  // 关键坑：antd Modal 进场用 transform: scale() 做整体缩放动画，toBeVisible 在动画
+  // 期间就返回 true。此刻读 boundingBox 拿到的是被等比缩小的尺寸——profession 列宽会被
+  // 缩到 100px 以下，直接断言 width>100 会偶发失败（实测表现为本用例时过时不过）。
+  // 注意：等比缩放下「高<宽」的比例恒成立，所以 height<width 这一条无法捕获动画中的
+  // 假阴性；必须对绝对宽度做轮询，等动画收完、宽度回到真实列宽再下断言。
+  await expect.poll(async () => (await profession.boundingBox())?.width ?? 0, {
+    timeout: 5000,
+    message: 'profession 宽度应等 Modal 进场动画结束并横向展开',
+  }).toBeGreaterThan(100);
+
+  // 动画收完后再取最终尺寸，做横排/竖排语义断言。
   const box = await profession.boundingBox();
   expect(box, 'profession 元素应存在尺寸').not.toBeNull();
-  // 手机端 modal 内容宽约 295px，profession 横排宽度应远大于竖排时的几十像素。
-  expect(box!.width, 'profession 应横向展示，不被挤窄成竖排').toBeGreaterThan(150);
+  // 横排一行时高度≈单行行高(~19px)，远小于列宽；竖排逐字换行时高度≈字数×行高，
+  // 会反超宽度。用 height<Width 作为语义判据，比任何固定像素阈值都更稳。
+  expect(box!.height, 'profession 高度应为一行，非逐字换行的多行').toBeLessThan(box!.width);
 });
 
 test('事项模板表格：手机端启用横向滚动，列不再被压缩错位', async ({ page }) => {

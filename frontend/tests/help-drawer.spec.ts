@@ -16,15 +16,19 @@ test('AC-M1-1: LeftRail 底部帮助按钮存在且可点击展开抽屉', async
   const helpBtn = page.locator('[data-testid="left-rail-help"]');
   await expect(helpBtn).toBeVisible();
 
-  // 点击前抽屉应不可见（Antd Drawer 抽屉根类）
-  await expect(page.locator('.ant-drawer-title').filter({ hasText: '帮助' })).toHaveCount(0);
+  // 点击前帮助弹窗应不可见。
+  // 帮助已从 antd Drawer 重构为 antd Modal（HelpPage），无障碍角色为 dialog；
+  // .ant-drawer-title 在当前实现中已不存在，改用 dialog 角色断言弹窗显隐。
+  await expect(page.getByRole('dialog')).toHaveCount(0);
 
   // 点击帮助按钮
   await helpBtn.click();
   await page.waitForTimeout(800);
 
-  // 抽屉应展开，标题为「帮助」
-  await expect(page.locator('.ant-drawer-title')).toHaveText('帮助');
+  // 弹窗应展开，标题为「帮助文档」（Modal title，非旧的「帮助」）。
+  // 用 getByText 而非 toHaveText：Modal title 容器内还内嵌了全屏切换按钮，
+  // 精确等值匹配会因拼接进按钮文本失败；这里只校验标题文案存在。
+  await expect(page.getByRole('dialog').getByText('帮助文档')).toBeVisible();
 });
 
 test('AC-M1-2: 抽屉左侧树形展示页面→功能点两级，默认选中当前页面总览', async ({ page }) => {
@@ -39,10 +43,10 @@ test('AC-M1-2: 抽屉左侧树形展示页面→功能点两级，默认选中�
   await page.locator('[data-testid="left-rail-help"]').click();
   await page.waitForTimeout(800);
 
-  // 树形应存在，且能看到一级节点「事项（列表）」（默认视图 todos）
-  // Antd Tree 节点标题用 .ant-tree-title
-  const treeTitles = page.locator('.ant-tree-title');
-  const titles = await treeTitles.allTextContents();
+  // 一级页面节点应存在，且能看到「事项（列表）」（默认视图 todos）。
+  // 帮助左侧已从 antd Tree 重构为自定义菜单：页面项文案在 .ntd-help-menu-item-label。
+  const pageLabels = page.locator('.ntd-help-menu-item-label');
+  const titles = await pageLabels.allTextContents();
   // 至少应包含「帮助首页」「事项（列表）」
   expect(titles.some(t => t.includes('帮助首页'))).toBeTruthy();
   expect(titles.some(t => t.includes('事项'))).toBeTruthy();
@@ -59,53 +63,29 @@ test('AC-M1-3: 选中任一节点，右侧渲染对应 md，mermaid 代码块渲
   await page.locator('[data-testid="left-rail-help"]').click();
   await page.waitForTimeout(800);
 
-  // 抽屉默认选中「当前页面总览」（事项视图 → todos-list），并非帮助首页；
+  // 弹窗默认选中「当前页面总览」（事项视图 → todos-list），并非帮助首页；
   // 需先显式点击「帮助首页」节点，再断言 _overview.md 的渲染内容。
-  // 原断言依赖「默认选中帮助首页」的错误假设，叠加 NTD-011 内容空白 bug，该用例自 PR #972 起从未通过。
-  // 定位器统一限定 .ant-drawer-open 作用域：页面若同时存在其他 Tree/Drawer，无作用域选择器可能误点（PR #978 评审）。
-  await page.locator('.ant-drawer-open .ant-tree-title').filter({ hasText: '帮助首页' }).first().click();
+  // 帮助菜单已重构为自定义 <button>：一级页面项 .ntd-help-menu-item，点击会选中并展开其功能点子项。
+  await page.locator('.ntd-help-menu-item', { hasText: '帮助首页' }).first().click();
   await page.waitForTimeout(500);
 
-  // md 里有「欢迎使用 ntd 帮助系统」文本。
-  // 注意必须拆成两条断言：toContainText 传数组时 Playwright 会要求 locator 解析为等长的元素列表，
-  // 而 .ant-drawer-body 只有一个元素，数组写法（原写法）在任何情况下都必然失败。
-  await expect(page.locator('.ant-drawer-open .ant-drawer-body')).toContainText('欢迎使用');
-  await expect(page.locator('.ant-drawer-open .ant-drawer-body')).toContainText('帮助系统');
+  // _overview.md 首行「欢迎使用 ntd」，并含「怎么用这个帮助」小节。
+  // 内容容器已随重构改为 .ntd-help-content（旧 .ant-drawer-body 不再存在）。
+  await expect(page.locator('.ntd-help-content')).toContainText('欢迎使用');
+  await expect(page.locator('.ntd-help-content')).toContainText('怎么用这个帮助');
 
-  // 切换到事项列表某个功能点节点（如「新建事项」）
-  // 先展开事项（列表）一级节点
-  const todoListNode = page.locator('.ant-drawer-open .ant-tree-treenode').filter({ hasText: '事项（列表）' });
-  await todoNodeExpandAndSelect(page, todoListNode, '新建事项');
+  // 切换到事项列表某个功能点节点（如「新建事项」）。
+  // 默认视图即 todos → todos-list 节点在弹窗打开时已被展开（expandedKeys 初始含 p:todos-list），
+  // 因此无需再点击父节点展开，直接点二级功能点子项 .ntd-help-menu-sub-item。
+  await page.locator('.ntd-help-menu-sub-item', { hasText: '新建事项' }).first().click();
+  await page.waitForTimeout(800);
 
-  // 右侧应渲染功能点 md，至少含「新建事项」「数据流图」「开发指导」标题
-  await expect(page.locator('.ant-drawer-open .ant-drawer-body')).toContainText('新建事项');
-  await expect(page.locator('.ant-drawer-open .ant-drawer-body')).toContainText('数据流图');
-  await expect(page.locator('.ant-drawer-open .ant-drawer-body')).toContainText('开发指导');
+  // 右侧应渲染 todo-list-create.md：含标题「新建事项」「事项创建数据流」「怎么操作」三段。
+  // 旧断言里的「数据流图 / 开发指导」在当前 md 中不存在，按实际章节标题校验。
+  await expect(page.locator('.ntd-help-content')).toContainText('新建事项');
+  await expect(page.locator('.ntd-help-content')).toContainText('事项创建数据流');
+  await expect(page.locator('.ntd-help-content')).toContainText('怎么操作');
 
   // mermaid 代码块应渲染成 svg（help-mermaid div 内有 svg）
   await expect(page.locator('.help-mermaid svg').first()).toBeVisible();
 });
-
-/**
- * 展开一级节点并点击指定的二级功能点。
- *
- * @param page Playwright page
- * @param parentNode 一级节点的 locator
- * @param featureTitle 二级功能点的中文名
- */
-async function todoNodeExpandAndSelect(page: import('@playwright/test').Page, parentNode: import('@playwright/test').Locator, featureTitle: string) {
-  // 子节点标题在树中可见，说明父节点已展开，直接点二级。
-  const featureTitleLocator = page.locator('.ant-drawer-open .ant-tree-title').filter({ hasText: featureTitle }).first();
-  // 未展开时点击父节点「标题文字」展开：NTD-011 修复后点标题 = 选中 + 展开，且不会反向收起。
-  // 不点 switcher 箭头的原因：箭头是「切换」语义，若节点已展开会被误收起；
-  // 且不能依赖 ant-tree-treenode-expanded 等内部 class 判断展开态（antd 版本间可能更名）。
-  if (!(await featureTitleLocator.isVisible())) {
-    await parentNode.locator('.ant-tree-title').first().click();
-    await page.waitForTimeout(400);
-  }
-  // 点二级功能点节点。
-  // 注意：antd Tree 的节点是平级渲染，子节点并不嵌套在父节点 treenode 的 DOM 内，
-  // 因此必须在整个抽屉范围内按标题查找，不能在 parentNode 内部 locator（原写法永远找不到）。
-  await featureTitleLocator.click();
-  await page.waitForTimeout(800);
-}

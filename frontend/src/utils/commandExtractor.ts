@@ -538,7 +538,7 @@ export function extractCommandsByExecutor(
   }
 }
 
-/** 提取器在 Playwright 单元测试（frontend/tests/issue-648-command-extractor.spec.ts）中用于验证 */
+/** 提取器在 vitest 单元测试（./commandExtractor.test.ts）中用于验证 */
 export const __test__ = {
   extractClaudeCommands,
   extractAgentCommands,

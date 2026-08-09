@@ -70,20 +70,6 @@ export function ExecutorsPanel() {
   const [executionTimeoutSecs, setExecutionTimeoutSecs] = useState<number>(() => DEFAULT_EXECUTION_TIMEOUT_SECS);
   const lastEnabledExecutionTimeoutSecsRef = useRef<number>(DEFAULT_EXECUTION_TIMEOUT_SECS);
 
-  // 使用 Form.useWatch 订阅表单字段，直接响应 setFieldsValue 变化。
-  const watchedTimeoutSecs = Form.useWatch('execution_timeout_secs', configForm);
-
-  // 同步 watch 值到本地 state（仅处理外部 setFieldsValue 调用，如后端配置加载）。
-  useEffect(() => {
-    if (watchedTimeoutSecs === undefined) return;
-    if (watchedTimeoutSecs !== executionTimeoutSecs) {
-      setExecutionTimeoutSecs(watchedTimeoutSecs);
-    }
-    if (watchedTimeoutSecs !== 0) {
-      lastEnabledExecutionTimeoutSecsRef.current = watchedTimeoutSecs;
-    }
-  }, [watchedTimeoutSecs, executionTimeoutSecs]);
-
   // 0 表示禁用执行超时，其余值至少为 60 秒
   const executionTimeoutEnabled = executionTimeoutSecs !== 0;
   const executionTimeoutMinutes = executionTimeoutEnabled
@@ -173,6 +159,14 @@ export function ExecutorsPanel() {
     try {
       const cfg = await db.getConfig();
       configForm.setFieldsValue(cfg);
+      // 超时控件脱离 Form 托管（见 JSX），表单不再持有 execution_timeout_secs；
+      // 这里手动把后端秒值同步到 state，并刷新「上次启用值」，
+      // 保证 Switch/InputNumber 显示与后端一致、关闭后重开能恢复到加载值。
+      const secs = cfg.execution_timeout_secs ?? DEFAULT_EXECUTION_TIMEOUT_SECS;
+      setExecutionTimeoutSecs(secs);
+      if (secs !== 0) {
+        lastEnabledExecutionTimeoutSecsRef.current = secs;
+      }
     } catch {
       // 加载失败时使用默认值
     }
@@ -222,6 +216,9 @@ export function ExecutorsPanel() {
   const handleSaveConfig = async () => {
     try {
       const values = await configForm.validateFields();
+      // 超时控件脱离 Form 托管（见 JSX），validateFields 不再带 execution_timeout_secs；
+      // 这里从 state 注入秒值，保证保存体与后端字段一致。
+      values.execution_timeout_secs = executionTimeoutSecs;
       setConfigSaving(true);
       await db.updateConfig(values);
       message.success('配置已保存');
@@ -242,10 +239,9 @@ export function ExecutorsPanel() {
       lastEnabledExecutionTimeoutSecsRef.current = executionTimeoutSecs;
     }
     const next = checked ? lastEnabledExecutionTimeoutSecsRef.current : 0;
-    // 直接更新本地 state，确保 Switch 立即响应；
-    // 同时调用 setFieldsValue 同步到表单供保存时读取。
+    // 仅更新本地 state 驱动 Switch/InputNumber；保存体由 handleSaveConfig 从 state 注入，
+    // 不再向表单写 execution_timeout_secs（该字段已脱离 Form 托管）。
     setExecutionTimeoutSecs(next);
-    configForm.setFieldsValue({ execution_timeout_secs: next });
   };
 
   return (
@@ -702,29 +698,28 @@ export function ExecutorsPanel() {
                   onChange={handleExecutionTimeoutToggle}
                 />
                 {/*
-                  手动管理 value/onChange 而非交由 Form.Item 托管：
-                  展示层用分钟（executionTimeoutMinutes），存储层用秒（execution_timeout_secs），
-                  需要在 onChange 中做 v * 60 转换后通过 setFieldsValue 写入表单，
-                  因此不能依赖 Form.Item 的默认值管理路径。
+                  超时控件脱离 Form.Item 托管，改为纯受控：
+                  展示用分钟（executionTimeoutMinutes）、存储用秒（execution_timeout_secs），
+                  单位不同不能共用一个字段值。此前给 Form.Item 带 name 后，antd 会用字段值
+                  （秒，如 300）覆盖 InputNumber 的 value，导致控件显示原始秒数而非分钟（应显示 5）。
+                  现在 value 取分钟、onChange 换算成秒写回 state；保存时由 handleSaveConfig
+                  从 state 注入 execution_timeout_secs，保存体仍然完整。
                 */}
-                <Form.Item name="execution_timeout_secs" noStyle>
-                  <InputNumber
-                    size="small"
-                    min={1}
-                    max={MAX_EXECUTION_TIMEOUT_MINUTES}
-                    style={{ width: 80 }}
-                    disabled={!executionTimeoutEnabled}
-                    value={executionTimeoutMinutes}
-                    onChange={(v) => {
-                      if (v) {
-                        const nextSecs = v * 60;
-                        setExecutionTimeoutSecs(nextSecs);
-                        configForm.setFieldsValue({ execution_timeout_secs: nextSecs });
-                        lastEnabledExecutionTimeoutSecsRef.current = nextSecs;
-                      }
-                    }}
-                  />
-                </Form.Item>
+                <InputNumber
+                  size="small"
+                  min={1}
+                  max={MAX_EXECUTION_TIMEOUT_MINUTES}
+                  style={{ width: 80 }}
+                  disabled={!executionTimeoutEnabled}
+                  value={executionTimeoutMinutes}
+                  onChange={(v) => {
+                    if (v) {
+                      const nextSecs = v * 60;
+                      setExecutionTimeoutSecs(nextSecs);
+                      lastEnabledExecutionTimeoutSecsRef.current = nextSecs;
+                    }
+                  }}
+                />
                 <span style={{ fontSize: 13, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>分钟</span>
                 <Tooltip title={`单个执行任务的最大时长（1 ~ ${MAX_EXECUTION_TIMEOUT_MINUTES} 分钟，上限 7 天）；关闭后不再因超时自动终止`}>
                   <InfoCircleOutlined style={{ color: 'var(--color-text-quaternary)', fontSize: 12 }} />

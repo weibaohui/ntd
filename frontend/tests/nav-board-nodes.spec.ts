@@ -1,6 +1,7 @@
 // 030-导航关系图黑板看板节点 Playwright 功能测试。
-// 对应测试文档 docs/testing/030-导航关系图黑板看板节点-测试.md 的 TC-01 到 TC-06。
-// baseURL 见 playwright.config.ts：http://localhost:5173（Vite dev）。
+// 对应测试文档 docs/testing/030-导航关系图黑板看板节点-测试.md 的 TC-01 到 TC-05。
+// （TC-06 触发器 fallback 随 044-loop-slim 下线删除；节点总数同步由 12 → 11。）
+// baseURL 见 playwright.config.ts：http://localhost:18088（dev embedded 模式）。
 // 关系图为纯静态渲染，后端 API 不可达不影响本套件断言。
 
 import { test, expect, type Page } from '@playwright/test';
@@ -45,9 +46,11 @@ test.describe('030-导航关系图黑板看板节点', () => {
     // 用 testid 而非文本定位：label 文本可能与其他 UI 撞车，testid 是节点专属锚点
     await expect(page.getByTestId('onboarding-graph-node-blackboard')).toBeVisible();
     await expect(page.getByTestId('onboarding-graph-node-kanban')).toBeVisible();
-    // 每节点 1 个 <circle>，marker 箭头用的是 <path> 不是 circle，圆总数应正好 12（原 10 + 新 2）
+    // 每节点 1 个 <circle>，marker 箭头用的是 <path> 不是 circle。
+    // 044 loop-slim 移除了 trigger 触发器节点，当前 GRAPH_NODES 共 11 个（原 12 减去 trigger），
+    // 故圆总数断言同步调整为 11；trigger 节点的回归用例 TC-06 已整体下线。
     const circles = page.getByTestId('onboarding-relation-graph').locator('svg circle');
-    await expect(circles).toHaveCount(12);
+    await expect(circles).toHaveCount(11);
   });
 
   test('TC-02 点击黑板 → Drawer 三层语义说明 + 跳转黑板页', async ({ page }) => {
@@ -114,15 +117,8 @@ test.describe('030-导航关系图黑板看板节点', () => {
     await expect(edge).toHaveAttribute('stroke-width', '3');
   });
 
-  test('TC-06 回归：既有 fallback 节点（触发器）行为不变', async ({ page }) => {
-    await gotoGraph(page);
-    await page.getByTestId('onboarding-graph-node-trigger').click();
-    const drawer = page.locator('.ant-drawer-open');
-    // 通用文案逐字断言：触发器未填 drawerDesc，必须回退到这句原文（防 030 改动误伤存量）
-    await expect(
-      drawer.getByText('这是关系图的支线节点，用于辅助说明主概念关系，不对应独立菜单入口。'),
-    ).toBeVisible();
-    // 触发器无 navTarget，Drawer 内不得出现任何跳转按钮
-    await expect(drawer.locator('[data-testid^="onboarding-graph-drawer-goto-"]')).toHaveCount(0);
-  });
+  // TC-06「回归：既有 fallback 节点（触发器）行为不变」已随 044-loop-slim 下线整体删除：
+  // 044 移除触发能力时同步删掉了 onboarding-graph-node-trigger 节点（见 concepts.tsx GRAPH_NODES，
+  // 注释「044：触发器节点已随触发能力下线移除」）。trigger 不再渲染，断言其 drawer 行为已无意义。
+  // 黑板/看板仍走 GraphNodeDrawerFallback 分支，TC-02/TC-03 已覆盖 fallback+跳转路径的有效性。
 });

@@ -14,13 +14,21 @@
 //   保存持久化（需用户工艺）留手动。
 // ---------------------------------------------------------------------------
 import { test, expect } from '@playwright/test';
+import { editUrlByName } from './helpers/process';
 
 const BASE = 'http://localhost:18088';
-const EDIT_URL = `${BASE}/#/processes?processMode=edit&name=4p12s-delivery`;
+// 040 后工艺按 guid 寻址（name 允许重复不再唯一），guid 由 helper 按 name 动态查出，
+// 不再硬编码 name=，避免 bundled 工艺改名时 spec 静默退化成列表页。
+let editUrl = '';
 
 test.describe('033 环节评审模板 review_prompt', () => {
+  // 一次性查出系统工艺 4p12s-delivery 的 guid 并拼编辑器 URL，各 test 共用。
+  test.beforeAll(async ({ request }) => {
+    editUrl = await editUrlByName(request, '4p12s-delivery');
+  });
+
   test('环节属性面板渲染「评审 Prompt」字段', async ({ page }) => {
-    await page.goto(EDIT_URL);
+    await page.goto(editUrl);
     await page.waitForTimeout(3000);
     // 可视化区与环节节点就绪
     expect(await page.locator('.react-flow').count()).toBeGreaterThan(0);
@@ -36,8 +44,8 @@ test.describe('033 环节评审模板 review_prompt', () => {
     await expect(label).toBeVisible({ timeout: 5000 });
   });
 
-  test('「评审 Prompt」字段渲染 textarea 控件且 placeholder 提示占位符用法', async ({ page }) => {
-    await page.goto(EDIT_URL);
+  test('「评审 Prompt」字段渲染 MD 编辑器控件（046 升级）', async ({ page }) => {
+    await page.goto(editUrl);
     await page.waitForTimeout(3000);
     expect(await page.locator('.react-flow__node-link').count()).toBeGreaterThan(0);
 
@@ -45,15 +53,15 @@ test.describe('033 环节评审模板 review_prompt', () => {
     await page.locator('.react-flow__node-link').first().click({ timeout: 5000, force: true });
     await page.waitForTimeout(1200);
 
-    // 「评审 Prompt」字段下应渲染 textarea 控件（033 新增）
+    // 046 把「评审 Prompt」从 TextArea 升级为 PromptMdField（@uiw/react-md-editor 封装），
+    // 根节点 .w-md-editor；原 TextArea 的 placeholder 提示迁到 Form.Item tooltip（hover 才显，
+    // 不便在 Playwright 断言），故这里只校验 MD 编辑器渲染。
     const rpItem = page
       .locator('.ant-form-item')
       .filter({ has: page.locator('.ant-form-item-label', { hasText: '评审 Prompt' }) });
-    const textarea = rpItem.locator('textarea');
-    await expect(textarea).toHaveCount(1);
-    // placeholder 应提示「完整替代默认评审模板」+ 占位符用法（033 完整替代语义）。
+    const mdEditor = rpItem.locator('.w-md-editor');
+    await expect(mdEditor).toHaveCount(1);
     // 说明：编辑→YAML 同步底层（updateLinkField→yamlDump）由 vitest processDefinitionUpdater.test.ts
     //       19 个用例覆盖；系统工艺只读，编辑持久化需用户工艺，留手动验证。
-    await expect(textarea).toHaveAttribute('placeholder', /环节专属评审模板/);
   });
 });

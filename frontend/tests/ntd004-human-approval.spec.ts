@@ -50,17 +50,15 @@ SELECT (SELECT MAX(id) FROM tasks) || ',' || (SELECT MAX(id) FROM loop_execution
   return { taskId, execId };
 }
 
-/** 进入任务详情的执行历史 Tab 并展开第一条执行，返回通过/拒绝按钮定位器。 */
+/** 进入任务详情的执行历史 Tab，等待自动展开首条待审批执行后返回通过/拒绝按钮定位器。 */
 async function openExecBoard(page: import('@playwright/test').Page, taskId: number) {
   await page.goto(`${BASE}/#/tasks/${taskId}`);
   // 任务详情首屏：Tabs 出现即加载完成。
   await page.waitForSelector('.ant-tabs', { timeout: 15000 });
   await page.getByRole('tab', { name: /执行历史/ }).click();
-  // 「待审批」引导标记：任务视角的审批入口提示（验证点 1）。
-  await expect(page.getByText(/条待审批，展开处理/)).toBeVisible({ timeout: 10000 });
-  // 展开执行行 → 内嵌工艺执行看板。
-  await page.getByRole('button', { name: /查看详情/ }).click();
-  // 看板加载完成标志：门禁区「通过」「拒绝」按钮出现（验证点 2）。
+  // ExecHistoryTab 固定开启 autoExpandFirstPending：执行历史 Tab 打开、首屏数据到达后，
+  // 自动展开第一条 pending_approval 的执行，门禁区「通过/拒绝」按钮随展开直接可见。
+  // 早期版本里的「条待审批，展开处理」引导文案与「查看详情」按钮已随该自动展开能力移除。
   // AntD 对两个汉字的按钮自动插空格（autoInsertSpace），可访问名是「通 过」，用正则兼容。
   const approveBtn = page.getByRole('button', { name: /通\s*过/ });
   const rejectBtn = page.getByRole('button', { name: /拒\s*绝/ });
@@ -101,7 +99,8 @@ test('NTD004 审批通过：环节 success + loop 成功结束', async ({ page }
 
   // 操作反馈 + 看板刷新后门禁 Tag 变 passed；「通过/拒绝」按钮消失。
   await expect(page.getByText('已通过').first()).toBeVisible({ timeout: 5000 });
-  await expect(page.getByText(/人工审批 → passed/)).toBeVisible({ timeout: 10000 });
+  // 门禁结果现在以独立 Tag（gate_name）+ result span 渲染，旧「人工审批 → passed」整行文案已不存在；
+  // 终态由下方 expectExecState 轮询（exec.status=success、pending_approval_count=0）权威校验。
   await expect(page.getByRole('button', { name: /通\s*过/ })).toHaveCount(0);
 
   // resume_loop_execution 生效：单环节工艺（on_success=end）审批通过后 loop 应直接成功结束。
@@ -124,7 +123,8 @@ test('NTD004 审批拒绝：请求 approved=false + 环节 failed', async ({ pag
   expect(req.postDataJSON()).toMatchObject({ approved: false });
 
   await expect(page.getByText('已拒绝').first()).toBeVisible({ timeout: 5000 });
-  await expect(page.getByText(/人工审批 → failed/)).toBeVisible({ timeout: 10000 });
+  // 同「通过」用例：门禁结果渲染拆分为 Tag+span，旧「人工审批 → failed」整行文案已不存在；
+  // 终态由下方 expectExecState（exec.status=failed、task.status=failed）权威校验。
 
   // 拒绝后 loop 以失败终态结束（resume 按环节 status 判定，不再被 rating=0/min=0 误判）。
   // NTD-005 回归：任务状态同步为 failed（此前 resume 路径不回写，任务永远"进行中"）。
@@ -135,19 +135,18 @@ test('NTD004 审批拒绝：请求 approved=false + 环节 failed', async ({ pag
 });
 
 test('NTD004 重启后待审批状态保留（持久化回归）', async ({ page }) => {
-  // 待审批是纯 DB 状态（无内存等待），刷新页面重拉数据后引导标记与审批按钮必须仍在。
+  // 待审批是纯 DB 状态（无内存等待），刷新页面重拉数据后审批入口必须仍在。
   // 用「重新打开页面」模拟重启后的首次访问：服务端状态不依赖进程内存。
   const { taskId } = seedPendingApproval('持久');
   await page.goto(`${BASE}/#/tasks/${taskId}`);
   await page.waitForSelector('.ant-tabs', { timeout: 15000 });
   await page.getByRole('tab', { name: /执行历史/ }).click();
-  await expect(page.getByText(/条待审批，展开处理/)).toBeVisible({ timeout: 10000 });
+  // autoExpandFirstPending：执行历史 Tab 打开后自动展开首条待审批执行，通过按钮直接可见。
+  await expect(page.getByRole('button', { name: /通\s*过/ })).toBeVisible({ timeout: 10000 });
 
-  // 重新加载页面（等价于重启后再次进入），状态与入口保持。
+  // 重新加载页面（等价于重启后再次进入）：状态从 DB 重拉，待审批执行仍自动展开、入口保持。
   await page.reload();
   await page.waitForSelector('.ant-tabs', { timeout: 15000 });
   await page.getByRole('tab', { name: /执行历史/ }).click();
-  await expect(page.getByText(/条待审批，展开处理/)).toBeVisible({ timeout: 10000 });
-  await page.getByRole('button', { name: /查看详情/ }).click();
   await expect(page.getByRole('button', { name: /通\s*过/ })).toBeVisible({ timeout: 10000 });
 });

@@ -1,8 +1,9 @@
 // 093 useApp 细粒度迁移批次 1 冒烟：18 个迁移组件覆盖的核心页面渲染与联动。
-// 走 vite dev server（5173，代理 /api 到 18088），验证迁移后组件行为零回归。
+// dev 用 embedded 模式（前端 dist 经 rust-embed 打进后端 + 后端 API 同端口）监听 18088；
+// 不再依赖独立的 vite dev server（旧注释里的 5173），验证迁移后组件行为零回归。
 import { test, expect } from '@playwright/test';
 
-const BASE = 'http://localhost:5173';
+const BASE = 'http://localhost:18088';
 
 test('093-b1: 首屏渲染且无页面错误（Dashboard/列表壳）', async ({ page }) => {
   const errors: string[] = [];

@@ -25,10 +25,14 @@ SELECT MAX(id) FROM tasks;
 // 打开任务页前写入主题与视图偏好：ThemeProvider 初始化时读取 localStorage，
 // 这样能稳定覆盖亮/暗两个分支，而不依赖操作系统主题。
 async function openTasksPage(page: Page, theme: ThemeName, title: string) {
-  await page.addInitScript((nextTheme) => {
+  // workspace 必须显式锁定到 WORKSPACE_ID：DataLoader 启动时按 path 升序取 dirs[0]
+  // （dev 库里 /Users/mac/sticky-notes 排最前 → ws 3），而种子任务在 ws 1；
+  // 不锁定会让 TasksPage 加载 ws 3 列表，种子行永远不出现。
+  await page.addInitScript(({ nextTheme, wsId }) => {
     localStorage.setItem('app_theme', nextTheme);
     localStorage.setItem('ntd_tasks_view', 'list');
-  }, theme);
+    localStorage.setItem('selected_workspace', String(wsId));
+  }, { nextTheme: theme, wsId: WORKSPACE_ID });
   await page.goto(`${BASE}/#/tasks`, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction((nextTheme) => document.documentElement.getAttribute('data-theme') === nextTheme, theme);
   await expect(page.getByTestId('tasks-table-view')).toBeVisible();
@@ -51,7 +55,8 @@ async function selectTaskRow(page: Page, title: string) {
 async function openBatchDeleteConfirm(page: Page) {
   await page.getByTestId('tasks-table-batch-trigger').click();
   await page.getByRole('menuitem', { name: '删除' }).click();
-  await expect(page.locator('.ant-modal-confirm')).toBeVisible();
+  // antd v6 下 Modal.confirm 的类名可能随版本变化，按 dialog 角色定位最稳。
+  await expect(page.getByRole('dialog')).toBeVisible();
 }
 
 async function readModalTheme(page: Page) {
@@ -69,8 +74,11 @@ test('NTD-006：勾选任务后批量按钮位于工具栏第一位', async ({ p
   await openTasksPage(page, 'light', title);
   await selectTaskRow(page, title);
 
+  // 工具栏是 tasks-table-view 的首个子 div；批量按钮经 Dropdown 包裹，
+  // 用 querySelectorAll('[data-testid]') 取工具栏内带 testid 的元素（按 DOM 顺序），
+  // 兼容 Dropdown 是否给 Button 套一层 wrapper span，避免直接读 children 拿到 null。
   const toolbarTestIds = await page.locator('[data-testid="tasks-table-view"] > div').first().evaluate((toolbar) => {
-    return Array.from(toolbar.children).map((child) => child.getAttribute('data-testid'));
+    return Array.from(toolbar.querySelectorAll('[data-testid]')).map((el) => el.getAttribute('data-testid'));
   });
   expect(toolbarTestIds[0]).toBe('tasks-table-batch-trigger');
 });
