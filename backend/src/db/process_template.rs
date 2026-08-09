@@ -5,7 +5,43 @@ use sea_orm::{
 use crate::db::Database;
 use crate::db::entity::process_templates;
 
+/// 093-B5：工艺统计聚合行（`get_process_template_stats` 的返回元素）。
+/// 字段与 handlers/process.rs 的 get_process_stats 响应字段一一对应。
+#[derive(Debug, Clone)]
+pub struct ProcessTemplateStatRow {
+    pub name: String,
+    pub display_name: String,
+    pub complexity: String,
+    pub loop_count: i64,
+}
+
 impl Database {
+    /// 093-B5：模板安装次数聚合（从 handlers/process.rs 下沉的 raw SQL）。
+    /// 按模板 LEFT JOIN loops 统计安装环路数，按次数倒序；分层规范：handler 不写 SQL。
+    pub async fn get_process_template_stats(
+        &self,
+    ) -> Result<Vec<ProcessTemplateStatRow>, sea_orm::DbErr> {
+        let rows = self
+            .conn
+            .query_all(sea_orm::Statement::from_string(
+                sea_orm::DbBackend::Sqlite,
+                "SELECT pt.name, pt.display_name, pt.complexity, COUNT(l.id) AS loop_count \
+                 FROM process_templates pt \
+                 LEFT JOIN loops l ON l.process_template_id = pt.id \
+                 GROUP BY pt.id ORDER BY loop_count DESC".to_string(),
+            ))
+            .await?;
+        Ok(rows
+            .iter()
+            .map(|row| ProcessTemplateStatRow {
+                name: row.try_get_by("name").unwrap_or_default(),
+                display_name: row.try_get_by("display_name").unwrap_or_default(),
+                complexity: row.try_get_by("complexity").unwrap_or_default(),
+                loop_count: row.try_get_by("loop_count").unwrap_or(0),
+            })
+            .collect())
+    }
+
     /// 按 ID 查找工艺模板。
     pub async fn get_process_template_by_id(
         &self,
@@ -319,6 +355,27 @@ mod tests {
         )
         .await
         .unwrap();
+    }
+
+    /// 093-B5：get_process_template_stats——模板聚合并按安装环路数倒序；无环路模板 loop_count=0。
+    #[tokio::test]
+    async fn test_get_process_template_stats_aggregates_loop_count() {
+        let db = Database::new(":memory:").await.unwrap();
+        seed_two_templates(&db).await;
+        // 给系统模板挂两条环路（用户模板不挂）
+        let sys = db.get_process_template_by_name("sys-tpl").await.unwrap().unwrap();
+        for name in ["L1", "L2"] {
+            db.exec(&format!(
+                "INSERT INTO loops (name, process_template_id) VALUES ('{name}', {})", sys.id
+            ))
+            .await
+            .unwrap();
+        }
+        let stats = db.get_process_template_stats().await.unwrap();
+        assert_eq!(stats.len(), 2);
+        assert_eq!(stats[0].name, "sys-tpl", "按 loop_count 倒序，sys-tpl 应在前");
+        assert_eq!(stats[0].loop_count, 2);
+        assert_eq!(stats[1].loop_count, 0, "无环路模板 LEFT JOIN 计数为 0");
     }
 
     #[tokio::test]

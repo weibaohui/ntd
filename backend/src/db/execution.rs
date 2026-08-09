@@ -762,6 +762,24 @@ impl Database {
         Ok(())
     }
 
+    /// 093-B5：删除早于 cutoff 的执行日志，返回实际删除行数。
+    ///
+    /// 从 `handlers/backup.rs::cleanup_old_logs` 下沉的 DAO（分层规范：handler 不写 SQL）。
+    /// 两个修法一并落地：cutoff 走参数绑定（原 format! 拼接，违反禁止清单 #4）；
+    /// 行数取 `ExecResult::rows_affected`（原额外跑一条 `SELECT changes()`）。
+    /// cutoff 与 timestamp 列同为 ISO8601 字符串，字典序即时间序。
+    pub async fn delete_execution_logs_before(&self, cutoff: &str) -> Result<u64, sea_orm::DbErr> {
+        let res = self
+            .conn
+            .execute(sea_orm::Statement::from_sql_and_values(
+                sea_orm::DbBackend::Sqlite,
+                "DELETE FROM execution_logs WHERE timestamp < ?",
+                [cutoff.into()],
+            ))
+            .await?;
+        Ok(res.rows_affected())
+    }
+
     /// 分页获取执行日志
     pub async fn get_execution_logs(
         &self,
@@ -1898,6 +1916,25 @@ mod center_aggregate_tests {
         ))
         .await
         .expect("insert log");
+    }
+
+    /// 093-B5：delete_execution_logs_before——参数化删除 + rows_affected 返回真实行数。
+    #[tokio::test]
+    async fn test_delete_execution_logs_before_cutoff() {
+        let db = fresh_db().await;
+        let t = seed_todo(&db, "T").await;
+        seed_exec(&db, t, "success", "manual").await; // record id=1
+        // 两条旧日志（10 天前）+ 一条新日志（现在）
+        db.exec("INSERT INTO execution_logs (record_id, timestamp, log_type, content) VALUES (1, '2026-07-01T00:00:00Z', 'info', 'old1')").await.unwrap();
+        db.exec("INSERT INTO execution_logs (record_id, timestamp, log_type, content) VALUES (1, '2026-07-02T00:00:00Z', 'info', 'old2')").await.unwrap();
+        db.exec("INSERT INTO execution_logs (record_id, timestamp, log_type, content) VALUES (1, '2026-08-08T00:00:00Z', 'info', 'new')").await.unwrap();
+
+        let deleted = db.delete_execution_logs_before("2026-08-01T00:00:00Z").await.unwrap();
+        assert_eq!(deleted, 2, "应删除两条旧日志");
+        // 幂等边界：再删一次为 0；新日志仍在
+        assert_eq!(db.delete_execution_logs_before("2026-08-01T00:00:00Z").await.unwrap(), 0);
+        let remaining = db.count_execution_logs_for_records(&[1]).await.unwrap();
+        assert_eq!(remaining.get(&1).copied(), Some(1), "新日志不应被删");
     }
 
     /// count_execution_logs_for_records：GROUP BY 聚合计数（093 WS 重连 log_total 数据源）。

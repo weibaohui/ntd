@@ -828,6 +828,44 @@ impl Database {
         loop_executions::Entity::find_by_id(id).one(&self.conn).await
     }
 
+    /// 093-B5：任务详情页用的「最近 N 条 loop 执行记录」（从 handlers/tasks.rs 下沉）。
+    /// 原 handler 侧是 `format!("... WHERE task_id={}")` 拼接 SQL（违反禁止清单 #4），
+    /// 下沉同时改为 SeaORM 参数绑定查询。
+    pub async fn list_recent_loop_executions_for_task(
+        &self,
+        task_id: i64,
+        limit: u64,
+    ) -> Result<Vec<loop_executions::Model>, sea_orm::DbErr> {
+        loop_executions::Entity::find()
+            .filter(loop_executions::Column::TaskId.eq(task_id))
+            .order_by_desc(loop_executions::Column::StartedAt)
+            .limit(limit)
+            .all(&self.conn)
+            .await
+    }
+
+    /// 093-B5：由 artifact 反查所属工作空间路径（从 handlers/tasks.rs 下沉的三级跳查询）。
+    /// artifact → step_execution → loop_execution → loop 取 workspace_path；
+    /// 纯搬移不改逻辑（保持逐跳 find 与原 NotFound 语义），JOIN 优化留待后续。
+    pub async fn get_artifact_workspace_path(
+        &self,
+        step_execution_id: i64,
+    ) -> Result<Option<String>, sea_orm::DbErr> {
+        let se = loop_step_executions::Entity::find_by_id(step_execution_id)
+            .one(&self.conn)
+            .await?
+            .ok_or(sea_orm::DbErr::RecordNotFound("step_exec not found".into()))?;
+        let le = loop_executions::Entity::find_by_id(se.loop_execution_id)
+            .one(&self.conn)
+            .await?
+            .ok_or(sea_orm::DbErr::RecordNotFound("loop_exec not found".into()))?;
+        let lp = loops::Entity::find_by_id(le.loop_id)
+            .one(&self.conn)
+            .await?
+            .ok_or(sea_orm::DbErr::RecordNotFound("loop not found".into()))?;
+        Ok(lp.workspace_path)
+    }
+
     pub async fn list_loop_executions(
         &self,
         loop_id: i64,
@@ -2357,6 +2395,49 @@ mod loop_stats_tests {
         ))
         .await
         .expect("insert step_execution");
+    }
+
+    /// 093-B5：list_recent_loop_executions_for_task——按 task_id 过滤、started_at 倒序、limit 生效。
+    #[tokio::test]
+    async fn test_list_recent_loop_executions_for_task() {
+        let db = fresh_db().await;
+        let lp = seed_loop_status(&db, "L", "enabled").await;
+        // 两条挂在 task 7、一条挂在 task 8（task_id 直插，绕开 seed helper 的列集）
+        for (task, expr) in [(7, "datetime('now','-2 hours')"), (7, "datetime('now','-1 hours')"), (8, "datetime('now')")] {
+            db.exec(&format!(
+                "INSERT INTO loop_executions (loop_id, trigger_type, status, started_at, task_id) \
+                 VALUES ({lp}, 'manual', 'success', {expr}, {task})"
+            ))
+            .await
+            .expect("insert loop_execution");
+        }
+        let rows = db.list_recent_loop_executions_for_task(7, 20).await.unwrap();
+        assert_eq!(rows.len(), 2, "只应返回 task 7 的记录");
+        // 倒序：新的（-1h）在前
+        assert!(rows[0].started_at > rows[1].started_at, "应按 started_at 倒序");
+        // limit 生效
+        let limited = db.list_recent_loop_executions_for_task(7, 1).await.unwrap();
+        assert_eq!(limited.len(), 1);
+    }
+
+    /// 093-B5：get_artifact_workspace_path——三级跳返回 loop 的 workspace_path；断链报 NotFound。
+    #[tokio::test]
+    async fn test_get_artifact_workspace_path() {
+        let db = fresh_db().await;
+        db.exec("INSERT INTO loops (name, workspace_path) VALUES ('L', '/ws/path')").await.expect("insert loop");
+        let loop_id = max_id(&db, "loops").await;
+        let le = seed_loop_execution(&db, loop_id, "manual", "running", "datetime('now')").await;
+        let todo = seed_todo(&db, "T").await;
+        let step = seed_loop_step(&db, loop_id, todo, "s1").await;
+        // execution_record_id 有外键约束，必须先 seed 真实记录再关联
+        let record_id = seed_execution_record(&db, "{}").await;
+        link_step_execution(&db, le, step, todo, record_id).await;
+        let se_id = max_id(&db, "loop_step_executions").await;
+
+        let path = db.get_artifact_workspace_path(se_id).await.unwrap();
+        assert_eq!(path, Some("/ws/path".to_string()));
+        // 断链：不存在的 step_execution_id → RecordNotFound
+        assert!(db.get_artifact_workspace_path(99999).await.is_err());
     }
 
     /// set_step_execution_min_rating：阈值回写后能被读出；

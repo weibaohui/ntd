@@ -364,29 +364,25 @@ async fn build_task_executions(
     db: &crate::db::Database,
     task_id: i64,
 ) -> Result<Vec<serde_json::Value>, AppError> {
-    use sea_orm::{ConnectionTrait, DbBackend, Statement};
-    let exec_rows = db.conn.query_all(Statement::from_string(DbBackend::Sqlite,
-        format!("SELECT id, status, started_at, finished_at, total_steps, completed_steps, failed_steps, trigger_meta \
-                 FROM loop_executions WHERE task_id={} ORDER BY started_at DESC LIMIT 20", task_id)
-    )).await?;
+    // 093-B5：原始拼接 SQL 已下沉为 DAO（参数绑定）；handler 只做 JSON 映射
+    let exec_rows = db.list_recent_loop_executions_for_task(task_id, 20).await?;
     // 一次批量查待审批数再按 exec_id 映射，避免逐行 N+1（NTD-004）。
-    let exec_ids: Vec<i64> = exec_rows.iter().map(|r| r.try_get_by::<i64,_>("id").unwrap_or(0)).collect();
+    let exec_ids: Vec<i64> = exec_rows.iter().map(|r| r.id).collect();
     let pending_counts = db.count_pending_approvals_by_execution_ids(&exec_ids).await?;
     Ok(exec_rows.iter().map(|r| {
-        let meta = r.try_get_by::<Option<String>,_>("trigger_meta").ok().flatten()
-            .and_then(|m| serde_json::from_str::<serde_json::Value>(&m).ok());
+        // entity 的 trigger_meta 是 String（非 Option），空串解析失败自然落 None
+        let meta = serde_json::from_str::<serde_json::Value>(&r.trigger_meta).ok();
         let requirement = meta.as_ref().and_then(|v| v.get("requirement").and_then(|r| r.as_str().map(|s| s.to_string())));
-        let exec_id = r.try_get_by::<i64,_>("id").unwrap_or(0);
         serde_json::json!({
-            "id": exec_id,
-            "status": r.try_get_by::<String,_>("status").unwrap_or_default(),
-            "started_at": r.try_get_by::<Option<String>,_>("started_at").ok().flatten(),
-            "finished_at": r.try_get_by::<Option<String>,_>("finished_at").ok().flatten(),
-            "total_steps": r.try_get_by::<i32,_>("total_steps").unwrap_or(0),
-            "completed_steps": r.try_get_by::<i32,_>("completed_steps").unwrap_or(0),
-            "failed_steps": r.try_get_by::<i32,_>("failed_steps").unwrap_or(0),
+            "id": r.id,
+            "status": r.status,
+            "started_at": r.started_at,
+            "finished_at": r.finished_at,
+            "total_steps": r.total_steps,
+            "completed_steps": r.completed_steps,
+            "failed_steps": r.failed_steps,
             "requirement": requirement,
-            "pending_approval_count": pending_counts.get(&exec_id).copied().unwrap_or(0),
+            "pending_approval_count": pending_counts.get(&r.id).copied().unwrap_or(0),
         })
     }).collect())
 }
@@ -463,14 +459,11 @@ async fn resolve_artifact_workspace(
     db: &crate::db::Database,
     art: &crate::db::entity::loop_step_artifacts::Model,
 ) -> Result<String, sea_orm::DbErr> {
-    use sea_orm::EntityTrait;
-    let se = crate::db::entity::loop_step_executions::Entity::find_by_id(art.loop_step_execution_id).one(&db.conn).await?
-        .ok_or(sea_orm::DbErr::RecordNotFound("step_exec not found".into()))?;
-    let le = crate::db::entity::loop_executions::Entity::find_by_id(se.loop_execution_id).one(&db.conn).await?
-        .ok_or(sea_orm::DbErr::RecordNotFound("loop_exec not found".into()))?;
-    let lp = crate::db::entity::loops::Entity::find_by_id(le.loop_id).one(&db.conn).await?
-        .ok_or(sea_orm::DbErr::RecordNotFound("loop not found".into()))?;
-    Ok(lp.workspace_path.unwrap_or_default())
+    // 093-B5：三级跳查询已下沉为 db.get_artifact_workspace_path（纯搬移，语义不变）
+    Ok(db
+        .get_artifact_workspace_path(art.loop_step_execution_id)
+        .await?
+        .unwrap_or_default())
 }
 
 async fn read_workspace_file(ws: &str, rel: &str) -> String {
@@ -657,7 +650,9 @@ mod tests {
         let sql = format!(
             "UPDATE loops SET process_template_id = {template_id}, {version_sql} WHERE id = {loop_id}"
         );
-        db.conn
+        // 093-B5：测试侧直写 SQL 走 _conn_raw()（该口子的既定用途：测试构造边界数据），
+        // 不再经 db.conn 转义口
+        db._conn_raw()
             .execute(Statement::from_string(DbBackend::Sqlite, sql))
             .await
             .expect("bind loop template must succeed");
