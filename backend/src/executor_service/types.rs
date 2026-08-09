@@ -126,6 +126,28 @@ pub(crate) enum RunOutcome {
     Completed(std::io::Result<std::process::ExitStatus>),
 }
 
+/// 093-B3：执行终态结果三元组。
+/// success / exit_code / result_str 在 finalize_normal_completion、
+/// emit_completion_events 等函数间总是结伴出现（Data Clump 坏味道），
+/// 聚合成一个对象后 19 参/15 参签名才能塌缩。
+pub(crate) struct CompletionOutcome {
+    pub success: bool,
+    pub exit_code: i32,
+    pub result_str: String,
+}
+
+/// 093-B3：select! 终态后 kill + drain 所需的进程句柄簇。
+/// 这 5 个句柄在三个终态分支间原样传递（child 引用 + 4 个 owned handle），
+/// 聚合成一个对象后 run_cancellation_path / run_timeout_path 才能从 17 参塌缩到 2 参。
+/// 生命周期注解：child 是可变借用（kill_process_tree 需要 &mut），其余 handle 随结构 move。
+pub(crate) struct ProcessTeardown<'a> {
+    pub child: &'a mut command_group::AsyncGroupChild,
+    pub stdout_task: Option<tokio::task::JoinHandle<()>>,
+    pub stderr_task: Option<tokio::task::JoinHandle<()>>,
+    pub log_flusher: Arc<crate::log_flusher::LogFlusher>,
+    pub flush_timer: tokio::task::JoinHandle<()>,
+}
+
 /// Stage 1 步骤 1：在 `request` 上做 message 占位符替换，并返回替换后的 message。
 pub(crate) struct SubstitutedContext {
     pub message: String,

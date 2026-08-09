@@ -14,14 +14,12 @@ use std::sync::Arc;
 
 use command_group::AsyncCommandGroup;
 use tokio::io::AsyncWriteExt;
-use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 
 use crate::adapters::CodeExecutor;
 use crate::db::Database;
 use crate::executor_service::ExecEvent;
 use crate::models::ParsedLogEntry;
-use crate::task_manager::TaskManager;
 
 use super::completion::{
     emit_post_execution_todo_progress, finalize_normal_completion, handle_cancellation_branch,
@@ -31,7 +29,7 @@ use super::log_capture::{
     await_readers, drain_readers_and_flush, flush_and_extract_result, send_event,
     setup_log_capture_pipeline,
 };
-use super::worktree::{cleanup_worktree_if_needed, kill_process_tree, WorktreeContext};
+use super::worktree::{cleanup_worktree_if_needed, kill_process_tree};
 use super::types::{SpawnContext, SpawnRuntime};
 
 /// issue #660: 原来 449 行 `run_todo_execution` 的 spawn 闭包体。
@@ -87,42 +85,30 @@ pub(crate) async fn try_spawn_executor_child(
         Ok(c) => Some(c),
         Err(e) => {
             cleanup_worktree_if_needed(&runtime.worktree_ctx).await;
-            handle_spawn_failure(
-                &runtime.db,
-                &runtime.tx,
-                &runtime.task_manager,
-                &runtime.task_id,
-                runtime.todo_id,
-                &runtime.todo_title,
-                runtime.executor_spawn.as_ref(),
-                runtime.feishu_bot_id,
-                runtime.feishu_receive_id.clone(),
-                runtime.feishu_receive_id_type.clone(),
-                e,
-                runtime.prepared.request.workspace_id,
-            )
-            .await;
+            handle_spawn_failure(runtime, e).await;
             None
         }
     }
 }
 
 /// `group_spawn` 失败时的清理：发 Output/Finished 事件 + finish_todo_execution + remove task。
-#[allow(clippy::too_many_arguments)]
+/// 093-B3：12 参塌缩为 `&SpawnRuntime` + error（全部上下文字段均为 runtime 成员）。
 pub(crate) async fn handle_spawn_failure(
-    db: &Database,
-    tx: &broadcast::Sender<ExecEvent>,
-    task_manager: &TaskManager,
-    task_id: &str,
-    todo_id: i64,
-    todo_title: &str,
-    executor: &dyn CodeExecutor,
-    feishu_bot_id: Option<i64>,
-    feishu_receive_id: Option<String>,
-    feishu_receive_id_type: Option<String>,
+    runtime: &SpawnRuntime,
     error: std::io::Error,
-    workspace_id: Option<i64>,
 ) {
+    // 解出原名局部量保持函数体零改动（引用取向，零克隆）
+    let db = runtime.db.as_ref();
+    let tx = &runtime.tx;
+    let task_manager = runtime.task_manager.as_ref();
+    let task_id = runtime.task_id.as_str();
+    let todo_id = runtime.todo_id;
+    let todo_title = runtime.todo_title.as_str();
+    let executor = runtime.executor_spawn.as_ref();
+    let feishu_bot_id = runtime.feishu_bot_id;
+    let feishu_receive_id = runtime.feishu_receive_id.clone();
+    let feishu_receive_id_type = runtime.feishu_receive_id_type.clone();
+    let workspace_id = runtime.prepared.request.workspace_id;
     let error_msg = format!("Failed to spawn executor: {}", error);
     let entry = ParsedLogEntry::error(error_msg.clone());
     send_event(
@@ -366,24 +352,30 @@ pub(crate) async fn dispatch_outcome(
     execution_start: std::time::Instant,
 ) {
     match outcome {
+        // 093-B3：dispatch_cancellation / dispatch_timeout 纯转发壳已删除
+        // （Remove Middle Man），match 臂直接装配 ProcessTeardown 调 run_*_path。
         super::types::RunOutcome::Cancelled => {
-            dispatch_cancellation(
-                child,
-                stdout_task,
-                stderr_task,
-                log_flusher,
-                flush_timer,
-                runtime,
+            run_cancellation_path(
+                super::types::ProcessTeardown {
+                    child,
+                    stdout_task,
+                    stderr_task,
+                    log_flusher,
+                    flush_timer,
+                },
+                &runtime,
             ).await;
         }
         super::types::RunOutcome::TimedOut => {
-            dispatch_timeout(
-                child,
-                stdout_task,
-                stderr_task,
-                log_flusher,
-                flush_timer,
-                runtime,
+            run_timeout_path(
+                super::types::ProcessTeardown {
+                    child,
+                    stdout_task,
+                    stderr_task,
+                    log_flusher,
+                    flush_timer,
+                },
+                &runtime,
             )
             .await;
         }
@@ -400,73 +392,6 @@ pub(crate) async fn dispatch_outcome(
             .await;
         }
     }
-}
-
-/// Cancelled 分支：kill + drain + handle_cancellation_branch + cleanup worktree。
-#[allow(clippy::too_many_arguments)]
-async fn dispatch_cancellation(
-    child: &mut command_group::AsyncGroupChild,
-    stdout_task: Option<JoinHandle<()>>,
-    stderr_task: Option<JoinHandle<()>>,
-    log_flusher: Arc<crate::log_flusher::LogFlusher>,
-    flush_timer: JoinHandle<()>,
-    runtime: SpawnRuntime,
-) {
-    run_cancellation_path(
-        child,
-        stdout_task,
-        stderr_task,
-        log_flusher,
-        flush_timer,
-        &runtime.db,
-        &runtime.tx,
-        &runtime.task_manager,
-        &runtime.task_id,
-        runtime.todo_id,
-        &runtime.todo_title,
-        runtime.executor_spawn.as_ref(),
-        runtime.record_id,
-        runtime.feishu_bot_id,
-        runtime.feishu_receive_id.clone(),
-        runtime.feishu_receive_id_type.clone(),
-        &runtime.worktree_ctx,
-        runtime.prepared.request.workspace_id,
-    )
-    .await;
-}
-
-/// TimedOut 分支：kill + drain + handle_timeout_branch + cleanup worktree。
-#[allow(clippy::too_many_arguments)]
-async fn dispatch_timeout(
-    child: &mut command_group::AsyncGroupChild,
-    stdout_task: Option<JoinHandle<()>>,
-    stderr_task: Option<JoinHandle<()>>,
-    log_flusher: Arc<crate::log_flusher::LogFlusher>,
-    flush_timer: JoinHandle<()>,
-    runtime: SpawnRuntime,
-) {
-    run_timeout_path(
-        child,
-        stdout_task,
-        stderr_task,
-        log_flusher,
-        flush_timer,
-        &runtime.db,
-        &runtime.tx,
-        &runtime.task_manager,
-        &runtime.task_id,
-        runtime.todo_id,
-        &runtime.todo_title,
-        runtime.executor_spawn.as_ref(),
-        runtime.record_id,
-        runtime.execution_timeout_secs,
-        runtime.feishu_bot_id,
-        runtime.feishu_receive_id.clone(),
-        runtime.feishu_receive_id_type.clone(),
-        &runtime.worktree_ctx,
-        runtime.prepared.request.workspace_id,
-    )
-    .await;
 }
 
 /// Completed 分支：装配 SpawnContext + handle_completed_branch。
@@ -511,90 +436,39 @@ async fn dispatch_completed(
 }
 
 /// 取消分支：kill 进程组 → drain readers → handle_cancellation_branch → cleanup worktree。
-#[allow(clippy::too_many_arguments)]
+/// 093-B3：17 参塌缩为 2 参——进程句柄簇归 ProcessTeardown，上下文字段全在 SpawnRuntime 里。
 pub(crate) async fn run_cancellation_path(
-    child: &mut command_group::AsyncGroupChild,
-    stdout_task: Option<JoinHandle<()>>,
-    stderr_task: Option<JoinHandle<()>>,
-    log_flusher: Arc<crate::log_flusher::LogFlusher>,
-    flush_timer: JoinHandle<()>,
-    db: &Arc<Database>,
-    tx: &broadcast::Sender<ExecEvent>,
-    task_manager: &Arc<TaskManager>,
-    task_id: &str,
-    todo_id: i64,
-    todo_title: &str,
-    executor: &dyn CodeExecutor,
-    record_id: i64,
-    feishu_bot_id: Option<i64>,
-    feishu_receive_id: Option<String>,
-    feishu_receive_id_type: Option<String>,
-    worktree_ctx: &WorktreeContext,
-    workspace_id: Option<i64>,
+    teardown: super::types::ProcessTeardown<'_>,
+    runtime: &SpawnRuntime,
 ) {
-    kill_process_tree(child).await;
-    drain_readers_and_flush(child, stdout_task, stderr_task, log_flusher, flush_timer).await;
-    handle_cancellation_branch(
-        db,
-        tx,
-        task_manager,
-        task_id,
-        todo_id,
-        todo_title,
-        executor,
-        record_id,
-        feishu_bot_id,
-        feishu_receive_id,
-        feishu_receive_id_type,
-        workspace_id,
-    )
-    .await;
-    cleanup_worktree_if_needed(worktree_ctx).await;
+    kill_process_tree(teardown.child).await;
+    drain_readers_and_flush(
+        teardown.child,
+        teardown.stdout_task,
+        teardown.stderr_task,
+        teardown.log_flusher,
+        teardown.flush_timer,
+    ).await;
+    handle_cancellation_branch(runtime).await;
+    cleanup_worktree_if_needed(&runtime.worktree_ctx).await;
 }
 
 /// 超时分支：kill → drain → handle_timeout_branch → cleanup worktree。
-#[allow(clippy::too_many_arguments)]
+/// 093-B3：17 参塌缩为 2 参——同 run_cancellation_path 的参数对象化。
 pub(crate) async fn run_timeout_path(
-    child: &mut command_group::AsyncGroupChild,
-    stdout_task: Option<JoinHandle<()>>,
-    stderr_task: Option<JoinHandle<()>>,
-    log_flusher: Arc<crate::log_flusher::LogFlusher>,
-    flush_timer: JoinHandle<()>,
-    db: &Arc<Database>,
-    tx: &broadcast::Sender<ExecEvent>,
-    task_manager: &Arc<TaskManager>,
-    task_id: &str,
-    todo_id: i64,
-    todo_title: &str,
-    executor: &dyn CodeExecutor,
-    record_id: i64,
-    execution_timeout_secs: u64,
-    feishu_bot_id: Option<i64>,
-    feishu_receive_id: Option<String>,
-    feishu_receive_id_type: Option<String>,
-    worktree_ctx: &WorktreeContext,
-    workspace_id: Option<i64>,
+    teardown: super::types::ProcessTeardown<'_>,
+    runtime: &SpawnRuntime,
 ) {
-    kill_process_tree(child).await;
-    drain_readers_and_flush(child, stdout_task, stderr_task, log_flusher, flush_timer).await;
-    handle_timeout_branch(
-        db,
-        tx,
-        task_manager,
-        task_id,
-        todo_id,
-        todo_title,
-        executor,
-        record_id,
-        execution_timeout_secs,
-        super::completion::format_timeout_secs(execution_timeout_secs),
-        feishu_bot_id,
-        feishu_receive_id,
-        feishu_receive_id_type,
-        workspace_id,
-    )
-    .await;
-    cleanup_worktree_if_needed(worktree_ctx).await;
+    kill_process_tree(teardown.child).await;
+    drain_readers_and_flush(
+        teardown.child,
+        teardown.stdout_task,
+        teardown.stderr_task,
+        teardown.log_flusher,
+        teardown.flush_timer,
+    ).await;
+    handle_timeout_branch(runtime).await;
+    cleanup_worktree_if_needed(&runtime.worktree_ctx).await;
 }
 
 /// 把「正常退出 → await readers → finalize flusher → emit progress →
@@ -660,26 +534,14 @@ pub(crate) async fn persist_and_finalize_completion(
         ctx.execution_start,
     )
     .await;
+    // 093-B3：19 个逐字段解包塌缩为 ctx 透传 + CompletionOutcome 三元组聚合
     finalize_normal_completion(
-        ctx.db.clone(),
-        ctx.executor_registry.clone(),
-        ctx.tx.clone(),
-        ctx.task_manager.clone(),
-        ctx.config.clone(),
-        ctx.executor.clone(),
-        ctx.task_id.clone(),
-        ctx.todo_id,
-        ctx.todo_title.clone(),
-        ctx.record_id,
-        success,
-        exit_code,
-        result_str,
-        ctx.trigger_type.clone(),
-        ctx.feishu_bot_id,
-        ctx.feishu_receive_id.clone(),
-        ctx.feishu_receive_id_type.clone(),
-        ctx.workspace_id,
-        ctx.expert_manager.clone(),
+        ctx,
+        super::types::CompletionOutcome {
+            success,
+            exit_code,
+            result_str,
+        },
     )
     .await;
 }
