@@ -126,6 +126,58 @@ impl ExecutionEvent {
         )
     }
 
+    /// 093-B2：WS Output 广播过滤——「哪些事件推给执行面板」的唯一事实源。
+    ///
+    /// 原 `log_capture::parse_and_broadcast` 的 18 分支 match 规则上移至此；
+    /// SessionEnd 刻意返回 false：逐行路径不转发，由 pipeline.finalize() 统一产出
+    /// （避免重复转发）。Info 的内容规则（纯 JSON 行/空串不打扰面板）封装在本方法内。
+    pub fn should_broadcast(&self) -> bool {
+        match self {
+            // 纯 JSON 行（{ 开头）或空串是协议噪声，不作为 info 转发
+            ExecutionEvent::Info { message } => {
+                !message.starts_with('{') && !message.is_empty()
+            }
+            ExecutionEvent::Error { .. }
+            | ExecutionEvent::Thinking { .. }
+            | ExecutionEvent::ToolCall { .. }
+            | ExecutionEvent::ToolResult { .. }
+            | ExecutionEvent::Assistant { .. }
+            | ExecutionEvent::Result { .. }
+            | ExecutionEvent::SessionStart { .. }
+            | ExecutionEvent::Tokens { .. }
+            | ExecutionEvent::Cost { .. }
+            | ExecutionEvent::Duration { .. }
+            | ExecutionEvent::StepStart { .. }
+            | ExecutionEvent::StepFinish { .. }
+            // ModelSwitch 需转发到 DB，否则 completion 阶段 get_model_from_logs 找不到模型
+            | ExecutionEvent::ModelSwitch { .. } => true,
+            ExecutionEvent::SessionEnd { .. }
+            | ExecutionEvent::Progress { .. }
+            | ExecutionEvent::User { .. }
+            | ExecutionEvent::System { .. } => false,
+        }
+    }
+
+    /// 093-B2：飞书私聊直推收集过滤——「哪些事件值得打扰用户」的唯一事实源。
+    ///
+    /// 原 `message_debounce::parse_for_direct_stream` 的分支规则上移至此：
+    /// 只保留思考/工具交互/助手回复/最终结论等对私聊用户有阅读价值的内容，
+    /// 内部状态（session/step/tokens/cost 等）一律不打扰。
+    pub fn is_direct_stream_worthy(&self) -> bool {
+        match self {
+            // 与 should_broadcast 相同的内容规则：协议噪声不进入收集
+            ExecutionEvent::Info { message } => {
+                !message.starts_with('{') && !message.is_empty()
+            }
+            ExecutionEvent::Thinking { .. }
+            | ExecutionEvent::ToolCall { .. }
+            | ExecutionEvent::ToolResult { .. }
+            | ExecutionEvent::Assistant { .. }
+            | ExecutionEvent::Result { .. } => true,
+            _ => false,
+        }
+    }
+
     /// 是否为需要显示在对话视图的消息类型
     pub fn is_message(&self) -> bool {
         matches!(
@@ -242,6 +294,53 @@ impl ExecutionEvent {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod tests {
     use super::*;
+
+    /// 093-B2：两个过滤判定的全枚举断言（18 个变体 × 2 维）。
+    /// 该表即原 parse_and_broadcast / parse_for_direct_stream 两处 match 的逐分支对照，
+    /// 防未来新增事件变体时过滤语义漂移。
+    #[test]
+    fn test_broadcast_and_direct_stream_matrix() {
+        // (事件, should_broadcast, is_direct_stream_worthy)
+        let cases: Vec<(ExecutionEvent, bool, bool)> = vec![
+            (ExecutionEvent::assistant("a"), true, true),
+            (ExecutionEvent::thinking("t"), true, true),
+            (ExecutionEvent::tool_call("i", "n", serde_json::json!({})), true, true),
+            (ExecutionEvent::tool_result("i", "o"), true, true),
+            (ExecutionEvent::result("r"), true, true),
+            (ExecutionEvent::error("e"), true, false),
+            (ExecutionEvent::SessionStart { session_id: "s".into() }, true, false),
+            (ExecutionEvent::Tokens { input: 1, output: 1, cache_read: None, cache_write: None }, true, false),
+            (ExecutionEvent::Cost { cost_usd: 0.1 }, true, false),
+            (ExecutionEvent::Duration { duration_ms: 1 }, true, false),
+            (ExecutionEvent::StepStart { name: "s".into(), index: 0 }, true, false),
+            (ExecutionEvent::StepFinish { name: "s".into(), index: 0 }, true, false),
+            // ModelSwitch 广播（DB 需要）但不打扰私聊用户
+            (ExecutionEvent::ModelSwitch { model: "m".into() }, true, false),
+            // SessionEnd 逐行路径不转发（由 finalize 统一产出）
+            (ExecutionEvent::SessionEnd { session_id: "s".into() }, false, false),
+            (ExecutionEvent::Progress { percent: 1, message: None }, false, false),
+            (ExecutionEvent::user("u"), false, false),
+            (ExecutionEvent::system("s"), false, false),
+        ];
+        for (event, broadcast, direct) in cases {
+            assert_eq!(event.should_broadcast(), broadcast, "should_broadcast 判定不符: {event:?}");
+            assert_eq!(event.is_direct_stream_worthy(), direct, "is_direct_stream_worthy 判定不符: {event:?}");
+        }
+    }
+
+    /// Info 的内容规则：纯 JSON 行 / 空串为协议噪声，两维都不转发；普通文本两维都收
+    #[test]
+    fn test_info_content_rules() {
+        let json_line = ExecutionEvent::info("{\"type\":\"x\"}");
+        assert!(!json_line.should_broadcast());
+        assert!(!json_line.is_direct_stream_worthy());
+        let empty = ExecutionEvent::info("");
+        assert!(!empty.should_broadcast());
+        assert!(!empty.is_direct_stream_worthy());
+        let plain = ExecutionEvent::info("普通日志");
+        assert!(plain.should_broadcast());
+        assert!(plain.is_direct_stream_worthy());
+    }
 
     #[test]
     fn test_to_log_type() {

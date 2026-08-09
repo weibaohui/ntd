@@ -131,64 +131,18 @@ pub(crate) fn parse_and_broadcast(
     // 执行器，让其内部状态与事件流保持同步（零重复解析）。
     executor: &dyn crate::adapters::CodeExecutor,
 ) -> Vec<ParsedLogEntry> {
-    let line_trimmed = line.trim();
-    if line_trimmed.is_empty() {
-        return Vec::new();
-    }
-
-    // 记录 feed 前的事件数，便于取出本次新增的所有事件
-    let len_before = pipeline.len();
-
-    // 用 pipeline 处理
-    pipeline.feed(line_trimmed);
-
-    // 取出本次新增的所有事件
-    let new_events: Vec<&ExecutionEvent> = pipeline.events()[len_before..].iter().collect();
-    if new_events.is_empty() {
-        return Vec::new();
-    }
+    // 093-B2：feed 骨架（空行守卫 + 新增切片簿记）收口到 pipeline.feed_stdout_new；
+    // 「哪些事件该广播」的过滤规则收口到 ExecutionEvent::should_broadcast。
+    let new_events = pipeline.feed_stdout_new(line);
 
     let mut results = Vec::new();
-    for event in &new_events {
-        // NTD-012：先回授再按类型广播——即使某类事件不转发（如 Info/Progress），
+    for event in new_events {
+        // NTD-012：先回授再过滤——即使某类事件不转发（如 Info/Progress），
         // 执行器也能观察到完整的生命周期序列（StepStart 重置依赖这一点）。
         executor.on_pipeline_event(event);
-        match event {
-            ExecutionEvent::Info { message } => {
-                // 空的或纯 JSON 行作为 info，不转发
-                if message.starts_with('{') || message.is_empty() {
-                    continue;
-                }
-                // 非 JSON 的普通 info 也转发
-                let parsed = emit_broadcast_event(event, tx, task_id, workspace_id);
-                results.push(parsed);
-            }
-            ExecutionEvent::Error { .. }
-            | ExecutionEvent::Thinking { .. }
-            | ExecutionEvent::ToolCall { .. }
-            | ExecutionEvent::ToolResult { .. }
-            | ExecutionEvent::Assistant { .. }
-            | ExecutionEvent::Result { .. }
-            | ExecutionEvent::SessionStart { .. }
-            | ExecutionEvent::Tokens { .. }
-            | ExecutionEvent::Cost { .. }
-            | ExecutionEvent::Duration { .. }
-            | ExecutionEvent::StepStart { .. }
-            | ExecutionEvent::StepFinish { .. } => {
-                let parsed = emit_broadcast_event(event, tx, task_id, workspace_id);
-                results.push(parsed);
-            }
-            // SessionEnd 由 pipeline.finalize() 生产，避免重复转发
-            ExecutionEvent::SessionEnd { .. }
-            | ExecutionEvent::Progress { .. } => {}
-            // ModelSwitch 需转发到 DB，否则 completion 阶段 get_model_from_logs 找不到模型
-            ExecutionEvent::ModelSwitch { .. } => {
-                let parsed = emit_broadcast_event(event, tx, task_id, workspace_id);
-                results.push(parsed);
-            }
-            // 其他类型不转发
-            ExecutionEvent::User { .. }
-            | ExecutionEvent::System { .. } => {}
+        if event.should_broadcast() {
+            let parsed = emit_broadcast_event(event, tx, task_id, workspace_id);
+            results.push(parsed);
         }
     }
     results

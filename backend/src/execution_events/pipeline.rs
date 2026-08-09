@@ -60,6 +60,21 @@ impl EventPipeline {
         }
     }
 
+    /// 093-B2：「trim 空行守卫 → 记录簿记 → feed → 返回本次新增切片」的共享骨架。
+    ///
+    /// 原在 `parse_and_broadcast`（log_capture）与 `parse_for_direct_stream`
+    /// （message_debounce）各写一遍；stderr 路径因 atomcode 特判选择
+    /// feed/feed_stderr 不同构，刻意不适用本方法。
+    pub fn feed_stdout_new(&mut self, line: &str) -> &[ExecutionEvent] {
+        let line_trimmed = line.trim();
+        if line_trimmed.is_empty() {
+            return &[];
+        }
+        let len_before = self.events.len();
+        self.feed(line_trimmed);
+        &self.events[len_before..]
+    }
+
     /// 结束处理，生成元数据事件
     pub fn finalize(&mut self) {
         let metadata = self.extractor.metadata().clone();
