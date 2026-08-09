@@ -36,6 +36,15 @@ impl EventPipeline {
         }
     }
 
+    /// 093-B4：从已装箱的 trait 对象构造（注册表工厂返回 `Box<dyn EventExtractor>`）。
+    /// 与 `with_extractor` 并存：泛型版服务具名构造点，本版服务注册表查表路径。
+    pub fn with_boxed_extractor(extractor: Box<dyn EventExtractor>) -> Self {
+        Self {
+            extractor,
+            events: Vec::new(),
+        }
+    }
+
     /// 处理一行标准输出
     pub fn feed(&mut self, line: &str) {
         let new_events = self.extractor.extract(line);

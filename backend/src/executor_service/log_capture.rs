@@ -18,15 +18,11 @@ use tokio::task::JoinHandle;
 
 use crate::adapters::CodeExecutor;
 use crate::db::Database;
-use crate::execution_events::{
-    AtomcodeExtractor, ClaudeCodeExtractor, CodebuddyExtractor, CodewhaleExtractor,
-    CodexExtractor, DbLogEntry, EventPipeline, ExecutionEvent,
-    HermesExtractor, KiloExtractor, KimiExtractor, MimoExtractor, MobilecoderExtractor,
-    OpencodeExtractor, PiExtractor, ZhanluExtractor,
-};
+// 093-B4：13 个 Extractor 的直接导入已随 match 塌缩删除——构造职责移交注册表工厂。
+use crate::execution_events::{DbLogEntry, EventPipeline, ExecutionEvent};
 use crate::executor_service::ExecEvent;
 use crate::log_flusher::LogFlusher;
-use crate::models::{ExecutorType, ParsedLogEntry};
+use crate::models::ParsedLogEntry;
 
 /// 触发 `Output` 事件的 helper：忽略 send 失败（无订阅者 = 没人想看，不算错误）。
 pub(crate) fn send_event(tx: &broadcast::Sender<ExecEvent>, event: ExecEvent) {
@@ -38,52 +34,10 @@ pub(crate) fn send_event(tx: &broadcast::Sender<ExecEvent>, event: ExecEvent) {
 /// pub(crate) 是为了让 message_debounce.rs 中的 executor 默认响应路径也能复用
 /// 同一套 pipeline 创建逻辑，避免每个调用方各自硬编码 executor 类型 → 提取器映射。
 pub(crate) fn create_pipeline_for_executor(executor: &dyn CodeExecutor) -> Option<EventPipeline> {
-    let executor_type = executor.executor_type();
-
-    // 根据执行器类型选择合适的提取器
-    let pipeline = match executor_type {
-        ExecutorType::Claudecode => {
-            EventPipeline::with_extractor(ClaudeCodeExtractor::new())
-        }
-        ExecutorType::Kilo => {
-            EventPipeline::with_extractor(KiloExtractor::new())
-        }
-        ExecutorType::Opencode => {
-            EventPipeline::with_extractor(OpencodeExtractor::new())
-        }
-        ExecutorType::Codex => {
-            EventPipeline::with_extractor(CodexExtractor::new())
-        }
-        ExecutorType::Hermes => {
-            EventPipeline::with_extractor(HermesExtractor::new())
-        }
-        ExecutorType::Kimi => {
-            EventPipeline::with_extractor(KimiExtractor::new())
-        }
-        ExecutorType::Pi => {
-            EventPipeline::with_extractor(PiExtractor::new())
-        }
-        ExecutorType::Mobilecoder => {
-            EventPipeline::with_extractor(MobilecoderExtractor::new())
-        }
-        ExecutorType::Atomcode => {
-            EventPipeline::with_extractor(AtomcodeExtractor::new())
-        }
-        ExecutorType::Zhanlu => {
-            EventPipeline::with_extractor(ZhanluExtractor::new())
-        }
-        ExecutorType::Codewhale => {
-            EventPipeline::with_extractor(CodewhaleExtractor::new())
-        }
-        ExecutorType::Mimo => {
-            EventPipeline::with_extractor(MimoExtractor::new())
-        }
-        ExecutorType::Codebuddy => {
-            EventPipeline::with_extractor(CodebuddyExtractor::new())
-        }
-    };
-
-    Some(pipeline)
+    // 093-B4：13 臂 match 已收敛进注册表——ExecutorDef.create_extractor 工厂指针。
+    // 新增执行器只在 EXECUTORS 静态表挂一行，不再触碰本函数。
+    let def = crate::adapters::find_executor_by_type(executor.executor_type())?;
+    Some(EventPipeline::with_boxed_extractor((def.create_extractor)()))
 }
 
 /// 将 ExecutionEvent 转换为 ParsedLogEntry 并发送 Output 事件
