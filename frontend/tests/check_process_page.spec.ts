@@ -8,8 +8,10 @@ test.describe('Process Library 工艺模板库', () => {
     // 等待页面骨架渲染
     await page.waitForTimeout(1500);
 
-    // 页面标题应存在
-    const title = page.locator('text=工艺模板库');
+    // 页面标题：028 后 PageCard 标题已由旧的「工艺模板库」改为「工艺」
+    // （「工艺模板库」现仅存在于代码注释/帮助文档，不再渲染进 DOM，旧 text= 选择器因此 0 匹配）。
+    // 用 .ntd-page-card-title-text 锚定标题文本节点，避免 text=工艺 同时命中「创建工艺」按钮。
+    const title = page.locator('.ntd-page-card-title-text', { hasText: '工艺' });
     await expect(title).toBeVisible({ timeout: 5000 });
 
     // 刷新按钮应存在

@@ -25,7 +25,9 @@ test.describe('黑板主题页操作工具条', () => {
 
     // 点击删除应弹出二次确认 Modal，避免误删
     await deleteBtn.click();
-    const confirmModal = page.locator('.ant-modal-confirm').filter({ hasText: '删除主题' });
+    // 删除二次确认已从 Modal.confirm 改为普通 JSX <Modal>（黑板的删除主题弹窗），
+    // 故容器类名是 .ant-modal 而非 .ant-modal-confirm；靠 hasText「删除主题」收窄定位。
+    const confirmModal = page.locator('.ant-modal').filter({ hasText: '删除主题' });
     await expect(confirmModal).toBeVisible({ timeout: 5000 });
     // 确认框内出现「删除」「取消」两个按钮，证明确实是二次确认而非直接删除。
     // antd zhCN locale 会对两字中文按钮插入空格（删除→"删 除"），用 \s* 兼容。

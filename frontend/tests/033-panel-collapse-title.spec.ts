@@ -9,13 +9,21 @@
 // 绕过 M5 Tabs 容器对 React Flow 节点指针事件的已知拦截。
 // ---------------------------------------------------------------------------
 import { test, expect } from '@playwright/test';
+import { editUrlByName } from './helpers/process';
 
 const BASE = process.env.UI_BASE || 'http://localhost:18088';
-const EDIT_URL = `${BASE}/#/processes?processMode=edit&name=4p12s-delivery`;
+// 040 后工艺按 guid 寻址（name 允许重复不再唯一），guid 由 helper 按 name 动态查出，
+// 不再硬编码 name=，避免 bundled 工艺改名时 spec 静默退化成列表页。
+let editUrl = '';
 
 test.describe('033 面板改动验证', () => {
+  // 一次性查出系统工艺 4p12s-delivery 的 guid 并拼编辑器 URL，各 test 共用。
+  test.beforeAll(async ({ request }) => {
+    editUrl = await editUrlByName(request, '4p12s-delivery', BASE);
+  });
+
   test('评审 Prompt 参数条不含 max_output_chars', async ({ page }) => {
-    await page.goto(EDIT_URL);
+    await page.goto(editUrl);
     await page.waitForTimeout(3000);
     expect(await page.locator('.react-flow__node-link').count()).toBeGreaterThan(0);
 
@@ -39,7 +47,7 @@ test.describe('033 面板改动验证', () => {
   });
 
   test('属性面板收起后窄条显示标题与向右箭头', async ({ page }) => {
-    await page.goto(EDIT_URL);
+    await page.goto(editUrl);
     await page.waitForTimeout(3000);
     expect(await page.locator('.react-flow__node-link').count()).toBeGreaterThan(0);
 

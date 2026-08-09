@@ -12,20 +12,27 @@
 // 注意：
 // - 8 个 bundled 工艺都是系统工艺（is_system=true），M4 的系统工艺防护
 //   会把 Monaco readOnly，但可视化区 + 属性面板仍应渲染（只读态）。
-// - 路由用 query params 格式：?processMode=edit&name=xxx（非 path 风格）。
+// - 路由用 query params 格式：?processMode=edit&guid=xxx（非 path 风格）。
+//   040 后工艺按 guid 寻址（name 允许重复不再唯一），故 guid 由 helper 动态查 name 得到，
+//   不再硬编码，避免 bundled 工艺改名时 spec 静默退化成列表页。
 // - React Flow v12 节点选择器用 class：.react-flow__node-phase / .react-flow__node-link
 //   （非 data-type 属性，v12 不输出 data-type）。
 // ---------------------------------------------------------------------------
 
 import { test, expect } from '@playwright/test';
+import { editUrlByName } from './helpers/process';
 
-const BASE = 'http://localhost:18088';
-// 路由：query params 格式
-const EDIT_URL = `${BASE}/#/processes?processMode=edit&name=4p12s-delivery`;
+// 编辑器直链在 beforeAll 里按 name 查 guid 拼出（见上注释），各 test 共用。
+let editUrl = '';
 
 test.describe('029 M4 React Flow 可视化编辑器', () => {
+  // 一次性查出系统工艺 4p12s-delivery 的 guid 并拼编辑器 URL，避免每个 test 重复请求。
+  test.beforeAll(async ({ request }) => {
+    editUrl = await editUrlByName(request, '4p12s-delivery');
+  });
+
   test('AC-M4-1: 进入编辑器后渲染可视化区与 React Flow 节点', async ({ page }) => {
-    await page.goto(EDIT_URL);
+    await page.goto(editUrl);
     await page.waitForTimeout(3000);
 
     // 顶部 Alert 应存在（系统工艺黄色告警）
@@ -51,7 +58,7 @@ test.describe('029 M4 React Flow 可视化编辑器', () => {
   });
 
   test('AC-M4-10: React Flow 画布渲染 Controls 与 MiniMap', async ({ page }) => {
-    await page.goto(EDIT_URL);
+    await page.goto(editUrl);
     await page.waitForTimeout(3000);
 
     // 等 React Flow 挂载（Tabs 激活态下用 count 容错）
@@ -62,14 +69,13 @@ test.describe('029 M4 React Flow 可视化编辑器', () => {
     const controls = page.locator('.react-flow__controls');
     await expect(controls).toBeVisible({ timeout: 5000 });
 
-    // MiniMap（小地图）应存在
-    const minimap = page.locator('.react-flow__minimap');
-    await expect(minimap).toBeVisible({ timeout: 5000 });
+    // MiniMap 已按需求移除（泳道式布局横向狭长，小地图辨识度低），不再断言其存在——
+    // 见 ProcessVisualEditor.tsx「小地图已按需求移除」注释。
   });
 
   // M7 skip：M5 引入 Tabs 后 React Flow 节点点击被 Tabs 容器拦截，已知回归留后续 issue
   test.skip('AC-M4-3: 点击 link 节点右侧属性面板切换到环节属性', async ({ page }) => {
-    await page.goto(EDIT_URL);
+    await page.goto(editUrl);
     await page.waitForTimeout(3000);
 
     const rfCount = await page.locator('.react-flow').count();
@@ -92,7 +98,7 @@ test.describe('029 M4 React Flow 可视化编辑器', () => {
 
   // M7 skip：同 AC-M4-3，Tabs 容器拦截 phase 节点点击
   test.skip('AC-M4-4: 点击 phase 节点右侧属性面板切换到阶段属性', async ({ page }) => {
-    await page.goto(EDIT_URL);
+    await page.goto(editUrl);
     await page.waitForTimeout(3000);
 
     const rfCount = await page.locator('.react-flow').count();
@@ -112,7 +118,7 @@ test.describe('029 M4 React Flow 可视化编辑器', () => {
 
   // M7 skip：同 AC-M4-3，Tabs 容器拦截 pane 点击
   test.skip('AC-M4-12: 未选中节点时属性面板显示全局面板', async ({ page }) => {
-    await page.goto(EDIT_URL);
+    await page.goto(editUrl);
     await page.waitForTimeout(3000);
 
     const rfCount = await page.locator('.react-flow').count();

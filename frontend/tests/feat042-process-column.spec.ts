@@ -21,8 +21,8 @@ VALUES ('guid-feat042-${suffix}', 'feat042-${suffix}', '${processName}', '3.4.5'
 INSERT INTO todos (title, prompt, status, executor, workspace_id, workspace_path, created_at, updated_at)
 VALUES ('${todoTitle}', '验证三列表工艺列统一', 'pending', 'claudecode', ${WORKSPACE_ID}, '/tmp',
         strftime('%Y-%m-%dT%H:%M:%SZ','now','utc'), strftime('%Y-%m-%dT%H:%M:%SZ','now','utc'));
-INSERT INTO loops (name, description, workspace_id, workspace_path, status, icon, process_template_id, process_template_version, created_at, updated_at)
-VALUES ('${loopName}', '验证三列表工艺列统一', ${WORKSPACE_ID}, '/tmp', 'paused', 'loop',
+INSERT INTO loops (name, description, workspace_id, workspace_path, status, process_template_id, process_template_version, created_at, updated_at)
+VALUES ('${loopName}', '验证三列表工艺列统一', ${WORKSPACE_ID}, '/tmp', 'paused',
         (SELECT MAX(id) FROM process_templates), '3.4.5',
         strftime('%Y-%m-%dT%H:%M:%SZ','now','utc'), strftime('%Y-%m-%dT%H:%M:%SZ','now','utc'));
 INSERT INTO loop_steps (loop_id, name, order_index, todo_id, enabled, gate_config, skill_names, created_at)

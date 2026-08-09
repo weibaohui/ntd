@@ -29,7 +29,9 @@ test.describe('环路视图功能测试', () => {
     await memorialBtn.click();
     // 为什么等待视图切换完成：MemorialBoard 挂载后需要拉取 completed todos，
     // 等待看板工具栏可见作为"视图已就绪"的信号
-    await expect(page.locator('.memorial-header')).toBeVisible({ timeout: 5000 });
+    // PageCard 重构后头部类名为 .ntd-page-card-header（旧的 .memorial-header 已是死 CSS），
+    // 作为「MemorialBoard 视图已就绪」的信号。
+    await expect(page.locator('.ntd-page-card-header')).toBeVisible({ timeout: 5000 });
   });
 
   // 测试视图切换选项数量是否正确（覆盖 UI 回归风险）。
@@ -57,7 +59,7 @@ test.describe('环路视图功能测试', () => {
 
     // 为什么等待搜索框出现：搜索框是 LoopKanban 组件的标志性 UI，
     // 可见即表示组件已挂载且工具栏渲染完成。
-    const searchInput = page.getByPlaceholder(/搜索环路名称或触发类型/);
+    const searchInput = page.getByPlaceholder(/搜索任务/);
     await expect(searchInput).toBeVisible({ timeout: 5000 });
   });
 
@@ -69,22 +71,25 @@ test.describe('环路视图功能测试', () => {
     await loopKanbanOption.click();
 
     // 为什么验证工具栏：工具栏是 LoopKanban 的固定部分，无论有无数据都应渲染
-    const toolbar = page.locator('.loop-kanban-toolbar');
+    const toolbar = page.locator('.memorial-toolbar');
     await expect(toolbar).toBeVisible({ timeout: 5000 });
 
-    // 为什么等待 loading 消失：避免在加载态做断言，导致误判
-    // 为什么用 15 秒超时：批量拉取多个环路的执行历史可能较慢，给足缓冲避免 CI 抖动
-    const spin = page.locator('.ant-spin');
-    await expect(spin).toBeHidden({ timeout: 15000 });
+    // 为什么先等 .loop-kanban-board 挂载：旧版直接等 .ant-spin toBeHidden，
+    // 但 MemorialBoard 切到 loop_kanban 模式与 LoopKanban 实际挂载之间有空窗——
+    // 此时 .ant-spin 尚未进入 DOM，toBeHidden 把「不存在」也视为 hidden 而瞬间通过，
+    // 紧接着的 columns/empty 一次性读取就撞在组件挂载前，误判为白屏。
+    // .loop-kanban-board 是 LoopKanban 根 div，恒定渲染，作为「组件已挂载」的可靠信号。
+    const board = page.locator('.loop-kanban-board');
+    await expect(board).toBeVisible({ timeout: 10000 });
 
-    // 为什么用"或"逻辑：数据可能为空（空状态）或有数据（列头可见），
-    // 两者都是正常状态，只要不是永久 loading 即可
-    const columnHeaders = page.locator('.loop-kanban-column-header');
+    // 为什么用 .or() + toBeVisible 而非一次性 count/isVisible：
+    // useLoopExecutions 有两段加载（先环路列表、再批量执行历史），中间 loading 会二次置 true，
+    // 一次性读取可能正好撞上 loading 把 columns/empty 替换成 Spin 的瞬间。
+    // Playwright 的 expect(...).toBeVisible() 会自动重试到目标稳定可见，给足 15s 覆盖两段加载。
+    // 数据为空 → 空状态；有数据 → 列头；二者必居其一，只要不永久 loading 即通过。
+    const columns = page.locator('.loop-kanban-column-header');
     const emptyState = page.locator('.ant-empty-description');
-    const hasColumns = (await columnHeaders.count()) > 0;
-    const hasEmpty = await emptyState.isVisible().catch(() => false);
-    // 为什么至少有一种状态：确保 UI 有反馈，不会白屏
-    expect(hasColumns || hasEmpty).toBeTruthy();
+    await expect(columns.or(emptyState).first()).toBeVisible({ timeout: 15000 });
   });
 
   // 测试时间过滤功能（边界条件：切换选项后数据重新过滤）。
@@ -94,17 +99,16 @@ test.describe('环路视图功能测试', () => {
     await loopKanbanOption.click();
 
     // 为什么先等工具栏可见：确保组件已挂载，避免点击时元素未渲染
-    const toolbar = page.locator('.loop-kanban-toolbar');
+    const toolbar = page.locator('.memorial-toolbar');
     await expect(toolbar).toBeVisible({ timeout: 5000 });
 
     // 为什么用 getByRole + filter：时间选项也是 radiogroup，
     // 用包含"7d"文本的 radio 定位，比 nth(2) 更稳定
     const timeSegmented = page.getByRole('radiogroup').filter({ has: page.getByText('7d') });
     if (await timeSegmented.isVisible({ timeout: 2000 }).catch(() => false)) {
-      const sevenDaysOption = timeSegmented.getByRole('radio', { name: '7d' });
-      await sevenDaysOption.click();
-      // 为什么不再用 waitForTimeout：点击后状态立即更新，无需等待固定时间，
-      // 若需验证数据变化可用 expect() 的内置重试机制
+      // antd Segmented 的 radio <input> 是视觉隐藏的（opacity:0），点 radio 角色会一直
+      // 「element is not visible」直到 30s 超时；改点可见的选项文本「7d」。
+      await timeSegmented.getByText('7d', { exact: true }).click();
     }
   });
 
@@ -115,7 +119,7 @@ test.describe('环路视图功能测试', () => {
     await loopKanbanOption.click();
 
     // 为什么用 getByPlaceholder：搜索框的语义化定位，比 class 或 nth() 更明确
-    const searchInput = page.getByPlaceholder(/搜索环路名称或触发类型/);
+    const searchInput = page.getByPlaceholder(/搜索任务/);
     await expect(searchInput).toBeVisible({ timeout: 5000 });
 
     // 为什么输入"test"：常见测试数据，验证输入流程正常

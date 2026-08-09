@@ -26,8 +26,9 @@ test.describe('029 M6 新建工艺流程', () => {
     await page.goto(LIST_URL);
     await page.waitForTimeout(2000);
 
-    // 列表页标题应存在
-    await expect(page.locator('text=工艺模板库').first()).toBeVisible({ timeout: 5000 });
+    // 列表页标题现为「工艺」（029 重构后由 PageHeader 渲染，旧文案「工艺模板库」已精简）。
+    // 限定 main 区域，避免误匹配侧边栏「工艺」导航项。
+    await expect(page.locator('main').locator('text=工艺').first()).toBeVisible({ timeout: 5000 });
 
     // 创建工艺按钮应存在
     const createBtn = page.locator('button:has-text("创建工艺")');

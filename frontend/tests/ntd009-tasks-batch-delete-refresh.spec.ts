@@ -21,10 +21,14 @@ SELECT MAX(id) FROM tasks;
 }
 
 async function openTasksPage(page: Page) {
-  await page.addInitScript(() => {
+  // workspace 必须显式锁定到 WORKSPACE_ID：DataLoader 启动时按 path 升序取 dirs[0]
+  // （dev 库里 /Users/mac/sticky-notes 排最前 → ws 3），而种子任务在 ws 1；
+  // 不锁定会让 TasksPage 加载 ws 3 列表，种子行永远不出现，删除前 toHaveCount(1) 即失败。
+  await page.addInitScript((wsId) => {
     localStorage.setItem('app_theme', 'light');
     localStorage.setItem('ntd_tasks_view', 'list');
-  });
+    localStorage.setItem('selected_workspace', String(wsId));
+  }, WORKSPACE_ID);
   await page.goto(`${BASE}/#/tasks`, { waitUntil: 'domcontentloaded' });
   await expect(page.getByTestId('tasks-table-view')).toBeVisible();
 }

@@ -83,6 +83,14 @@ test.describe('TodoDetail 加载态/错误态/重试', () => {
       },
     );
 
+    // 关键：开发库后端按 path ASC 排序返回 project_directories，首项是 id=3 的工作空间，
+    // 故 SPA 冷启动默认选中 workspace=3（不是 1）。getTodo 实际请求 /workspaces/3/todos/<id>，
+    // 与上面的 route 拦截（workspaces/1/...）不匹配，hitCount 恒为 0——本用例此前因此失败。
+    // 在首次导航前用 addInitScript 把 selected_workspace 钉到 1，让 getTodo 走 /workspaces/1/...，
+    // 命中拦截规则，hitCount 才能正确反映「重试又发了一次请求」。ws=1 在开发库中有效，DataLoader 校验会保留它。
+    await page.addInitScript(() => {
+      localStorage.setItem('selected_workspace', '1');
+    });
     await page.goto(`${BASE}/#/todos/${NON_EXISTENT_ID}`);
     await expect(page.getByText('任务加载失败或不存在')).toBeVisible({ timeout: 8000 });
     // 记录首次加载后的命中数（至少 1 次初始请求）
