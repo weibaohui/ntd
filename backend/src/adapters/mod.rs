@@ -306,7 +306,6 @@ pub mod mobilecoder_event;
 pub mod claude_protocol;
 pub mod claude_code;
 pub mod codebuddy;
-pub mod opencode;
 pub mod opencode_event;
 pub mod atomcode;
 pub mod hermes;
@@ -315,12 +314,14 @@ pub mod codex;
 pub mod codewhale;
 pub mod pi;
 pub mod pi_event;
-pub mod mimo;
 pub mod mimo_event;
-pub mod zhanlu;
 pub mod zhanlu_event;
-pub mod kilo;
 pub mod kilo_event;
+// 093-B1：kilo/opencode/zhanlu/mimo 四份复制粘贴适配器（77%~83% 逐字相同）
+// 已收敛为 step_protocol 统一实现 + step_event 统一事件模型；
+// *_event.rs 四个文件是保持旧引用路径的别名壳。
+pub mod step_event;
+pub mod step_protocol;
 
 #[async_trait]
 pub trait CodeExecutor: Send + Sync {
@@ -477,16 +478,16 @@ impl ExecutorRegistry {
             "claudecode" => Arc::new(claude_code::ClaudeCodeExecutor::new(expanded)),
             "mobilecoder" => Arc::new(mobilecoder::MobilecoderExecutor::new(expanded)),
             "codebuddy" => Arc::new(codebuddy::CodebuddyExecutor::new(expanded)),
-            "opencode" => Arc::new(opencode::OpencodeExecutor::new(expanded)),
+            "opencode" => Arc::new(step_protocol::StepProtocolExecutor::opencode(expanded)),
             "atomcode" => Arc::new(atomcode::AtomcodeExecutor::new(expanded)),
             "hermes" => Arc::new(hermes::HermesExecutor::new(expanded)),
             "kimi" => Arc::new(kimi::KimiExecutor::new(expanded)),
             "codex" => Arc::new(codex::CodexExecutor::new(expanded)),
             "codewhale" => Arc::new(codewhale::CodewhaleExecutor::new(expanded)),
             "pi" => Arc::new(pi::PiExecutor::new(expanded)),
-            "mimo" => Arc::new(mimo::MimoExecutor::new(expanded)),
-            "zhanlu" => Arc::new(zhanlu::ZhanluExecutor::new(expanded)),
-            "kilo" => Arc::new(kilo::KiloExecutor::new(expanded)),
+            "mimo" => Arc::new(step_protocol::StepProtocolExecutor::mimo(expanded)),
+            "zhanlu" => Arc::new(step_protocol::StepProtocolExecutor::zhanlu(expanded)),
+            "kilo" => Arc::new(step_protocol::StepProtocolExecutor::kilo(expanded)),
             _ => return None,
         };
         Some(executor)
