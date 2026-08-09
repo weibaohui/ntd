@@ -24,16 +24,16 @@ test('三层链路闭环：工艺→环路→事项→环路', async ({ page }) 
   await page.goto('http://localhost:18088/#/processes');
   await page.waitForLoadState('networkidle');
 
-  // 数据前置：dev 库为共享 SQLite，「我的」视图常残留 guid-feat042-* 测试占位条目，
-  // 其 install 返回 Not Found → 不会产生新环路，后续链路全断。先探测系统模板是否可安装，
-  // 不可用则跳过（避免在他人的 dev 环境上误报）。
+  // 数据前置：dev 库为共享 SQLite，「我的」视图里的非系统工艺 install 行为不可控
+  // （历史 fixture 或用户手建条目都可能 install 失败，不产生新环路，后续链路全断）。
+  // 先探测系统模板是否可安装，不可用则跳过（避免在他人的 dev 环境上误报）。
   const probe = await page.request.get('http://localhost:18088/api/bundled/processes?is_system=true');
   const probeBody = await probe.json().catch(() => null);
   const sysCount = Array.isArray(probeBody?.data) ? probeBody.data.length : 0;
   test.skip(sysCount === 0, 'dev 库无系统工艺模板，无法验证安装链路');
 
-  // 切到「模板」scope：系统模板的 guid 为真实 UUID，install 必成功并产生新环路；
-  // 留在「我的」会命中 guid-feat042-* 失效占位条目，install 404。
+  // 切到「模板」scope：系统模板的 guid 为真实 bundled UUID，install 必成功并产生新环路；
+  // 留在「我的」可能命中行为不可控的非系统条目，install 不保证成功。
   await page.getByText('模板', { exact: true }).click();
 
   // 等工艺卡片渲染后点第一个「安装」按钮
@@ -96,16 +96,16 @@ test('P1-工艺详情三 Tab：流程图、实例环路、YAML 源', async ({ pa
   await page.goto('http://localhost:18088/#/processes');
   await page.waitForLoadState('networkidle');
 
-  // 数据前置：dev 库为共享 SQLite，「我的」视图常残留 guid-feat042-* 测试占位条目，
-  // 其 getProcess 返回 404 → setDetail 永不触发 → 详情 Modal 不开。先探测系统模板是否可用，
-  // 不可用则跳过（避免在他人的 dev 环境上误报）。系统模板 guid 为真实 UUID，可稳定寻址。
+  // 数据前置：dev 库为共享 SQLite，「我的」视图里的非系统工艺 getProcess 可能失败
+  // （setDetail 不触发 → 详情 Modal 不开）。先探测系统模板是否可用，不可用则跳过
+  // （避免在他人的 dev 环境上误报）。系统模板 guid 为真实 bundled UUID，可稳定寻址。
   const probe = await page.request.get('http://localhost:18088/api/bundled/processes?is_system=true');
   const probeBody = await probe.json().catch(() => null);
   const sysCount = Array.isArray(probeBody?.data) ? probeBody.data.length : 0;
   test.skip(sysCount === 0, 'dev 库无系统工艺模板，无法验证详情 Modal');
 
   // 切到「模板」scope：系统模板的 guid 是 bundled 真实 UUID，getProcess 必返 200；
-  // 留在「我的」会命中失效占位条目导致 Modal 打不开（见上）。
+  // 留在「我的」可能命中非系统条目导致 Modal 打不开（见上）。
   await page.getByText('模板', { exact: true }).click();
 
   // 点第一个工艺卡片上的「详情」按钮打开 Modal

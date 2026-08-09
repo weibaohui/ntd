@@ -198,18 +198,15 @@ test('修改执行超时分钟后保存，刷新后值持久化', async ({ page 
   await page.waitForTimeout(500);
 
   // 刷新后验证持久化：读取执行超时 InputNumber 的显示值。
-  // 注意：该 InputNumber 虽声明 value={executionTimeoutMinutes}（期望显示分钟），
-  // 但被 <Form.Item name="execution_timeout_secs"> 包裹后，antd 会注入表单字段值
-  // （秒）覆盖显式 value——因此控件实际显示的是 execution_timeout_secs（秒）而非分钟。
-  // 已对照真实 API 复核（10800 秒的配置显示为 10800 而非 180），属稳定行为。
-  // 「执行超时 ... 分钟」标签与秒数显示不一致，疑似 src UI 缺陷（仅记，不在本用例修复）。
-  // 故这里断言显示值为 300（持久化的秒），与上方 PUT body 的 execution_timeout_secs 一致，
-  // 共同验证「值已保存并被重新加载」这一核心目标。
+  // 控件脱离 Form 托管后，展示层用分钟（executionTimeoutMinutes）、存储层用秒：
+  // 持久化的是 execution_timeout_secs=300（见上方 PUT body），刷新后 loadConfig 把 300 秒
+  // 同步到 state，控件按 round(300/60)=5 显示分钟。故显示值应为 5（分钟），与存储的 300 秒分离，
+  // 这正是「执行超时 … 分钟」标签所示单位——本断言即验证 src 已修复「显示秒而非分钟」的缺陷。
   const displayVal = await page
     .locator('.ant-card')
     .filter({ hasText: '运行配置' })
     .locator('.ant-input-number-input')
     .nth(1)
     .inputValue();
-  expect(Number(displayVal)).toBe(300);
+  expect(Number(displayVal)).toBe(5);
 });
