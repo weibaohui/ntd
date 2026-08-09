@@ -2,8 +2,9 @@ import { test, expect } from '@playwright/test';
 
 test.describe('Executor UI Tests', () => {
   test.beforeEach(async ({ page }) => {
-    // Go to the app
-    await page.goto('http://localhost:5173');
+    // Go to the app。dev 用 embedded 模式（rust-embed 打进后端），监听 18088；
+    // 旧的 5173 是 vite dev server 端口，make dev 不启动它，连不上会超时。
+    await page.goto('http://localhost:18088');
     // Wait for page to load
     await page.waitForLoadState('networkidle');
   });

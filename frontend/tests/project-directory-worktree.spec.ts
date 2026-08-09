@@ -10,7 +10,9 @@
 // 系列请求并返回固定 fixture, 让 UI 逻辑可独立验证.
 import { test, expect, Page } from '@playwright/test';
 
-const BASE = 'http://localhost:5173';
+// dev 用 embedded 模式（前端 dist 经 rust-embed 打进后端）监听 18088；下方 page.route()
+// 拦截 /api 返回固定 fixture，故只需一个能服务应用页面的端口即可，指向 18088。
+const BASE = 'http://localhost:18088';
 
 // 默认 fixture 模板：每个用例在 beforeEach 里深拷贝一份，避免相互污染。
 // 历史上把 fixtureDirs 作为 module-level 单例，PUT 路径会原地 mutate[0]，

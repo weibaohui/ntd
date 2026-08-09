@@ -2,7 +2,9 @@
 // 点某个执行项 → 看板应在该项正下方、同框展开。
 import { test, expect } from '@playwright/test';
 
-const BASE = 'http://localhost:5180';
+// dev 服务用 embedded 模式（前端 dist 经 rust-embed 打进后端），监听 18088；
+// 旧的 5180 是误写，应用页面并不在该端口上服务，会导致 goto 直接连接拒绝。
+const BASE = 'http://localhost:18088';
 
 test('执行历史内联展开校验', async ({ page }) => {
   await page.goto(`${BASE}/#/tasks`, { waitUntil: 'domcontentloaded' });
