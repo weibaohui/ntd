@@ -51,7 +51,7 @@ describe('useExecutionEvents（094 workspace 订阅范围）', () => {
     vi.unstubAllGlobals();
   });
 
-  it('首连 URL 携带当前 workspace_id', async () => {
+  it('test_useExecutionEvents_initial_connection_includes_workspace_id', async () => {
     mockWorkspace = 1;
     const { unmount } = renderHook(() => useExecutionEvents());
     expect(FakeWebSocket.instances).toHaveLength(1);
@@ -60,7 +60,7 @@ describe('useExecutionEvents（094 workspace 订阅范围）', () => {
     await flushTimers();
   });
 
-  it('workspace 为空时不带参数（服务端全推兼容口）', async () => {
+  it('test_useExecutionEvents_null_workspace_uses_unscoped_connection', async () => {
     mockWorkspace = null;
     const { unmount } = renderHook(() => useExecutionEvents());
     expect(FakeWebSocket.instances[0].url).not.toContain('workspace_id');
@@ -68,7 +68,7 @@ describe('useExecutionEvents（094 workspace 订阅范围）', () => {
     await flushTimers();
   });
 
-  it('切换 workspace：断旧连新，且旧连接 onclose 不产生重复连接（竞态守卫）', async () => {
+  it('test_useExecutionEvents_workspace_change_ignores_stale_onclose', async () => {
     mockWorkspace = 1;
     const { unmount, rerender } = renderHook(() => useExecutionEvents());
     expect(FakeWebSocket.instances[0].url).toContain('workspace_id=1');
