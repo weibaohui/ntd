@@ -4,6 +4,7 @@
 |--------|---------|---------|
 | AI (Pi) | 2026-08-08 | 初始版本 |
 | AI (zhanlu) | 2026-08-10 | 按 CodeRabbit 评审修正：差异方法口径（5 行为查询+1 类型映射）、方法名与代码对齐、验证方案措辞（去掉"全绿"，写明 git_sync 环境失败） |
+| AI (zhanlu) | 2026-08-10 | 按 CodeRabbit 评审收窄安全反思：to_full_json 防覆盖属已声明的边界载荷语义变化，不再笼统写"无协议变化" |
 
 > 093 优化扫描专项 B1（重构批次 1）。源自 code-refactor/design-patterns skill 扫描诊断第 1 条：
 > **Copy-Paste Programming 反模式**——4 个执行器适配器最高 83% 逐字相同。
@@ -95,6 +96,9 @@ pub struct StepProtocolExecutor {
 
 ## 5. 安全反思
 
-- 纯内部重构，无接口/schema/协议变化；执行器进程间通信的 JSONL 解析行为逐格保持；
+- 无公开 API、DB schema、进程协议（JSONL 事件格式）变化；执行器通信的解析行为逐格保持；
+- **例外收窄**（CodeRabbit #1006 评审）：`to_full_json` 的 extra 同名键防覆盖对齐属于
+  已声明的**边界载荷语义变化**——影响特定 `tool_use` 载荷中 extra 恰好含
+  command/description 同名键的场景（真实协议反序列化不可达，仅手工构造可触发）；
 - serde alias 只放宽反序列化输入面，不改变输出；
 - 注册表键（"kilo"/"mimo"/...）不变，用户配置无感。
