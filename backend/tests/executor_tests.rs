@@ -825,7 +825,10 @@ mod kilo_executor_tests {
     }
 
     #[test]
-    fn test_kilo_get_model_is_always_none() {
+    fn test_kilo_get_model_none_before_model_injection() {
+        // kilo flavor 的 reports_model()=true：注入模型后 get_model 会回报；
+        // 本用例只锁定「未注入」场景为 None（恒 None 语义只属于 mimo flavor）。
+        // CodeRabbit #1008 评审：原名 is_always_none 描述了错误契约，改为场景化命名。
         let executor = StepProtocolExecutor::kilo("kilo".to_string());
         assert!(executor.get_model().is_none());
     }

@@ -241,18 +241,26 @@ pub(crate) async fn emit_post_execution_todo_progress(
 pub(crate) async fn handle_cancellation_branch(
     runtime: &crate::executor_service::types::SpawnRuntime,
 ) {
-    // 解出原名局部量保持函数体零改动（引用取向，零克隆）
+    // 解出原名局部量保持函数体零改动（引用取向，零克隆）：
+    // 每个局部量的名字与原位置参数逐一相同，下游函数体因此一行不用改，
+    // 重构期 diff 核对「行为等价」时只需检查本解包段
     let db = runtime.db.as_ref();
     let tx = &runtime.tx;
     let task_manager = runtime.task_manager.as_ref();
     let task_id = runtime.task_id.as_str();
     let todo_id = runtime.todo_id;
     let todo_title = runtime.todo_title.as_str();
+    // 取消/超时/失败路径共用 runtime.executor_spawn（spawn 期选定的执行器实例）；
+    // 与 SpawnContext.executor 同源，分支里只用其元数据（不再发起执行）
     let executor = runtime.executor_spawn.as_ref();
     let record_id = runtime.record_id;
     let feishu_bot_id = runtime.feishu_bot_id;
+    // feishu_receive_id(_type) clone 原因同 emit_completion_events：
+    // Finished 事件 owned，生命周期独立于 runtime 借用
     let feishu_receive_id = runtime.feishu_receive_id.clone();
     let feishu_receive_id_type = runtime.feishu_receive_id_type.clone();
+    // workspace_id 嵌在 prepared.request 里而非平铺——设计取舍见 PreparedExecution
+    // 字段注释（嵌入 request 整段，加字段时只动 1 处）
     let workspace_id = runtime.prepared.request.workspace_id;
     let _ = db
         .update_todo_status(todo_id, crate::models::TodoStatus::Cancelled)
@@ -305,12 +313,13 @@ pub(crate) async fn handle_cancellation_branch(
 }
 
 /// timeout 分支末段：写 DB（failed + 包含超时常量文案） + 发 Output/Finished 事件 + remove task。
-#[allow(clippy::too_many_arguments)]
 /// 093-B3：14 参塌缩为 `&SpawnRuntime`；timeout_str 由 runtime.execution_timeout_secs
 /// 在函数内现算（原由调用点格式化后传入，是 Replace Parameter with Query 的应用）。
 pub(crate) async fn handle_timeout_branch(
     runtime: &crate::executor_service::types::SpawnRuntime,
 ) {
+    // 同名解包段与 handle_cancellation_branch 同构（理由见其注释）；
+    // 刻意保持两分支解包顺序一致——diff 对照时任何字段缺失都一眼可见
     let db = runtime.db.as_ref();
     let tx = &runtime.tx;
     let task_manager = runtime.task_manager.as_ref();
@@ -320,6 +329,9 @@ pub(crate) async fn handle_timeout_branch(
     let executor = runtime.executor_spawn.as_ref();
     let record_id = runtime.record_id;
     let execution_timeout_secs = runtime.execution_timeout_secs;
+    // timeout_str 函数内现算（Replace Parameter with Query）：
+    // 调用点原本也只是把 execution_timeout_secs 格式化一遍，参数传递纯属转发；
+    // 收进函数后格式化口径全仓唯一，不会出现两处文案漂移
     let timeout_str = format_timeout_secs(execution_timeout_secs);
     let feishu_bot_id = runtime.feishu_bot_id;
     let feishu_receive_id = runtime.feishu_receive_id.clone();
@@ -378,7 +390,6 @@ pub(crate) async fn handle_timeout_branch(
 ///
 /// auto-review 仅在 `trigger_type != "auto_review"` 时启动（防止评审实例自身再触发评审）。
 /// 从 DB 查询 record 的 usage 获取 duration 和 tokens，传给 emit_completion_events。
-#[allow(clippy::too_many_arguments)]
 /// 093-B3：19 个位置参数塌缩为 `&SpawnContext`（全部字段本来就从 ctx 逐字段解包）
 /// + `CompletionOutcome`（success/exit_code/result_str 数据团聚合）。
 pub(crate) async fn finalize_normal_completion(
@@ -441,6 +452,8 @@ pub(crate) async fn finalize_normal_completion(
         }
     };
 
+    // 完成事件必须放在 usage 查询之后发送：事件载荷要携带 duration/tokens，
+    // 提前发送会让飞书/前端收到缺统计信息的完成卡片（CodeRabbit #1008 评审点）
     emit_completion_events(ctx, &outcome, duration_secs, total_tokens);
     task_manager.remove(&task_id).await;
 
@@ -944,7 +957,6 @@ async fn maybe_run_auto_review(
 /// `duration_secs` 和 `total_tokens` 由调用方从 DB 查询 usage 后传入；
 /// 异常路径（cancel/timeout/spawn 失败等）传 0 即可。
 /// `trigger_type` 透传本次执行的触发类型，供下游识别"自身"避免递归（如 blackboard）。
-#[allow(clippy::too_many_arguments)]
 /// 093-B3：15 参塌缩为 4 参（ctx 承载任务/飞书/workspace/trigger 字段，
 /// outcome 承载终态三元组，仅 duration/tokens 是调用点计算值）。
 fn emit_completion_events(
@@ -956,6 +968,7 @@ fn emit_completion_events(
     // 解出原名局部量保持函数体零改动（引用取向，零克隆）
     let tx = &ctx.tx;
     let executor = &ctx.executor;
+    // 字符串字段用 as_str() 借用而非 clone：本函数只读不持有，省一次堆分配
     let task_id = ctx.task_id.as_str();
     let todo_id = ctx.todo_id;
     let todo_title = ctx.todo_title.as_str();
@@ -963,9 +976,13 @@ fn emit_completion_events(
     let exit_code = outcome.exit_code;
     let result_str = outcome.result_str.as_str();
     let feishu_bot_id = ctx.feishu_bot_id;
+    // feishu_receive_id(_type) 必须 clone：ExecEvent::Finished 是 owned 结构，
+    // 跨 await/广播后事件生命周期独立于 ctx，借用会悬垂
     let feishu_receive_id = ctx.feishu_receive_id.clone();
     let feishu_receive_id_type = ctx.feishu_receive_id_type.clone();
     let workspace_id = ctx.workspace_id;
+    // trigger_type 包装成 Some：ExecEvent 的该字段是 Option<String>，
+    // ctx 侧恒有值——包装点集中在此，下游不再判空
     let trigger_type = Some(ctx.trigger_type.clone());
     let entry = ParsedLogEntry::new(
         if success { "info" } else { "error" },

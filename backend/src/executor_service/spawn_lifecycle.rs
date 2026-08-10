@@ -30,6 +30,8 @@ use super::log_capture::{
     setup_log_capture_pipeline,
 };
 use super::worktree::{cleanup_worktree_if_needed, kill_process_tree};
+// SpawnContext/SpawnRuntime 两个参数对象是本文件各 stage 函数的签名基座
+// （093-B3 塌缩后的统一入参形态），集中导入避免函数内反复全路径书写
 use super::types::{SpawnContext, SpawnRuntime};
 
 /// issue #660: 原来 449 行 `run_todo_execution` 的 spawn 闭包体。
@@ -441,7 +443,10 @@ pub(crate) async fn run_cancellation_path(
     teardown: super::types::ProcessTeardown<'_>,
     runtime: &SpawnRuntime,
 ) {
+    // 先 kill：用户取消的第一语义是「立刻停」，任何后续读日志都不能阻塞停机
     kill_process_tree(teardown.child).await;
+    // kill 后 drain：读取器可能还缓冲着进程退出前的最后输出，
+    // 不 drain 直接丢会截断日志（且 flush_timer 需随结构 abort 防泄漏）
     drain_readers_and_flush(
         teardown.child,
         teardown.stdout_task,
@@ -449,7 +454,9 @@ pub(crate) async fn run_cancellation_path(
         teardown.log_flusher,
         teardown.flush_timer,
     ).await;
+    // 终态落库/发事件放在 drain 之后：保证 record 关联的日志完整可查
     handle_cancellation_branch(runtime).await;
+    // worktree 清理放最后：前面步骤若读 worktree 内文件（如 result 解析），先清理会读空
     cleanup_worktree_if_needed(&runtime.worktree_ctx).await;
 }
 
@@ -459,6 +466,9 @@ pub(crate) async fn run_timeout_path(
     teardown: super::types::ProcessTeardown<'_>,
     runtime: &SpawnRuntime,
 ) {
+    // 与取消分支同序（kill → drain → 终态 → 清理），理由一致；
+    // 两分支刻意保持镜像结构：差异只在终态 handler（文案与状态码不同），
+    // 读代码时对称性即正确性证据
     kill_process_tree(teardown.child).await;
     drain_readers_and_flush(
         teardown.child,
@@ -534,7 +544,9 @@ pub(crate) async fn persist_and_finalize_completion(
         ctx.execution_start,
     )
     .await;
-    // 093-B3：19 个逐字段解包塌缩为 ctx 透传 + CompletionOutcome 三元组聚合
+    // 093-B3：19 个逐字段解包塌缩为 ctx 透传 + CompletionOutcome 三元组聚合。
+    // outcome 在此构造即转交（by value move）：finalize 之后 success/exit_code/result_str
+    // 不再被本路径使用，move 语义恰好表达「终态数据的最终归宿」
     finalize_normal_completion(
         ctx,
         super::types::CompletionOutcome {
@@ -672,5 +684,132 @@ mod tests {
             stdout_true, "y\n",
             "worktree_active=true 时应预写 pi 的 stdin payload 'y\\n'，cat stdout 应回打该内容"
         );
+    }
+
+    /// 构造最小 SpawnRuntime 夹具（CodeRabbit #1008 评审补充 handle_spawn_failure 单测）。
+    /// 被测函数只读 db/tx/task_manager/executor_spawn/todo_id/todo_title/task_id
+    /// 与 prepared.request.workspace_id，其余字段一律占位——但 PreparedExecution
+    /// 字段全集必须 owned 构造，无部分构造捷径，故集中成 helper 表达
+    /// 「这些占位与本次断言无关」的意图。
+    /// 返回 (runtime, 事件接收端)：接收端用于断言广播出去的 Output/Finished。
+    async fn make_spawn_runtime(
+        db: std::sync::Arc<crate::db::Database>,
+        task_id: &str,
+    ) -> (super::SpawnRuntime, tokio::sync::broadcast::Receiver<crate::executor_service::ExecEvent>) {
+        use crate::executor_service::types::{PreparedExecution, SpawnRuntime};
+        use crate::executor_service::RunTodoExecutionRequest;
+        use std::sync::Arc;
+
+        let task_manager = Arc::new(crate::task_manager::TaskManager::default());
+        let (tx, rx) = tokio::sync::broadcast::channel(8);
+        let executor: Arc<dyn crate::adapters::CodeExecutor> =
+            Arc::new(crate::adapters::pi::PiExecutor::new("pi".to_string()));
+        // guard 必须真实注册：被测函数末尾 remove(task_id) 的行为断言依赖注册表先有这个 task
+        let mut task_guard = task_manager.register_with_guard(task_id.to_string()).await;
+        // 与生产路径同口径：cancel_rx 从 guard 中 take（register_task_and_load_todo 的模式）
+        let cancel_rx = task_guard.take_receiver();
+        let request = RunTodoExecutionRequest {
+            db: db.clone(),
+            executor_registry: Arc::new(crate::adapters::ExecutorRegistry::new()),
+            tx: tx.clone(),
+            task_manager: task_manager.clone(),
+            config: Arc::new(std::sync::RwLock::new(crate::config::Config::default())),
+            todo_id: 0,
+            message: String::new(),
+            req_executor: None,
+            req_model: None,
+            trigger_type: "test".to_string(),
+            params: None,
+            resume_session_id: None,
+            resume_message: None,
+            source_todo_id: None,
+            source_todo_title: None,
+            feishu_bot_id: None,
+            feishu_receive_id: None,
+            feishu_receive_id_type: None,
+            loop_step_execution_id: None,
+            step_id: None,
+            workspace_path: None,
+            workspace_id: None,
+            expert_manager: None,
+        };
+        let prepared = PreparedExecution {
+            request,
+            task_guard,
+            cancel_rx,
+            task_id: task_id.to_string(),
+            command_args: vec![],
+            executable_path: "pi".to_string(),
+            executor: executor.clone(),
+            executor_str: "pi".to_string(),
+            record_id: 0,
+            todo: None,
+            todo_workspace_path: None,
+            timeout_secs: 0,
+        };
+        let runtime = SpawnRuntime {
+            db,
+            tx,
+            task_manager,
+            todo_id: 0,
+            todo_title: "placeholder".to_string(),
+            executor_spawn: executor,
+            record_id: 0,
+            worktree_ctx: Default::default(),
+            task_id: task_id.to_string(),
+            execution_timeout_secs: 0,
+            feishu_bot_id: None,
+            feishu_receive_id: None,
+            feishu_receive_id_type: None,
+            effective_workspace_path: None,
+            prepared,
+        };
+        (runtime, rx)
+    }
+
+    /// spawn 失败路径编排：todo 落 failed、Output/Finished 各广播一次、task 从注册表移除。
+    /// 覆盖正常分支（有 todo 行）与边界（todo_id=0 的环节独立执行不碰 DB）。
+    #[tokio::test]
+    async fn test_handle_spawn_failure_marks_failed_and_emits_events() {
+        let db = std::sync::Arc::new(crate::db::Database::new(":memory:").await.unwrap());
+        // 真实 seed 一个 todo：finish_todo_execution(id, false) 要把它的 status 翻成 failed
+        let todo_id = db.create_todo("T", "prompt").await.unwrap();
+        let (mut runtime, mut rx) = make_spawn_runtime(db.clone(), "task-spawn-fail").await;
+        // 夹具 todo_id 默认 0（独立执行不碰 DB），本用例覆盖「有 todo」主路径
+        runtime.todo_id = todo_id;
+
+        super::handle_spawn_failure(&runtime, std::io::Error::other("spawn boom")).await;
+
+        // 断言 1：todo 状态翻转为 failed（DB 侧最终一致性证据；status 是 TodoStatus 枚举）
+        let todo = db.get_todo(todo_id).await.unwrap().unwrap();
+        assert_eq!(todo.status, crate::models::TodoStatus::Failed, "spawn 失败应把 todo 置为 failed");
+        // 断言 2：广播恰好 Output(error) + Finished(success=false) 两条
+        let first = rx.try_recv().expect("应收到 Output 事件");
+        let second = rx.try_recv().expect("应收到 Finished 事件");
+        assert!(matches!(first, crate::executor_service::ExecEvent::Output { .. }));
+        match second {
+            crate::executor_service::ExecEvent::Finished { success, result, .. } => {
+                assert!(!success, "spawn 失败的 Finished 必须 success=false");
+                assert!(result.unwrap_or_default().contains("spawn boom"), "Finished 应携带原始错误文案");
+            }
+            other => panic!("第二帧应为 Finished，实际: {other:?}"),
+        }
+        // 断言 3：task 已从注册表移除（cancel 查无此 task 返回 false）
+        assert!(!runtime.task_manager.cancel("task-spawn-fail").await, "task 应已被 remove");
+    }
+
+    /// spawn 失败路径边界：todo_id=0（环节独立执行）时 finish_todo_execution 短路，
+    /// 不碰 DB 也不报错，事件仍正常广播。
+    #[tokio::test]
+    async fn test_handle_spawn_failure_todo_id_zero_skips_db() {
+        let db = std::sync::Arc::new(crate::db::Database::new(":memory:").await.unwrap());
+        let (runtime, mut rx) = make_spawn_runtime(db, "task-spawn-fail-zero").await;
+
+        super::handle_spawn_failure(&runtime, std::io::Error::other("no process")).await;
+
+        // todo_id=0 时 DB 无写入目标，只需验证事件帧完整（Output + Finished）
+        assert!(rx.try_recv().is_ok(), "Output 事件应照常广播");
+        assert!(rx.try_recv().is_ok(), "Finished 事件应照常广播");
+        assert!(!runtime.task_manager.cancel("task-spawn-fail-zero").await);
     }
 }
