@@ -1460,7 +1460,7 @@ mod tests {
     /// 093-B4：label 改查注册表后，补「每个 ExecutorType 都有注册项 + 工厂可构造」断言——
     /// 这是「新增执行器忘注册/忘挂工厂」的回归守卫。
     #[test]
-    fn test_every_executor_type_registered_with_factory() {
+    fn test_find_executor_by_type_returns_registered_definitions_with_factories() {
         for et in [
             ExecutorType::Claudecode, ExecutorType::Hermes, ExecutorType::Codex,
             ExecutorType::Codebuddy, ExecutorType::Opencode, ExecutorType::Atomcode,

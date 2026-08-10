@@ -765,21 +765,13 @@ fn validate_process_name(name: &str) -> Result<(), AppError> {
 pub async fn get_process_stats(
     State(state): State<AppState>,
 ) -> Result<impl axum::response::IntoResponse, AppError> {
-    use sea_orm::{ConnectionTrait, DbBackend, Statement};
-    // 按模板聚合安装次数（loops.process_template_id GROUP BY）
-    let sql = "SELECT pt.name, pt.display_name, pt.complexity, COUNT(l.id) AS loop_count
-        FROM process_templates pt
-        LEFT JOIN loops l ON l.process_template_id = pt.id
-        GROUP BY pt.id ORDER BY loop_count DESC";
-    let rows = state.db.conn.query_all(Statement::from_string(DbBackend::Sqlite, sql)).await?;
+    // 093-B5：聚合 SQL 已下沉为 db.get_process_template_stats()，handler 只做字段映射
+    let rows = state.db.get_process_template_stats().await?;
     let mut stats = Vec::new();
     for row in rows {
-        let name: String = row.try_get_by("name").unwrap_or_default();
-        let display_name: String = row.try_get_by("display_name").unwrap_or_default();
-        let complexity: String = row.try_get_by("complexity").unwrap_or_default();
-        let loop_count: i64 = row.try_get_by("loop_count").unwrap_or(0);
         stats.push(serde_json::json!({
-            "name": name, "display_name": display_name, "complexity": complexity, "loop_count": loop_count
+            "name": row.name, "display_name": row.display_name,
+            "complexity": row.complexity, "loop_count": row.loop_count
         }));
     }
     Ok(ApiResponse::ok(serde_json::json!({

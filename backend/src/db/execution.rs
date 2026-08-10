@@ -762,6 +762,31 @@ impl Database {
         Ok(())
     }
 
+    /// 093-B5：删除早于 cutoff 的执行日志，返回实际删除行数。
+    ///
+    /// 从 `handlers/backup.rs::cleanup_old_logs` 下沉的 DAO（分层规范：handler 不写 SQL）。
+    /// 两个修法一并落地：cutoff 走参数绑定（原 format! 拼接，违反禁止清单 #4）；
+    /// 行数取 `ExecResult::rows_affected`（原额外跑一条 `SELECT changes()`）。
+    /// cutoff 与 timestamp 列同为 ISO8601 字符串，字典序即时间序。
+    pub async fn delete_execution_logs_before(&self, cutoff: &str) -> Result<u64, sea_orm::DbErr> {
+        let res = self
+            .conn
+            // from_sql_and_values 走参数绑定：cutoff 不进 SQL 文本，
+            // 从根上消除拼接注入面（禁止清单 #4），也不再依赖调用方的格式转义
+            .execute(sea_orm::Statement::from_sql_and_values(
+                // 本项目的生产/开发/测试库均为 SQLite，固定 DbBackend::Sqlite
+                // 而非从连接探测——省一次运行时判断，语义显式
+                sea_orm::DbBackend::Sqlite,
+                "DELETE FROM execution_logs WHERE timestamp < ?",
+                [cutoff.into()],
+            ))
+            // `?` 传播错误：handler 侧原样转成 String 错误文案，语义与旧路径一致
+            .await?;
+        // rows_affected 取自同一 statement 的执行结果；旧实现另跑 SELECT changes()
+        // 在连接池下可能落到不同连接而取错行数，此处一并修正
+        Ok(res.rows_affected())
+    }
+
     /// 分页获取执行日志
     pub async fn get_execution_logs(
         &self,
@@ -1898,6 +1923,25 @@ mod center_aggregate_tests {
         ))
         .await
         .expect("insert log");
+    }
+
+    /// 093-B5：delete_execution_logs_before——参数化删除 + rows_affected 返回真实行数。
+    #[tokio::test]
+    async fn test_delete_execution_logs_before_cutoff() {
+        let db = fresh_db().await;
+        let t = seed_todo(&db, "T").await;
+        seed_exec(&db, t, "success", "manual").await; // record id=1
+        // 造 2 旧 1 新三条日志：验证边界「早于 cutoff 才删」两侧都覆盖到
+        db.exec("INSERT INTO execution_logs (record_id, timestamp, log_type, content) VALUES (1, '2026-07-01T00:00:00Z', 'info', 'old1')").await.unwrap();
+        db.exec("INSERT INTO execution_logs (record_id, timestamp, log_type, content) VALUES (1, '2026-07-02T00:00:00Z', 'info', 'old2')").await.unwrap();
+        db.exec("INSERT INTO execution_logs (record_id, timestamp, log_type, content) VALUES (1, '2026-08-08T00:00:00Z', 'info', 'new')").await.unwrap();
+
+        let deleted = db.delete_execution_logs_before("2026-08-01T00:00:00Z").await.unwrap();
+        assert_eq!(deleted, 2, "应删除两条旧日志");
+        // 幂等边界：再删一次为 0；新日志仍在
+        assert_eq!(db.delete_execution_logs_before("2026-08-01T00:00:00Z").await.unwrap(), 0);
+        let remaining = db.count_execution_logs_for_records(&[1]).await.unwrap();
+        assert_eq!(remaining.get(&1).copied(), Some(1), "新日志不应被删");
     }
 
     /// count_execution_logs_for_records：GROUP BY 聚合计数（093 WS 重连 log_total 数据源）。
