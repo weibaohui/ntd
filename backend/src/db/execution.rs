@@ -1964,20 +1964,28 @@ mod center_aggregate_tests {
         assert_eq!(remaining.get(&1).copied(), Some(1), "新日志不应被删");
     }
 
-    /// 095：insert_execution_log_entries——对象版批量插入（生产热路径）。
-    /// 覆盖：多条目落库、metadata 三字段打包正确性、空切片短路。
+    /// 095：insert_execution_log_entries——空切片短路（拆出的独立场景，CodeRabbit #1014）。
     #[tokio::test]
-    async fn test_insert_execution_log_entries_packs_metadata_and_skips_empty() {
+    async fn test_insert_execution_log_entries_empty_slice_is_noop() {
         let db = fresh_db().await;
         let t = seed_todo(&db, "T").await;
         seed_exec(&db, t, "running", "manual").await; // record id=1
 
-        // 空切片短路：不报错、不产生任何行（insert_many 对空 Vec 会生成非法 SQL）
+        // insert_many 对空 Vec 会生成非法 SQL；语义上空入参即无活可干——短路为 Ok
         db.insert_execution_log_entries(1, &[]).await.unwrap();
         let count = db.count_execution_logs_for_records(&[1]).await.unwrap();
         assert_eq!(count.get(&1).copied().unwrap_or(0), 0, "空切片不应插入任何行");
+    }
 
-        // 两条目：一条裸 info（无元数据字段），一条带完整工具元数据
+    /// 095：insert_execution_log_entries——多条目落库与 metadata 打包正确性。
+    #[tokio::test]
+    async fn test_insert_execution_log_entries_packs_metadata() {
+        let db = fresh_db().await;
+        let t = seed_todo(&db, "T").await;
+        seed_exec(&db, t, "running", "manual").await; // record id=1
+
+        // 两条目对照：裸 info（无元数据字段）与带完整工具元数据的 tool_call，
+        // 覆盖 metadata 打包的「全空」与「全有」两个极端形态
         let entries = vec![
             crate::models::ParsedLogEntry::info("plain".to_string()),
             crate::models::ParsedLogEntry {
@@ -1991,11 +1999,11 @@ mod center_aggregate_tests {
         ];
         db.insert_execution_log_entries(1, &entries).await.unwrap();
 
-        // 行数与核心列正确
+        // 行数断言：两条目全部落库
         let count = db.count_execution_logs_for_records(&[1]).await.unwrap();
         assert_eq!(count.get(&1).copied(), Some(2), "两条目应全部落库");
-        // metadata 打包正确性：usage/tool_name/tool_input_json 三字段合入 metadata 列
-        // （_conn_raw 是测试既定的原始连接口子，仅用于直接读回断言）
+        // 逐列读回断言（_conn_raw 是测试既定的原始连接口子）：
+        // metadata 打包内容必须与旧 JSON 路径逐字节一致（usage/tool_name/tool_input_json）
         let rows = db
             ._conn_raw()
             .query_all(sea_orm::Statement::from_string(
@@ -2004,31 +2012,66 @@ mod center_aggregate_tests {
             ))
             .await
             .unwrap();
+        // 裸条目：三字段全 null（serde_json::json! 对 None 输出 null，无 skip）
         let meta_plain: String = rows[0].try_get_by("metadata").unwrap();
         assert_eq!(meta_plain, r#"{"tool_input_json":null,"tool_name":null,"usage":null}"#,
             "裸条目三字段应为 null（与旧 JSON 路径落库内容一致）");
+        // 工具条目：tool_name/tool_input_json 实值入 metadata
         let meta_tool: String = rows[1].try_get_by("metadata").unwrap();
         assert!(meta_tool.contains(r#""tool_name":"edit""#), "tool_name 应入 metadata: {meta_tool}");
-        assert!(meta_tool.contains(r#""filePath":"\\/x.rs""#) || meta_tool.contains("filePath"),
-            "tool_input_json 应入 metadata: {meta_tool}");
+        assert!(meta_tool.contains("filePath"), "tool_input_json 应入 metadata: {meta_tool}");
         let log_type: String = rows[1].try_get_by("log_type").unwrap();
         assert_eq!(log_type, "tool_call");
     }
 
-    /// 095：JSON 薄壳与对象版落库内容一致（存量调用方行为不变的回归守卫）。
+    /// 095：JSON 薄壳回归——完整载荷（含 toolName/toolInputJson/usage 的线上 serde 形态）
+    /// 经薄壳落库后与对象版逐列一致（CodeRabbit #1014：防 serde 映射漂移）。
     #[tokio::test]
-    async fn test_insert_execution_logs_json_shell_matches_object_path() {
+    async fn test_insert_execution_logs_json_shell_full_payload_matches_object_path() {
         let db = fresh_db().await;
         let t = seed_todo(&db, "T").await;
         seed_exec(&db, t, "running", "manual").await; // record id=1
 
-        // ParsedLogEntry 的线上 JSON 形态：log_type→"type"、tool_name→"toolName"（serde rename）
-        let json = r#"[{"timestamp":"2026-08-10T10:00:00Z","type":"assistant","content":"hello"}]"#;
+        // 完整 JSON 载荷：serde rename 后的线上形态（type/toolName/toolInputJson + usage 对象）
+        let json = r#"[{"timestamp":"2026-08-10T10:00:00Z","type":"tool_call","content":"edit","usage":{"input_tokens":10,"output_tokens":20},"toolName":"edit","toolInputJson":"{\"filePath\":\"/x.rs\"}"}]"#;
         db.insert_execution_logs(1, json).await.unwrap();
-        let count = db.count_execution_logs_for_records(&[1]).await.unwrap();
-        assert_eq!(count.get(&1).copied(), Some(1), "JSON 薄壳应正常落库");
 
-        // 非法 JSON：返回解析错误（薄壳的存量错误语义保持）
+        // 同内容对象版落库到另一 record，逐列比对两路径产物
+        seed_exec(&db, t, "running", "manual").await; // record id=2
+        let entry = crate::models::ParsedLogEntry {
+            timestamp: "2026-08-10T10:00:00Z".to_string(),
+            log_type: "tool_call".to_string(),
+            content: "edit".to_string(),
+            usage: Some(crate::models::ExecutionUsage { input_tokens: 10, output_tokens: 20, cache_read_input_tokens: None, cache_creation_input_tokens: None, total_cost_usd: None, duration_ms: None }),
+            tool_name: Some("edit".to_string()),
+            tool_input_json: Some(r#"{"filePath":"/x.rs"}"#.to_string()),
+        };
+        db.insert_execution_log_entries(2, &[entry]).await.unwrap();
+
+        // 逐列比较（log_type/content/metadata 三列必须一致）
+        let rows = db
+            ._conn_raw()
+            .query_all(sea_orm::Statement::from_string(
+                sea_orm::DbBackend::Sqlite,
+                "SELECT record_id, log_type, content, metadata FROM execution_logs WHERE record_id IN (1,2) ORDER BY record_id".to_string(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 2, "两条路径各落一行");
+        let cols = |i: usize| -> (String, String, String) {
+            (rows[i].try_get_by("log_type").unwrap(),
+             rows[i].try_get_by("content").unwrap(),
+             rows[i].try_get_by("metadata").unwrap())
+        };
+        assert_eq!(cols(0), cols(1), "JSON 薄壳与对象版落库内容必须逐列一致");
+    }
+
+    /// 095：JSON 薄壳错误分支——非法 JSON 返回解析错误（存量调用方错误语义保持）。
+    #[tokio::test]
+    async fn test_insert_execution_logs_json_shell_rejects_invalid_json() {
+        let db = fresh_db().await;
+        let t = seed_todo(&db, "T").await;
+        seed_exec(&db, t, "running", "manual").await; // record id=1
         assert!(db.insert_execution_logs(1, "not-json").await.is_err());
     }
 

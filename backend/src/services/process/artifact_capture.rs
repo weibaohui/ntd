@@ -297,6 +297,8 @@ fn extract_after_marker(text: &str, marker: &str) -> Option<String> {
 
 /// 用简单正则提取第一个 http/https URL。
 fn extract_first_url(text: &str) -> Option<String> {
+    // 局部 use 而非顶部导入：LazyLock 仅此一处使用，就近声明让「静态缓存只服务
+    // 本函数」的关系一目了然，也不给模块顶部 import 表添噪音
     use std::sync::LazyLock;
     // 095-3：LazyLock 进程级一次编译，替代每次调用现编译（同款范式见
     // adapters/mod.rs THINK_RE）。正则模式是编译期常量，unwrap 不可达；
@@ -306,6 +308,8 @@ fn extract_first_url(text: &str) -> Option<String> {
         // 简易 URL 正则：http(s):// 后跟非空白字符，直到遇到引号、括号或空白。
         regex::Regex::new(r#"https?://[^\s"'()\]\}>]+"#).unwrap()
     });
+    // find 取首个匹配即返回：调用方只需要「文本里有没有可打开的链接」，
+    // 全量 find_iter 是浪费；map 转 owned String 脱离 text 借用生命周期
     URL_RE.find(text).map(|m| m.as_str().to_string())
 }
 

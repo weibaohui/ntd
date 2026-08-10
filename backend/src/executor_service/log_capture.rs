@@ -547,7 +547,10 @@ pub(crate) async fn drain_readers_and_flush(
     //   2) 等所有 in-flight flush task 完成
     //   3) drain buffer 残余一次性 append
     //   4) 等 timer + 所有 spawned flush task 退出
-    log_flusher.finalize().await;
+    // 095：drain 失败向上告警——取消/超时路径日志缺失不影响终态判定，warn 即可
+    if let Err(e) = log_flusher.finalize().await {
+        tracing::warn!("log flusher finalize drain failed (cancel/timeout path): {e}");
+    }
     let _ = flush_timer.await;
 }
 
@@ -564,7 +567,10 @@ pub(crate) async fn flush_and_extract_result(
     db: &Arc<Database>,
     record_id: i64,
 ) -> (Vec<ParsedLogEntry>, String) {
-    log_flusher.finalize().await;
+    // 095：drain 失败时后续读库会缺残余段——warn 明示快照可能不全（执行已终结，只能降级）
+    if let Err(e) = log_flusher.finalize().await {
+        tracing::warn!("log flusher finalize drain failed for record {record_id}: {e}; log snapshot may be incomplete");
+    }
     let _ = flush_timer.await;
     let all_logs_snapshot = db.get_all_execution_logs(record_id).await.unwrap_or_default();
     let result_str = super::completion::get_final_result_from_logs(&all_logs_snapshot)

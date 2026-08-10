@@ -238,8 +238,14 @@ impl LogFlusher {
     /// 4. drain `handles`，等所有 spawned flush task 真正退出。
     ///
     /// 调用方必须在 stdout/stderr task 退出后调用本方法，保证没有并发 writer。
+    ///
+    /// 返回语义（CodeRabbit #1014 评审）：drain 写库失败时返回 `Err` 传播给调用方，
+    /// 替代旧的「只记 error 日志」——调用方据此告警或决定后续口径。
+    /// 注意 shutdown 路径**刻意不做 snapshot 回滚**：flusher 随执行终结而弃，
+    /// buffer 回滚后无任何读者，恢复无意义；这与 `spawn_flush` 的运行期回滚契约
+    /// 不同（后者 buffer 持续被消费）。
     #[allow(clippy::expect_used)]
-    pub async fn finalize(self: Arc<Self>) {
+    pub async fn finalize(self: Arc<Self>) -> Result<(), String> {
         self.inner.shutdown.store(true, Ordering::Release);
 
         // 等所有 in-flight flush 完成。指数退避避免空转。
@@ -254,6 +260,8 @@ impl LogFlusher {
             let mut logs = self.inner.logs.lock().await;
             std::mem::take(&mut *logs)
         };
+        // drain 失败暂存错误，句柄收割仍要完成——资源清理优先于错误早退
+        let mut drain_err = None;
         if !snapshot.is_empty() {
             // 095：直传对象切片，无序列化步骤——失败模式只剩 sink 写入本身
             if let Err(e) = self.inner.sink.append(self.inner.record_id, &snapshot).await {
@@ -262,6 +270,10 @@ impl LogFlusher {
                     self.inner.record_id,
                     e
                 );
+                drain_err = Some(format!(
+                    "finalize drain failed for record {}: {}",
+                    self.inner.record_id, e
+                ));
             }
         }
 
@@ -279,6 +291,12 @@ impl LogFlusher {
                     tracing::error!("LogFlusher flush task panicked: {}", e);
                 }
             }
+        }
+
+        // drain 错误最后返回：调用方拿到失败信号时，资源已确定清理干净
+        match drain_err {
+            Some(e) => Err(e),
+            None => Ok(()),
         }
     }
 
@@ -506,7 +524,7 @@ mod tests {
         flusher.push(make_entry("e")).await;
         flusher.push(make_entry("f")).await;
 
-        flusher.finalize().await;
+        flusher.finalize().await.unwrap();
 
         let s = state.lock().unwrap();
         let total = s.total_log_entries();
@@ -525,7 +543,7 @@ mod tests {
         flusher.push(make_entry("b")).await;
         assert_eq!(flusher.unflushed_count(), 2);
 
-        flusher.finalize().await;
+        flusher.finalize().await.unwrap();
         let s = state.lock().unwrap();
         assert_eq!(
             s.call_count(),
@@ -545,7 +563,7 @@ mod tests {
         for i in 0..100 {
             flusher.push(make_entry(&format!("e{}", i))).await;
         }
-        flusher.finalize().await;
+        flusher.finalize().await.unwrap();
 
         let s = state.lock().unwrap();
         assert_eq!(s.total_log_entries(), 100);
@@ -579,7 +597,7 @@ mod tests {
         // 等 2.5 秒，timer 应该至少触发 2 次
         tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
 
-        flusher.finalize().await;
+        flusher.finalize().await.unwrap();
         let _ = timer_handle.await;
 
         let s = state.lock().unwrap();
@@ -610,7 +628,7 @@ mod tests {
             tokio::spawn(async move { f.run_timer().await })
         };
 
-        flusher.finalize().await; // 立即 shutdown
+        flusher.finalize().await.unwrap(); // 立即 shutdown
         // 等 timer 退出
         let _ = tokio::time::timeout(std::time::Duration::from_secs(3), timer_handle)
             .await
@@ -622,5 +640,33 @@ mod tests {
             0,
             "buffer 为空时 finalize 不应调用 append"
         );
+    }
+
+    /// 测试 8（CodeRabbit #1014）：finalize drain 写库失败时返回 Err 传播，
+    /// 替代旧的「只记日志」——调用方能据此告警；且资源清理仍完成（shutdown 置位）。
+    #[tokio::test]
+    async fn finalize_returns_err_when_drain_fails() {
+        let (sink, _state) = MockSink::failing(); // fail_all：drain 必然失败
+        let flusher = fresh_flusher(Box::new(sink), 100); // 高阈值避免中途触发
+
+        flusher.push(make_entry("a")).await;
+        flusher.push(make_entry("b")).await;
+
+        let result = flusher.clone().finalize().await;
+        assert!(result.is_err(), "drain 失败必须传播给调用方");
+        assert!(result.unwrap_err().contains("finalize drain failed"));
+        // 失败传播不牺牲清理语义：shutdown 标志已置位
+        assert!(flusher.is_shutdown());
+    }
+
+    /// 测试 9：buffer 为空时 finalize 返回 Ok（无 drain 即无失败面）。
+    #[tokio::test]
+    async fn finalize_empty_buffer_returns_ok() {
+        let (sink, state) = MockSink::new();
+        let flusher = fresh_flusher(Box::new(sink), 100);
+
+        let result = flusher.finalize().await;
+        assert!(result.is_ok(), "空 buffer drain 应成功返回");
+        assert_eq!(state.lock().unwrap().call_count(), 0, "空 buffer 不触发 append");
     }
 }
