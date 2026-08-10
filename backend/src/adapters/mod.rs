@@ -22,6 +22,10 @@ pub struct ExecutorDef {
     pub session_dir: &'static str,
     /// Aliases that can be used to refer to this executor
     pub aliases: &'static [&'static str],
+    /// 093-B4：该执行器的事件提取器工厂（双解析体系收敛的注册点）。
+    /// 非捕获闭包强制转换为 fn 指针，因此可放入静态表；
+    /// 新增执行器只需在本表挂一行，不再修改任何 match。
+    pub create_extractor: fn() -> Box<dyn crate::execution_events::EventExtractor>,
 }
 
 impl ExecutorDef {
@@ -42,6 +46,7 @@ pub static EXECUTORS: &[ExecutorDef] = &[
         default_path: "claude",
         session_dir: "~/.claude",
         aliases: &["claude", "claude_code"],
+        create_extractor: || Box::new(crate::execution_events::impls::claude_code::ClaudeCodeExtractor::new()),
     },
     ExecutorDef {
         name: "codebuddy",
@@ -51,6 +56,7 @@ pub static EXECUTORS: &[ExecutorDef] = &[
         default_path: "codebuddy",
         session_dir: "~/.codebuddy",
         aliases: &["cbc"],
+        create_extractor: || Box::new(crate::execution_events::impls::codebuddy::CodebuddyExtractor::new()),
     },
     ExecutorDef {
         name: "opencode",
@@ -60,6 +66,7 @@ pub static EXECUTORS: &[ExecutorDef] = &[
         default_path: "opencode",
         session_dir: "~/.opencode",
         aliases: &[],
+        create_extractor: || Box::new(crate::execution_events::impls::opencode::OpencodeExtractor::new()),
     },
     ExecutorDef {
         name: "atomcode",
@@ -69,6 +76,7 @@ pub static EXECUTORS: &[ExecutorDef] = &[
         default_path: "atomcode",
         session_dir: "~/.atomcode",
         aliases: &["atom"],
+        create_extractor: || Box::new(crate::execution_events::impls::atomcode::AtomcodeExtractor::new()),
     },
     ExecutorDef {
         name: "hermes",
@@ -78,6 +86,7 @@ pub static EXECUTORS: &[ExecutorDef] = &[
         default_path: "hermes",
         session_dir: "~/.hermes",
         aliases: &[],
+        create_extractor: || Box::new(crate::execution_events::impls::hermes::HermesExtractor::new()),
     },
     ExecutorDef {
         name: "kimi",
@@ -87,6 +96,7 @@ pub static EXECUTORS: &[ExecutorDef] = &[
         default_path: "kimi",
         session_dir: "~/.kimi",
         aliases: &[],
+        create_extractor: || Box::new(crate::execution_events::impls::kimi::KimiExtractor::new()),
     },
     ExecutorDef {
         name: "mobilecoder",
@@ -96,6 +106,7 @@ pub static EXECUTORS: &[ExecutorDef] = &[
         default_path: "mobile",
         session_dir: "~/.mobile-coder",
         aliases: &[],
+        create_extractor: || Box::new(crate::execution_events::impls::mobilecoder::MobilecoderExtractor::new()),
     },
     ExecutorDef {
         name: "codex",
@@ -105,6 +116,7 @@ pub static EXECUTORS: &[ExecutorDef] = &[
         default_path: "codex",
         session_dir: "~/.codex",
         aliases: &[],
+        create_extractor: || Box::new(crate::execution_events::impls::codex::CodexExtractor::new()),
     },
     ExecutorDef {
         name: "codewhale",
@@ -114,6 +126,7 @@ pub static EXECUTORS: &[ExecutorDef] = &[
         default_path: "codewhale",
         session_dir: "~/.codewhale",
         aliases: &[],
+        create_extractor: || Box::new(crate::execution_events::impls::codewhale::CodewhaleExtractor::new()),
     },
     ExecutorDef {
         name: "pi",
@@ -123,6 +136,7 @@ pub static EXECUTORS: &[ExecutorDef] = &[
         default_path: "pi",
         session_dir: "~/.pi",
         aliases: &[],
+        create_extractor: || Box::new(crate::execution_events::impls::pi::PiExtractor::new()),
     },
     ExecutorDef {
         name: "mimo",
@@ -132,6 +146,7 @@ pub static EXECUTORS: &[ExecutorDef] = &[
         default_path: "mimo",
         session_dir: "~/.local/share/mimocode",
         aliases: &["mimocode"],
+        create_extractor: || Box::new(crate::execution_events::impls::mimo::MimoExtractor::new()),
     },
     ExecutorDef {
         name: "zhanlu",
@@ -141,6 +156,7 @@ pub static EXECUTORS: &[ExecutorDef] = &[
         default_path: "zl",
         session_dir: "~/.local/share/zhanlu/storage",
         aliases: &["zhanlucode", "zl"],
+        create_extractor: || Box::new(crate::execution_events::impls::zhanlu::ZhanluExtractor::new()),
     },
     ExecutorDef {
         // Kilo: 与 Opencode/Zhanlu 一致的开源 AI 编程执行器。
@@ -153,6 +169,7 @@ pub static EXECUTORS: &[ExecutorDef] = &[
         default_path: "kilo",
         session_dir: "~/.kilo",
         aliases: &[],
+        create_extractor: || Box::new(crate::execution_events::impls::kilo::KiloExtractor::new()),
     },
 ];
 
@@ -168,6 +185,13 @@ pub const DEFAULT_EXECUTOR: &str = "claudecode";
 /// Find executor definition by name or alias
 pub fn find_executor(name: &str) -> Option<&'static ExecutorDef> {
     EXECUTORS.iter().find(|e| e.matches(name))
+}
+
+/// 093-B4：按 ExecutorType 反查注册项。
+/// Extractor 工厂查表（create_pipeline_for_executor）与 display_name 查表
+/// （handlers/skills.rs）共用此入口——注册表是执行器元数据的唯一事实源。
+pub fn find_executor_by_type(executor_type: ExecutorType) -> Option<&'static ExecutorDef> {
+    EXECUTORS.iter().find(|e| e.executor_type == executor_type)
 }
 
 /// Parse executor string (with aliases) into `ExecutorType`.

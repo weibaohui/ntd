@@ -149,21 +149,11 @@ pub(crate) fn resolve_skill_path_for_read(base: &Path, skill_name: &str) -> Resu
 }
 
 fn executor_label(et: ExecutorType) -> &'static str {
-    match et {
-        ExecutorType::Claudecode => "Claude Code",
-        ExecutorType::Hermes => "Hermes",
-        ExecutorType::Codex => "Codex",
-        ExecutorType::Codebuddy => "CodeBuddy",
-        ExecutorType::Opencode => "Opencode",
-        ExecutorType::Atomcode => "AtomCode",
-        ExecutorType::Kimi => "Kimi",
-        ExecutorType::Mobilecoder => "MobileCoder",
-        ExecutorType::Codewhale => "CodeWhale",
-        ExecutorType::Pi => "Pi",
-        ExecutorType::Mimo => "MiMo",
-        ExecutorType::Zhanlu => "Zhanlu",
-        ExecutorType::Kilo => "Kilo",
-    }
+    // 093-B4：原 13 臂 match 与 ExecutorDef.display_name 逐字重复，删除改查注册表；
+    // 查不到时回退规范名（as_str），比 panic 宽容且不会返回空串。
+    crate::adapters::find_executor_by_type(et)
+        .map(|d| d.display_name)
+        .unwrap_or_else(|| et.as_str())
 }
 
 // 仅用于本文件 tests 模块的数组完整性自检（元素齐全 / 无重复 / 含 Kilo）；
@@ -1465,6 +1455,24 @@ mod tests {
     #[test]
     fn test_executor_label_kilo() {
         assert_eq!(executor_label(ExecutorType::Kilo), "Kilo");
+    }
+
+    /// 093-B4：label 改查注册表后，补「每个 ExecutorType 都有注册项 + 工厂可构造」断言——
+    /// 这是「新增执行器忘注册/忘挂工厂」的回归守卫。
+    #[test]
+    fn test_every_executor_type_registered_with_factory() {
+        for et in [
+            ExecutorType::Claudecode, ExecutorType::Hermes, ExecutorType::Codex,
+            ExecutorType::Codebuddy, ExecutorType::Opencode, ExecutorType::Atomcode,
+            ExecutorType::Kimi, ExecutorType::Mobilecoder, ExecutorType::Codewhale,
+            ExecutorType::Pi, ExecutorType::Mimo, ExecutorType::Zhanlu, ExecutorType::Kilo,
+        ] {
+            let def = crate::adapters::find_executor_by_type(et)
+                .unwrap_or_else(|| panic!("{et:?} 未在 EXECUTORS 注册表"));
+            assert!(!def.display_name.is_empty());
+            // 工厂必须能构造出提取器（验证 create_extractor 已正确挂载）
+            let _extractor = (def.create_extractor)();
+        }
     }
 
     #[test]
