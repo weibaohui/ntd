@@ -44,14 +44,19 @@ use crate::models::ParsedLogEntry;
 ///
 /// 必须 `Send + Sync + 'static`：flush task 会被 `tokio::spawn` 到独立任务，
 /// 其 future 跨 `'static` 边界，且多个 writer task 会并发调用。
+///
+/// 095：载荷为 `&[ParsedLogEntry]` 对象切片而非 JSON 字符串——消除
+/// 「flusher 序列化 → sink 反序列化」的双重转换（093 性能扫描 P2）。
+/// 借用语义：append 期间切片只读；失败回滚由 flusher 持有 owned snapshot 完成，
+/// 与载荷形态无关。
 #[async_trait]
 pub trait LogSink: Send + Sync + 'static {
-    /// 把 `logs_json` 追加写入 `record_id` 对应执行记录。
+    /// 把 `entries` 追加写入 `record_id` 对应执行记录。
     /// 返回 `Err` 时 [`LogFlusher`] 会把这次写入的快照回滚到内存 buffer。
-    async fn append(&self, record_id: i64, logs_json: &str) -> Result<(), String>;
+    async fn append(&self, record_id: i64, entries: &[ParsedLogEntry]) -> Result<(), String>;
 }
 
-/// 把 [`Database::append_execution_record_logs`] 适配成 [`LogSink`]。
+/// 把 [`Database::insert_execution_log_entries`] 适配成 [`LogSink`]。
 pub struct DatabaseLogSink {
     db: Arc<Database>,
 }
@@ -64,9 +69,9 @@ impl DatabaseLogSink {
 
 #[async_trait]
 impl LogSink for DatabaseLogSink {
-    async fn append(&self, record_id: i64, logs_json: &str) -> Result<(), String> {
+    async fn append(&self, record_id: i64, entries: &[ParsedLogEntry]) -> Result<(), String> {
         self.db
-            .append_execution_record_logs(record_id, logs_json)
+            .insert_execution_log_entries(record_id, entries)
             .await
             .map_err(|e| e.to_string())
     }
@@ -205,18 +210,6 @@ impl LogFlusher {
         f(&logs)
     }
 
-    /// 把 buffer 序列化为 JSON。错误时回退到 `"[]"`。
-    /// 调用方通常把它与数据库读取的日志合并形成全量快照。
-    pub async fn serialize(&self) -> String {
-        self.with_logs(|logs| {
-            serde_json::to_string(logs).unwrap_or_else(|e| {
-                tracing::error!("LogFlusher serialize failed: {}", e);
-                "[]".to_string()
-            })
-        })
-        .await
-    }
-
     /// 周期兜底 flush 循环。每 `timer_interval_secs` 秒检查一次 buffer。
     ///
     /// 退出条件：`shutdown` 被置 `true`。
@@ -262,14 +255,13 @@ impl LogFlusher {
             std::mem::take(&mut *logs)
         };
         if !snapshot.is_empty() {
-            if let Ok(json) = serde_json::to_string(&snapshot) {
-                if let Err(e) = self.inner.sink.append(self.inner.record_id, &json).await {
-                    tracing::error!(
-                        "LogFlusher finalize drain failed for record {}: {}",
-                        self.inner.record_id,
-                        e
-                    );
-                }
+            // 095：直传对象切片，无序列化步骤——失败模式只剩 sink 写入本身
+            if let Err(e) = self.inner.sink.append(self.inner.record_id, &snapshot).await {
+                tracing::error!(
+                    "LogFlusher finalize drain failed for record {}: {}",
+                    self.inner.record_id,
+                    e
+                );
             }
         }
 
@@ -325,7 +317,7 @@ impl LogFlusher {
     /// 把 `Arc::clone` 移交给 spawned flush task。task 内部：
     /// 1. `swap(0)` 清零 counter（即使 spawn 前已有新 writer 推入，swap 也是原子的）
     /// 2. 取走 buffer snapshot
-    /// 3. 调 sink 写库
+    /// 3. 调 sink 写库（095：直传对象切片，无序列化中转）
     /// 4. 失败则把 snapshot 放回 buffer + counter += snapshot_len
     /// 5. `pending=false` 释放锁
     fn spawn_flush(&self) {
@@ -341,17 +333,9 @@ impl LogFlusher {
             };
             let snapshot_len = snapshot.len() as u64;
 
-            let success = match serde_json::to_string(&snapshot) {
-                Ok(json) => inner.sink.append(inner.record_id, &json).await.is_ok(),
-                Err(e) => {
-                    tracing::error!(
-                        "LogFlusher failed to serialize snapshot for record {}: {}",
-                        inner.record_id,
-                        e
-                    );
-                    false
-                }
-            };
+            // 095：snapshot 是 owned Vec，append 只借用——写库失败后
+            // snapshot 仍持有全部条目，回滚语义与载荷形态无关
+            let success = inner.sink.append(inner.record_id, &snapshot).await.is_ok();
 
             if !success {
                 // 失败回滚：把 snapshot 放回 buffer，counter 加回 snapshot_len。
@@ -390,8 +374,8 @@ mod tests {
 
     #[derive(Default)]
     struct MockSinkState {
-        /// 所有 append 调用按时间顺序记录
-        calls: Vec<(i64, String)>,
+        /// 所有 append 调用按时间顺序记录（095：记对象切片克隆，免 JSON 解析断言）
+        calls: Vec<(i64, Vec<ParsedLogEntry>)>,
         /// 一次性失败开关：置 true 后下一次 append 返回 Err 后自动复位
         fail_next: bool,
         /// 强制所有 append 失败
@@ -404,14 +388,8 @@ mod tests {
         }
 
         fn total_log_entries(&self) -> usize {
-            self.calls
-                .iter()
-                .map(|(_, json)| {
-                    serde_json::from_str::<Vec<ParsedLogEntry>>(json)
-                        .map(|v| v.len())
-                        .unwrap_or(0)
-                })
-                .sum()
+            // 095：对象切片直接数条数，不再 parse JSON 还原
+            self.calls.iter().map(|(_, entries)| entries.len()).sum()
         }
     }
 
@@ -440,12 +418,13 @@ mod tests {
 
     #[async_trait]
     impl LogSink for MockSink {
-        async fn append(&self, record_id: i64, logs_json: &str) -> Result<(), String> {
+        async fn append(&self, record_id: i64, entries: &[ParsedLogEntry]) -> Result<(), String> {
             let mut state = self.state.lock().unwrap();
             if state.fail_all {
                 return Err("mock permanent failure".to_string());
             }
-            state.calls.push((record_id, logs_json.to_string()));
+            // 克隆存证：切片借用跨不过调用边界，测试断言在调用完成后进行
+            state.calls.push((record_id, entries.to_vec()));
             if state.fail_next {
                 state.fail_next = false;
                 return Err("mock one-shot failure".to_string());

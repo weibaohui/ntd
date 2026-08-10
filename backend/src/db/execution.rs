@@ -721,7 +721,11 @@ impl Database {
         self.insert_execution_logs(id, new_logs_json).await
     }
 
-    /// 将 JSON 格式的日志条目批量插入 execution_logs 表
+    /// 将 JSON 格式的日志条目批量插入 execution_logs 表。
+    ///
+    /// 095：薄壳——解析 JSON 后转调 [`Self::insert_execution_log_entries`]。
+    /// 本方法只服务存量 JSON 调用方（v2_v5 迁移、`remaining_logs` 路径）；
+    /// 生产热路径（LogFlusher 落库）走对象版接口，无 JSON 中转。
     pub async fn insert_execution_logs(
         &self,
         record_id: i64,
@@ -732,13 +736,28 @@ impl Database {
                 "Failed to parse logs JSON for record {}: {}",
                 record_id, e
             )))?;
+        self.insert_execution_log_entries(record_id, &entries).await
+    }
+
+    /// 095：对象版批量插入（生产热路径）。入参即内存对象切片，
+    /// 相比 JSON 版省掉「to_string 全量序列化 + from_str 全量反序列化」两趟转换。
+    ///
+    /// metadata 重打包不可省：execution_logs 表 schema 是 timestamp/log_type/content/metadata
+    /// 四列，对象→列格式的转换属持久化必需（usage/tool_name/tool_input_json 合入 metadata 列）。
+    pub async fn insert_execution_log_entries(
+        &self,
+        record_id: i64,
+        entries: &[ParsedLogEntry],
+    ) -> Result<(), sea_orm::DbErr> {
+        // 空切片短路：insert_many 对空 Vec 会生成非法 SQL，且语义上无活可干
         if entries.is_empty() {
             return Ok(());
         }
 
         let models: Vec<execution_logs::ActiveModel> = entries
-            .into_iter()
+            .iter()
             .map(|e| {
+                // metadata 三字段打包与旧 JSON 路径同一份代码逻辑——落库内容逐字节一致
                 let metadata = serde_json::json!({
                     "usage": e.usage,
                     "tool_name": e.tool_name,
@@ -747,9 +766,10 @@ impl Database {
                 let metadata_str = serde_json::to_string(&metadata).unwrap_or_default();
                 execution_logs::ActiveModel {
                     record_id: ActiveValue::Set(record_id),
-                    timestamp: ActiveValue::Set(e.timestamp),
-                    log_type: ActiveValue::Set(e.log_type),
-                    content: ActiveValue::Set(e.content),
+                    // 切片只读借用，timestamp/log_type/content 需 clone 进 owned ActiveModel
+                    timestamp: ActiveValue::Set(e.timestamp.clone()),
+                    log_type: ActiveValue::Set(e.log_type.clone()),
+                    content: ActiveValue::Set(e.content.clone()),
                     metadata: ActiveValue::Set(Some(metadata_str)),
                     ..Default::default()
                 }
@@ -1942,6 +1962,74 @@ mod center_aggregate_tests {
         assert_eq!(db.delete_execution_logs_before("2026-08-01T00:00:00Z").await.unwrap(), 0);
         let remaining = db.count_execution_logs_for_records(&[1]).await.unwrap();
         assert_eq!(remaining.get(&1).copied(), Some(1), "新日志不应被删");
+    }
+
+    /// 095：insert_execution_log_entries——对象版批量插入（生产热路径）。
+    /// 覆盖：多条目落库、metadata 三字段打包正确性、空切片短路。
+    #[tokio::test]
+    async fn test_insert_execution_log_entries_packs_metadata_and_skips_empty() {
+        let db = fresh_db().await;
+        let t = seed_todo(&db, "T").await;
+        seed_exec(&db, t, "running", "manual").await; // record id=1
+
+        // 空切片短路：不报错、不产生任何行（insert_many 对空 Vec 会生成非法 SQL）
+        db.insert_execution_log_entries(1, &[]).await.unwrap();
+        let count = db.count_execution_logs_for_records(&[1]).await.unwrap();
+        assert_eq!(count.get(&1).copied().unwrap_or(0), 0, "空切片不应插入任何行");
+
+        // 两条目：一条裸 info（无元数据字段），一条带完整工具元数据
+        let entries = vec![
+            crate::models::ParsedLogEntry::info("plain".to_string()),
+            crate::models::ParsedLogEntry {
+                timestamp: "2026-08-10T10:00:00Z".to_string(),
+                log_type: "tool_call".to_string(),
+                content: "edit".to_string(),
+                usage: None,
+                tool_name: Some("edit".to_string()),
+                tool_input_json: Some(r#"{"filePath":"/x.rs"}"#.to_string()),
+            },
+        ];
+        db.insert_execution_log_entries(1, &entries).await.unwrap();
+
+        // 行数与核心列正确
+        let count = db.count_execution_logs_for_records(&[1]).await.unwrap();
+        assert_eq!(count.get(&1).copied(), Some(2), "两条目应全部落库");
+        // metadata 打包正确性：usage/tool_name/tool_input_json 三字段合入 metadata 列
+        // （_conn_raw 是测试既定的原始连接口子，仅用于直接读回断言）
+        let rows = db
+            ._conn_raw()
+            .query_all(sea_orm::Statement::from_string(
+                sea_orm::DbBackend::Sqlite,
+                "SELECT log_type, content, metadata FROM execution_logs WHERE record_id = 1 ORDER BY id".to_string(),
+            ))
+            .await
+            .unwrap();
+        let meta_plain: String = rows[0].try_get_by("metadata").unwrap();
+        assert_eq!(meta_plain, r#"{"tool_input_json":null,"tool_name":null,"usage":null}"#,
+            "裸条目三字段应为 null（与旧 JSON 路径落库内容一致）");
+        let meta_tool: String = rows[1].try_get_by("metadata").unwrap();
+        assert!(meta_tool.contains(r#""tool_name":"edit""#), "tool_name 应入 metadata: {meta_tool}");
+        assert!(meta_tool.contains(r#""filePath":"\\/x.rs""#) || meta_tool.contains("filePath"),
+            "tool_input_json 应入 metadata: {meta_tool}");
+        let log_type: String = rows[1].try_get_by("log_type").unwrap();
+        assert_eq!(log_type, "tool_call");
+    }
+
+    /// 095：JSON 薄壳与对象版落库内容一致（存量调用方行为不变的回归守卫）。
+    #[tokio::test]
+    async fn test_insert_execution_logs_json_shell_matches_object_path() {
+        let db = fresh_db().await;
+        let t = seed_todo(&db, "T").await;
+        seed_exec(&db, t, "running", "manual").await; // record id=1
+
+        // ParsedLogEntry 的线上 JSON 形态：log_type→"type"、tool_name→"toolName"（serde rename）
+        let json = r#"[{"timestamp":"2026-08-10T10:00:00Z","type":"assistant","content":"hello"}]"#;
+        db.insert_execution_logs(1, json).await.unwrap();
+        let count = db.count_execution_logs_for_records(&[1]).await.unwrap();
+        assert_eq!(count.get(&1).copied(), Some(1), "JSON 薄壳应正常落库");
+
+        // 非法 JSON：返回解析错误（薄壳的存量错误语义保持）
+        assert!(db.insert_execution_logs(1, "not-json").await.is_err());
     }
 
     /// count_execution_logs_for_records：GROUP BY 聚合计数（093 WS 重连 log_total 数据源）。
