@@ -4,12 +4,12 @@ use ntd::adapters::CodeExecutor;
 use ntd::adapters::kimi::KimiExecutor;
 use ntd::adapters::claude_code::ClaudeCodeExecutor;
 use ntd::adapters::hermes::HermesExecutor;
-use ntd::adapters::opencode::OpencodeExecutor;
+
 use ntd::adapters::atomcode::AtomcodeExecutor;
 use ntd::adapters::mobilecoder::MobilecoderExecutor;
 use ntd::adapters::codex::CodexExecutor;
-use ntd::adapters::zhanlu::ZhanluExecutor;
-use ntd::adapters::kilo::KiloExecutor;
+
+use ntd::adapters::step_protocol::StepProtocolExecutor;
 use ntd::models::{ParsedLogEntry, ExecutorType};
 
 #[cfg(test)]
@@ -405,13 +405,13 @@ mod opencode_executor_tests {
 
     #[test]
     fn test_opencode_executor_type() {
-        let executor = OpencodeExecutor::new("opencode".to_string());
+        let executor = StepProtocolExecutor::opencode("opencode".to_string());
         assert_eq!(executor.executor_type(), ExecutorType::Opencode);
     }
 
     #[test]
     fn test_opencode_command_args() {
-        let executor = OpencodeExecutor::new("opencode".to_string());
+        let executor = StepProtocolExecutor::opencode("opencode".to_string());
         let args = executor.command_args("say hello");
         assert!(args.contains(&"--dangerously-skip-permissions".to_string()));
         assert!(args.contains(&"--format".to_string()));
@@ -421,7 +421,7 @@ mod opencode_executor_tests {
 
     #[test]
     fn test_opencode_check_success() {
-        let executor = OpencodeExecutor::new("opencode".to_string());
+        let executor = StepProtocolExecutor::opencode("opencode".to_string());
         assert!(executor.check_success(0));
         assert!(!executor.check_success(1));
     }
@@ -435,13 +435,13 @@ mod zhanlu_executor_tests {
 
     #[test]
     fn test_zhanlu_executor_type() {
-        let executor = ZhanluExecutor::new("zl".to_string());
+        let executor = StepProtocolExecutor::zhanlu("zl".to_string());
         assert_eq!(executor.executor_type(), ExecutorType::Zhanlu);
     }
 
     #[test]
     fn test_zhanlu_command_args() {
-        let executor = ZhanluExecutor::new("zl".to_string());
+        let executor = StepProtocolExecutor::zhanlu("zl".to_string());
         let args = executor.command_args("say hello");
         assert!(args.contains(&"--dangerously-skip-permissions".to_string()));
         assert!(args.contains(&"--format".to_string()));
@@ -451,20 +451,20 @@ mod zhanlu_executor_tests {
 
     #[test]
     fn test_zhanlu_check_success() {
-        let executor = ZhanluExecutor::new("zl".to_string());
+        let executor = StepProtocolExecutor::zhanlu("zl".to_string());
         assert!(executor.check_success(0));
         assert!(!executor.check_success(1));
     }
 
     #[test]
     fn test_zhanlu_supports_resume() {
-        let executor = ZhanluExecutor::new("zl".to_string());
+        let executor = StepProtocolExecutor::zhanlu("zl".to_string());
         assert!(executor.supports_resume());
     }
 
     #[test]
     fn test_zhanlu_parse_step_start() {
-        let executor = ZhanluExecutor::new("zl".to_string());
+        let executor = StepProtocolExecutor::zhanlu("zl".to_string());
         let line = r#"{"type":"step_start","timestamp":1700000000000}"#;
         let entry = executor.parse_output_line(line).unwrap();
         assert_eq!(entry.log_type, "step_start");
@@ -472,7 +472,7 @@ mod zhanlu_executor_tests {
 
     #[test]
     fn test_zhanlu_parse_text() {
-        let executor = ZhanluExecutor::new("zl".to_string());
+        let executor = StepProtocolExecutor::zhanlu("zl".to_string());
         let line = r#"{"type":"text","timestamp":1700000000000,"part":{"type":"text","text":"hi from zhanlu"}}"#;
         let entry = executor.parse_output_line(line).unwrap();
         assert_eq!(entry.log_type, "text");
@@ -482,7 +482,7 @@ mod zhanlu_executor_tests {
     #[test]
     fn test_zhanlu_extract_session_id_from_hyphenated_format() {
         // Issue #673 要求与 opencode 输出一致，所以 sessionID 也是 camelCase
-        let executor = ZhanluExecutor::new("zl".to_string());
+        let executor = StepProtocolExecutor::zhanlu("zl".to_string());
         let line = r#"{"type":"step-start","timestamp":1700000000000,"sessionID":"ses_zhanlu_001"}"#;
         assert_eq!(executor.extract_session_id(line), Some("ses_zhanlu_001".to_string()));
     }
@@ -491,8 +491,8 @@ mod zhanlu_executor_tests {
     /// 这是 Issue #673「输出 JSON 格式也一致」的端到端证据。
     #[test]
     fn test_zhanlu_matches_opencode_on_same_json() {
-        let opencode = OpencodeExecutor::new("opencode".to_string());
-        let zhanlu = ZhanluExecutor::new("zl".to_string());
+        let opencode = StepProtocolExecutor::opencode("opencode".to_string());
+        let zhanlu = StepProtocolExecutor::zhanlu("zl".to_string());
 
         let line = r#"{"type":"tool-use","timestamp":1700000000000,"part":{"type":"tool","tool":"bash","state":{"status":"completed","input":{"description":"echo"},"output":"ok"}}}"#;
         let o = opencode.parse_output_line(line).unwrap();
@@ -650,19 +650,19 @@ mod kilo_executor_tests {
 
     #[test]
     fn test_kilo_executor_type() {
-        let executor = KiloExecutor::new("kilo".to_string());
+        let executor = StepProtocolExecutor::kilo("kilo".to_string());
         assert_eq!(executor.executor_type(), ExecutorType::Kilo);
     }
 
     #[test]
     fn test_kilo_executable_path() {
-        let executor = KiloExecutor::new("/usr/local/bin/kilo".to_string());
+        let executor = StepProtocolExecutor::kilo("/usr/local/bin/kilo".to_string());
         assert_eq!(executor.executable_path(), "/usr/local/bin/kilo");
     }
 
     #[test]
     fn test_kilo_command_args() {
-        let executor = KiloExecutor::new("kilo".to_string());
+        let executor = StepProtocolExecutor::kilo("kilo".to_string());
         let args = executor.command_args("say hello");
         assert!(args.contains(&"run".to_string()));
         assert!(args.contains(&"--format".to_string()));
@@ -673,7 +673,7 @@ mod kilo_executor_tests {
 
     #[test]
     fn test_kilo_command_args_order() {
-        let executor = KiloExecutor::new("kilo".to_string());
+        let executor = StepProtocolExecutor::kilo("kilo".to_string());
         let args = executor.command_args("hello");
         assert_eq!(args[0], "run");
         assert_eq!(args[1], "--format");
@@ -684,7 +684,7 @@ mod kilo_executor_tests {
 
     #[test]
     fn test_kilo_command_args_with_session_resume() {
-        let executor = KiloExecutor::new("kilo".to_string());
+        let executor = StepProtocolExecutor::kilo("kilo".to_string());
         let args = executor.command_args_with_session("continue task", Some("ses_abc"), true);
         assert!(args.contains(&"-s".to_string()));
         assert!(args.contains(&"ses_abc".to_string()));
@@ -695,7 +695,7 @@ mod kilo_executor_tests {
     #[test]
     fn test_kilo_command_args_with_session_no_resume() {
         // is_resume=false: session_id is NOT passed
-        let executor = KiloExecutor::new("kilo".to_string());
+        let executor = StepProtocolExecutor::kilo("kilo".to_string());
         let args = executor.command_args_with_session("new task", Some("ses_abc"), false);
         assert!(!args.contains(&"-s".to_string()));
         assert!(!args.contains(&"ses_abc".to_string()));
@@ -705,7 +705,7 @@ mod kilo_executor_tests {
     #[test]
     fn test_kilo_command_args_with_session_resume_no_session_id() {
         // is_resume=true but no session_id: -s flag should NOT appear
-        let executor = KiloExecutor::new("kilo".to_string());
+        let executor = StepProtocolExecutor::kilo("kilo".to_string());
         let args = executor.command_args_with_session("task", None, true);
         assert!(!args.contains(&"-s".to_string()));
         assert!(args.contains(&"task".to_string()));
@@ -713,13 +713,13 @@ mod kilo_executor_tests {
 
     #[test]
     fn test_kilo_check_success_zero() {
-        let executor = KiloExecutor::new("kilo".to_string());
+        let executor = StepProtocolExecutor::kilo("kilo".to_string());
         assert!(executor.check_success(0));
     }
 
     #[test]
     fn test_kilo_check_success_non_zero_without_step_finish() {
-        let executor = KiloExecutor::new("kilo".to_string());
+        let executor = StepProtocolExecutor::kilo("kilo".to_string());
         assert!(!executor.check_success(1));
         assert!(!executor.check_success(144));
         assert!(!executor.check_success(-1));
@@ -727,7 +727,7 @@ mod kilo_executor_tests {
 
     #[test]
     fn test_kilo_check_success_non_zero_with_step_finish() {
-        let executor = KiloExecutor::new("kilo".to_string());
+        let executor = StepProtocolExecutor::kilo("kilo".to_string());
         // Simulate step_finish event arriving before process exits
         let line = r#"{"type":"step-finish","timestamp":1700000000000,"part":{"type":"step-finish","reason":"stop","tokens":{"total":100,"input":50,"output":50,"reasoning":0,"cache":{"read":0,"write":0}},"cost":0}}"#;
         let _ = executor.parse_output_line(line);
@@ -737,13 +737,13 @@ mod kilo_executor_tests {
 
     #[test]
     fn test_kilo_supports_resume() {
-        let executor = KiloExecutor::new("kilo".to_string());
+        let executor = StepProtocolExecutor::kilo("kilo".to_string());
         assert!(executor.supports_resume());
     }
 
     #[test]
     fn test_kilo_parse_step_start_underscore() {
-        let executor = KiloExecutor::new("kilo".to_string());
+        let executor = StepProtocolExecutor::kilo("kilo".to_string());
         let line = r#"{"type":"step_start","timestamp":1700000000000}"#;
         let entry = executor.parse_output_line(line).unwrap();
         assert_eq!(entry.log_type, "step_start");
@@ -752,7 +752,7 @@ mod kilo_executor_tests {
 
     #[test]
     fn test_kilo_parse_step_start_hyphenated() {
-        let executor = KiloExecutor::new("kilo".to_string());
+        let executor = StepProtocolExecutor::kilo("kilo".to_string());
         let line = r#"{"type":"step-start","timestamp":1777471473403,"sessionID":"ses_abc"}"#;
         let entry = executor.parse_output_line(line).unwrap();
         assert_eq!(entry.log_type, "step_start");
@@ -761,7 +761,7 @@ mod kilo_executor_tests {
 
     #[test]
     fn test_kilo_parse_text() {
-        let executor = KiloExecutor::new("kilo".to_string());
+        let executor = StepProtocolExecutor::kilo("kilo".to_string());
         let line = r#"{"type":"text","timestamp":1777471505165,"sessionID":"ses_abc","part":{"type":"text","text":"hello from kilo"}}"#;
         let entry = executor.parse_output_line(line).unwrap();
         assert_eq!(entry.log_type, "text");
@@ -770,21 +770,21 @@ mod kilo_executor_tests {
 
     #[test]
     fn test_kilo_extract_session_id_from_top_level() {
-        let executor = KiloExecutor::new("kilo".to_string());
+        let executor = StepProtocolExecutor::kilo("kilo".to_string());
         let line = r#"{"type":"step-start","timestamp":1700000000000,"sessionID":"ses_kilo_001"}"#;
         assert_eq!(executor.extract_session_id(line), Some("ses_kilo_001".to_string()));
     }
 
     #[test]
     fn test_kilo_extract_session_id_from_part() {
-        let executor = KiloExecutor::new("kilo".to_string());
+        let executor = StepProtocolExecutor::kilo("kilo".to_string());
         let line = r#"{"type":"text","timestamp":1700000000000,"part":{"type":"text","text":"hi","session_id":"ses_from_part"}}"#;
         assert_eq!(executor.extract_session_id(line), Some("ses_from_part".to_string()));
     }
 
     #[test]
     fn test_kilo_extract_session_id_missing_returns_none() {
-        let executor = KiloExecutor::new("kilo".to_string());
+        let executor = StepProtocolExecutor::kilo("kilo".to_string());
         let line = r#"{"type":"step_start","timestamp":1700000000000}"#;
         assert!(executor.extract_session_id(line).is_none());
     }
@@ -793,8 +793,8 @@ mod kilo_executor_tests {
     /// from the same JSON input, since they use the same output format.
     #[test]
     fn test_kilo_matches_opencode_on_same_json() {
-        let opencode = OpencodeExecutor::new("opencode".to_string());
-        let kilo = KiloExecutor::new("kilo".to_string());
+        let opencode = StepProtocolExecutor::opencode("opencode".to_string());
+        let kilo = StepProtocolExecutor::kilo("kilo".to_string());
 
         let line = r#"{"type":"tool-use","timestamp":1700000000000,"part":{"type":"tool","tool":"bash","state":{"status":"completed","input":{"description":"echo"},"output":"ok"}}}"#;
         let o = opencode.parse_output_line(line).unwrap();
@@ -810,9 +810,9 @@ mod kilo_executor_tests {
     /// Kilo and Zhanlu both mirror OpenCode format; all three should agree on the same JSON.
     #[test]
     fn test_kilo_zhanlu_opencode_all_agree_on_step_start() {
-        let opencode = OpencodeExecutor::new("opencode".to_string());
-        let kilo = KiloExecutor::new("kilo".to_string());
-        let zhanlu = ZhanluExecutor::new("zl".to_string());
+        let opencode = StepProtocolExecutor::opencode("opencode".to_string());
+        let kilo = StepProtocolExecutor::kilo("kilo".to_string());
+        let zhanlu = StepProtocolExecutor::zhanlu("zl".to_string());
 
         let line = r#"{"type":"step-start","timestamp":1700000000000,"sessionID":"ses_x"}"#;
         let o = opencode.parse_output_line(line).unwrap();
@@ -826,13 +826,13 @@ mod kilo_executor_tests {
 
     #[test]
     fn test_kilo_get_model_is_always_none() {
-        let executor = KiloExecutor::new("kilo".to_string());
+        let executor = StepProtocolExecutor::kilo("kilo".to_string());
         assert!(executor.get_model().is_none());
     }
 
     #[test]
     fn test_kilo_clone_shares_state() {
-        let executor = KiloExecutor::new("kilo".to_string());
+        let executor = StepProtocolExecutor::kilo("kilo".to_string());
         let cloned = executor.clone();
 
         // Set state on the clone and verify the original sees it (Arc sharing)

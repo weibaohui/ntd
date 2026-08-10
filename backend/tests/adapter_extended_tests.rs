@@ -528,12 +528,12 @@ mod mobilecoder_executor_extended_tests {
 
 #[cfg(test)]
 mod opencode_executor_extended_tests {
-    use ntd::adapters::opencode::OpencodeExecutor;
+    use ntd::adapters::step_protocol::StepProtocolExecutor;
     use ntd::adapters::CodeExecutor;
 
     #[test]
     fn test_extract_session_id_from_event() {
-        let executor = OpencodeExecutor::new("opencode".to_string());
+        let executor = StepProtocolExecutor::opencode("opencode".to_string());
         let line = r#"{"type":"step-start","sessionID":"ses_open_123"}"#;
         let session = executor.extract_session_id(line);
         assert_eq!(session, Some("ses_open_123".to_string()));
@@ -541,7 +541,7 @@ mod opencode_executor_extended_tests {
 
     #[test]
     fn test_extract_session_id_from_part() {
-        let executor = OpencodeExecutor::new("opencode".to_string());
+        let executor = StepProtocolExecutor::opencode("opencode".to_string());
         let line = r#"{"type":"text","part":{"session_id":"ses_part_456"},"text":"hello"}"#;
         let session = executor.extract_session_id(line);
         assert_eq!(session, Some("ses_part_456".to_string()));
@@ -549,7 +549,7 @@ mod opencode_executor_extended_tests {
 
     #[test]
     fn test_extract_session_id_not_found() {
-        let executor = OpencodeExecutor::new("opencode".to_string());
+        let executor = StepProtocolExecutor::opencode("opencode".to_string());
         let line = r#"{"type":"text","text":"hello"}"#;
         let session = executor.extract_session_id(line);
         assert!(session.is_none());
@@ -557,20 +557,20 @@ mod opencode_executor_extended_tests {
 
     #[test]
     fn test_extract_session_id_invalid_json() {
-        let executor = OpencodeExecutor::new("opencode".to_string());
+        let executor = StepProtocolExecutor::opencode("opencode".to_string());
         let session = executor.extract_session_id("not json");
         assert!(session.is_none());
     }
 
     #[test]
     fn test_supports_resume() {
-        let executor = OpencodeExecutor::new("opencode".to_string());
+        let executor = StepProtocolExecutor::opencode("opencode".to_string());
         assert!(executor.supports_resume());
     }
 
     #[test]
     fn test_command_args_with_session_new() {
-        let executor = OpencodeExecutor::new("opencode".to_string());
+        let executor = StepProtocolExecutor::opencode("opencode".to_string());
         let args = executor.command_args_with_session("continue", Some("session_new"), false);
         assert!(args.contains(&"--dangerously-skip-permissions".to_string()));
         // For new session (is_resume=false), it shouldn't add -s flag
@@ -579,7 +579,7 @@ mod opencode_executor_extended_tests {
 
     #[test]
     fn test_command_args_with_session_resume() {
-        let executor = OpencodeExecutor::new("opencode".to_string());
+        let executor = StepProtocolExecutor::opencode("opencode".to_string());
         let args = executor.command_args_with_session("continue", Some("existing_session"), true);
         assert!(args.contains(&"-s".to_string()));
         assert!(args.contains(&"existing_session".to_string()));

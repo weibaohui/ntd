@@ -722,10 +722,10 @@ mod tests {
     /// check_success(144) 把成功任务误判为失败。修复后事件回授置位 flag。
     #[test]
     fn test_parse_and_broadcast_syncs_executor_success_flag() {
-        use crate::adapters::kilo::KiloExecutor;
+        use crate::adapters::step_protocol::StepProtocolExecutor;
         use crate::execution_events::impls::kilo::KiloExtractor;
 
-        let executor = KiloExecutor::new("kilo".to_string());
+        let executor = StepProtocolExecutor::kilo("kilo".to_string());
         let mut pipeline = EventPipeline::with_extractor(KiloExtractor::new());
         let (tx, _rx) = broadcast::channel(16);
 
