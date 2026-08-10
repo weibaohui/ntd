@@ -48,13 +48,18 @@ impl Database {
         let am = tasks::ActiveModel {
             title: ActiveValue::Set(title.to_string()),
             workspace_id: ActiveValue::Set(Some(workspace_id)),
-            // 委派任务不绑工艺模板/环路；template_id 沿用 0（与环路默认口径一致），loop_id 留空。
-            template_id: ActiveValue::Set(Some(0)),
+            // 委派任务不绑工艺模板/环路；template_id 直接 None（语义明确：委派确实无工艺），
+            // 不再用 Some(0) 哨兵值——之前的 0 会被前端 formatProcessText 误判为有效 ID，
+            // 渲染出 #0-#0--（NTD-013 问题 A）。
+            template_id: ActiveValue::Set(None),
             loop_id: ActiveValue::Set(None),
             // 需求原文随建写入（见函数注释：避免建后再 update 的原子性缺口）。
             description: ActiveValue::Set(description.to_string()),
             created_at: ActiveValue::Set(Some(now.clone())),
             updated_at: ActiveValue::Set(Some(now)),
+            // 委派任务首帖会立即触发讨论区执行，因此初始状态直接设为 running，
+            // 不再走 DB 默认 pending——否则列表「状态」列显示「待执行」与实际执行不同步（NTD-013 问题 B）。
+            status: ActiveValue::Set("running".to_string()),
             execution_mode: ActiveValue::Set("delegate".to_string()),
             assignee_kind: ActiveValue::Set(Some(assignee_kind.to_string())),
             assignee_name: ActiveValue::Set(Some(assignee_name.to_string())),

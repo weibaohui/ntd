@@ -95,7 +95,7 @@ const KanbanTaskCard = memo(function KanbanTaskCard({
       }}
       data-testid={`tasks-kanban-card-${task.id}`}
     >
-      {/* 头部行：#id + 复杂度标签 */}
+      {/* 头部行：#id + 复杂度标签 + 类型徽标 + 待审批标记 + 创建时间 */}
       <div
         style={{
           display: 'flex',
@@ -112,6 +112,11 @@ const KanbanTaskCard = memo(function KanbanTaskCard({
             {complexityLabel(task.complexity)}
           </Tag>
         )}
+        {/* NTD-013：与 Table/Card 同口径，加环路/委派类型徽标。
+            看板卡片未展示主状态 Tag，徽标紧跟复杂度 Tag，一眼区分任务类型。 */}
+        <Text type="secondary" style={{ fontSize: 10 }}>
+          {task.execution_mode === 'delegate' ? '委派' : '环路'}
+        </Text>
         {/* 063：待审批标记放头部行，卡片在未展开的看板里也能一眼看到；点击直达执行历史。 */}
         <PendingApprovalTag
           count={task.pending_approval_count ?? 0}
@@ -141,6 +146,25 @@ const KanbanTaskCard = memo(function KanbanTaskCard({
       >
         {task.title}
       </div>
+      {/* NTD-013：工艺/委派信息 Tag（与 Card 同口径）：
+          - 委派模式：蓝色委派信息 Tag；
+          - 环路模式：若有工艺名，显示灰色工艺名 Tag（简洁，避免三段式在看板卡片过拥挤）。 */}
+      {task.execution_mode === 'delegate' ? (
+        (() => {
+          const kindLabel = task.assignee_kind === 'expert' ? '专家' : '执行器';
+          const name = task.assignee_name?.trim() || '未知处理人';
+          const suffix = task.auto_continue ? ' 🚀接力' : '';
+          return (
+            <Tag color="blue" style={{ fontSize: 11, margin: '0 0 6px 0' }}>
+              {`委派：${name}（${kindLabel}）${suffix}`}
+            </Tag>
+          );
+        })()
+      ) : (
+        task.template_name && (
+          <Tag style={{ fontSize: 11, margin: '0 0 6px 0' }}>{task.template_name}</Tag>
+        )
+      )}
       {/* 最近执行状态 */}
       {task.latest_execution_status && (
         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>

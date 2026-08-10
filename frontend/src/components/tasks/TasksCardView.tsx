@@ -135,7 +135,7 @@ function TaskCard({
         e.currentTarget.style.transform = 'translateY(0)';
       }}
     >
-      {/* 头部行：#id + 状态 Tag + 创建时间 */}
+      {/* 头部行：#id + 状态 Tag + 类型徽标 + 待审批标记 + 创建时间 */}
       <div
         style={{
           display: 'flex',
@@ -149,6 +149,10 @@ function TaskCard({
         <Tag color={statusColor(task.status)} style={{ fontSize: 11, margin: 0 }}>
           {STATUS_LABEL[task.status] ?? task.status}
         </Tag>
+        {/* NTD-013：与 Table 视图同口径，状态 Tag 旁加环路/委派类型徽标。 */}
+        <Text type="secondary" style={{ fontSize: 10 }}>
+          {task.execution_mode === 'delegate' ? '委派' : '环路'}
+        </Text>
         {/* 063：待审批标记与状态 Tag 同行展示，不进详情即可感知。 */}
         <PendingApprovalTag count={task.pending_approval_count ?? 0} onApprove={onApprove} />
         <Text type="secondary" style={{ fontSize: 11, marginLeft: 'auto' }}>
@@ -188,7 +192,7 @@ function TaskCard({
         </Paragraph>
       )}
 
-      {/* 底部行：复杂度 Tag + 模板 Tag + 再次执行按钮 */}
+      {/* 底部行：复杂度 Tag + 工艺/委派 Tag + 再次执行按钮 */}
       <div
         style={{
           display: 'flex',
@@ -203,8 +207,20 @@ function TaskCard({
             {complexityLabel(task.complexity)}
           </Tag>
         )}
-        {task.template_name && (
-          <Tag style={{ fontSize: 11, margin: 0 }}>{task.template_name}</Tag>
+        {/* NTD-013：与 Table 视图同口径，执行方式分支：
+            - 委派模式：显示委派信息蓝色 Tag；
+            - 环路模式：有工艺名时显示工艺名 Tag（原行为，不扩三段式避免卡片拥挤）。 */}
+        {task.execution_mode === 'delegate' ? (
+          (() => {
+            const kindLabel = task.assignee_kind === 'expert' ? '专家' : '执行器';
+            const name = task.assignee_name?.trim() || '未知处理人';
+            const suffix = task.auto_continue ? ' 🚀接力' : '';
+            return <Tag color="blue" style={{ fontSize: 11, margin: 0 }}>{`委派：${name}（${kindLabel}）${suffix}`}</Tag>;
+          })()
+        ) : (
+          task.template_name && (
+            <Tag style={{ fontSize: 11, margin: 0 }}>{task.template_name}</Tag>
+          )
         )}
         <Button
           type="text"

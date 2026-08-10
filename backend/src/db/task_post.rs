@@ -160,6 +160,10 @@ impl Database {
     /// 定位：`source_execution_id = record_id`（一条执行只对应一条占位帖）。
     /// 找不到（帖子已被删）则静默返回 0，不影响执行本身的成功落定。
     /// `success` 决定 status；`result` 写入正文；`executor` 仅在原帖缺执行器时补。
+    ///
+    /// NTD-013：除了更新占位帖，还要同步把所属任务（task_posts.task_id → tasks.id）
+    /// 的 tasks.status 更新为同一终态。此前只更了帖子，没更任务主状态，导致委派任务的
+    /// 列表「状态」列永远停留在 pending/running，与实际执行结果不同步。
     pub async fn finalize_discussion_post(
         &self,
         record_id: i64,
@@ -172,7 +176,8 @@ impl Database {
             .one(&self.conn)
             .await?;
         let Some(post) = post else { return Ok(0); };
-        // 回写前先记下载体 todo id，update 会消费 post（into），之后用不到原值了。
+        // 回写前先记下 task_id 与载体 todo_id：update 会消费 post（into），之后取不到。
+        let task_id = post.task_id;
         let carrier_todo_id = post.source_todo_id;
         let status = if success { STATUS_SUCCESS } else { STATUS_FAILED };
         // 执行可能无文本输出（如失败时 stderr 未被当作 result），
@@ -195,6 +200,9 @@ impl Database {
         }
         am.updated_at = ActiveValue::Set(Some(utc_timestamp()));
         am.update(&self.conn).await?;
+        // NTD-013：同步所属 task 的主状态，保持列表「状态」列与执行结果一致。
+        // 使用同模块已有的 update_task_status（失败仅 warn，不阻塞回写主流程）。
+        let _ = self.update_task_status(task_id, status).await;
         // 软删载体 todo：执行已结束，让所有 deleted_at IS NULL 查询兜底排除它，
         // 避免讨论载体 Todo 残留在事项中心 / 列表 / 计数里（执行记录不受影响，仍可跳转）。
         if let Some(tid) = carrier_todo_id {

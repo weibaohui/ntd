@@ -75,8 +75,16 @@ function buildColumns(
       width: 100,
       // 054：可排序列（状态枚举字符串排序）
       sorter: makeSorter<TaskItem>('status'),
-      render: (status: string) => (
-        <Tag color={statusColor(status)}>{STATUS_LABEL[status] ?? status}</Tag>
+      render: (status: string, task) => (
+        // NTD-013：状态 Tag 旁追加极小「环路 / 委派」类型徽标，
+        // 让用户一眼区分两类任务，无需去工艺列或详情找。
+        // 用 flex inline 布局让徽标与 Tag 对齐；fontSize=10 / ml=4 避免视觉杂乱。
+        <div style={{ display: 'flex', alignItems: 'center' }}>
+          <Tag color={statusColor(status)}>{STATUS_LABEL[status] ?? status}</Tag>
+          <Text type="secondary" style={{ fontSize: 10, marginLeft: 4 }}>
+            {task.execution_mode === 'delegate' ? '委派' : '环路'}
+          </Text>
+        </div>
       ),
     },
     {
@@ -115,8 +123,19 @@ function buildColumns(
       key: 'process',
       width: 220,
       ellipsis: true,
-      // 与事项/环路列表统一：#工艺id-工艺名称-工艺版本；无模板来源显示 —。
+      // NTD-013：工艺列按执行方式分支渲染：
+      // - 环路模式（execution_mode !== 'delegate'）：原三段式 #工艺id-名称-版本；
+      // - 委派模式（execution_mode === 'delegate'）：复用此列位置显示委派信息
+      //   「委派给：处理人（专家/执行器）+ 🚀自动接力（若开启）」，
+      //   避免委派任务在该列显示错误格式的工艺（#0-#0--），并补全列表层缺失的委派信息透出。
       render: (_, task) => {
+        if (task.execution_mode === 'delegate') {
+          const kindLabel = task.assignee_kind === 'expert' ? '专家' : '执行器';
+          const name = task.assignee_name?.trim() || '未知处理人';
+          const base = `委派给：${name}（${kindLabel}）`;
+          const suffix = task.auto_continue ? ' 🚀自动接力' : '';
+          return <Tag color="blue">{base}{suffix}</Tag>;
+        }
         const text = formatProcessText(task.template_id, task.template_name, task.template_version);
         return text === '-' ? <Text type="secondary">—</Text> : <Tag>{text}</Tag>;
       },

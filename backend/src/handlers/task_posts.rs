@@ -1114,6 +1114,12 @@ async fn spawn_relay_execution(
     let exec = run_todo_execution_boxed(request).await;
     match exec.record_id {
         Some(record_id) => {
+            // NTD-013：新一轮接力执行即将开始，把 task.status 设回 running，
+            // 避免列表「状态」列停留在上一轮的 success/failed，与实际执行不同步。
+            // 失败仅 warn，不阻塞：状态不同步是展示性问题，执行本身照常推进。
+            if let Err(e) = handles.db.update_task_status(task.id, STATUS_RUNNING).await {
+                tracing::warn!(error = %e, task_id = task.id, "relay sync task.status to running failed");
+            }
             // 占位帖：running，关联执行记录与载体 todo。
             let placeholder = format!("{author} 正在干活…");
             let np = spec.into_post(&placeholder, STATUS_RUNNING, Some(record_id), Some(todo_id));
