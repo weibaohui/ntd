@@ -837,8 +837,11 @@ impl Database {
         limit: u64,
     ) -> Result<Vec<loop_executions::Model>, sea_orm::DbErr> {
         loop_executions::Entity::find()
+            // task_id 走 SeaORM 表达式编译期生成参数绑定，替代原 format! 拼接
             .filter(loop_executions::Column::TaskId.eq(task_id))
+            // 详情页语义是「最近」：按开始时间倒序，最新的排最前
             .order_by_desc(loop_executions::Column::StartedAt)
+            // limit 由调用方给（现固定 20）：DAO 不硬编码页大小，保持复用性
             .limit(limit)
             .all(&self.conn)
             .await
@@ -851,14 +854,19 @@ impl Database {
         &self,
         step_execution_id: i64,
     ) -> Result<Option<String>, sea_orm::DbErr> {
+        // 第一跳：step_execution 找不到说明 artifact 挂着孤儿外键，
+        // 转 RecordNotFound 让 handler 映射 404——与原 handler 内联实现语义逐字一致
         let se = loop_step_executions::Entity::find_by_id(step_execution_id)
             .one(&self.conn)
             .await?
             .ok_or(sea_orm::DbErr::RecordNotFound("step_exec not found".into()))?;
+        // 第二跳：loop_execution 断链同样报 NotFound（数据异常，不外露为 panic）
         let le = loop_executions::Entity::find_by_id(se.loop_execution_id)
             .one(&self.conn)
             .await?
             .ok_or(sea_orm::DbErr::RecordNotFound("loop_exec not found".into()))?;
+        // 第三跳取 loops.workspace_path；保留 Option 原样返回
+        // （调用方 unwrap_or_default 兜空串，与原 handler 行为一致）
         let lp = loops::Entity::find_by_id(le.loop_id)
             .one(&self.conn)
             .await?
@@ -2402,7 +2410,8 @@ mod loop_stats_tests {
     async fn test_list_recent_loop_executions_for_task() {
         let db = fresh_db().await;
         let lp = seed_loop_status(&db, "L", "enabled").await;
-        // 两条挂在 task 7、一条挂在 task 8（task_id 直插，绕开 seed helper 的列集）
+        // 两条挂在 task 7、一条挂在 task 8（task_id 直插，绕开 seed helper 的列集）；
+        // 时间梯度 -2h/-1h/now：同时验证「按 task 过滤」与「倒序」两个断言的数据前提
         for (task, expr) in [(7, "datetime('now','-2 hours')"), (7, "datetime('now','-1 hours')"), (8, "datetime('now')")] {
             db.exec(&format!(
                 "INSERT INTO loop_executions (loop_id, trigger_type, status, started_at, task_id) \
@@ -2436,7 +2445,7 @@ mod loop_stats_tests {
 
         let path = db.get_artifact_workspace_path(se_id).await.unwrap();
         assert_eq!(path, Some("/ws/path".to_string()));
-        // 断链：不存在的 step_execution_id → RecordNotFound
+        // 断链边界：不存在的 step_execution_id → RecordNotFound（handler 据此映射 404）
         assert!(db.get_artifact_workspace_path(99999).await.is_err());
     }
 

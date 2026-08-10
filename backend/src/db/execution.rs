@@ -771,12 +771,19 @@ impl Database {
     pub async fn delete_execution_logs_before(&self, cutoff: &str) -> Result<u64, sea_orm::DbErr> {
         let res = self
             .conn
+            // from_sql_and_values 走参数绑定：cutoff 不进 SQL 文本，
+            // 从根上消除拼接注入面（禁止清单 #4），也不再依赖调用方的格式转义
             .execute(sea_orm::Statement::from_sql_and_values(
+                // 本项目的生产/开发/测试库均为 SQLite，固定 DbBackend::Sqlite
+                // 而非从连接探测——省一次运行时判断，语义显式
                 sea_orm::DbBackend::Sqlite,
                 "DELETE FROM execution_logs WHERE timestamp < ?",
                 [cutoff.into()],
             ))
+            // `?` 传播错误：handler 侧原样转成 String 错误文案，语义与旧路径一致
             .await?;
+        // rows_affected 取自同一 statement 的执行结果；旧实现另跑 SELECT changes()
+        // 在连接池下可能落到不同连接而取错行数，此处一并修正
         Ok(res.rows_affected())
     }
 
@@ -1924,7 +1931,7 @@ mod center_aggregate_tests {
         let db = fresh_db().await;
         let t = seed_todo(&db, "T").await;
         seed_exec(&db, t, "success", "manual").await; // record id=1
-        // 两条旧日志（10 天前）+ 一条新日志（现在）
+        // 造 2 旧 1 新三条日志：验证边界「早于 cutoff 才删」两侧都覆盖到
         db.exec("INSERT INTO execution_logs (record_id, timestamp, log_type, content) VALUES (1, '2026-07-01T00:00:00Z', 'info', 'old1')").await.unwrap();
         db.exec("INSERT INTO execution_logs (record_id, timestamp, log_type, content) VALUES (1, '2026-07-02T00:00:00Z', 'info', 'old2')").await.unwrap();
         db.exec("INSERT INTO execution_logs (record_id, timestamp, log_type, content) VALUES (1, '2026-08-08T00:00:00Z', 'info', 'new')").await.unwrap();

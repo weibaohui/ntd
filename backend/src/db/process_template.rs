@@ -24,7 +24,10 @@ impl Database {
         let rows = self
             .conn
             .query_all(sea_orm::Statement::from_string(
+                // 固定 Sqlite 后端：项目全部环境均为 SQLite，语义显式且省运行时探测
                 sea_orm::DbBackend::Sqlite,
+                // SQL 为无参静态文本（聚合无输入），保留 raw SQL 而非改查询构建器：
+                // LEFT JOIN + GROUP BY 的语义在 SQL 文本里更直观，且无注入面
                 "SELECT pt.name, pt.display_name, pt.complexity, COUNT(l.id) AS loop_count \
                  FROM process_templates pt \
                  LEFT JOIN loops l ON l.process_template_id = pt.id \
@@ -34,9 +37,12 @@ impl Database {
         Ok(rows
             .iter()
             .map(|row| ProcessTemplateStatRow {
+                // try_get_by + unwrap_or_default：列缺失/NULL 时给空串而非报错，
+                // 与 handler 旧内联实现的宽容读取口径逐字一致
                 name: row.try_get_by("name").unwrap_or_default(),
                 display_name: row.try_get_by("display_name").unwrap_or_default(),
                 complexity: row.try_get_by("complexity").unwrap_or_default(),
+                // COUNT 聚合正常路径恒非 NULL；unwrap_or(0) 仅作防御性兜底
                 loop_count: row.try_get_by("loop_count").unwrap_or(0),
             })
             .collect())
@@ -362,7 +368,8 @@ mod tests {
     async fn test_get_process_template_stats_aggregates_loop_count() {
         let db = Database::new(":memory:").await.unwrap();
         seed_two_templates(&db).await;
-        // 给系统模板挂两条环路（用户模板不挂）
+        // 给系统模板挂两条环路（用户模板不挂）：覆盖「有/无环路」两种计数形态，
+        // 才能同时断言 LEFT JOIN 计数与 ORDER BY 倒序
         let sys = db.get_process_template_by_name("sys-tpl").await.unwrap().unwrap();
         for name in ["L1", "L2"] {
             db.exec(&format!(
