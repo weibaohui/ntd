@@ -66,10 +66,14 @@ impl EventPipeline {
     /// （message_debounce）各写一遍；stderr 路径因 atomcode 特判选择
     /// feed/feed_stderr 不同构，刻意不适用本方法。
     pub fn feed_stdout_new(&mut self, line: &str) -> &[ExecutionEvent] {
+        // trim 后判空：执行器输出常见"  \n"类空白行，feed 进去只会产生噪声事件；
+        // 返回 &[] 让调用方 for 循环天然零迭代，省一个 is_empty 分支
         let line_trimmed = line.trim();
         if line_trimmed.is_empty() {
             return &[];
         }
+        // 簿记：feed 前记录事件总数，feed 后切片 [len_before..] 即「本次新增」——
+        // 调用方只应处理增量，全量重发会把历史事件重复广播/落库
         let len_before = self.events.len();
         self.feed(line_trimmed);
         &self.events[len_before..]
@@ -323,6 +327,33 @@ mod tests {
 
         let tool_calls = pipeline.tool_call_events();
         assert_eq!(tool_calls.len(), 1);
+    }
+
+    // ─── 093-B2：feed_stdout_new（CodeRabbit 评审补充）───
+
+    /// 空行/纯空白行守卫：不产生事件、不触发送侧逻辑，返回空切片
+    #[test]
+    fn test_feed_stdout_new_empty_line_returns_empty_slice() {
+        let mut pipeline = EventPipeline::new("claudecode");
+        // "  \n  " 这类行在旧两处调用点靠手写 guard 拦截，收口后由本方法统一负责
+        assert!(pipeline.feed_stdout_new("   \t  ").is_empty());
+        assert!(pipeline.events().is_empty(), "空白行不应产生任何事件");
+    }
+
+    /// 正常 feed：返回的切片只含本次新增事件（簿记语义），不含历史事件
+    #[test]
+    fn test_feed_stdout_new_returns_only_new_events() {
+        let mut pipeline = EventPipeline::new("claudecode");
+        // 第一行喂入一条 assistant 文本，第二次调用只应返回第二行新增的部分
+        let first = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"a"}]}}"#;
+        let second = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"b"}]}}"#;
+        let n_first = pipeline.feed_stdout_new(first).len();
+        assert!(n_first > 0, "首行应产生事件");
+        let total_after_first = pipeline.events().len();
+        let new_slice = pipeline.feed_stdout_new(second);
+        assert!(!new_slice.is_empty(), "第二行应产生新增事件");
+        // 簿记正确性：新增切片长度 + 之前总数 = 当前总数
+        assert_eq!(new_slice.len() + total_after_first, pipeline.events().len());
     }
 
     #[test]

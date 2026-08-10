@@ -1065,12 +1065,17 @@ fn parse_for_direct_stream(
     line: &str,
 ) -> Vec<ParsedLogEntry> {
     // 093-B2：feed 骨架收口到 pipeline.feed_stdout_new；
-    // 「哪些事件值得私聊直推」的过滤规则收口到 ExecutionEvent::is_direct_stream_worthy
-    // （全仓唯一事实源，不再与 emit_direct_stream 靠注释约定保持一致）。
+    // 收集侧过滤规则收口到 ExecutionEvent::is_direct_stream_worthy。
+    // 注意：本函数的「收集」决定落库面（调用方 result.logs），emit_direct_stream 的
+    // 二次过滤决定私聊发送面——info/error 等落库但不打扰私聊，两层规则不同是
+    // 有意的职责分离（落库面 ⊃ 发送面），非过滤不一致。
     let new_events = pipeline.feed_stdout_new(line);
     let mut results = Vec::new();
     for event in new_events {
         if event.is_direct_stream_worthy() {
+            // 事件 → 扁平日志条目的转换在此完成（而非调用方）：
+            // tool_input_json 等元数据的打包口径全仓唯一（DbLogEntry），
+            // 调用方拿到即可直接落库/发送，不再各自拼装
             let parsed = crate::execution_events::DbLogEntry::from_event_to_parsed_log_entry(event);
             results.push(parsed);
         }
