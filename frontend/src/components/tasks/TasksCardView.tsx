@@ -26,6 +26,9 @@ import {
   formatDateShort,
   matchesTaskStatusFilter,
 } from '@/components/tasks/constants';
+// NTD-013 / CodeRabbit Opinion 2：执行方式徽标 + 工艺/委派信息 Tag 收口到共享组件，
+// 三视图共用，杜绝委派文案再次漂移（详见 TaskExecutionTags.tsx）。
+import { ExecutionModeBadge, TaskExecutionInfoTag } from '@/components/tasks/TaskExecutionTags';
 
 const { Text, Paragraph } = Typography;
 
@@ -67,40 +70,9 @@ function TaskCard({
   onApprove: () => void;
   onTriggered: () => void;
 }) {
-  // 再次执行 Modal 开关 + 输入态。
-  const [reexecOpen, setReexecOpen] = useState(false);
-  const [newReq, setNewReq] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  // 卡片主体点击 → 选中任务。
-  // 「再次执行」按钮点击 → 阻止冒泡 + 打开 Modal。
+  // 卡片主体点击 → 选中任务。「再次执行」的交互（Modal/输入/提交）已拆到 TaskReexecButton，
+  // 使 TaskCard 回到 ≤150 行（NTD-013 / CodeRabbit Opinion 2）；workspaceId/onTriggered 仅转发给它。
   const handleCardClick = () => onSelect();
-
-  const handleReexecClick = (e: React.MouseEvent) => {
-    // 阻止冒泡到卡片 onClick，避免同时触发选中。
-    e.stopPropagation();
-    // 初始值用任务 description（如有），否则用 title。
-    setNewReq(task.description || task.title);
-    setReexecOpen(true);
-  };
-
-  const handleReexecSubmit = async () => {
-    if (!newReq.trim()) {
-      message.warning('请输入需求');
-      return;
-    }
-    setBusy(true);
-    try {
-      await bundledApi.createTaskExecution(workspaceId, task.id, newReq);
-      message.success('新执行已创建');
-      setReexecOpen(false);
-      onTriggered();
-    } catch (err) {
-      message.error(`创建失败：${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setBusy(false);
-    }
-  };
 
   return (
     <div
@@ -135,7 +107,7 @@ function TaskCard({
         e.currentTarget.style.transform = 'translateY(0)';
       }}
     >
-      {/* 头部行：#id + 状态 Tag + 创建时间 */}
+      {/* 头部行：#id + 状态 Tag + 类型徽标 + 待审批标记 + 创建时间 */}
       <div
         style={{
           display: 'flex',
@@ -149,6 +121,8 @@ function TaskCard({
         <Tag color={statusColor(task.status)} style={{ fontSize: 11, margin: 0 }}>
           {STATUS_LABEL[task.status] ?? task.status}
         </Tag>
+        {/* NTD-013：与 Table 视图同口径，状态 Tag 旁加环路/委派类型徽标（共享组件）。 */}
+        <ExecutionModeBadge mode={task.execution_mode} />
         {/* 063：待审批标记与状态 Tag 同行展示，不进详情即可感知。 */}
         <PendingApprovalTag count={task.pending_approval_count ?? 0} onApprove={onApprove} />
         <Text type="secondary" style={{ fontSize: 11, marginLeft: 'auto' }}>
@@ -188,7 +162,7 @@ function TaskCard({
         </Paragraph>
       )}
 
-      {/* 底部行：复杂度 Tag + 模板 Tag + 再次执行按钮 */}
+      {/* 底部行：复杂度 Tag + 工艺/委派 Tag + 再次执行按钮 */}
       <div
         style={{
           display: 'flex',
@@ -203,36 +177,99 @@ function TaskCard({
             {complexityLabel(task.complexity)}
           </Tag>
         )}
-        {task.template_name && (
-          <Tag style={{ fontSize: 11, margin: 0 }}>{task.template_name}</Tag>
-        )}
-        <Button
-          type="text"
-          size="small"
-          icon={<ThunderboltOutlined />}
-          onClick={handleReexecClick}
-          style={{
-            marginLeft: 'auto',
-            fontSize: 12,
-            color: 'var(--color-primary, #1677ff)',
-          }}
-        >
-          再次执行
-        </Button>
+        {/* NTD-013：委派信息 Tag 走共享组件（防文案漂移）；环路分支卡片只显示工艺名（避免拥挤）。
+            delegateStyle 控制委派 Tag 在卡片底行的字号/外边距。 */}
+        <TaskExecutionInfoTag
+          task={task}
+          delegateStyle={{ fontSize: 11, margin: 0 }}
+          loopTag={
+            task.template_name ? (
+              <Tag style={{ fontSize: 11, margin: 0 }}>{task.template_name}</Tag>
+            ) : undefined
+          }
+        />
+        <TaskReexecButton task={task} workspaceId={workspaceId} onTriggered={onTriggered} />
       </div>
+    </div>
+  );
+}
 
-      {/* 再次执行 Modal：局部受控 */}
+/**
+ * 「再次执行」按钮 + Modal：从 TaskCard 拆出（NTD-013 / CodeRabbit Opinion 2，降行数）。
+ *
+ * 自带 Modal 开关 / 输入态 / 提交逻辑，调用方只关心创建成功后的 onTriggered 回调。
+ * 按钮点击 stopPropagation 防止冒泡到卡片本体（否则会同时触发选中跳详情）。
+ * Modal 经 antd portal 渲染到 body，故即便作为底部 flex 行的子节点也不影响卡片布局。
+ */
+function TaskReexecButton({
+  task,
+  workspaceId,
+  onTriggered,
+}: {
+  task: TaskItem;
+  workspaceId: number;
+  onTriggered: () => void;
+}) {
+  // Modal 开关 + 输入态 + 提交中态，全部局部受控，不污染 TaskCard。
+  const [reexecOpen, setReexecOpen] = useState(false);
+  const [newReq, setNewReq] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const handleClick = (e: React.MouseEvent) => {
+    // 阻止冒泡到卡片 onClick，避免点「再次执行」同时触发选中跳详情。
+    e.stopPropagation();
+    // 初始值优先用 description（更贴近真实诉求），缺省回退 title。
+    setNewReq(task.description || task.title);
+    setReexecOpen(true);
+  };
+
+  const handleSubmit = async () => {
+    // 空需求兜底：拒绝提交并提示，不发空请求。
+    if (!newReq.trim()) {
+      message.warning('请输入需求');
+      return;
+    }
+    setBusy(true);
+    try {
+      await bundledApi.createTaskExecution(workspaceId, task.id, newReq);
+      message.success('新执行已创建');
+      setReexecOpen(false);
+      onTriggered();
+    } catch (err) {
+      // 错误就地提示，不向上抛（Modal 保持打开，用户可改后重试）。
+      message.error(`创建失败：${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <Button
+        type="text"
+        size="small"
+        icon={<ThunderboltOutlined />}
+        onClick={handleClick}
+        style={{
+          marginLeft: 'auto',
+          fontSize: 12,
+          color: 'var(--color-primary, #1677ff)',
+        }}
+      >
+        再次执行
+      </Button>
+      {/* 再次执行 Modal：局部受控，portal 渲染。 */}
       <Modal
         title="输入这次的需求"
         open={reexecOpen}
         onCancel={() => setReexecOpen(false)}
-        onOk={handleReexecSubmit}
+        onOk={handleSubmit}
         confirmLoading={busy}
         okText="开始执行"
       >
         <Input.TextArea value={newReq} onChange={(e) => setNewReq(e.target.value)} rows={4} />
       </Modal>
-    </div>
+    </>
   );
 }
 

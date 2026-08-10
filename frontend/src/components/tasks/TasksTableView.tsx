@@ -21,6 +21,8 @@ import {
 import bundledApi from '@/api/bundled';
 import { formatProcessText } from '@/utils/processText';
 import { useResizableColumns, makeSorter } from '@/hooks/useResizableColumns';
+// NTD-013 / CodeRabbit Opinion 2：执行方式徽标 + 工艺/委派信息 Tag 收口到共享组件，三视图共用防漂移。
+import { ExecutionModeBadge, TaskExecutionInfoTag } from '@/components/tasks/TaskExecutionTags';
 
 const { Text } = Typography;
 
@@ -75,8 +77,13 @@ function buildColumns(
       width: 100,
       // 054：可排序列（状态枚举字符串排序）
       sorter: makeSorter<TaskItem>('status'),
-      render: (status: string) => (
-        <Tag color={statusColor(status)}>{STATUS_LABEL[status] ?? status}</Tag>
+      render: (status: string, task) => (
+        // NTD-013：状态 Tag 旁追加极小「环路 / 委派」类型徽标（共享组件），
+        // 让用户一眼区分两类任务。marginLeft:4 与 Tag 对齐（本列非 gap flex，需手动留白）。
+        <div style={{ display: 'flex', alignItems: 'center' }}>
+          <Tag color={statusColor(status)}>{STATUS_LABEL[status] ?? status}</Tag>
+          <ExecutionModeBadge mode={task.execution_mode} style={{ marginLeft: 4 }} />
+        </div>
       ),
     },
     {
@@ -115,11 +122,18 @@ function buildColumns(
       key: 'process',
       width: 220,
       ellipsis: true,
-      // 与事项/环路列表统一：#工艺id-工艺名称-工艺版本；无模板来源显示 —。
-      render: (_, task) => {
-        const text = formatProcessText(task.template_id, task.template_name, task.template_version);
-        return text === '-' ? <Text type="secondary">—</Text> : <Tag>{text}</Tag>;
-      },
+      // NTD-013：工艺列按执行方式分支——委派走共享 TaskExecutionInfoTag（防文案漂移），
+      // 环路走三段式 #工艺id-名称-版本（仅 Table 用三段式，Kanban/Card 仅工艺名，故由 loopTag 传入）。
+      render: (_, task) => (
+        <TaskExecutionInfoTag
+          task={task}
+          loopTag={(() => {
+            // 环路模式：三段式工艺串；'-' 表示无工艺来源，列里用破折号占位而非渲染 #0。
+            const text = formatProcessText(task.template_id, task.template_name, task.template_version);
+            return text === '-' ? <Text type="secondary">—</Text> : <Tag>{text}</Tag>;
+          })()}
+        />
+      ),
     },
     {
       title: '最近执行',
