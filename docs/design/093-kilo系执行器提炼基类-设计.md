@@ -3,6 +3,7 @@
 | 修改人 | 修改时间 | 修改内容 |
 |--------|---------|---------|
 | AI (Pi) | 2026-08-08 | 初始版本 |
+| AI (zhanlu) | 2026-08-10 | 按 CodeRabbit 评审修正：差异方法口径（5 行为查询+1 类型映射）、方法名与代码对齐、验证方案措辞（去掉"全绿"，写明 git_sync 环境失败） |
 
 > 093 优化扫描专项 B1（重构批次 1）。源自 code-refactor/design-patterns skill 扫描诊断第 1 条：
 > **Copy-Paste Programming 反模式**——4 个执行器适配器最高 83% 逐字相同。
@@ -37,7 +38,7 @@
 ## 2. 设计
 
 模式选型：**Template Method 的 Rust 组合版**——单一 `StepProtocolExecutor` 结构体 +
-`StepProtocolFlavor` 枚举承载 5 个行为旋钮（数据化配置，替代 4 份复制类）。
+`StepProtocolFlavor` 枚举承载运行时行为差异（数据化配置，替代 4 份复制类）。
 
 ### C1：统一事件模型 `adapters/step_event.rs`（新）
 
@@ -60,7 +61,7 @@ pub struct StepProtocolExecutor {
 ```
 
 - 4 个命名构造：`StepProtocolExecutor::{kilo, opencode, zhanlu, mimo}(path)`；
-- flavor 上的查询方法：`executor_type()` / `accepts_hyphenated()` / `has_reasoning()` / `uses_state_json()` / `resume_fallback_dash_c()` / `reports_model()`——**差异知识全仓只有这一处**；
+- flavor 上的查询方法共 6 个：5 个协议行为查询 `accepts_hyphenated_events()` / `has_reasoning_event()` / `serializes_full_tool_state()` / `resume_falls_back_to_dash_c()` / `reports_model()` + 1 个类型映射 `executor_type()`——**flavor 控制的运行时行为差异**全部集中于此；序列化层差异（camelCase alias、`snapshot`、`to_full_json` 防覆盖）由 C1 的 `step_event.rs` 承载，不在本枚举职责内；
 - 共享逻辑一份：`handle_step_start/tool_use/text/step_finish/reasoning`、`parse_output_line`、`extract_session_id`、`on_pipeline_event`、`check_success`、`command_args(_with_session)`；
 - 旧 4 文件（kilo.rs/opencode.rs/zhanlu.rs/mimo.rs，共 1840 行）**删除**，测试并集迁移到本文件。
 
@@ -89,7 +90,7 @@ pub struct StepProtocolExecutor {
 
 1. 统一测试套件覆盖原 4 套测试的并集：各 flavor 的事件解析（下划线/连字符）、reasoning（mimo）、tool_use 两种 JSON 载荷形态、check_success 三态（0/无 finish 非零/有 finish 非零）、session_id 缓存、command_args（-m 注入、mimo `-c` 降级）、get_model 差异。
 2. NTD-012 回归测试（log_capture）改编后构造器继续通过。
-3. `cargo clippy --all-targets -- -D warnings` 零告警；`cargo test` 全绿（除预存量环境失败 git_sync）。
+3. `cargo clippy --all-targets -- -D warnings` 零告警；`cargo test` 预期 1627 通过、1 个预存量环境失败（`git_sync` 测试：本机 git 版本过老不支持 `init -b`，与本次改动无关，main 上同样失败）。
 4. 反证：diff 级核对「统一实现 vs 各旧实现」的行为矩阵逐格一致（设计 §1.2 表即核对清单）。
 
 ## 5. 安全反思

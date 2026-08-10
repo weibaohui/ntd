@@ -3,6 +3,7 @@
 | 修改人 | 修改时间 | 修改内容 |
 |--------|---------|---------|
 | AI (Pi) | 2026-08-08 | 初始版本 |
+| AI (zhanlu) | 2026-08-10 | 按 CodeRabbit 评审修正：差异方法口径（5 行为查询+1 类型映射）、"唯一事实源"限定为运行时行为差异、测试结果去掉 ✅ 并写明失败明细 |
 
 > 对应设计：`docs/design/093-kilo系执行器提炼基类-设计.md`。093 专项 B1（重构批次 1），
 > 消除 code-refactor 诊断的 Copy-Paste Programming 反模式（4 份 77%~83% 逐字相同的适配器）。
@@ -17,7 +18,7 @@
 | 事件模块缩为别名壳 | `{kilo,opencode,zhanlu,mimo}_event.rs`（extractor 等引用方零改动） | 各 ~15 |
 | 调用点适配 | `adapters/mod.rs` 注册表、`log_capture.rs` NTD-012 回归测试、2 个集成测试文件 | — |
 
-**净减 ~1800 行**；行为差异知识从「散在 4 文件」收敛为 `StepProtocolFlavor` 的 6 个查询方法（差异矩阵唯一事实源）。
+**净减 ~1800 行**；运行时行为差异知识从「散在 4 文件」收敛为 `StepProtocolFlavor` 的 6 个方法（5 个协议行为查询 + 1 个类型映射，是**运行时行为差异**的唯一事实源；序列化层差异由 `step_event.rs` 承载）。
 
 ## 2. 与设计的对应关系
 
@@ -37,7 +38,7 @@
 ## 4. 测试与验证结果
 
 - `cargo clippy --all-targets -- -D warnings`：零告警 ✅
-- `cargo test --no-fail-fast`：1627 通过，唯一失败为预存量环境问题（git_sync，本机 git 过老）✅
+- `cargo test --no-fail-fast`：1627 通过 / 1 失败。失败项为 `git_sync::tests::test_sync_repo_restores_deleted_file`——预存量环境问题（本机 git 版本过老不支持 `init -b`，main 上同样失败），与本次改动无关
 - NTD-012 回归测试（改构造器后）继续通过 ✅
 - `make dev` 启动零错误；`GET /api/v1/executors` 确认 kilo/mimo/opencode/zhanlu 注册正常 ✅
 
