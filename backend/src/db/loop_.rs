@@ -2407,7 +2407,7 @@ mod loop_stats_tests {
 
     /// 093-B5：list_recent_loop_executions_for_task——按 task_id 过滤、started_at 倒序、limit 生效。
     #[tokio::test]
-    async fn test_list_recent_loop_executions_for_task() {
+    async fn test_list_recent_loop_executions_for_task_filters_orders_and_limits() {
         let db = fresh_db().await;
         let lp = seed_loop_status(&db, "L", "enabled").await;
         // 两条挂在 task 7、一条挂在 task 8（task_id 直插，绕开 seed helper 的列集）；
@@ -2430,8 +2430,12 @@ mod loop_stats_tests {
     }
 
     /// 093-B5：get_artifact_workspace_path——三级跳返回 loop 的 workspace_path；断链报 NotFound。
+    /// 断链覆盖说明（CodeRabbit #1010 评审）：仅第一级（step_execution 不存在）可测——
+    /// 后两级断链（loop_execution/loop 缺失）在 PRAGMA foreign_keys=ON + ON DELETE CASCADE
+    /// 下不可达（孤儿行插不进、父行删除会级联清子行），对应 RecordNotFound 分支为
+    /// 防御性代码，防未来 FK 策略变化，非当前可达路径。
     #[tokio::test]
-    async fn test_get_artifact_workspace_path() {
+    async fn test_get_artifact_workspace_path_returns_path_and_errors_when_chain_is_broken() {
         let db = fresh_db().await;
         db.exec("INSERT INTO loops (name, workspace_path) VALUES ('L', '/ws/path')").await.expect("insert loop");
         let loop_id = max_id(&db, "loops").await;

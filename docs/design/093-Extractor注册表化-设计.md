@@ -3,6 +3,7 @@
 | 修改人 | 修改时间 | 修改内容 |
 |--------|---------|---------|
 | AI (Pi) | 2026-08-08 | 初始版本 |
+| AI (zhanlu) | 2026-08-10 | 按 CodeRabbit 评审同步文档与代码：executor_label 实为「删 match 留壳查 find_executor_by_type」，非整函数删除 |
 
 > 093 专项 B4（重构批次 4）。源自 skill 扫描诊断第 4 条：Repeated Switches + Shotgun Surgery——
 > `ExecutorType` 大 match 散落多处，新增执行器要同步修改 N 个文件。
@@ -48,9 +49,17 @@ Some(EventPipeline::with_boxed_extractor((def.create_extractor)()))
 
 `EventPipeline` 新增 `with_boxed_extractor(Box<dyn EventExtractor>)` 构造（与既有 `with_extractor(impl)` 并存——注册表只能返回 trait 对象）。
 
-### C3：删除 `executor_label`
+### C3：`executor_label` 删除硬编码 match，保留函数作为注册表查询包装
 
-`skills.rs` 的调用点改 `crate::adapters::find_executor(et.as_str()).map(|d| d.display_name).unwrap_or(et.as_str())`（找不到时回退规范名，比 panic 宽容）；其测试同步改为断言注册表覆盖（保留「新增执行器忘注册」的回归守卫语义）。
+`skills.rs` 的 `executor_label(et)` 原是与 `ExecutorDef.display_name` 逐字重复的 13 臂 match。
+实施时**保留函数壳**（调用点零改动），函数体改查注册表：
+`crate::adapters::find_executor_by_type(et).map(|d| d.display_name).unwrap_or_else(|| et.as_str())`
+（找不到时回退规范名，比 panic 宽容）；其测试同步改为断言注册表覆盖
+（保留「新增执行器忘注册」的回归守卫语义）。
+
+> 注（CodeRabbit #1010 评审）：初版本节写「删除 executor_label」且示例误用
+> `find_executor(et.as_str())`——按名字符串反查对枚举语义不对（别名/大小写歧义），
+> 实际落地为按 ExecutorType 反查 `find_executor_by_type`，特此更正。
 
 ## 3. 影响模块
 
