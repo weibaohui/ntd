@@ -179,6 +179,29 @@ mod tests {
         Database::new(":memory:").await.expect("memory db must open")
     }
 
+    /// create_delegate_task：委派任务初始字段口径（NTD-013）。
+    /// - template_id 必须为 None（非 Some(0) 哨兵值），否则前端 formatProcessText
+    ///   会把 0 当有效 ID 渲染出 #0-#0--；
+    /// - 首帖立即触发执行，初始 status 必须是 running，不能走 DB 默认 pending。
+    /// 回读校验落库，排除「只返回未写库」的假阳性。
+    #[tokio::test]
+    async fn test_create_delegate_task_template_none_and_status_running() {
+        let db = fresh_db().await;
+        let task = db
+            .create_delegate_task("委派任务T", "需求原文", 1, "expert", "专家A", true, None)
+            .await
+            .expect("create delegate task");
+        // template_id=None：委派确实无工艺，杜绝 0 哨兵值（NTD-013 问题 A）。
+        assert_eq!(task.template_id, None, "委派任务 template_id 应为 None");
+        // status=running：首帖已触发执行，初始即运行中，列表不再误显「待执行」（NTD-013 问题 B）。
+        assert_eq!(task.status, "running", "委派任务初始 status 应为 running");
+        assert_eq!(task.execution_mode, "delegate");
+        // 回读落库校验：确认 INSERT 真的写入了 None / running，而非仅返回值如此。
+        let got = db.get_task(task.id).await.expect("get").expect("task exists");
+        assert_eq!(got.template_id, None);
+        assert_eq!(got.status, "running");
+    }
+
     /// increment_continue_rounds：从 0（委派任务初始）递增到 1、2，
     /// 校验 read-modify-write 正确落库且每次返回递增后的新值。
     #[tokio::test]

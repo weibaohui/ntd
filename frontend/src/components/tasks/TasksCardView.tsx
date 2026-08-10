@@ -214,8 +214,9 @@ function TaskCard({
           (() => {
             const kindLabel = task.assignee_kind === 'expert' ? '专家' : '执行器';
             const name = task.assignee_name?.trim() || '未知处理人';
-            const suffix = task.auto_continue ? ' 🚀接力' : '';
-            return <Tag color="blue" style={{ fontSize: 11, margin: 0 }}>{`委派：${name}（${kindLabel}）${suffix}`}</Tag>;
+            // 文案与 Table/Kanban 同口径：统一「委派给：… 🚀自动接力」（NTD-013 规范轴 c.1）。
+            const suffix = task.auto_continue ? ' 🚀自动接力' : '';
+            return <Tag color="blue" style={{ fontSize: 11, margin: 0 }}>{`委派给：${name}（${kindLabel}）${suffix}`}</Tag>;
           })()
         ) : (
           task.template_name && (

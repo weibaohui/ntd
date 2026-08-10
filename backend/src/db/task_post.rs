@@ -201,8 +201,11 @@ impl Database {
         am.updated_at = ActiveValue::Set(Some(utc_timestamp()));
         am.update(&self.conn).await?;
         // NTD-013：同步所属 task 的主状态，保持列表「状态」列与执行结果一致。
-        // 使用同模块已有的 update_task_status（失败仅 warn，不阻塞回写主流程）。
-        let _ = self.update_task_status(task_id, status).await;
+        // 失败仅记 warn 不阻塞：状态不同步是展示性问题，不应反过来打断执行落定主流程
+        // （与 handlers/task_posts.rs spawn_relay_execution 的同口径处理一致）。
+        if let Err(e) = self.update_task_status(task_id, status).await {
+            tracing::warn!(error = %e, task_id, "finalize sync task.status failed");
+        }
         // 软删载体 todo：执行已结束，让所有 deleted_at IS NULL 查询兜底排除它，
         // 避免讨论载体 Todo 残留在事项中心 / 列表 / 计数里（执行记录不受影响，仍可跳转）。
         if let Some(tid) = carrier_todo_id {
@@ -549,6 +552,44 @@ mod tests {
         let p2 = db.get_task_post(post.id).await.expect("get").expect("exists");
         assert_eq!(p2.status, STATUS_FAILED);
         assert!(!p2.content.is_empty(), "空结果应有兜底文案");
+    }
+
+    /// NTD-013：finalize 回写结论时，同步把所属 task 的主状态更新为同一终态，
+    /// 否则委派任务列表「状态」列永远停留在初始态，与实际执行结果不同步。
+    #[tokio::test]
+    async fn test_finalize_discussion_post_syncs_task_status() {
+        let db = fresh_db().await;
+        let task_id = seed_task(&db).await;
+        // 占位帖关联到执行记录 88888（FK 未强制，测试用任意 id），finalize 据此定位。
+        db.create_task_post(NewPost {
+            task_id,
+            parent_post_id: None,
+            kind: KIND_AGENT,
+            author_name: "codex",
+            executor: Some("codex"),
+            expert_name: None,
+            content: "codex 正在干活…",
+            mentions_json: "[]",
+            status: STATUS_RUNNING,
+            source_execution_id: Some(88888),
+            source_todo_id: None,
+        })
+        .await
+        .expect("create placeholder");
+
+        // 成功回写 → task.status 同步为 success。
+        db.finalize_discussion_post(88888, true, "结论：可行", None)
+            .await
+            .expect("finalize success");
+        let task = db.get_task(task_id).await.expect("get task").expect("task exists");
+        assert_eq!(task.status, STATUS_SUCCESS, "成功回写应同步 task.status=success");
+
+        // 失败回写 → task.status 同步为 failed。
+        db.finalize_discussion_post(88888, false, "失败原因", None)
+            .await
+            .expect("finalize failed");
+        let task2 = db.get_task(task_id).await.expect("get task").expect("task exists");
+        assert_eq!(task2.status, STATUS_FAILED, "失败回写应同步 task.status=failed");
     }
 
     /// create_discussion_todo 应把载体标记为 todo_type=4 并写入 expert_name。
