@@ -187,3 +187,45 @@ WikiChatFinished {
     duration_secs: i64,
 },
 }
+
+impl ExecEvent {
+    /// 094：事件的 workspace 归属，供 WS 广播按 workspace 过滤。
+    ///
+    /// 返回 None 的语义分两类（对 WS 客户端均全推）：
+    /// - 全局事件（Sync/ReviewStatusChanged）：本身不含 workspace 敏感信息；
+    /// - 飞书直发事件（DirectCardMessage/DirectStreamMessage）：已被 is_feishu_direct
+    ///   拦截在 WS channel 之外，None 仅为防御兜底。
+    ///
+    /// 全枚举匹配：新增变体漏处理时编译器报 non-exhaustive，天然守卫。
+    pub fn workspace_id(&self) -> Option<i64> {
+        match self {
+            // Option<i64> 组：执行生命周期事件，透传原字段
+            ExecEvent::Started { workspace_id, .. }
+            | ExecEvent::Output { workspace_id, .. }
+            | ExecEvent::Finished { workspace_id, .. }
+            | ExecEvent::TodoProgress { workspace_id, .. }
+            | ExecEvent::ExecutionStats { workspace_id, .. }
+            | ExecEvent::LoopFinished { workspace_id, .. } => *workspace_id,
+            // i64 必填组：黑板/WikiChat 系列，包 Some
+            ExecEvent::BlackboardDebounceStatus { workspace_id, .. }
+            | ExecEvent::WikiChatStarted { workspace_id, .. }
+            | ExecEvent::WikiChatOutput { workspace_id, .. }
+            | ExecEvent::WikiChatFinished { workspace_id, .. } => Some(*workspace_id),
+            // 全局/飞书专用组：无 workspace 归属
+            ExecEvent::Sync { .. }
+            | ExecEvent::ReviewStatusChanged { .. }
+            | ExecEvent::DirectCardMessage { .. }
+            | ExecEvent::DirectStreamMessage { .. } => None,
+        }
+    }
+
+    /// 094：飞书专用定向事件判定。这类事件只服务 FeishuPushService 的 bot 定向发送，
+    /// 前端 WS 客户端无对应消费分支——forwarder 据此拦截，不再推入 WS channel
+    /// （消除带宽浪费，也让「WS 消息 = 前端可消费消息」的语义单一化）。
+    pub fn is_feishu_direct(&self) -> bool {
+        matches!(
+            self,
+            ExecEvent::DirectCardMessage { .. } | ExecEvent::DirectStreamMessage { .. }
+        )
+    }
+}

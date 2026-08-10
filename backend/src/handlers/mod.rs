@@ -27,6 +27,10 @@ pub struct AppState {
     pub db: Arc<Database>,
     pub executor_registry: Arc<ExecutorRegistry>,
     pub tx: broadcast::Sender<ExecEvent>,
+    /// 094：WS 专用广播 channel（预序列化信封）。与 tx 的关系：tx 是事件总线
+    /// （飞书推送等订阅），ws_tx 只服务 WS 客户端——forwarder 任务把 tx 的事件
+    /// 过滤飞书专用、预序列化一次后桥接过来，WS 客户端零序列化共享 Arc<str>。
+    pub ws_tx: broadcast::Sender<ws_broadcast::WsEnvelope>,
     pub scheduler: Arc<TodoScheduler>,
     pub task_manager: Arc<TaskManager>,
     /// In-memory copy of the persisted Config. Wrapped in `std::sync::RwLock`
@@ -159,14 +163,29 @@ pub mod tasks;
 pub mod task_posts;
 pub mod quick_button;
 pub mod profiles;
+/// 094：WS 广播通路（预序列化信封 + forwarder），详见模块 doc
+pub mod ws_broadcast;
 /// workspace 归属校验 helper：v1 路由的租户边界守卫（verify_*_belongs_to_ws）。
 /// 所有 workspace-scoped handler 统一调用，避免跨工作空间越权读写。
 pub mod workspace_guard;
 
 // WebSocket handler
-pub async fn events_handler(State(state): State<AppState>, ws: WebSocketUpgrade) -> Response {
-    ws.on_upgrade(|mut ws| async move {
-        let mut rx = state.tx.subscribe();
+// 094：query 参数 workspace_id 声明客户端关注的 workspace——只推该 workspace 事件
+// + 全局事件（None 归属）；不带参数的旧客户端全推（兼容口）。
+#[derive(Debug, serde::Deserialize)]
+pub struct EventsQuery {
+    workspace_id: Option<i64>,
+}
+
+pub async fn events_handler(
+    State(state): State<AppState>,
+    ws: WebSocketUpgrade,
+    axum::extract::Query(query): axum::extract::Query<EventsQuery>,
+) -> Response {
+    let conn_workspace = query.workspace_id;
+    ws.on_upgrade(move |mut ws| async move {
+        // 094：订阅 WS 专用 channel（预序列化信封），不再订阅原始 ExecEvent channel
+        let mut rx = state.ws_tx.subscribe();
 
         // 连接时发送当前实际运行的任务列表
         // 批量获取执行记录，避免 N+1 查询
@@ -187,7 +206,22 @@ pub async fn events_handler(State(state): State<AppState>, ws: WebSocketUpgrade)
             .into_iter()
             .filter_map(|r| r.task_id.clone().map(|tid| (tid, r)))
             .collect();
-        let record_ids: Vec<i64> = record_map.values().map(|r| r.id).collect();
+        // 094：声明了 workspace 的连接，Sync 只回该 workspace 的运行任务；
+        // 查不到 record 的异常任务保守保留（决策 2a：DB 降级时宁多勿漏）。
+        if let Some(ws_id) = conn_workspace {
+            running_tasks.retain(|t| {
+                record_map
+                    .get(&t.task_id)
+                    .map(|r| r.workspace_id == Some(ws_id))
+                    .unwrap_or(true)
+            });
+        }
+        // record_ids 从过滤后的 running_tasks 反查：尾部日志/计数两个查询
+        // 也随 Sync 过滤收敛，不为其他 workspace 的任务白跑 SQL
+        let record_ids: Vec<i64> = running_tasks
+            .iter()
+            .filter_map(|t| record_map.get(&t.task_id).map(|r| r.id))
+            .collect();
         // reconnect 时每个任务只回传最近 RECONNECT_LOG_CAP 条日志，避免长跑任务的全量日志
         // 把首帧撑爆（既卡 serde 序列化，也卡 WS 推送）。完整历史前端通过 REST 分页按需拉取（091）。
         const RECONNECT_LOG_CAP: usize = 200;
@@ -249,7 +283,8 @@ pub async fn events_handler(State(state): State<AppState>, ws: WebSocketUpgrade)
                 .await;
         }
 
-        // 循环从 broadcast channel 读取事件并推到 WebSocket。
+        // 循环从 WS 专用 channel 读取预序列化信封并按 workspace 匹配推送（094）。
+        // 序列化已在 forwarder 全局做一次，此处仅 Arc 共享 + 一次 memcpy。
         //
         // 注意 `rx.recv()` 在 channel 容量耗尽时返回 `RecvError::Lagged(n)`:
         // ring buffer 已被覆盖,n 条旧事件丢失(包括可能错过的 Finished 等
@@ -271,13 +306,13 @@ pub async fn events_handler(State(state): State<AppState>, ws: WebSocketUpgrade)
             tokio::select! {
                 recv = rx.recv() => {
                     match recv {
-                        Ok(event) => {
-                            let json = serde_json::to_string(&event).unwrap_or_default();
-                            if json.is_empty() {
+                        Ok(envelope) => {
+                            // 094：workspace 匹配判定（三态真值表见 envelope_matches）
+                            if !ws_broadcast::envelope_matches(conn_workspace, envelope.workspace_id) {
                                 continue;
                             }
                             if ws
-                                .send(axum::extract::ws::Message::Text(json.into()))
+                                .send(axum::extract::ws::Message::Text(envelope.json.as_ref().into()))
                                 .await
                                 .is_err()
                             {
@@ -289,7 +324,7 @@ pub async fn events_handler(State(state): State<AppState>, ws: WebSocketUpgrade)
                                 "[ws-events] client lagged, skipped {} events; resubscribing to skip backlog",
                                 n
                             );
-                            rx = state.tx.subscribe();
+                            rx = state.ws_tx.subscribe();
                         }
                         Err(broadcast::error::RecvError::Closed) => {
                             tracing::info!("[ws-events] broadcast channel closed, closing WebSocket");
@@ -443,6 +478,16 @@ async fn build_app_state(
     let (push_service, push_mutator) = FeishuPushService::new(db.clone(), feishu_listener.clone());
     push_service.start(tx.subscribe());
 
+    // 094：WS 专用 channel + forwarder。容量与 tx 同配置——同一事件洪峰量级，
+    // WS 客户端的 Lagged 容忍度已在 events_handler 用 resubscribe 处理。
+    // config 读守卫与 main.rs 建 tx 时同款（RwLock 读 panic 容忍恢复）。
+    let broadcast_capacity = config
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .broadcast_channel_capacity;
+    let (ws_tx, _) = broadcast::channel(broadcast_capacity);
+    ws_broadcast::spawn_ws_forwarder(&tx, ws_tx.clone());
+
     // feishu_listener 按引用传入避免 clone 整个 Arc；函数内部只 clone 内部字段
     spawn_feishu_history_fetcher(ctx.clone(), db.clone(), &feishu_listener, debounce.clone());
     ensure_default_review_template_blocking(&db);
@@ -477,6 +522,7 @@ async fn build_app_state(
         db,
         executor_registry,
         tx: tx.clone(),
+        ws_tx,
         scheduler,
         task_manager,
         config,
@@ -901,11 +947,14 @@ mod app_state_config_helpers_tests {
         );
 
         let (feishu_push_mutator, _rx2) = broadcast::channel(1);
+        // 094：测试最小态补 ws_tx（forwarder 不启动——测试不依赖事件桥接）
+        let (ws_tx, _rx3) = broadcast::channel(1);
 
         AppState {
             db,
             executor_registry: Arc::new(ExecutorRegistry::default()),
             tx: ctx.tx.clone(),
+            ws_tx,
             scheduler,
             task_manager: ctx.task_manager.clone(),
             config: ctx.config.clone(),

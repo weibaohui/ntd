@@ -138,6 +138,10 @@ type ExecEvent = ExecEventStarted | ExecEventOutput | ExecEventFinished | ExecEv
 
 /** 全局唯一 WebSocket 连接实例 */
 let sharedWs: WebSocket | null = null;
+/** 094：当前连接声明的 workspace。null = 未声明（服务端全推，兼容旧行为）。
+ *  模块级记忆的原因：onclose 自动重连不在 React effect 内，拿不到最新 state，
+ *  必须沿用它——保证「重连不改变订阅范围」。 */
+let sharedWorkspaceId: number | null = null;
 /** 断线重连定时器 */
 let sharedReconnectTimer: ReturnType<typeof setTimeout> | null = null;
 /** 重连尝试次数（指数退避） */
@@ -172,7 +176,10 @@ function connectShared(dispatch: ReturnType<typeof useApp>['dispatch']) {
   if (sharedWs) return;
 
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const ws = new WebSocket(`${protocol}//${window.location.host}/api/events`);
+  // 094：声明 workspace 订阅范围，服务端按 workspace 过滤事件（预序列化 + 隔离）；
+  // null 时不带参数——服务端视为未声明，保持全推兼容口
+  const wsParam = sharedWorkspaceId != null ? `?workspace_id=${sharedWorkspaceId}` : '';
+  const ws = new WebSocket(`${protocol}//${window.location.host}/api/events${wsParam}`);
   sharedWs = ws;
 
   ws.onopen = () => {
@@ -418,7 +425,9 @@ function flushOutputBuffer() {
  * @param onRefresh - 可选的回调，每次收到 WS 事件时触发（用于面板刷新等用途）
  */
 export function useExecutionEvents(onRefresh?: () => void) {
-  const { dispatch } = useApp();
+  const { state, dispatch } = useApp();
+  // 094：订阅范围跟随全局 workspace 选择态
+  const selectedWorkspace = state.selectedWorkspace;
 
   // 用 ref 持有 onRefresh，使其始终指向最新值但不触发 effect 重新执行
   const onRefreshRef = useRef(onRefresh);
@@ -430,6 +439,10 @@ export function useExecutionEvents(onRefresh?: () => void) {
     if (!sharedDispatch) {
       sharedDispatch = dispatch;
     }
+
+    // 094：首连前同步订阅范围——初始挂载时把当前 workspace 写入模块级记忆，
+    // connectShared 建连时读取（此后 onclose 自动重连沿用同一范围）
+    sharedWorkspaceId = selectedWorkspace;
 
     // 递增调用方计数，把 ref 推入数组（后续触发时读 ref.current 总能拿到最新回调）
     sharedInstanceCount += 1;
@@ -451,9 +464,31 @@ export function useExecutionEvents(onRefresh?: () => void) {
       if (sharedInstanceCount <= 0) {
         teardownShared();
         sharedDispatch = null;
+        // 094：卸载复位订阅范围，下次挂载不受残留值影响
+        sharedWorkspaceId = null;
       }
     };
-    // dispatch 引用稳定（useCallback），不会导致 effect 重跑。
+    // dispatch 引用稳定（useCallback），不会导致 effect 重跑；
+    // selectedWorkspace 的响应式处理在下方独立 effect（避免首连/重连双重触发）。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 094：workspace 切换 → 重建 WS 连接（订阅范围随连接参数生效，只能重连切换）。
+  // 跳过首次运行：首连已在上方 effect 内带参建立，此处重复会多一次无谓断连。
+  const prevWorkspaceRef = useRef(selectedWorkspace);
+  useEffect(() => {
+    if (prevWorkspaceRef.current === selectedWorkspace) return;
+    prevWorkspaceRef.current = selectedWorkspace;
+    // 无活跃连接时只更新记忆（下一个调用方挂载时会用新范围建连）
+    sharedWorkspaceId = selectedWorkspace;
+    if (!sharedWs) return;
+    // teardown 会把 sharedShouldReconnect 置 false（语义是「不再续命」），
+    // 而切换场景需要「断旧连新」，故重置之；计数清零让新连接跳过退避立即建立
+    teardownShared();
+    sharedShouldReconnect = true;
+    sharedReconnectAttempt = 0;
+    if (sharedDispatch) connectShared(sharedDispatch);
+    // selectedWorkspace 每次真实变化都需要重连；teardown/connect 均为模块级稳定函数
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedWorkspace]);
 }
