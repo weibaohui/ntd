@@ -25,8 +25,11 @@ pub struct StepAgentEvent {
     pub event_type: String,
     #[serde(default)]
     pub timestamp: Option<u64>,
-    /// 顶层 session id：kilo 系 JSON 键恒为 `sessionID`，保持 rename 即可四家通用
-    #[serde(default, rename = "sessionID")]
+    /// 顶层 session id：kilo 系 JSON 键恒为 `sessionID`。
+    /// 用 alias 而非 rename（CodeRabbit #1008 评审）：与下方 StepAgentPart.session_id
+    /// 的容错范围对齐——两种键名都收，避免某 flavor 未来顶层发 snake_case 时
+    /// 字段静默落 None（反序列化不会报错，最难排查的一类漂移）。
+    #[serde(default, alias = "sessionID")]
     pub session_id: Option<String>,
     #[serde(default)]
     pub part: Option<StepAgentPart>,
@@ -106,6 +109,10 @@ impl StepAgentToolInput {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct StepAgentTokens {
+    // total/input/output 必填是刻意设计：与合并前四家旧事件结构体逐字对齐
+    // （zhanlu/kilo/opencode/mimo 的 Tokens 均如此）。若放宽为 default=0，
+    // 缺 usage 的 step_finish 将从「解析失败丢事件」变成「成功置位 + 零值统计」，
+    // 破坏 NTD-012 的成败判定语义——该容错方向须在确认真实协议形态后单开变更。
     pub total: u64,
     pub input: u64,
     pub output: u64,
@@ -146,6 +153,18 @@ mod tests {
         let event: StepAgentEvent = serde_json::from_str(json).unwrap();
         assert_eq!(event.event_type, "step-start");
         assert_eq!(event.session_id, Some("ses_abc123".to_string()));
+    }
+
+    /// 顶层 session_id 双键名容错（CodeRabbit #1008 评审项）：
+    /// alias 后 snake_case `session_id` 与 camelCase `sessionID` 均应落入同一字段
+    #[test]
+    fn test_step_event_top_level_session_id_accepts_snake_case() {
+        let snake = r#"{"type":"step_start","session_id":"ses_snake"}"#;
+        let camel = r#"{"type":"step_start","sessionID":"ses_camel"}"#;
+        let snake_ev: StepAgentEvent = serde_json::from_str(snake).unwrap();
+        let camel_ev: StepAgentEvent = serde_json::from_str(camel).unwrap();
+        assert_eq!(snake_ev.session_id, Some("ses_snake".to_string()), "snake_case 键应经 alias 落入");
+        assert_eq!(camel_ev.session_id, Some("ses_camel".to_string()), "camelCase 键保持兼容");
     }
 
     /// step_finish part 的 tokens/cost 完整解析（usage 提取链路的上游）

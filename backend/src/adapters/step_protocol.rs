@@ -371,7 +371,7 @@ mod tests {
 
     /// 连字符式事件名：kilo 系接受，mimo 拒绝（差异矩阵第 1 格）
     #[test]
-    fn test_hyphenated_events_acceptance_matrix() {
+    fn test_parse_output_line_hyphenated_events_matrix() {
         let line = r#"{"type":"step-start","timestamp":1700000000000,"sessionID":"ses_x"}"#;
         for exec in [
             StepProtocolExecutor::kilo("kilo".into()),
@@ -416,7 +416,7 @@ mod tests {
 
     /// reasoning：仅 mimo 路由到 thinking 日志；kilo 系视为未知事件（差异矩阵第 2 格）
     #[test]
-    fn test_reasoning_only_for_mimo() {
+    fn test_parse_output_line_reasoning_only_for_mimo() {
         let line = r#"{"type":"reasoning","timestamp":1700000000000,"part":{"type":"reasoning","text":"thinking..."}}"#;
         let mimo_entry = StepProtocolExecutor::mimo("mimo".into()).parse_output_line(line).unwrap();
         assert_eq!(mimo_entry.log_type, "thinking");
@@ -498,7 +498,7 @@ mod tests {
 
     /// session_id：顶层字段提取并缓存；无 sid 的行回退缓存值
     #[test]
-    fn test_session_id_extract_and_cache_fallback() {
+    fn test_extract_session_id_cache_fallback() {
         let exec = StepProtocolExecutor::kilo("kilo".into());
         let sid = exec.extract_session_id(r#"{"type":"step-start","sessionID":"sess_abc"}"#);
         assert_eq!(sid, Some("sess_abc".to_string()));

@@ -126,6 +126,42 @@ pub(crate) enum RunOutcome {
     Completed(std::io::Result<std::process::ExitStatus>),
 }
 
+/// 093-B3：执行终态结果三元组。
+/// success / exit_code / result_str 在 finalize_normal_completion、
+/// emit_completion_events 等函数间总是结伴出现（Data Clump 坏味道），
+/// 聚合成一个对象后 19 参/15 参签名才能塌缩。
+pub(crate) struct CompletionOutcome {
+    /// 终态成败：来自 check_success（exit_code + step_finish 事件回授的综合判定），
+    /// 决定 record 状态写 success 还是 failed
+    pub success: bool,
+    /// 原始退出码：与 success 分开保留——非零退出码也可能判成功（NTD-012 语义），
+    /// 事件载荷与日志需要原值而非折算后的布尔
+    pub exit_code: i32,
+    /// 最终输出文本：finalize 阶段从日志链提取，emit_completion_events 直接消费；
+    /// String 而非 &str：outcome 跨 await 点存活，借用会拉长调用栈生命周期
+    pub result_str: String,
+}
+
+/// 093-B3：select! 终态后 kill + drain 所需的进程句柄簇。
+/// 这 5 个句柄在三个终态分支间原样传递（child 引用 + 4 个 owned handle），
+/// 聚合成一个对象后 run_cancellation_path / run_timeout_path 才能从 17 参塌缩到 2 参。
+/// 生命周期注解：child 是可变借用（kill_process_tree 需要 &mut），其余 handle 随结构 move。
+pub(crate) struct ProcessTeardown<'a> {
+    /// 子进程组句柄：终态分支要调 kill_process_tree，必须是可变借用；
+    /// 借用而非 move：kill 后调用方可能还需读 exit 状态
+    pub child: &'a mut command_group::AsyncGroupChild,
+    /// stdout 读取任务：终态时需 drain（await 其结束）防日志截断；
+    /// Option 包容「stdout 未开启」的执行器形态
+    pub stdout_task: Option<tokio::task::JoinHandle<()>>,
+    /// stderr 读取任务：同 stdout 的 drain 语义
+    pub stderr_task: Option<tokio::task::JoinHandle<()>>,
+    /// 日志冲刷器：drain 后调 finalize 把残余 buffer 一次性入库
+    /// （issue #653：之后不得再重复插全量日志）
+    pub log_flusher: Arc<crate::log_flusher::LogFlusher>,
+    /// 周期冲刷定时器：终态必须 abort，否则持有 flusher 引用泄漏到进程结束后
+    pub flush_timer: tokio::task::JoinHandle<()>,
+}
+
 /// Stage 1 步骤 1：在 `request` 上做 message 占位符替换，并返回替换后的 message。
 pub(crate) struct SubstitutedContext {
     pub message: String,
