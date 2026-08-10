@@ -86,6 +86,12 @@ vergen-gitcl = "1"
 # - 不开 `print_stdout` / `print_stderr` —— daemon CLI 子命令本来就需要
 #   打 stdout/stderr 让用户看状态
 
+# 093 性能类：依赖包 1 级优化——dev 模式的运行时性能（测试执行速度、dev 实例响应）
+# 显著好于全零优化；本 crate 保持 opt-level=0，增量迭代编译速度不受影响。
+# 代价：依赖变更后首次全量重编略慢（一次性）；panic 栈可读性略降（部分内联）。
+[profile.dev.package."*"]
+opt-level = 1
+
 [profile.release]
 lto = true
 codegen-units = 1
