@@ -1064,48 +1064,20 @@ fn parse_for_direct_stream(
     pipeline: &mut EventPipeline,
     line: &str,
 ) -> Vec<ParsedLogEntry> {
-    let line_trimmed = line.trim();
-    if line_trimmed.is_empty() {
-        return Vec::new();
-    }
-    let len_before = pipeline.len();
-    pipeline.feed(line_trimmed);
-    let new_events: Vec<&crate::execution_events::ExecutionEvent> = pipeline.events()[len_before..].iter().collect();
-    if new_events.is_empty() {
-        return Vec::new();
-    }
+    // 093-B2：feed 骨架收口到 pipeline.feed_stdout_new；
+    // 收集侧过滤规则收口到 ExecutionEvent::is_direct_stream_worthy。
+    // 注意：本函数的「收集」决定落库面（调用方 result.logs），emit_direct_stream 的
+    // 二次过滤决定私聊发送面——info/error 等落库但不打扰私聊，两层规则不同是
+    // 有意的职责分离（落库面 ⊃ 发送面），非过滤不一致。
+    let new_events = pipeline.feed_stdout_new(line);
     let mut results = Vec::new();
-    for event in &new_events {
-        // 只处理对用户有价值的事件类型（与 emit_direct_stream 的过滤规则一致）
-        match event {
-            crate::execution_events::ExecutionEvent::Info { message } => {
-                if message.starts_with('{') || message.is_empty() {
-                    continue;
-                }
-                let parsed = crate::execution_events::DbLogEntry::from_event_to_parsed_log_entry(event);
-                results.push(parsed);
-            }
-            crate::execution_events::ExecutionEvent::Thinking { .. }
-            | crate::execution_events::ExecutionEvent::ToolCall { .. }
-            | crate::execution_events::ExecutionEvent::ToolResult { .. }
-            | crate::execution_events::ExecutionEvent::Assistant { .. }
-            | crate::execution_events::ExecutionEvent::Result { .. } => {
-                let parsed = crate::execution_events::DbLogEntry::from_event_to_parsed_log_entry(event);
-                results.push(parsed);
-            }
-            // 跳过内部状态事件（与 emit_direct_stream 的过滤规则一致）
-            crate::execution_events::ExecutionEvent::SessionStart { .. }
-            | crate::execution_events::ExecutionEvent::SessionEnd { .. }
-            | crate::execution_events::ExecutionEvent::StepStart { .. }
-            | crate::execution_events::ExecutionEvent::StepFinish { .. }
-            | crate::execution_events::ExecutionEvent::Tokens { .. }
-            | crate::execution_events::ExecutionEvent::Cost { .. }
-            | crate::execution_events::ExecutionEvent::Duration { .. }
-            | crate::execution_events::ExecutionEvent::ModelSwitch { .. }
-            | crate::execution_events::ExecutionEvent::Error { .. }
-            | crate::execution_events::ExecutionEvent::Progress { .. }
-            | crate::execution_events::ExecutionEvent::User { .. }
-            | crate::execution_events::ExecutionEvent::System { .. } => {}
+    for event in new_events {
+        if event.is_direct_stream_worthy() {
+            // 事件 → 扁平日志条目的转换在此完成（而非调用方）：
+            // tool_input_json 等元数据的打包口径全仓唯一（DbLogEntry），
+            // 调用方拿到即可直接落库/发送，不再各自拼装
+            let parsed = crate::execution_events::DbLogEntry::from_event_to_parsed_log_entry(event);
+            results.push(parsed);
         }
     }
     results
