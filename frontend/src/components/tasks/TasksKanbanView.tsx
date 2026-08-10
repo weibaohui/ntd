@@ -24,6 +24,8 @@ import {
   laneOfTask,
   statusColor,
 } from '@/components/tasks/constants';
+// NTD-013 / CodeRabbit Opinion 2：执行方式徽标 + 工艺/委派信息 Tag 收口到共享组件，三视图共用防漂移。
+import { ExecutionModeBadge, TaskExecutionInfoTag } from '@/components/tasks/TaskExecutionTags';
 
 const { Text } = Typography;
 
@@ -112,11 +114,9 @@ const KanbanTaskCard = memo(function KanbanTaskCard({
             {complexityLabel(task.complexity)}
           </Tag>
         )}
-        {/* NTD-013：与 Table/Card 同口径，加环路/委派类型徽标。
+        {/* NTD-013：与 Table/Card 同口径，加环路/委派类型徽标（共享组件）。
             看板卡片未展示主状态 Tag，徽标紧跟复杂度 Tag，一眼区分任务类型。 */}
-        <Text type="secondary" style={{ fontSize: 10 }}>
-          {task.execution_mode === 'delegate' ? '委派' : '环路'}
-        </Text>
+        <ExecutionModeBadge mode={task.execution_mode} />
         {/* 063：待审批标记放头部行，卡片在未展开的看板里也能一眼看到；点击直达执行历史。 */}
         <PendingApprovalTag
           count={task.pending_approval_count ?? 0}
@@ -146,26 +146,17 @@ const KanbanTaskCard = memo(function KanbanTaskCard({
       >
         {task.title}
       </div>
-      {/* NTD-013：工艺/委派信息 Tag（与 Card 同口径）：
-          - 委派模式：蓝色委派信息 Tag；
-          - 环路模式：若有工艺名，显示灰色工艺名 Tag（简洁，避免三段式在看板卡片过拥挤）。 */}
-      {task.execution_mode === 'delegate' ? (
-        (() => {
-          const kindLabel = task.assignee_kind === 'expert' ? '专家' : '执行器';
-          const name = task.assignee_name?.trim() || '未知处理人';
-          // 文案与 Table/Card 同口径：统一「委派给：… 🚀自动接力」（NTD-013 规范轴 c.1）。
-          const suffix = task.auto_continue ? ' 🚀自动接力' : '';
-          return (
-            <Tag color="blue" style={{ fontSize: 11, margin: '0 0 6px 0' }}>
-              {`委派给：${name}（${kindLabel}）${suffix}`}
-            </Tag>
-          );
-        })()
-      ) : (
-        task.template_name && (
-          <Tag style={{ fontSize: 11, margin: '0 0 6px 0' }}>{task.template_name}</Tag>
-        )
-      )}
+      {/* NTD-013：委派信息 Tag 走共享组件（防文案漂移）；环路分支卡片只显示工艺名（避免拥挤）。
+          delegateStyle 控制委派 Tag 在看板卡片的字号/外边距。 */}
+      <TaskExecutionInfoTag
+        task={task}
+        delegateStyle={{ fontSize: 11, margin: '0 0 6px 0' }}
+        loopTag={
+          task.template_name ? (
+            <Tag style={{ fontSize: 11, margin: '0 0 6px 0' }}>{task.template_name}</Tag>
+          ) : undefined
+        }
+      />
       {/* 最近执行状态 */}
       {task.latest_execution_status && (
         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
