@@ -187,3 +187,72 @@ WikiChatFinished {
     duration_secs: i64,
 },
 }
+
+impl ExecEvent {
+    /// 094：事件的 workspace 作用域，供 WS 广播按连接声明过滤。
+    ///
+    /// 三态区分的动机（CodeRabbit #1011 评审）：`Option<i64>` 把「未归属」与「全局」
+    /// 混在一个 None 里，且 DB 层 `workspace_id=0` 是「未分配工作空间」的哨兵值
+    /// （loop_runner.rs 的既有约定：Some(0) 与 None 语义等价），必须显式区分：
+    /// - `Workspace(N)`（N>0）：归属确定 workspace，仅推给声明该 workspace 的连接；
+    /// - `Unscoped`：未归属任务/loop（None 或 Some(0)）——不推给任何带参连接，
+    ///   与 todo 列表的 workspace 过滤语义对齐（未归属在任何 workspace 视图均不显示）；
+    /// - `Global`：无 workspace 概念的全局事件（Sync/ReviewStatusChanged），全推。
+    pub fn event_scope(&self) -> EventScope {
+        match self {
+            // 生命周期组：Option<i64> 字段——None 与 Some(0) 经 scope_from_optional 归一为
+            // Unscoped（DB 层 0 是「未分配」哨兵，见 loop_runner.rs 的等价约定）
+            ExecEvent::Started { workspace_id, .. }
+            | ExecEvent::Output { workspace_id, .. }
+            | ExecEvent::Finished { workspace_id, .. }
+            | ExecEvent::TodoProgress { workspace_id, .. }
+            | ExecEvent::ExecutionStats { workspace_id, .. }
+            | ExecEvent::LoopFinished { workspace_id, .. } => scope_from_optional(*workspace_id),
+            // 黑板/WikiChat 组：i64 必填字段——0 同样按未归属哨兵处理
+            ExecEvent::BlackboardDebounceStatus { workspace_id, .. }
+            | ExecEvent::WikiChatStarted { workspace_id, .. }
+            | ExecEvent::WikiChatOutput { workspace_id, .. }
+            | ExecEvent::WikiChatFinished { workspace_id, .. } => scope_from_optional(Some(*workspace_id)),
+            // 全局组：无 workspace 概念
+            ExecEvent::Sync { .. } | ExecEvent::ReviewStatusChanged { .. } => EventScope::Global,
+            // 飞书专用组：在 forwarder 已被 is_feishu_direct 拦截，Global 仅为防御兜底
+            ExecEvent::DirectCardMessage { .. } | ExecEvent::DirectStreamMessage { .. } => {
+                EventScope::Global
+            }
+        }
+    }
+
+    /// 094：飞书专用定向事件判定。这类事件只服务 FeishuPushService 的 bot 定向发送，
+    /// 前端 WS 客户端无对应消费分支——forwarder 据此拦截，不再推入 WS channel
+    /// （消除带宽浪费，也让「WS 消息 = 前端可消费消息」的语义单一化）。
+    pub fn is_feishu_direct(&self) -> bool {
+        matches!(
+            self,
+            ExecEvent::DirectCardMessage { .. } | ExecEvent::DirectStreamMessage { .. }
+        )
+    }
+}
+
+/// 094：事件作用域三态（见 `ExecEvent::event_scope` doc）。
+/// Copy/Eq 供匹配判定零成本使用。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EventScope {
+    /// 无 workspace 概念的全局事件：全量转发
+    Global,
+    /// 归属确定 workspace（N>0）：仅推给声明该 workspace 的连接
+    Workspace(i64),
+    /// 未归属（workspace_id 为 None 或哨兵 0）：不推给任何带参连接
+    Unscoped,
+}
+
+/// Option<i64> workspace_id → EventScope 的归一化：
+/// None 与 Some(0) 都是「未分配工作空间」（loop_runner.rs 既有约定），统一为 Unscoped；
+/// 只有 Some(N>0) 才是真正的 workspace 归属。
+/// pub(crate)：handlers 的 Sync 握手过滤（sync_task_visible）复用同一归一口径。
+pub(crate) fn scope_from_optional(workspace_id: Option<i64>) -> EventScope {
+    match workspace_id {
+        // 仅 Some(N>0) 算真实归属——Some(0) 落到下一臂（哨兵语义见 fn doc）
+        Some(id) if id > 0 => EventScope::Workspace(id),
+        _ => EventScope::Unscoped,
+    }
+}

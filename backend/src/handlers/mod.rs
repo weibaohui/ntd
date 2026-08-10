@@ -27,6 +27,10 @@ pub struct AppState {
     pub db: Arc<Database>,
     pub executor_registry: Arc<ExecutorRegistry>,
     pub tx: broadcast::Sender<ExecEvent>,
+    /// 094：WS 专用广播 channel（预序列化信封）。与 tx 的关系：tx 是事件总线
+    /// （飞书推送等订阅），ws_tx 只服务 WS 客户端——forwarder 任务把 tx 的事件
+    /// 过滤飞书专用、预序列化一次后桥接过来，WS 客户端零序列化共享 Arc<str>。
+    pub ws_tx: broadcast::Sender<ws_broadcast::WsEnvelope>,
     pub scheduler: Arc<TodoScheduler>,
     pub task_manager: Arc<TaskManager>,
     /// In-memory copy of the persisted Config. Wrapped in `std::sync::RwLock`
@@ -159,14 +163,48 @@ pub mod tasks;
 pub mod task_posts;
 pub mod quick_button;
 pub mod profiles;
+/// 094：WS 广播通路（预序列化信封 + forwarder），详见模块 doc
+pub mod ws_broadcast;
 /// workspace 归属校验 helper：v1 路由的租户边界守卫（verify_*_belongs_to_ws）。
 /// 所有 workspace-scoped handler 统一调用，避免跨工作空间越权读写。
 pub mod workspace_guard;
 
 // WebSocket handler
-pub async fn events_handler(State(state): State<AppState>, ws: WebSocketUpgrade) -> Response {
-    ws.on_upgrade(|mut ws| async move {
-        let mut rx = state.tx.subscribe();
+// 094：query 参数 workspace_id 声明客户端关注的 workspace——只推该 workspace 事件
+// + 全局事件（Global 作用域）；不带参数的旧客户端全推（兼容口）。
+#[derive(Debug, serde::Deserialize)]
+pub struct EventsQuery {
+    workspace_id: Option<i64>,
+}
+
+/// 094：Sync 握手的任务可见性谓词（抽出为纯函数以便单测，CodeRabbit #1011）。
+///
+/// - `task_record_ws`：任务 execution_record 的 workspace_id（None 外层 = 查不到 record
+///   的异常任务，决策 2a 保守保留——DB 降级时宁多勿漏）；
+/// - 有 record 时按 EventScope 归一后判定：仅 Workspace(conn) 可见——
+///   Unscoped（None/哨兵 0 的未归属任务）对带参连接不可见，与主循环过滤语义一致。
+fn sync_task_visible(task_record_ws: Option<Option<i64>>, conn_ws: i64) -> bool {
+    match task_record_ws {
+        None => true,
+        Some(ws) => matches!(
+            crate::executor_service::events::scope_from_optional(ws),
+            crate::executor_service::EventScope::Workspace(id) if id == conn_ws
+        ),
+    }
+}
+
+pub async fn events_handler(
+    State(state): State<AppState>,
+    ws: WebSocketUpgrade,
+    axum::extract::Query(query): axum::extract::Query<EventsQuery>,
+) -> Response {
+    // conn_workspace 在 upgrade 前落定：闭包 move 进异步任务后 query 已不可达；
+    // 无效参数（非数字）在 Query 抽取阶段即 400 拒绝，不会进入本函数
+    let conn_workspace = query.workspace_id;
+    ws.on_upgrade(move |mut ws| async move {
+        // 094：订阅 WS 专用 channel（预序列化信封），不再订阅原始 ExecEvent channel——
+        // 序列化已在 forwarder 全局做一次，本任务零序列化开销
+        let mut rx = state.ws_tx.subscribe();
 
         // 连接时发送当前实际运行的任务列表
         // 批量获取执行记录，避免 N+1 查询
@@ -187,7 +225,19 @@ pub async fn events_handler(State(state): State<AppState>, ws: WebSocketUpgrade)
             .into_iter()
             .filter_map(|r| r.task_id.clone().map(|tid| (tid, r)))
             .collect();
-        let record_ids: Vec<i64> = record_map.values().map(|r| r.id).collect();
+        // 094：声明了 workspace 的连接，Sync 只回该 workspace 的运行任务；
+        // 谓词语义（含无 record 保守保留、0 哨兵未归属不可见）见 sync_task_visible。
+        if let Some(ws_id) = conn_workspace {
+            running_tasks.retain(|t| {
+                sync_task_visible(record_map.get(&t.task_id).map(|r| r.workspace_id), ws_id)
+            });
+        }
+        // record_ids 从过滤后的 running_tasks 反查：尾部日志/计数两个查询
+        // 也随 Sync 过滤收敛，不为其他 workspace 的任务白跑 SQL
+        let record_ids: Vec<i64> = running_tasks
+            .iter()
+            .filter_map(|t| record_map.get(&t.task_id).map(|r| r.id))
+            .collect();
         // reconnect 时每个任务只回传最近 RECONNECT_LOG_CAP 条日志，避免长跑任务的全量日志
         // 把首帧撑爆（既卡 serde 序列化，也卡 WS 推送）。完整历史前端通过 REST 分页按需拉取（091）。
         const RECONNECT_LOG_CAP: usize = 200;
@@ -249,7 +299,8 @@ pub async fn events_handler(State(state): State<AppState>, ws: WebSocketUpgrade)
                 .await;
         }
 
-        // 循环从 broadcast channel 读取事件并推到 WebSocket。
+        // 循环从 WS 专用 channel 读取预序列化信封并按 workspace 匹配推送（094）。
+        // 序列化已在 forwarder 全局做一次，此处仅 Arc 共享 + 一次 memcpy。
         //
         // 注意 `rx.recv()` 在 channel 容量耗尽时返回 `RecvError::Lagged(n)`:
         // ring buffer 已被覆盖,n 条旧事件丢失(包括可能错过的 Finished 等
@@ -271,13 +322,13 @@ pub async fn events_handler(State(state): State<AppState>, ws: WebSocketUpgrade)
             tokio::select! {
                 recv = rx.recv() => {
                     match recv {
-                        Ok(event) => {
-                            let json = serde_json::to_string(&event).unwrap_or_default();
-                            if json.is_empty() {
+                        Ok(envelope) => {
+                            // 094：作用域匹配判定（Global/Workspace/Unscoped 语义见 envelope_matches）
+                            if !ws_broadcast::envelope_matches(conn_workspace, envelope.scope) {
                                 continue;
                             }
                             if ws
-                                .send(axum::extract::ws::Message::Text(json.into()))
+                                .send(axum::extract::ws::Message::Text(envelope.json.as_ref().into()))
                                 .await
                                 .is_err()
                             {
@@ -289,7 +340,7 @@ pub async fn events_handler(State(state): State<AppState>, ws: WebSocketUpgrade)
                                 "[ws-events] client lagged, skipped {} events; resubscribing to skip backlog",
                                 n
                             );
-                            rx = state.tx.subscribe();
+                            rx = state.ws_tx.subscribe();
                         }
                         Err(broadcast::error::RecvError::Closed) => {
                             tracing::info!("[ws-events] broadcast channel closed, closing WebSocket");
@@ -443,6 +494,16 @@ async fn build_app_state(
     let (push_service, push_mutator) = FeishuPushService::new(db.clone(), feishu_listener.clone());
     push_service.start(tx.subscribe());
 
+    // 094：WS 专用 channel + forwarder。容量与 tx 同配置——同一事件洪峰量级，
+    // WS 客户端的 Lagged 容忍度已在 events_handler 用 resubscribe 处理。
+    // config 读守卫与 main.rs 建 tx 时同款（RwLock 读 panic 容忍恢复）。
+    let broadcast_capacity = config
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .broadcast_channel_capacity;
+    let (ws_tx, _) = broadcast::channel(broadcast_capacity);
+    ws_broadcast::spawn_ws_forwarder(&tx, ws_tx.clone());
+
     // feishu_listener 按引用传入避免 clone 整个 Arc；函数内部只 clone 内部字段
     spawn_feishu_history_fetcher(ctx.clone(), db.clone(), &feishu_listener, debounce.clone());
     ensure_default_review_template_blocking(&db);
@@ -477,6 +538,7 @@ async fn build_app_state(
         db,
         executor_registry,
         tx: tx.clone(),
+        ws_tx,
         scheduler,
         task_manager,
         config,
@@ -870,7 +932,8 @@ mod app_state_config_helpers_tests {
     /// `Database::new` / `TodoScheduler::new` 是 async 的,所以整体包在
     /// `#[tokio::test]` 的 runtime 里。三个被测方法本身是 sync 的,放到
     /// `block_on` 闭包外执行,避免对 runtime 类型造成约束。
-    async fn build_minimal_state_async() -> AppState {
+    // pub(crate)：094 的 events_handler 测试（events_handler_tests 模块）复用本夹具
+    pub(crate) async fn build_minimal_state_async() -> AppState {
         // 内存数据库:不依赖外部文件,跑得快,适合单测。
         let db = Arc::new(crate::db::Database::new(":memory:").await.unwrap());
 
@@ -901,11 +964,14 @@ mod app_state_config_helpers_tests {
         );
 
         let (feishu_push_mutator, _rx2) = broadcast::channel(1);
+        // 094：测试最小态补 ws_tx（forwarder 不启动——测试不依赖事件桥接）
+        let (ws_tx, _rx3) = broadcast::channel(1);
 
         AppState {
             db,
             executor_registry: Arc::new(ExecutorRegistry::default()),
             tx: ctx.tx.clone(),
+            ws_tx,
             scheduler,
             task_manager: ctx.task_manager.clone(),
             config: ctx.config.clone(),
@@ -1201,5 +1267,72 @@ mod create_app_refactor_tests {
             BODY_LINES_BUDGET,
             sig_line,
         );
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
+mod events_handler_tests {
+    //! 094：events_handler 新增分支的覆盖（CodeRabbit #1011 评审项）。
+    //! 实时事件过滤由 ws_broadcast::envelope_matches 单测背书；本模块覆盖
+    //! Sync retain 谓词全分支 + query 参数解析的 HTTP 层行为。
+    use super::app_state_config_helpers_tests::build_minimal_state_async;
+    use super::{events_routes, sync_task_visible};
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    /// sync_task_visible 全分支：record 匹配/跨 workspace/0 哨兵未归属/无 record 保守保留
+    #[test]
+    fn test_events_handler_sync_task_visible_all_branches() {
+        // 有 record 且归属匹配 → 可见
+        assert!(sync_task_visible(Some(Some(1)), 1));
+        // 有 record 跨 workspace → 不可见（隔离核心）
+        assert!(!sync_task_visible(Some(Some(2)), 1));
+        // 有 record 但 workspace_id=0（未归属哨兵）→ 带参连接不可见
+        assert!(!sync_task_visible(Some(Some(0)), 1));
+        // 有 record 但 workspace_id=None（未归属）→ 同样不可见
+        assert!(!sync_task_visible(Some(None), 1));
+        // 无 record 的异常任务 → 保守保留（决策 2a：DB 降级时宁多勿漏）
+        assert!(sync_task_visible(None, 1));
+    }
+
+    /// 无效 workspace_id 查询参数：Query 反序列化拒绝，不得进入 handler（400 而非 500/panic）
+    #[tokio::test]
+    async fn test_events_handler_rejects_invalid_workspace_id() {
+        let state = build_minimal_state_async().await;
+        let app = events_routes().with_state(state);
+        let resp = app
+            .oneshot(Request::builder().uri("/api/events?workspace_id=abc").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        // axum Query 抽取失败 → 400 Bad Request（在 WS upgrade 之前，无连接泄漏）
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    /// 有效参数但无 upgrade 头：不得升级，返回 4xx（WS 握手缺失由 axum 拒绝）
+    #[tokio::test]
+    async fn test_events_handler_without_upgrade_header_not_upgraded() {
+        let state = build_minimal_state_async().await;
+        let app = events_routes().with_state(state);
+        let resp = app
+            .oneshot(Request::builder().uri("/api/events?workspace_id=1").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        // axum 对缺 upgrade 头的 WS 路由返回 426 Upgrade Required（或 400）——
+        // 不断言具体码位（axum 版本相关），只锁「非 2xx 且非 500」契约
+        assert!(resp.status().is_client_error(), "got: {}", resp.status());
+    }
+
+    /// 无参数连接（兼容口）：query 缺失同样不得 panic，无 upgrade 头返回 4xx
+    #[tokio::test]
+    async fn test_events_handler_without_query_param_accepted() {
+        let state = build_minimal_state_async().await;
+        let app = events_routes().with_state(state);
+        let resp = app
+            .oneshot(Request::builder().uri("/api/events").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert!(resp.status().is_client_error(), "got: {}", resp.status());
     }
 }
