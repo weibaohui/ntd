@@ -160,6 +160,10 @@ impl Database {
     /// 定位：`source_execution_id = record_id`（一条执行只对应一条占位帖）。
     /// 找不到（帖子已被删）则静默返回 0，不影响执行本身的成功落定。
     /// `success` 决定 status；`result` 写入正文；`executor` 仅在原帖缺执行器时补。
+    ///
+    /// NTD-013：除了更新占位帖，还要同步把所属任务（task_posts.task_id → tasks.id）
+    /// 的 tasks.status 更新为同一终态。此前只更了帖子，没更任务主状态，导致委派任务的
+    /// 列表「状态」列永远停留在 pending/running，与实际执行结果不同步。
     pub async fn finalize_discussion_post(
         &self,
         record_id: i64,
@@ -172,7 +176,17 @@ impl Database {
             .one(&self.conn)
             .await?;
         let Some(post) = post else { return Ok(0); };
-        // 回写前先记下载体 todo id，update 会消费 post（into），之后用不到原值了。
+        // 幂等守卫（NTD-013 / CodeRabbit Opinion 1）：占位帖已处于终态(success/failed)说明本次
+        // finalize 是「重复或迟到」事件——同一条执行记录的真正结局早在首轮回写时落定(completion 与
+        // compensate_finished_execution 都按 execution_records 的真实状态调用，不会对同一记录给出
+        // 相反成败)。若迟到事件照常回写，会把 task.status 从「下一轮接力刚设回的 running」错误覆盖
+        // 回上一轮终态（接力竞态：列表显示 success，实际第 2 轮正运行中）。故已终态直接幂等返回 0，
+        // 不触碰帖子正文 / task.status / 载体软删——首轮回写已完成全部副作用，二次事件无须再写。
+        if post.status == STATUS_SUCCESS || post.status == STATUS_FAILED {
+            return Ok(0);
+        }
+        // 回写前先记下 task_id 与载体 todo_id：update 会消费 post（into），之后取不到。
+        let task_id = post.task_id;
         let carrier_todo_id = post.source_todo_id;
         let status = if success { STATUS_SUCCESS } else { STATUS_FAILED };
         // 执行可能无文本输出（如失败时 stderr 未被当作 result），
@@ -195,6 +209,12 @@ impl Database {
         }
         am.updated_at = ActiveValue::Set(Some(utc_timestamp()));
         am.update(&self.conn).await?;
+        // NTD-013：同步所属 task 的主状态，保持列表「状态」列与执行结果一致。
+        // 失败仅记 warn 不阻塞：状态不同步是展示性问题，不应反过来打断执行落定主流程
+        // （与 handlers/task_posts.rs spawn_relay_execution 的同口径处理一致）。
+        if let Err(e) = self.update_task_status(task_id, status).await {
+            tracing::warn!(error = %e, task_id, "finalize sync task.status failed");
+        }
         // 软删载体 todo：执行已结束，让所有 deleted_at IS NULL 查询兜底排除它，
         // 避免讨论载体 Todo 残留在事项中心 / 列表 / 计数里（执行记录不受影响，仍可跳转）。
         if let Some(tid) = carrier_todo_id {
@@ -494,10 +514,17 @@ mod tests {
             .unwrap_or(None);
         assert!(deleted_at.is_some(), "载体 todo 应已软删");
 
-        // 失败分支：再 finalize 一次（同 record）会把状态改成 failed。
-        db.finalize_discussion_post(12345, false, "失败原因", None).await.expect("finalize failed");
+        // 幂等守卫（NTD-013 / CodeRabbit Opinion 1）：同 record 再 finalize（即便带相反成败）
+        // 应被守卫拦截——生产中一条记录只 finalize 一次，completion 与 compensate 给出相同成败；
+        // 这里用相反值反向验证守卫对「迟到/重复」事件的防御。返回 0、状态/正文保持首次落定值。
+        let n2 = db
+            .finalize_discussion_post(12345, false, "迟到事件", None)
+            .await
+            .expect("finalize again");
+        assert_eq!(n2, 0, "已终态帖子二次 finalize 应幂等返回 0");
         let updated2 = db.get_task_post(post.id).await.expect("get").expect("exists");
-        assert_eq!(updated2.status, STATUS_FAILED);
+        assert_eq!(updated2.status, STATUS_SUCCESS, "幂等跳过不改写已落定的 success");
+        assert_eq!(updated2.content, "结论：可行", "幂等跳过不改写已落定的正文");
     }
 
     /// finalize 找不到对应执行记录时静默返回 0（帖子已被删的兜底）。
@@ -509,8 +536,117 @@ mod tests {
     }
 
     /// finalize 在结果为空（成功无结论 / 失败无输出）时用兜底文案，避免回写空帖。
+    /// 用两条不同执行记录分别走「成功空」「失败空」，避免同 record 二次 finalize 被幂等守卫拦截。
     #[tokio::test]
     async fn test_finalize_discussion_post_empty_result_fallback() {
+        let db = fresh_db().await;
+        let task_id = seed_task(&db).await;
+
+        // 成功但无文本结论 → 兜底文案 + success（record 778）。
+        let post_ok = db
+            .create_task_post(NewPost {
+                task_id,
+                parent_post_id: None,
+                kind: KIND_AGENT,
+                author_name: "codex",
+                executor: Some("codex"),
+                expert_name: None,
+                content: "codex 正在干活…",
+                mentions_json: "[]",
+                status: STATUS_RUNNING,
+                source_execution_id: Some(778),
+                source_todo_id: None,
+            })
+            .await
+            .expect("create success placeholder");
+        db.finalize_discussion_post(778, true, "", None).await.expect("finalize");
+        let p = db.get_task_post(post_ok.id).await.expect("get").expect("exists");
+        assert_eq!(p.status, STATUS_SUCCESS);
+        assert!(!p.content.is_empty(), "成功空结果应有兜底文案");
+
+        // 失败且无输出 → 兜底文案 + failed（record 779，另一条独立占位帖）。
+        let post_fail = db
+            .create_task_post(NewPost {
+                task_id,
+                parent_post_id: None,
+                kind: KIND_AGENT,
+                author_name: "codex",
+                executor: Some("codex"),
+                expert_name: None,
+                content: "codex 正在干活…",
+                mentions_json: "[]",
+                status: STATUS_RUNNING,
+                source_execution_id: Some(779),
+                source_todo_id: None,
+            })
+            .await
+            .expect("create failed placeholder");
+        db.finalize_discussion_post(779, false, "   ", None).await.expect("finalize");
+        let p2 = db.get_task_post(post_fail.id).await.expect("get").expect("exists");
+        assert_eq!(p2.status, STATUS_FAILED);
+        assert!(!p2.content.is_empty(), "失败空结果应有兜底文案");
+    }
+
+    /// NTD-013：finalize 回写结论时，同步把所属 task 的主状态更新为同一终态，
+    /// 否则委派任务列表「状态」列永远停留在初始态，与实际执行结果不同步。
+    /// 用两条不同执行记录分别走 success / failed，避免「同 record 二次 finalize」被幂等守卫拦截
+    /// （生产中一条记录只 finalize 一次，success/failed 不会发生在同一条记录上）。
+    #[tokio::test]
+    async fn test_finalize_discussion_post_syncs_task_status() {
+        let db = fresh_db().await;
+        let task_id = seed_task(&db).await;
+        // 成功记录 88888：占位帖 running，finalize success → task.status=success。
+        db.create_task_post(NewPost {
+            task_id,
+            parent_post_id: None,
+            kind: KIND_AGENT,
+            author_name: "codex",
+            executor: Some("codex"),
+            expert_name: None,
+            content: "codex 正在干活…",
+            mentions_json: "[]",
+            status: STATUS_RUNNING,
+            source_execution_id: Some(88888),
+            source_todo_id: None,
+        })
+        .await
+        .expect("create success placeholder");
+
+        db.finalize_discussion_post(88888, true, "结论：可行", None)
+            .await
+            .expect("finalize success");
+        let task = db.get_task(task_id).await.expect("get task").expect("task exists");
+        assert_eq!(task.status, STATUS_SUCCESS, "成功回写应同步 task.status=success");
+
+        // 失败记录 88889：另一条独立占位帖，finalize failed → task.status=failed。
+        db.create_task_post(NewPost {
+            task_id,
+            parent_post_id: None,
+            kind: KIND_AGENT,
+            author_name: "codex",
+            executor: Some("codex"),
+            expert_name: None,
+            content: "codex 正在干活…",
+            mentions_json: "[]",
+            status: STATUS_RUNNING,
+            source_execution_id: Some(88889),
+            source_todo_id: None,
+        })
+        .await
+        .expect("create failed placeholder");
+
+        db.finalize_discussion_post(88889, false, "失败原因", None)
+            .await
+            .expect("finalize failed");
+        let task2 = db.get_task(task_id).await.expect("get task").expect("task exists");
+        assert_eq!(task2.status, STATUS_FAILED, "失败回写应同步 task.status=failed");
+    }
+
+    /// 幂等（CodeRabbit Opinion 1 - 重复落定）：同一条执行记录被 finalize 两次
+    /// （completion 回调 + compensate_finished_execution 竞态补偿可能都触发，但成败值一致），
+    /// 第二次必须是无副作用幂等返回 0：帖子状态/正文不变，不再二次软删载体、不再触碰 task.status。
+    #[tokio::test]
+    async fn test_finalize_discussion_post_idempotent_on_duplicate() {
         let db = fresh_db().await;
         let task_id = seed_task(&db).await;
         let post = db
@@ -524,23 +660,90 @@ mod tests {
                 content: "codex 正在干活…",
                 mentions_json: "[]",
                 status: STATUS_RUNNING,
-                source_execution_id: Some(777),
+                source_execution_id: Some(666),
                 source_todo_id: None,
             })
             .await
             .expect("create placeholder");
 
-        // 成功但无文本结论 → 兜底文案 + success。
-        db.finalize_discussion_post(777, true, "", None).await.expect("finalize");
-        let p = db.get_task_post(post.id).await.expect("get").expect("exists");
-        assert_eq!(p.status, STATUS_SUCCESS);
-        assert!(!p.content.is_empty(), "空结果应有兜底文案");
+        // 首次 finalize（success）正常落定，返回 1，正文/状态写入。
+        let n1 = db
+            .finalize_discussion_post(666, true, "结论", None)
+            .await
+            .expect("first finalize");
+        assert_eq!(n1, 1);
+        let after1 = db.get_task_post(post.id).await.unwrap().unwrap();
+        assert_eq!(after1.status, STATUS_SUCCESS);
+        assert_eq!(after1.content, "结论");
 
-        // 失败且无输出 → 兜底文案 + failed。
-        db.finalize_discussion_post(777, false, "   ", None).await.expect("finalize");
-        let p2 = db.get_task_post(post.id).await.expect("get").expect("exists");
-        assert_eq!(p2.status, STATUS_FAILED);
-        assert!(!p2.content.is_empty(), "空结果应有兜底文案");
+        // 二次 finalize（同 record、同 success）应被幂等守卫拦截：返回 0，状态/正文保持不变。
+        let n2 = db
+            .finalize_discussion_post(666, true, "迟到的同一结论", None)
+            .await
+            .expect("second finalize");
+        assert_eq!(n2, 0, "已终态二次 finalize 幂等返回 0");
+        let after2 = db.get_task_post(post.id).await.unwrap().unwrap();
+        assert_eq!(after2.status, STATUS_SUCCESS, "幂等跳过不改写状态");
+        assert_eq!(after2.content, "结论", "幂等跳过不改写正文");
+    }
+
+    /// 接力竞态（CodeRabbit Opinion 1 - 迟到事件覆盖新 running）：复现生产时序——
+    ///   1) 第 1 轮执行(record 111)完成 → finalize 把 task.status 设为 success；
+    ///   2) 接力(spawn_relay_execution)启动第 2 轮，把 task.status 设回 running；
+    ///   3) 第 1 轮的一条「迟到/重复」finalize 事件到达(record 111 已终态)。
+    /// 守卫必须拦截 3)，否则 task.status 被错误覆盖回 success，列表与实际「第 2 轮运行中」不同步。
+    #[tokio::test]
+    async fn test_finalize_discussion_post_stale_does_not_clobber_running_handoff() {
+        let db = fresh_db().await;
+        let task_id = seed_task(&db).await;
+        // 第 1 轮占位帖（record 111），running。
+        db.create_task_post(NewPost {
+            task_id,
+            parent_post_id: None,
+            kind: KIND_AGENT,
+            author_name: "codex",
+            executor: Some("codex"),
+            expert_name: None,
+            content: "第1轮 正在干活…",
+            mentions_json: "[]",
+            status: STATUS_RUNNING,
+            source_execution_id: Some(111),
+            source_todo_id: None,
+        })
+        .await
+        .expect("create round-1 placeholder");
+
+        // 1) 第 1 轮成功完成 → 占位帖 111 落定，task.status=success。
+        db.finalize_discussion_post(111, true, "第1轮结论", None)
+            .await
+            .expect("round-1 finalize");
+        assert_eq!(
+            db.get_task(task_id).await.unwrap().unwrap().status,
+            STATUS_SUCCESS
+        );
+
+        // 2) 接力启动第 2 轮 → spawn_relay_execution 把 task.status 设回 running。
+        db.update_task_status(task_id, STATUS_RUNNING)
+            .await
+            .expect("relay set running");
+        assert_eq!(
+            db.get_task(task_id).await.unwrap().unwrap().status,
+            STATUS_RUNNING,
+            "接力后 task 应回到 running"
+        );
+
+        // 3) 第 1 轮的迟到 finalize 事件到达（record 111 仍是其归属）。
+        //    守卫必须幂等跳过：返回 0，task.status 保持 running，不被覆盖回 success。
+        let n_stale = db
+            .finalize_discussion_post(111, true, "迟到的第1轮结论", None)
+            .await
+            .expect("stale finalize");
+        assert_eq!(n_stale, 0, "迟到事件应被幂等守卫拦截");
+        assert_eq!(
+            db.get_task(task_id).await.unwrap().unwrap().status,
+            STATUS_RUNNING,
+            "接力 running 状态不应被迟到事件覆盖"
+        );
     }
 
     /// create_discussion_todo 应把载体标记为 todo_type=4 并写入 expert_name。
