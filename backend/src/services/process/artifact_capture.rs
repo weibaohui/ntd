@@ -297,9 +297,16 @@ fn extract_after_marker(text: &str, marker: &str) -> Option<String> {
 
 /// 用简单正则提取第一个 http/https URL。
 fn extract_first_url(text: &str) -> Option<String> {
-    // 简易 URL 正则：http(s):// 后跟非空白字符，直到遇到引号、括号或空白。
-    let re = regex::Regex::new(r#"https?://[^\s"'()\]\}>]+"#).ok()?;
-    re.find(text).map(|m| m.as_str().to_string())
+    use std::sync::LazyLock;
+    // 095-3：LazyLock 进程级一次编译，替代每次调用现编译（同款范式见
+    // adapters/mod.rs THINK_RE）。正则模式是编译期常量，unwrap 不可达；
+    // 原实现的 `.ok()?` 在 LazyLock 下无意义（失败即进程不可用，panic 更诚实）。
+    static URL_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+        #[allow(clippy::unwrap_used)]
+        // 简易 URL 正则：http(s):// 后跟非空白字符，直到遇到引号、括号或空白。
+        regex::Regex::new(r#"https?://[^\s"'()\]\}>]+"#).unwrap()
+    });
+    URL_RE.find(text).map(|m| m.as_str().to_string())
 }
 
 /// 从文本中提取 ```json ... ``` 代码块，或第一个顶层 JSON 对象/数组。
