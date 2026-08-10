@@ -294,6 +294,13 @@ function connectShared(dispatch: ReturnType<typeof useApp>['dispatch']) {
   };
 
   ws.onclose = () => {
+    // 094 竞态防护（CodeRabbit #1011 评审指出的真 bug）：
+    // workspace 切换时 teardownShared() 发起旧连接 close()，其 onclose 在**后续事件循环**
+    // 才触发——此时 sharedWs 可能已是新连接。若不加身份判断，旧回调会把 sharedWs 置 null
+    // 冲掉新连接引用，并因 sharedShouldReconnect=true 再安排一次重连 → 孤儿连接 +
+    // 重复连接（事件重复 dispatch，issue #720 的回归形态）。
+    // 闭包捕获的 ws 与当前 sharedWs 比对：只有「当前在管连接自己的 onclose」才清理。
+    if (sharedWs !== ws) return;
     sharedWs = null;
     if (sharedShouldReconnect) {
       const delay = getReconnectDelay();
@@ -424,6 +431,21 @@ function flushOutputBuffer() {
  *
  * @param onRefresh - 可选的回调，每次收到 WS 事件时触发（用于面板刷新等用途）
  */
+/** 094：切换 WS 订阅范围——更新模块级记忆，若有活跃连接则断旧连新。
+ *  抽为模块函数（CodeRabbit #1011：useExecutionEvents 超长拆分）：
+ *  effect 只负责「检测变化」，连接生命周期操作集中在此。 */
+function reconnectWithWorkspace(workspaceId: number | null) {
+  // 无活跃连接时只更新记忆：下个调用方挂载时会用新范围建连
+  sharedWorkspaceId = workspaceId;
+  if (!sharedWs) return;
+  // teardown 会把 sharedShouldReconnect 置 false（语义是「不再续命」），
+  // 而切换场景需要「断旧连新」，故重置之；计数清零让新连接跳过退避立即建立
+  teardownShared();
+  sharedShouldReconnect = true;
+  sharedReconnectAttempt = 0;
+  if (sharedDispatch) connectShared(sharedDispatch);
+}
+
 export function useExecutionEvents(onRefresh?: () => void) {
   const { state, dispatch } = useApp();
   // 094：订阅范围跟随全局 workspace 选择态
@@ -479,16 +501,7 @@ export function useExecutionEvents(onRefresh?: () => void) {
   useEffect(() => {
     if (prevWorkspaceRef.current === selectedWorkspace) return;
     prevWorkspaceRef.current = selectedWorkspace;
-    // 无活跃连接时只更新记忆（下一个调用方挂载时会用新范围建连）
-    sharedWorkspaceId = selectedWorkspace;
-    if (!sharedWs) return;
-    // teardown 会把 sharedShouldReconnect 置 false（语义是「不再续命」），
-    // 而切换场景需要「断旧连新」，故重置之；计数清零让新连接跳过退避立即建立
-    teardownShared();
-    sharedShouldReconnect = true;
-    sharedReconnectAttempt = 0;
-    if (sharedDispatch) connectShared(sharedDispatch);
-    // selectedWorkspace 每次真实变化都需要重连；teardown/connect 均为模块级稳定函数
+    reconnectWithWorkspace(selectedWorkspace);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedWorkspace]);
 }

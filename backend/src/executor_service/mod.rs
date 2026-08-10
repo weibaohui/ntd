@@ -23,7 +23,7 @@ pub(crate) mod stages;
 pub(crate) mod types;
 pub(crate) mod worktree;
 
-pub use events::ExecEvent;
+pub use events::{EventScope, ExecEvent};
 
 use std::sync::Arc;
 use tokio::sync::broadcast;

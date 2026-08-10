@@ -3,10 +3,12 @@
 // 验证点：
 // 1. 首连 URL 携带 ?workspace_id=<初始 workspace>（localStorage 清空时为目录列表第一项）。
 // 2. 切换 workspace 后旧连接关闭、新连接携带新 workspace_id。
-// 3. 全程 console 无错误（重连流程无异常）。
+// 3. 切换过程不产生重复连接（CodeRabbit #1011 onclose 竞态守卫的 e2e 背书）。
+// 4. 全程 console 无错误（重连流程无异常）。
 import { test, expect } from '@playwright/test';
 
 test('094 WS 连接携带 workspace_id 且切换 workspace 后重连换参', async ({ page }) => {
+  // console 错误收集：修复前若重连逻辑异常，通常伴随 React/WS 报错——先埋监听再操作
   const consoleErrors: string[] = [];
   page.on('console', msg => { if (msg.type() === 'error') consoleErrors.push(msg.text()); });
   page.on('pageerror', err => consoleErrors.push(`pageerror: ${err.message}`));
@@ -16,11 +18,17 @@ test('094 WS 连接携带 workspace_id 且切换 workspace 后重连换参', asy
     try { localStorage.removeItem('ntd_selected_workspace'); } catch {}
   });
 
-  // 捕获所有 WS 连接（page.on('websocket') 对后续每次 new WebSocket 都触发）
+  // 捕获所有 WS 连接的 URL 与关闭事件：page.on('websocket') 对每次 new WebSocket 触发；
+  // close 事件记录用于「切换后旧连接确实关闭、且无同参数重复连接」的竞态断言
   const wsUrls: string[] = [];
+  const closedUrls: string[] = [];
   page.on('websocket', ws => {
     wsUrls.push(ws.url());
     console.log('WS 连接建立:', ws.url());
+    ws.on('close', () => {
+      closedUrls.push(ws.url());
+      console.log('WS 连接关闭:', ws.url());
+    });
   });
 
   await page.goto('http://localhost:18088');
@@ -63,6 +71,15 @@ test('094 WS 连接携带 workspace_id 且切换 workspace 后重连换参', asy
   const lastParam = new URL(wsUrls[wsUrls.length - 1]).searchParams.get('workspace_id');
   console.log('切换后 workspace_id:', lastParam, '全部连接:', JSON.stringify(wsUrls));
   expect(lastParam).not.toBe(firstParam);
+
+  // 竞态断言（CodeRabbit #1011）：等一个重连退避周期（>2s）后，
+  // 不得出现第三个连接——旧 onclose 若误触发重连会产生与末次同参的重复连接。
+  // 注意：Playwright 对页面主动 close() 的 close 事件捕获不可靠（实测不触发），
+  // 故 close 事件仅记录观察，硬断言落在「无重复连接」上（竞态未修复时 dupCount=2）
+  await page.waitForTimeout(2500);
+  console.log('捕获的关闭事件:', JSON.stringify(closedUrls));
+  const dupCount = wsUrls.filter(u => u === `ws://localhost:18088/api/events?workspace_id=${lastParam}`).length;
+  expect(dupCount, '切换后连接不得重复（onclose 竞态回归守卫）').toBe(1);
 
   expect(consoleErrors, `console 不应有错误: ${consoleErrors.join('; ')}`).toEqual([]);
 });

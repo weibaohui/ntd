@@ -3,6 +3,7 @@
 | 修改人 | 修改时间 | 修改内容 |
 |--------|---------|---------|
 | AI (zhanlu) | 2026-08-10 | 初始版本 |
+| AI (zhanlu) | 2026-08-10 | 按 CodeRabbit 评审：forwarder 启动位置/签名同步最终实现、流程图声明 text 语言、变体数 13→14、workspace_id 升级为 EventScope 三态（区分未归属与全局） |
 
 > 093 优化扫描专项·性能类第 1 项（首轮扫描 P1）。
 > 实证：每条执行事件 N 个 WS 客户端（标签页）各自序列化一次；所有 workspace 的事件推给所有客户端。
@@ -41,16 +42,16 @@ WS 客户端收到后前端 switch 无对应分支，纯带宽浪费。
 
 ### 入选：forwarder + WS 专用 channel（最小侵入）
 
-```
+```text
 ExecEvent channel (state.tx)      ← 现有链路零改动（12 发送点 + 飞书订阅侧）
    │
-   ▼ forwarder 任务（main.rs 启动）
+   ▼ forwarder 任务（handlers/mod.rs::build_app_state 启动）
    跳过飞书专用事件 → serde_json::to_string 一次 → ws_tx.send(WsEnvelope)
    │
-WsEnvelope { workspace_id: Option<i64>, json: Arc<str> }   ← 全局唯一序列化产物
+WsEnvelope { scope: EventScope, json: Arc<str> }   ← 全局唯一序列化产物
    │
    ▼ events_handler（/api/events?workspace_id=N）
-   envelope.workspace_id 与连接声明匹配才转发；Arc<str> 全客户端共享
+   envelope.scope 与连接声明匹配才转发；Arc<str> 全客户端共享
 ```
 
 ### 落选：改原 channel 为 envelope
@@ -84,7 +85,7 @@ impl ExecEvent {
 }
 ```
 
-13 变体全枚举（漏一个编译器会报 non-exhaustive，天然守卫）。
+14 变体全枚举（漏一个编译器会报 non-exhaustive，天然守卫）。
 
 ### C2：WsEnvelope + forwarder（handlers/mod.rs 或独立模块）
 
@@ -97,7 +98,7 @@ pub struct WsEnvelope {
 }
 
 /// 启动转发任务：订阅 ExecEvent channel → 过滤飞书专用 → 预序列化 → 发 WS channel
-pub fn spawn_ws_forwarder(tx: broadcast::Sender<ExecEvent>, ws_tx: broadcast::Sender<WsEnvelope>);
+pub fn spawn_ws_forwarder(tx: &broadcast::Sender<ExecEvent>, ws_tx: broadcast::Sender<WsEnvelope>);
 ```
 
 `AppState` 增加 `ws_tx: broadcast::Sender<WsEnvelope>`；容量复用现有
@@ -124,8 +125,8 @@ pub fn spawn_ws_forwarder(tx: broadcast::Sender<ExecEvent>, ws_tx: broadcast::Se
 | 文件 | 改动 |
 |------|------|
 | `executor_service/events.rs` | +2 方法 +全变体单测 |
-| `handlers/mod.rs` | WsEnvelope、forwarder、handler 过滤 |
-| `main.rs` | 启动 forwarder；AppState.ws_tx 初始化 |
+| `handlers/ws_broadcast.rs`（新模块） | WsEnvelope、envelope_matches、spawn_ws_forwarder |
+| `handlers/mod.rs` | AppState.ws_tx 接线、build_app_state 启动 forwarder、handler 过滤 |
 | `handlers/*`（AppState 构造点） | 补 ws_tx 字段（编译器找齐） |
 | `frontend/src/hooks/useExecutionEvents.ts` | URL 参数 + 切换重连 |
 

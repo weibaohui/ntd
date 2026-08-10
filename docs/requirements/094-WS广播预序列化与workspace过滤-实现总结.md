@@ -3,6 +3,7 @@
 | 修改人 | 修改时间 | 修改内容 |
 |--------|---------|---------|
 | AI (zhanlu) | 2026-08-10 | 初始版本 |
+| AI (zhanlu) | 2026-08-10 | 按 CodeRabbit 评审：workspace_id() 升级为 EventScope 三态（未归属不再推给带参连接）、前端 onclose 竞态修复、补 vitest/handler 测试、变体数口径 14 |
 
 > 对应设计：`docs/design/094-WS广播预序列化与workspace过滤-设计.md`。
 > 093 专项性能类第 1 项：WS 广播逐客户端重复序列化 + 无 workspace 过滤。
@@ -11,7 +12,7 @@
 
 | 变化 | 文件 | 说明 |
 |------|------|------|
-| ExecEvent 查询方法 | `executor_service/events.rs` | `workspace_id()`（13 变体全枚举）+ `is_feishu_direct()` |
+| ExecEvent 查询方法 | `executor_service/events.rs` | `event_scope()`（14 变体全枚举，Global/Workspace/Unscoped 三态）+ `is_feishu_direct()` |
 | WS 广播通路（新模块） | `handlers/ws_broadcast.rs` | `WsEnvelope`（Arc<str> 预序列化）、`envelope_matches` 三态判定、`spawn_ws_forwarder` 桥接任务 |
 | AppState 接线 | `handlers/mod.rs` | `ws_tx` 字段 + forwarder 启动（容量复用 broadcast_channel_capacity 配置） |
 | events_handler 改造 | `handlers/mod.rs` | `?workspace_id=` query 解析；Sync 握手按 record.workspace_id 过滤（无 record 保守保留）；主循环订阅 ws_tx 按匹配转发 |

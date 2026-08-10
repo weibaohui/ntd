@@ -171,10 +171,26 @@ pub mod workspace_guard;
 
 // WebSocket handler
 // 094：query 参数 workspace_id 声明客户端关注的 workspace——只推该 workspace 事件
-// + 全局事件（None 归属）；不带参数的旧客户端全推（兼容口）。
+// + 全局事件（Global 作用域）；不带参数的旧客户端全推（兼容口）。
 #[derive(Debug, serde::Deserialize)]
 pub struct EventsQuery {
     workspace_id: Option<i64>,
+}
+
+/// 094：Sync 握手的任务可见性谓词（抽出为纯函数以便单测，CodeRabbit #1011）。
+///
+/// - `task_record_ws`：任务 execution_record 的 workspace_id（None 外层 = 查不到 record
+///   的异常任务，决策 2a 保守保留——DB 降级时宁多勿漏）；
+/// - 有 record 时按 EventScope 归一后判定：仅 Workspace(conn) 可见——
+///   Unscoped（None/哨兵 0 的未归属任务）对带参连接不可见，与主循环过滤语义一致。
+fn sync_task_visible(task_record_ws: Option<Option<i64>>, conn_ws: i64) -> bool {
+    match task_record_ws {
+        None => true,
+        Some(ws) => matches!(
+            crate::executor_service::events::scope_from_optional(ws),
+            crate::executor_service::EventScope::Workspace(id) if id == conn_ws
+        ),
+    }
 }
 
 pub async fn events_handler(
@@ -182,9 +198,12 @@ pub async fn events_handler(
     ws: WebSocketUpgrade,
     axum::extract::Query(query): axum::extract::Query<EventsQuery>,
 ) -> Response {
+    // conn_workspace 在 upgrade 前落定：闭包 move 进异步任务后 query 已不可达；
+    // 无效参数（非数字）在 Query 抽取阶段即 400 拒绝，不会进入本函数
     let conn_workspace = query.workspace_id;
     ws.on_upgrade(move |mut ws| async move {
-        // 094：订阅 WS 专用 channel（预序列化信封），不再订阅原始 ExecEvent channel
+        // 094：订阅 WS 专用 channel（预序列化信封），不再订阅原始 ExecEvent channel——
+        // 序列化已在 forwarder 全局做一次，本任务零序列化开销
         let mut rx = state.ws_tx.subscribe();
 
         // 连接时发送当前实际运行的任务列表
@@ -207,13 +226,10 @@ pub async fn events_handler(
             .filter_map(|r| r.task_id.clone().map(|tid| (tid, r)))
             .collect();
         // 094：声明了 workspace 的连接，Sync 只回该 workspace 的运行任务；
-        // 查不到 record 的异常任务保守保留（决策 2a：DB 降级时宁多勿漏）。
+        // 谓词语义（含无 record 保守保留、0 哨兵未归属不可见）见 sync_task_visible。
         if let Some(ws_id) = conn_workspace {
             running_tasks.retain(|t| {
-                record_map
-                    .get(&t.task_id)
-                    .map(|r| r.workspace_id == Some(ws_id))
-                    .unwrap_or(true)
+                sync_task_visible(record_map.get(&t.task_id).map(|r| r.workspace_id), ws_id)
             });
         }
         // record_ids 从过滤后的 running_tasks 反查：尾部日志/计数两个查询
@@ -307,8 +323,8 @@ pub async fn events_handler(
                 recv = rx.recv() => {
                     match recv {
                         Ok(envelope) => {
-                            // 094：workspace 匹配判定（三态真值表见 envelope_matches）
-                            if !ws_broadcast::envelope_matches(conn_workspace, envelope.workspace_id) {
+                            // 094：作用域匹配判定（Global/Workspace/Unscoped 语义见 envelope_matches）
+                            if !ws_broadcast::envelope_matches(conn_workspace, envelope.scope) {
                                 continue;
                             }
                             if ws
@@ -916,7 +932,8 @@ mod app_state_config_helpers_tests {
     /// `Database::new` / `TodoScheduler::new` 是 async 的,所以整体包在
     /// `#[tokio::test]` 的 runtime 里。三个被测方法本身是 sync 的,放到
     /// `block_on` 闭包外执行,避免对 runtime 类型造成约束。
-    async fn build_minimal_state_async() -> AppState {
+    // pub(crate)：094 的 events_handler 测试（events_handler_tests 模块）复用本夹具
+    pub(crate) async fn build_minimal_state_async() -> AppState {
         // 内存数据库:不依赖外部文件,跑得快,适合单测。
         let db = Arc::new(crate::db::Database::new(":memory:").await.unwrap());
 
@@ -1250,5 +1267,72 @@ mod create_app_refactor_tests {
             BODY_LINES_BUDGET,
             sig_line,
         );
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
+mod events_handler_tests {
+    //! 094：events_handler 新增分支的覆盖（CodeRabbit #1011 评审项）。
+    //! 实时事件过滤由 ws_broadcast::envelope_matches 单测背书；本模块覆盖
+    //! Sync retain 谓词全分支 + query 参数解析的 HTTP 层行为。
+    use super::app_state_config_helpers_tests::build_minimal_state_async;
+    use super::{events_routes, sync_task_visible};
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    /// sync_task_visible 全分支：record 匹配/跨 workspace/0 哨兵未归属/无 record 保守保留
+    #[test]
+    fn test_events_handler_sync_task_visible_all_branches() {
+        // 有 record 且归属匹配 → 可见
+        assert!(sync_task_visible(Some(Some(1)), 1));
+        // 有 record 跨 workspace → 不可见（隔离核心）
+        assert!(!sync_task_visible(Some(Some(2)), 1));
+        // 有 record 但 workspace_id=0（未归属哨兵）→ 带参连接不可见
+        assert!(!sync_task_visible(Some(Some(0)), 1));
+        // 有 record 但 workspace_id=None（未归属）→ 同样不可见
+        assert!(!sync_task_visible(Some(None), 1));
+        // 无 record 的异常任务 → 保守保留（决策 2a：DB 降级时宁多勿漏）
+        assert!(sync_task_visible(None, 1));
+    }
+
+    /// 无效 workspace_id 查询参数：Query 反序列化拒绝，不得进入 handler（400 而非 500/panic）
+    #[tokio::test]
+    async fn test_events_handler_rejects_invalid_workspace_id() {
+        let state = build_minimal_state_async().await;
+        let app = events_routes().with_state(state);
+        let resp = app
+            .oneshot(Request::builder().uri("/api/events?workspace_id=abc").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        // axum Query 抽取失败 → 400 Bad Request（在 WS upgrade 之前，无连接泄漏）
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    /// 有效参数但无 upgrade 头：不得升级，返回 4xx（WS 握手缺失由 axum 拒绝）
+    #[tokio::test]
+    async fn test_events_handler_without_upgrade_header_not_upgraded() {
+        let state = build_minimal_state_async().await;
+        let app = events_routes().with_state(state);
+        let resp = app
+            .oneshot(Request::builder().uri("/api/events?workspace_id=1").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        // axum 对缺 upgrade 头的 WS 路由返回 426 Upgrade Required（或 400）——
+        // 不断言具体码位（axum 版本相关），只锁「非 2xx 且非 500」契约
+        assert!(resp.status().is_client_error(), "got: {}", resp.status());
+    }
+
+    /// 无参数连接（兼容口）：query 缺失同样不得 panic，无 upgrade 头返回 4xx
+    #[tokio::test]
+    async fn test_events_handler_without_query_param_accepted() {
+        let state = build_minimal_state_async().await;
+        let app = events_routes().with_state(state);
+        let resp = app
+            .oneshot(Request::builder().uri("/api/events").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert!(resp.status().is_client_error(), "got: {}", resp.status());
     }
 }
