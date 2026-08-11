@@ -292,6 +292,8 @@ impl EventExtractor for AtomcodeExtractor {
         events
     }
 
+    // 096-W1：本 override 与 trait 默认实现**有意不同**，勿删——
+    // 委托 extract() 走完整管线（协议帧解析），而非默认的 error 关键字分流。
     fn extract_stderr(&mut self, line: &str) -> Option<ExecutionEvent> {
         // atomcode 的 stderr 由 try_parse_stderr_with_pipeline 通过 pipeline.feed()
         // 驱动 extract()，本方法仅在 fallback 路径被调用。为保持一致，委托给 extract()

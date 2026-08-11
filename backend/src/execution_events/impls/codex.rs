@@ -291,6 +291,8 @@ impl EventExtractor for CodexExtractor {
         }
     }
 
+    // 096-W1：本 override 与 trait 默认实现**有意不同**，勿删——
+    // 默认实现按 "error" 关键字分流 Error/Info，Codex 统一 Info（误报率高）。
     fn extract_stderr(&mut self, line: &str) -> Option<ExecutionEvent> {
         let trimmed = line.trim();
         if trimmed.is_empty() {
