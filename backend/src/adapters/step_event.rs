@@ -86,10 +86,12 @@ pub struct StepAgentToolInput {
 }
 
 impl StepAgentToolInput {
-    /// 序列化为完整 JSON 字符串。
+    /// 序列化为完整 JSON Value。
     /// 结构化字段（command/description）优先级最高；extra 中同名键跳过，
     /// 防止 extra 覆盖核心语义（采用 mimo 旧版的防覆盖语义）。
-    pub fn to_full_json(&self) -> String {
+    /// 096-W2：Value 形态独立成方法（kilo/opencode 提取器的 ToolCall input 需要 Value），
+    /// `to_full_json` 退化为本方法的字符串化委托。
+    pub fn to_full_json_value(&self) -> serde_json::Value {
         let mut map = serde_json::Map::new();
         if let Some(ref cmd) = self.command {
             map.insert("command".into(), serde_json::Value::String(cmd.clone()));
@@ -103,7 +105,14 @@ impl StepAgentToolInput {
             }
             map.insert(k.clone(), v.clone());
         }
-        serde_json::to_string(&serde_json::Value::Object(map)).unwrap_or_default()
+        serde_json::Value::Object(map)
+    }
+
+    /// 序列化为完整 JSON 字符串。
+    /// 结构化字段（command/description）优先级最高；extra 中同名键跳过，
+    /// 防止 extra 覆盖核心语义（采用 mimo 旧版的防覆盖语义）。
+    pub fn to_full_json(&self) -> String {
+        serde_json::to_string(&self.to_full_json_value()).unwrap_or_default()
     }
 }
 

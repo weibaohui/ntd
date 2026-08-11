@@ -66,7 +66,7 @@ pub static EXECUTORS: &[ExecutorDef] = &[
         default_path: "opencode",
         session_dir: "~/.opencode",
         aliases: &[],
-        create_extractor: || Box::new(crate::execution_events::impls::opencode::OpencodeExtractor::new()),
+        create_extractor: || Box::new(crate::execution_events::impls::opencode::OpencodeExtractor::new("opencode")),
     },
     ExecutorDef {
         name: "atomcode",
@@ -169,7 +169,7 @@ pub static EXECUTORS: &[ExecutorDef] = &[
         default_path: "kilo",
         session_dir: "~/.kilo",
         aliases: &[],
-        create_extractor: || Box::new(crate::execution_events::impls::kilo::KiloExtractor::new()),
+        create_extractor: || Box::new(crate::execution_events::impls::kilo::KiloExtractor::new("kilo")),
     },
 ];
 

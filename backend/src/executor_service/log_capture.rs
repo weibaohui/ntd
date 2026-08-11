@@ -686,7 +686,7 @@ mod tests {
         use crate::execution_events::impls::kilo::KiloExtractor;
 
         let executor = StepProtocolExecutor::kilo("kilo".to_string());
-        let mut pipeline = EventPipeline::with_extractor(KiloExtractor::new());
+        let mut pipeline = EventPipeline::with_extractor(KiloExtractor::new("kilo"));
         let (tx, _rx) = broadcast::channel(16);
 
         // 修复前的事实：未走任何解析时，非零退出码判定为失败

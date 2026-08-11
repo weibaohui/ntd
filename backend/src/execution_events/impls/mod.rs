@@ -15,6 +15,8 @@ pub mod mimo;
 pub mod mobilecoder;
 pub mod opencode;
 pub mod pi;
+// step 协议族统一提取器（kilo/opencode 的共享实现，096-W2 收敛产物）
+pub mod step_protocol;
 pub mod zhanlu;
 
 pub use atomcode::AtomcodeExtractor;
