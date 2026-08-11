@@ -46,71 +46,25 @@ impl MobilecoderExtractor {
             "tool_use" => {
                 // 工具调用：从 part 中提取工具名和参数
                 if let Some(part) = json.get("part") {
-                    let tool = part.get("tool").and_then(|v| v.as_str()).unwrap_or("bash");
-                    let input = part.get("state")
-                        .and_then(|s| s.get("input"))
-                        .cloned()
-                        .unwrap_or(serde_json::json!({}));
-
-                    events.push(ExecutionEvent::ToolCall {
-                        id: part.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-                        name: tool.to_string(),
-                        input,
-                    });
-
-                    // 检查是否有输出（工具结果）
-                    if let Some(output) = part.get("state")
-                        .and_then(|s| s.get("output"))
+                    // id 取法是各家唯一差异（mobilecoder 仅 part.id），工具对提取逻辑共享
+                    let call_id = part
+                        .get("id")
                         .and_then(|v| v.as_str())
-                    {
-                        if !output.is_empty() {
-                            events.push(ExecutionEvent::ToolResult {
-                                call_id: String::new(),
-                                output: output.to_string(),
-                                is_error: part.get("state")
-                                    .and_then(|s| s.get("status"))
-                                    .and_then(|v| v.as_str())
-                                    .map(|s| s == "error" || s == "failed")
-                                    .unwrap_or(false),
-                            });
-                        }
-                    }
+                        .unwrap_or_default()
+                        .to_string();
+                    events.extend(super::step_json::extract_tool_pair(part, &call_id));
                 }
             }
             "text" => {
-                // 文本回复
+                // 文本回复（mobilecoder 的 message_id 键为 snake_case）
                 if let Some(part) = json.get("part") {
-                    if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
-                        let trimmed = text.trim();
-                        if !trimmed.is_empty() {
-                            events.push(ExecutionEvent::Assistant {
-                                content: trimmed.to_string(),
-                                thinking: None,
-                                message_id: part.get("message_id").and_then(|v| v.as_str()).map(String::from),
-                            });
-                        }
-                    }
+                    events.extend(super::step_json::extract_assistant_text(part, Some("message_id")));
                 }
             }
             "step_finish" => {
-                // 步骤完成：提取 tokens / cost
+                // 步骤完成：提取 tokens / cost（三家逐字同构部分，已收敛）
                 if let Some(part) = json.get("part") {
-                    // Token 统计
-                    if let Some(tokens) = part.get("tokens") {
-                        events.push(ExecutionEvent::Tokens {
-                            input: tokens.get("input").and_then(|v| v.as_u64()).unwrap_or(0),
-                            output: tokens.get("output").and_then(|v| v.as_u64()).unwrap_or(0),
-                            cache_read: tokens.get("cache").and_then(|c| c.get("read")).and_then(|v| v.as_u64()),
-                            cache_write: tokens.get("cache").and_then(|c| c.get("write")).and_then(|v| v.as_u64()),
-                        });
-                    }
-
-                    // 成本
-                    if let Some(cost) = part.get("cost").and_then(|v| v.as_f64()) {
-                        if cost > 0.0 {
-                            events.push(ExecutionEvent::Cost { cost_usd: cost });
-                        }
-                    }
+                    events.extend(super::step_json::extract_tokens_cost(part));
                 }
 
                 events.push(ExecutionEvent::StepFinish {

@@ -17,6 +17,8 @@ pub mod opencode;
 pub mod pi;
 // step 协议族统一提取器（kilo/opencode 的共享实现，096-W2 收敛产物）
 pub mod step_protocol;
+// step 协议族 Value 导航分支的共享自由函数（zhanlu/mimo/mobilecoder 共用，096-W2 收敛产物）
+pub(crate) mod step_json;
 pub mod zhanlu;
 
 pub use atomcode::AtomcodeExtractor;

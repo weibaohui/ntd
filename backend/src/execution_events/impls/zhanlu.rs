@@ -49,80 +49,30 @@ impl ZhanluExtractor {
             }
             "text" => {
                 if let Some(part) = json.get("part") {
-                    if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
-                        let trimmed = text.trim();
-                        if !trimmed.is_empty() {
-                            events.push(ExecutionEvent::Assistant {
-                                content: trimmed.to_string(),
-                                thinking: None,
-                                message_id: None,
-                            });
-                        }
-                    }
+                    // zhanlu 不产出 message_id（None 为既有行为），共享 text 提取逻辑
+                    events.extend(super::step_json::extract_assistant_text(part, None));
                 }
             }
             "reasoning" => {
                 if let Some(part) = json.get("part") {
-                    if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
-                        let trimmed = text.trim();
-                        if !trimmed.is_empty() {
-                            events.push(ExecutionEvent::Thinking {
-                                content: truncated(trimmed, 500),
-                            });
-                        }
-                    }
+                    events.extend(super::step_json::extract_thinking(part));
                 }
             }
             "tool-use" | "tool_use" => {
                 if let Some(part) = json.get("part") {
-                    let tool = part.get("tool").and_then(|v| v.as_str()).unwrap_or("bash");
-                    let input = part.get("state")
-                        .and_then(|s| s.get("input"))
-                        .cloned()
-                        .unwrap_or(serde_json::json!({}));
-
-                    events.push(ExecutionEvent::ToolCall {
-                        id: part.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-                        name: tool.to_string(),
-                        input,
-                    });
-
-                    // 工具结果（如果有 output）
-                    if let Some(output) = part.get("state")
-                        .and_then(|s| s.get("output"))
+                    // id 取法是各家唯一差异（zhanlu 仅 part.id），工具对提取逻辑共享
+                    let call_id = part
+                        .get("id")
                         .and_then(|v| v.as_str())
-                    {
-                        if !output.is_empty() {
-                            events.push(ExecutionEvent::ToolResult {
-                                call_id: String::new(),
-                                output: output.to_string(),
-                                is_error: part.get("state")
-                                    .and_then(|s| s.get("status"))
-                                    .and_then(|v| v.as_str())
-                                    .map(|s| s == "error" || s == "failed")
-                                    .unwrap_or(false),
-                            });
-                        }
-                    }
+                        .unwrap_or_default()
+                        .to_string();
+                    events.extend(super::step_json::extract_tool_pair(part, &call_id));
                 }
             }
             "step-finish" | "step_finish" => {
                 if let Some(part) = json.get("part") {
-                    // Token 统计
-                    if let Some(tokens) = part.get("tokens") {
-                        events.push(ExecutionEvent::Tokens {
-                            input: tokens.get("input").and_then(|v| v.as_u64()).unwrap_or(0),
-                            output: tokens.get("output").and_then(|v| v.as_u64()).unwrap_or(0),
-                            cache_read: tokens.get("cache").and_then(|c| c.get("read")).and_then(|v| v.as_u64()),
-                            cache_write: tokens.get("cache").and_then(|c| c.get("write")).and_then(|v| v.as_u64()),
-                        });
-                    }
-                    // 成本
-                    if let Some(cost) = part.get("cost").and_then(|v| v.as_f64()) {
-                        if cost > 0.0 {
-                            events.push(ExecutionEvent::Cost { cost_usd: cost });
-                        }
-                    }
+                    // tokens/cost 提取（三家逐字同构部分，已收敛）
+                    events.extend(super::step_json::extract_tokens_cost(part));
                 }
 
                 let idx = self.step_index.saturating_sub(1);
@@ -168,11 +118,6 @@ impl EventExtractor for ZhanluExtractor {
 
 impl Default for ZhanluExtractor {
     fn default() -> Self { Self::new() }
-}
-
-/// 截断字符串到指定长度
-fn truncated(s: &str, max: usize) -> String {
-    s.chars().take(max).collect()
 }
 
 #[cfg(test)]
