@@ -291,6 +291,8 @@ impl EventExtractor for CodexExtractor {
         }
     }
 
+    // 096-W1：本 override 与 trait 默认实现**有意不同**，勿删——
+    // 默认实现按 "error" 关键字分流 Error/Info，Codex 统一 Info（误报率高）。
     fn extract_stderr(&mut self, line: &str) -> Option<ExecutionEvent> {
         let trimmed = line.trim();
         if trimmed.is_empty() {
@@ -409,5 +411,34 @@ mod tests {
         let events = extractor.extract(r#"{"type":"thread.started"}"#);
         assert!(events.iter().all(|e| !matches!(e, ExecutionEvent::SessionStart { .. })));
         assert!(extractor.metadata().session_id.is_none());
+    }
+
+    // ====================== 096-W1：extract_stderr override 回归保护 ======================
+
+    // 钉住 Codex extract_stderr 的差异化行为：含 error 关键字的 stderr 行统一判为 Info。
+    // trait 默认实现（extractor.rs:33-48）会将其分流为 Error 事件，Codex 因 stderr 误报率高
+    // 而 override 为恒 Info。若有人误删 override 回退默认实现，本测试会失败。
+    #[test]
+    fn test_extract_stderr_error_keyword_returns_info() {
+        let mut extractor = CodexExtractor::new();
+        // 含 "error" 关键字——默认实现会返回 Error，Codex override 必须返回 Info
+        let event = extractor.extract_stderr("Error: compilation failed");
+        match event.as_ref() {
+            Some(ExecutionEvent::Info { message }) => assert_eq!(message.as_str(), "Error: compilation failed"),
+            // 命中此分支说明 override 被删、回退成了默认的 error 关键字分流
+            Some(ExecutionEvent::Error { .. }) => {
+                panic!("含 error 关键字的 stderr 不应判为 Error（Codex override 统一 Info）")
+            }
+            None => panic!("预期 Info 事件，实际返回 None"),
+            Some(_) => panic!("预期 Info 事件，实际返回其他事件类型"),
+        }
+    }
+
+    // 空行/纯空白行不应产出事件，避免 stderr 空行噪声污染事件流
+    #[test]
+    fn test_extract_stderr_empty_line_returns_none() {
+        let mut extractor = CodexExtractor::new();
+        assert!(extractor.extract_stderr("").is_none());
+        assert!(extractor.extract_stderr("   \t  ").is_none());
     }
 }

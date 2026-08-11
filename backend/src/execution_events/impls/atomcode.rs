@@ -292,6 +292,8 @@ impl EventExtractor for AtomcodeExtractor {
         events
     }
 
+    // 096-W1：本 override 与 trait 默认实现**有意不同**，勿删——
+    // 委托 extract() 走完整管线（协议帧解析），而非默认的 error 关键字分流。
     fn extract_stderr(&mut self, line: &str) -> Option<ExecutionEvent> {
         // atomcode 的 stderr 由 try_parse_stderr_with_pipeline 通过 pipeline.feed()
         // 驱动 extract()，本方法仅在 fallback 路径被调用。为保持一致，委托给 extract()
@@ -600,5 +602,38 @@ mod tests {
             done_events.iter().any(|e| matches!(e, ExecutionEvent::StepFinish { .. })),
             "missing StepFinish event"
         );
+    }
+
+    // ====================== 096-W1：extract_stderr override 回归保护 ======================
+
+    // 钉住 Atomcode extract_stderr 的差异化行为：委托 extract() 走协议帧解析管线。
+    // trait 默认实现按 "error" 关键字分流 Error/Info，但 Atomcode 的 stderr 是协议帧格式，
+    // 必须走 extract() 才能提取 Tokens/StepFinish 等结构化事件。若删掉 override 回退默认，
+    // 含 [tokens] 的 stderr 行会被当作普通 Info 文本，tokens 就丢了。
+    #[test]
+    fn test_extract_stderr_delegates_to_extract_pipeline() {
+        let mut ext = AtomcodeExtractor::new();
+        // 协议帧行——默认实现会包装为 Info，override 委托 extract() 产出 Tokens
+        let event = ext.extract_stderr("[tokens] prompt=120 completion=45");
+        match event.as_ref() {
+            Some(ExecutionEvent::Tokens { input, output, .. }) => {
+                assert_eq!(*input, 120);
+                assert_eq!(*output, 45);
+            }
+            // 命中此分支说明 override 被删、回退成了默认实现（当成 Info 文本）
+            Some(ExecutionEvent::Info { .. }) => {
+                panic!("stderr 的 [tokens] 行应走 extract() 管线产出 Tokens，而非默认实现包装为 Info")
+            }
+            None => panic!("预期 Tokens 事件，实际返回 None"),
+            Some(_) => panic!("预期 Tokens 事件，实际返回其他事件类型"),
+        }
+    }
+
+    // 空行委托 extract() 返回空，.next() 为 None，不应产出事件
+    #[test]
+    fn test_extract_stderr_empty_line_returns_none() {
+        let mut ext = AtomcodeExtractor::new();
+        assert!(ext.extract_stderr("").is_none());
+        assert!(ext.extract_stderr("   ").is_none());
     }
 }

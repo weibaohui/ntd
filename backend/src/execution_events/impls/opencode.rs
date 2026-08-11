@@ -220,23 +220,6 @@ impl EventExtractor for OpencodeExtractor {
         }
     }
 
-    fn extract_stderr(&mut self, line: &str) -> Option<ExecutionEvent> {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            return None;
-        }
-
-        if trimmed.to_lowercase().contains("error") {
-            Some(ExecutionEvent::Error {
-                message: trimmed.to_string(),
-            })
-        } else {
-            Some(ExecutionEvent::Info {
-                message: trimmed.to_string(),
-            })
-        }
-    }
-
     fn metadata(&self) -> &ExecutionMetadata {
         &self.metadata
     }
