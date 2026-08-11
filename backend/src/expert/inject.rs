@@ -36,12 +36,15 @@ use super::ExpertIndexManager;
 /// {original_message}
 /// ```
 ///
-/// 注意：本函数的 warn 日志不带调用方前缀（如 "wiki chat:"），
-/// 统一文案以便日志聚合检索；调用方上下文由调用方自己的 info 日志承担。
+/// 注意：本函数的 warn 日志通过 `caller_tag` 参数携带调用方前缀（如 "wiki chat: "），
+/// 以便运维从聚合日志中区分注入失败来自 wiki chat 还是 todo 执行通路；todo 通路传空串
+/// 保持其原有的无前缀文案。这是 096-W1 review 的可观测性修复——合并前 wiki 通路独有
+/// "wiki chat:" 前缀，收口时一度丢失，现通过参数显式回传。
 pub(crate) fn inject_expert_message(
     expert_manager: &ExpertIndexManager,
     expert_name: Option<&str>,
     message: &str,
+    caller_tag: &str,
 ) -> String {
     // 未指定专家名（或空串）时直接返回原消息——空串判等来自 wiki chat 通路的既有行为，
     // 收进公共层后两条通路语义一致。
@@ -51,14 +54,15 @@ pub(crate) fn inject_expert_message(
     };
     // 查找专家元数据，找不到则静默回退：专家可能已被卸载，不应因此阻断用户消息。
     let Some(metadata) = expert_manager.get_expert_by_name(name) else {
-        tracing::warn!("未找到专家 '{}'，跳过专家上下文注入", name);
+        tracing::warn!("{}未找到专家 '{}'，跳过专家上下文注入", caller_tag, name);
         return message.to_string();
     };
     // 解析主理 agent：team 用 lead_agent、agent 用 agent_name（resolve_agent_name 统一），
     // 并按 (expert_name, agent_name) 复合键查找，避免不同专家同名 agent 互窜。
     let Some(agent_name) = metadata.resolve_agent_name() else {
         tracing::warn!(
-            "专家 '{}' 没有可用 agent（agent_name/lead_agent 都为空）",
+            "{}专家 '{}' 没有可用 agent（agent_name/lead_agent 都为空）",
+            caller_tag,
             name
         );
         return message.to_string();
@@ -66,7 +70,8 @@ pub(crate) fn inject_expert_message(
     // 读取 Agent MD 全文；文件缺失/不可读同样静默回退（索引与文件可能不同步）。
     let Ok(agent_md) = expert_manager.get_agent_md_content(name, agent_name) else {
         tracing::warn!(
-            "未找到专家 '{}' 的 Agent '{}' MD 内容，跳过注入",
+            "{}未找到专家 '{}' 的 Agent '{}' MD 内容，跳过注入",
+            caller_tag,
             name,
             agent_name
         );
@@ -104,46 +109,22 @@ fn build_expert_prompt(agent_md: &str, skills_text: &str, original_message: &str
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-    use crate::expert::{AgentFileMetadata, ExpertMetadata, ExpertSource, ExpertType, SkillMetadata};
+    use crate::expert::test_support::make_minimal_expert_metadata;
+    use crate::expert::{AgentFileMetadata, SkillMetadata};
 
-    /// 构造最小可用的 ExpertMetadata 供测试使用。
-    /// 只填必要字段，其余用空值/None，避免每个测试都重复 22 个字段。
-    fn make_minimal_expert_metadata(
-        name: &str,
-        agent_name: Option<&str>,
-        lead_agent: Option<&str>,
-    ) -> ExpertMetadata {
-        ExpertMetadata {
-            name: name.to_string(),
-            expert_type: ExpertType::Agent,
-            version: "0.0.1-test".to_string(),
-            source: ExpertSource::System,
-            display_name_zh: None,
-            display_name_en: None,
-            profession_zh: None,
-            profession_en: None,
-            description_zh: None,
-            description_en: None,
-            avatar_path: None,
-            category_id: None,
-            definition_dir: "/tmp".to_string(),
-            plugin_json_path: "/tmp/plugin.json".to_string(),
-            agent_name: agent_name.map(|s| s.to_string()),
-            lead_agent: lead_agent.map(|s| s.to_string()),
-            member_agents: vec![],
-            members: vec![],
-            skills: vec![],
-            default_init_prompt_zh: None,
-            default_init_prompt_en: None,
-            tags: vec![],
-            loaded_at: "test".to_string(),
-            is_active: true,
+    /// RAII 守卫：持有临时 MD 文件路径，Drop 时自动删除。
+    /// 断言失败 panic 时仍会触发 Drop（unwind），避免临时文件泄漏到 $TMPDIR。
+    struct TmpMdFile(String);
+
+    impl Drop for TmpMdFile {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
         }
     }
 
-    /// 准备临时 Agent MD 文件并注册到索引，返回 (manager, md_path)；
-    /// 调用方负责在断言后删除 md_path，避免临时文件堆积。
-    fn make_manager_with_agent_md(content: &str, with_skill: bool) -> (ExpertIndexManager, String) {
+    /// 准备临时 Agent MD 文件并注册到索引，返回 (manager, TmpMdFile)；
+    /// TmpMdFile 的 Drop 自动删除临时文件，断言失败也不泄漏，调用方无需手动清理。
+    fn make_manager_with_agent_md(content: &str, with_skill: bool) -> (ExpertIndexManager, TmpMdFile) {
         use std::io::Write;
         // 以纳秒时间戳命名，保证并发测试互不踩踏
         let mut tmp_path = std::env::temp_dir();
@@ -188,7 +169,7 @@ mod tests {
         };
         let expert = make_minimal_expert_metadata("rust-expert", Some("rust-agent"), None);
         manager.update_index(&expert, &[agent_file], &skills);
-        (manager, md_path)
+        (manager, TmpMdFile(md_path))
     }
 
     /// 未指定专家名（None 或空串）时原样返回消息——空串判等是 wiki chat 通路的既有行为。
@@ -196,36 +177,36 @@ mod tests {
     fn test_inject_expert_message_none_or_empty_name_returns_original() {
         let manager = ExpertIndexManager::new();
         let original = "原始消息";
-        assert_eq!(inject_expert_message(&manager, None, original), original);
-        assert_eq!(inject_expert_message(&manager, Some(""), original), original);
+        assert_eq!(inject_expert_message(&manager, None, original, ""), original);
+        assert_eq!(inject_expert_message(&manager, Some(""), original, ""), original);
     }
 
     /// 专家无技能时应省略「可用技能」段落（两段式），避免出现空标题。
     /// 这是 pre_spawn 既有测试未覆盖的分支，公共层补齐锁定。
     #[test]
     fn test_inject_expert_message_without_skills_omits_skills_section() {
-        let (manager, md_path) = make_manager_with_agent_md("你是一个 Rust 专家", false);
-        let result = inject_expert_message(&manager, Some("rust-expert"), "请帮我写代码");
+        // _guard 绑定到作用域末尾，Drop 时自动删临时 MD；即使下方断言 panic 也不泄漏
+        let (manager, _guard) = make_manager_with_agent_md("你是一个 Rust 专家", false);
+        let result = inject_expert_message(&manager, Some("rust-expert"), "请帮我写代码", "");
         // 期望中的三个连续 \n：夹具用 writeln! 写入 MD 使 agent_md 自带尾部换行，
         // 拼接时再补两个 \n——与真实场景（MD 文件通常以换行结尾）一致
         assert_eq!(
             result,
             "# 专家角色定义\n你是一个 Rust 专家\n\n\n# 任务\n请帮我写代码"
         );
-        let _ = std::fs::remove_file(&md_path);
     }
 
     /// 专家有技能时输出三段式：角色定义 → 可用技能 → 任务，锁定拼接格式契约。
     #[test]
     fn test_inject_expert_message_with_skills_full_three_section_prompt() {
-        let (manager, md_path) = make_manager_with_agent_md("你是一个 Rust 专家", true);
-        let result = inject_expert_message(&manager, Some("rust-expert"), "请帮我写代码");
+        // _guard 绑定到作用域末尾，Drop 时自动删临时 MD；即使下方断言 panic 也不泄漏
+        let (manager, _guard) = make_manager_with_agent_md("你是一个 Rust 专家", true);
+        let result = inject_expert_message(&manager, Some("rust-expert"), "请帮我写代码", "");
         assert!(result.starts_with("# 专家角色定义\n你是一个 Rust 专家\n"));
         assert!(result.contains("## 可用技能"));
         // build_skills_context 将技能名渲染为 Markdown 链接指向 SKILL.md 路径
         assert!(result.contains("- **[code-review]("));
         assert!(result.ends_with("# 任务\n请帮我写代码"));
-        let _ = std::fs::remove_file(&md_path);
     }
 
     /// `build_expert_prompt` 把 Agent MD、技能列表、原 message 拼成三段式 prompt。

@@ -647,7 +647,7 @@ pub(crate) async fn inject_expert_context(
     let Some(expert_manager) = &request.expert_manager else {
         return message.to_string();
     };
-    crate::expert::inject_expert_message(expert_manager, Some(expert_name), message)
+    crate::expert::inject_expert_message(expert_manager, Some(expert_name), message, "")
 }
 
 // ─── 环节级「期望产物 + spec 模板」注入（需求 054）───
@@ -856,6 +856,8 @@ pub(crate) async fn enforce_concurrency_limit(
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod tests {
     use super::*;
+    // 共享专家测试夹具（与 expert::inject 测试共用），避免 ExpertMetadata 22 字段构造重复
+    use crate::expert::test_support::make_minimal_expert_metadata;
 
     #[test]
     fn test_resolve_executor_type_priority_chain() {
@@ -1126,42 +1128,6 @@ mod tests {
         assert!(result.contains("# 任务\n请帮我写代码"));
         // 清理临时文件
         let _ = std::fs::remove_file(&md_path);
-    }
-
-    /// 构造最小可用的 ExpertMetadata 供测试使用。
-    /// 只填必要字段，其余用空值/None，避免每个测试都重复 22 个字段。
-    fn make_minimal_expert_metadata(
-        name: &str,
-        agent_name: Option<&str>,
-        lead_agent: Option<&str>,
-    ) -> crate::expert::ExpertMetadata {
-        use crate::expert::{ExpertMetadata, ExpertSource, ExpertType};
-        ExpertMetadata {
-            name: name.to_string(),
-            expert_type: ExpertType::Agent,
-            version: "0.0.1-test".to_string(),
-            source: ExpertSource::System,
-            display_name_zh: None,
-            display_name_en: None,
-            profession_zh: None,
-            profession_en: None,
-            description_zh: None,
-            description_en: None,
-            avatar_path: None,
-            category_id: None,
-            definition_dir: "/tmp".to_string(),
-            plugin_json_path: "/tmp/plugin.json".to_string(),
-            agent_name: agent_name.map(|s| s.to_string()),
-            lead_agent: lead_agent.map(|s| s.to_string()),
-            member_agents: vec![],
-            members: vec![],
-            skills: vec![],
-            default_init_prompt_zh: None,
-            default_init_prompt_en: None,
-            tags: vec![],
-            loaded_at: "test".to_string(),
-            is_active: true,
-        }
     }
 
     /// 构造一个带 expert_name 的 Todo（仅填必要字段）。

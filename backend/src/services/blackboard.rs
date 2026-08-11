@@ -512,7 +512,7 @@ pub async fn chat_with_wiki(
     //     失败时静默使用原 message，不阻断对话——专家注入是增强项而非必需项。
     //     核心逻辑已收口到 expert::inject_expert_message（096-W1-PR3），与 todo 执行管线共用一份。
     let final_message =
-        crate::expert::inject_expert_message(expert_manager, expert_name, message);
+        crate::expert::inject_expert_message(expert_manager, expert_name, message, "wiki chat: ");
 
     let _ = tx.send(ExecEvent::WikiChatStarted {
         task_id: task_id.clone(),

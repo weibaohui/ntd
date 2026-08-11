@@ -10,6 +10,10 @@ pub mod index;
 // 专家上下文注入公共核心：todo 执行管线（pre_spawn）与 wiki chat 通路（blackboard）共用，
 // 仅 crate 内可见——注入是内部增强能力，不对外暴露为 API。
 pub(crate) mod inject;
+// 测试夹具共享模块：仅 cfg(test) 下编译，inject.rs 与 executor_service::pre_spawn 的测试共用
+// make_minimal_expert_metadata，避免 22 字段 ExpertMetadata 构造两处重复（096-W1 review 收口）
+#[cfg(test)]
+pub(crate) mod test_support;
 pub mod loader;
 pub mod parser;
 pub mod types;
