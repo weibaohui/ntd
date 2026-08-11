@@ -83,7 +83,7 @@ function TaskCard({
         background: 'var(--color-bg-card, #fff)',
         borderRadius: 'var(--radius-md, 8px)',
         padding: 14,
-        // 阴影：与 TodoCard 一致的轻阴影。
+        // 阴影：与 原 TodoCard 一致的轻阴影。
         boxShadow: '0 1px 2px rgba(0, 0, 0, 0.06)',
         // 交互：cursor pointer + hover transition。
         cursor: 'pointer',

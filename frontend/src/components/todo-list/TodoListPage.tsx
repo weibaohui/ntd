@@ -4,7 +4,6 @@
 // 1. 替代原 ItemsPage，承担卡片/列表形态切换；事项详情已独立到 TodoDetailPage（URL: /#/todos/:id）。
 // 2. viewMode='card'（默认）→ 渲染 TodoCenterCardView（五类驱动卡片墙）。
 // 3. viewMode='list' → 渲染 PageCard + TodoListView（Ant Design Table 单栏宽屏）。
-// 3.5 viewMode='kanban' → 复用 KanbanBoard（todo 状态看板 + 拖拽改状态），与任务页看板形态对齐。
 // 4. 点击卡片或 table 行 → 调用 onSelectTodo 由父组件 pushUrl('todos', { id }) 跳转独立详情页。
 // 5. 顶部 header：搜索框 + 刷新 + Segmented + 新建按钮。
 // 6. 单行操作由 useTodoRowActions hook 提供，避免主函数膨胀。
@@ -22,8 +21,6 @@ import { useIsMobile } from '@/hooks/useIsMobile';
 import { TODO_LIST_REFRESH_EVENT } from '@/constants';
 import { PageCard } from '@/components/common/PageCard';
 import { TodoCenterCardView } from '@/components/TodoCenterCardView';
-// KanbanBoard：todo 维度状态看板（待办/进行中/已完成/失败 + 拖拽改状态），看板视图复用。
-import { KanbanBoard } from '@/components/KanbanBoard';
 // RunningBoard：执行记录监控（6 列 + 实时 WS + 评审流水线 + 自带统计栏/刷新），running 视图复用。
 import { RunningBoard } from '@/components/running-board';
 import { TodoListView } from './TodoListView';
@@ -38,11 +35,11 @@ import type { TodoCenterItem } from '@/types';
 const VIEW_STORAGE_KEY = 'ntd_items_view';
 
 /** 读取持久化的视图模式，默认卡片（设计文档：默认卡片式事项中心）。 */
-function readInitialView(): 'card' | 'list' | 'kanban' | 'running' {
+function readInitialView(): 'card' | 'list' | 'running' {
   try {
     const v = localStorage.getItem(VIEW_STORAGE_KEY);
-    // 显式校验合法值：历史脏值一律回退到默认卡片视图
-    if (v === 'list' || v === 'kanban' || v === 'running') return v;
+    // 显式校验合法值：历史脏值（含已移除的 'kanban'）一律回退到默认卡片视图
+    if (v === 'list' || v === 'running') return v;
     return 'card';
   } catch {
     return 'card';
@@ -53,7 +50,7 @@ function readInitialView(): 'card' | 'list' | 'kanban' | 'running' {
 const SEARCH_DEBOUNCE_MS = 300;
 
 /** 列表数据加载 hook（056 服务端分页版）：翻页/排序/搜索变化时重新拉取对应页。 */
-function useTodoListData(workspaceId: number | null, viewMode: 'card' | 'list' | 'kanban' | 'running', searchKeyword: string) {
+function useTodoListData(workspaceId: number | null, viewMode: 'card' | 'list' | 'running', searchKeyword: string) {
   const [items, setItems] = useState<TodoCenterItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
@@ -151,7 +148,7 @@ export function TodoListPage({
   const isMobile = useIsMobile();
 
   // 视图模式：默认卡片，用户切到列表后下次仍记住
-  const [viewMode, setViewMode] = useState<'card' | 'list' | 'kanban' | 'running'>(readInitialView);
+  const [viewMode, setViewMode] = useState<'card' | 'list' | 'running'>(readInitialView);
   // 统一搜索词：卡片/列表两种形态共用一个搜索框
   const [searchKeyword, setSearchKeyword] = useState('');
   // 刷新信号：每次点击刷新按钮自增，传递给 TodoCenterCardView 触发重新加载
@@ -164,7 +161,7 @@ export function TodoListPage({
   const rowActions = useTodoRowActions({ workspaceId, onReload: reload });
 
   // 持久化视图模式
-  const handleViewChange = useCallback((m: 'card' | 'list' | 'kanban' | 'running') => {
+  const handleViewChange = useCallback((m: 'card' | 'list' | 'running') => {
     setViewMode(m);
     try { localStorage.setItem(VIEW_STORAGE_KEY, m); } catch { /* 静默降级 */ }
   }, []);
@@ -200,21 +197,9 @@ export function TodoListPage({
           extra={headerExtra}
           refreshKey={refreshKey}
         />
-      ) : viewMode === 'kanban' ? (
-        // 看板态：复用 KanbanBoard（todo 状态看板 + 拖拽改状态），不传 props 让其自带顶栏。
-        // contentStyle 与任务页看板态一致：固定高度 + overflow hidden，让看板四列各自纵向滚动。
-        <PageCard
-          icon={<UnorderedListOutlined />}
-          title="事项"
-          extra={headerExtra}
-          style={{ flex: 1, height: '100%' }}
-          contentStyle={{ height: 'calc(100% - 43px)', overflow: 'hidden' }}
-        >
-          <KanbanBoard />
-        </PageCard>
       ) : viewMode === 'running' ? (
         // 执行监控态：复用 RunningBoard（执行记录 6 列 + 实时 WS + 评审流水线 + 自带统计栏/刷新）。
-        // 不传 searchText/hours：RunningBoard 自带统计栏+刷新+实时，全量执行记录，与 card/kanban 的 todo 定义维度区分。
+        // 不传 searchText/hours：RunningBoard 自带统计栏+刷新+实时，全量执行记录（与 card 的 todo 定义维度区分）。
         <PageCard
           icon={<UnorderedListOutlined />}
           title="事项"
