@@ -885,11 +885,9 @@ impl Database {
             .filter(loop_executions::Column::LoopId.eq(loop_id))
             .order_by_desc(loop_executions::Column::StartedAt);
         if let Some(h) = hours.filter(|&h| h > 0) {
-            // hours 已验证 > 0，format! 是构建 SQL 字面量的唯一途径
-            let time_expr = sea_orm::sea_query::Expr::cust(format!(
-                "REPLACE(REPLACE(started_at, 'T', ' '), 'Z', '') >= datetime('now', '-{} hours')", h
-            ));
-            query = query.filter(time_expr);
+            // 096-W2：预计算 UTC cutoff 做裸列 gte 绑定（093 同款口径）——
+            // 替代 REPLACE(REPLACE(...)) >= datetime('now',...) 旧写法，started_at 索引保持命中
+            query = query.filter(loop_executions::Column::StartedAt.gte(crate::models::utc_timestamp_minus_hours(h)));
         }
         query.limit(limit).offset(offset).all(&self.conn).await
     }
@@ -1617,10 +1615,11 @@ impl Database {
         workspace_id: Option<i64>,
         hours: Option<u32>,
     ) -> Result<(i64, i64, i64), sea_orm::DbErr> {
-        use sea_orm::{ConnectionTrait, DbBackend, Statement};
+        use sea_orm::ConnectionTrait;
         let ws_filter = workspace_id
             .map(|id| format!("AND l.workspace_id = {}", id))
             .unwrap_or_default();
+        let (time_clause, cutoff) = Self::loop_exec_time_filter(hours, "le.started_at");
         let sql = format!(
             "SELECT \
             COUNT(*) AS total, \
@@ -1629,12 +1628,12 @@ impl Database {
             FROM loop_executions le \
             JOIN loops l ON l.id = le.loop_id \
             WHERE {} {}",
-            Self::loop_exec_time_filter(hours, "le.started_at"),
+            time_clause,
             ws_filter
         );
         let row = self
             .conn
-            .query_one(Statement::from_string(DbBackend::Sqlite, sql))
+            .query_one(Self::loop_stats_statement(sql, cutoff))
             .await?
             .ok_or_else(|| sea_orm::DbErr::RecordNotFound("loop exec summary returned no rows".into()))?;
         Ok((
@@ -1650,10 +1649,11 @@ impl Database {
         workspace_id: Option<i64>,
         hours: Option<u32>,
     ) -> Result<Vec<crate::models::LoopTriggerTypeCount>, sea_orm::DbErr> {
-        use sea_orm::{ConnectionTrait, DbBackend, Statement};
+        use sea_orm::ConnectionTrait;
         let ws_filter = workspace_id
             .map(|id| format!("AND l.workspace_id = {}", id))
             .unwrap_or_default();
+        let (time_clause, cutoff) = Self::loop_exec_time_filter(hours, "le.started_at");
         let sql = format!(
             "SELECT \
             COALESCE(le.trigger_type, 'manual') AS trigger_type, \
@@ -1665,12 +1665,12 @@ impl Database {
             WHERE {} {} \
             GROUP BY COALESCE(le.trigger_type, 'manual') \
             ORDER BY count DESC",
-            Self::loop_exec_time_filter(hours, "le.started_at"),
+            time_clause,
             ws_filter
         );
         let rows = self
             .conn
-            .query_all(Statement::from_string(DbBackend::Sqlite, sql))
+            .query_all(Self::loop_stats_statement(sql, cutoff))
             .await?;
         let mut out = Vec::with_capacity(rows.len());
         for row in rows {
@@ -1692,12 +1692,13 @@ impl Database {
         workspace_id: Option<i64>,
         hours: Option<u32>,
     ) -> Result<(u64, u64, f64), sea_orm::DbErr> {
-        use sea_orm::{ConnectionTrait, DbBackend, Statement};
+        use sea_orm::ConnectionTrait;
         // le.started_at 用于时间过滤;LEFT JOIN 保证无 step/record 的 execution 行不丢失,
         // 其 token 经 COALESCE 兜底为 0。
         let ws_filter = workspace_id
             .map(|id| format!("AND l.workspace_id = {}", id))
             .unwrap_or_default();
+        let (time_clause, cutoff) = Self::loop_exec_time_filter(hours, "le.started_at");
         let sql = format!(
             "SELECT \
             COALESCE(SUM(COALESCE(json_extract(er.usage, '$.input_tokens'), 0)), 0) AS input_tokens, \
@@ -1708,12 +1709,12 @@ impl Database {
             LEFT JOIN loop_step_executions lse ON lse.loop_execution_id = le.id \
             LEFT JOIN execution_records er ON er.id = lse.execution_record_id \
             WHERE {} {}",
-            Self::loop_exec_time_filter(hours, "le.started_at"),
+            time_clause,
             ws_filter
         );
         let row = self
             .conn
-            .query_one(Statement::from_string(DbBackend::Sqlite, sql))
+            .query_one(Self::loop_stats_statement(sql, cutoff))
             .await?
             .ok_or_else(|| sea_orm::DbErr::RecordNotFound("loop token totals returned no rows".into()))?;
         // 用 i64 中转再 as u64:token 量级远低于 i64 上限,SQLite 整数返回 i64 最稳妥。
@@ -1723,15 +1724,35 @@ impl Database {
         Ok((input as u64, output as u64, cost))
     }
 
-    /// 构建 loop_executions 时间过滤 SQL 片段(impl 关联函数,无 self)。
-    /// hours=None/0 → 全时段("1=1");否则按 started_at 文本列回退 N 小时。
-    /// col 允许传别名前缀(如 "le.started_at"),适配 JOIN 查询的表别名。
-    fn loop_exec_time_filter(hours: Option<u32>, col: &str) -> String {
+    /// 构建 loop_executions 时间过滤 SQL 片段与配套 cutoff 值（impl 关联函数，无 self）。
+    ///
+    /// 096-W2 参数绑定版契约：
+    /// - hours=Some(h>0) → (`"{col} >= ?"`, Some(cutoff))：调用点把 cutoff 经
+    ///   `Statement::from_sql_and_values` 绑定——裸列比较保持 started_at 索引命中，
+    ///   替代 REPLACE(REPLACE(...)) >= datetime('now',...) 旧写法；
+    /// - hours=None/0 → (`"1=1"`, None)：全时段占位，无参数绑定。
+    ///
+    /// col 允许传别名前缀（如 "le.started_at"），适配 JOIN 查询的表别名。
+    fn loop_exec_time_filter(hours: Option<u32>, col: &str) -> (String, Option<String>) {
         match hours.filter(|&h| h > 0) {
-            Some(h) => format!(
-                "REPLACE(REPLACE({col}, 'T', ' '), 'Z', '') >= datetime('now', '-{h} hours')"
+            Some(h) => (
+                format!("{col} >= ?"),
+                Some(crate::models::utc_timestamp_minus_hours(h)),
             ),
-            None => "1=1".to_string(),
+            None => ("1=1".to_string(), None),
+        }
+    }
+
+    /// 按可选 cutoff 构造 Statement：有值走参数绑定（`?` 占位），无值退化为纯文本。
+    /// loop 统计三个 raw SQL 查询共用，避免各自重复 match 分支。
+    fn loop_stats_statement(sql: String, cutoff: Option<String>) -> sea_orm::Statement {
+        match cutoff {
+            Some(c) => sea_orm::Statement::from_sql_and_values(
+                sea_orm::DbBackend::Sqlite,
+                sql,
+                vec![c.into()],
+            ),
+            None => sea_orm::Statement::from_string(sea_orm::DbBackend::Sqlite, sql),
         }
     }
 
@@ -2567,6 +2588,28 @@ mod loop_stats_tests {
         assert_eq!(stats.total_executions, 0);
         assert!(stats.trigger_type_distribution.is_empty());
         assert_eq!(stats.total_input_tokens, 0);
+    }
+
+    /// 096-W2：loop_exec_time_filter 参数绑定版契约——
+    /// Some(h>0) 返回 `?` 占位片段 + cutoff 值（T/Z ISO 格式），None/0 返回 1=1 占位且无绑定值。
+    #[test]
+    fn test_loop_exec_time_filter_param_binding_contract() {
+        // hours=None → 全时段占位，无参数（调用点据此走纯文本 Statement）
+        let (clause, cutoff) = Database::loop_exec_time_filter(None, "le.started_at");
+        assert_eq!(clause, "1=1");
+        assert!(cutoff.is_none());
+        // hours=Some(0) → 与 None 同义（filter(|&h| h > 0) 短路）
+        let (clause, cutoff) = Database::loop_exec_time_filter(Some(0), "le.started_at");
+        assert_eq!(clause, "1=1");
+        assert!(cutoff.is_none());
+        // hours=Some(24) → 裸列占位片段 + T/Z ISO cutoff（字符串序=时间序的格式契约）
+        let (clause, cutoff) = Database::loop_exec_time_filter(Some(24), "le.started_at");
+        assert_eq!(clause, "le.started_at >= ?");
+        let cutoff = cutoff.expect("Some(h>0) 必须给出 cutoff");
+        assert!(
+            cutoff.ends_with('Z') && cutoff.contains('T'),
+            "cutoff 应为 T/Z ISO 格式（与存储格式同构），实际: {cutoff}"
+        );
     }
 }
 

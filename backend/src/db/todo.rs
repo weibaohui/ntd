@@ -1928,12 +1928,14 @@ impl Database {
         workspace_id: Option<i64>,
     ) -> Result<Vec<crate::models::RecentCompletedTodo>, sea_orm::DbErr> {
         let backend = self.conn.get_database_backend();
-        let time_filter = format!("datetime('now', '-{} hours')", hours);
+        // 096-W2：预计算 UTC cutoff 做裸列参数绑定（`er.finished_at >= ?`）——
+        // 替代 REPLACE(REPLACE(...)) >= datetime('now',...) 旧写法，消除列上函数调用
+        let time_cutoff = crate::models::utc_timestamp_minus_hours(hours);
 
         let mut conditions = vec![
             "t.deleted_at IS NULL".to_string(),
             "t.status IN ('completed', 'failed')".to_string(),
-            format!("REPLACE(REPLACE(er.finished_at, 'T', ' '), 'Z', '') >= {}", time_filter),
+            "er.finished_at >= ?".to_string(),
         ];
         // 按 workspace_id 过滤：仅显示该工作空间下的事项
         if let Some(wid) = workspace_id {
@@ -1958,7 +1960,12 @@ impl Database {
 
         let rows = self
             .conn
-            .query_all(Statement::from_string(backend, sql))
+            .query_all(Statement::from_sql_and_values(
+                backend,
+                sql,
+                // 与 conditions 中唯一的 `er.finished_at >= ?` 占位一一对应
+                vec![time_cutoff.into()],
+            ))
             .await?;
 
         let todo_ids: Vec<i64> = rows
@@ -2923,6 +2930,51 @@ mod todo_center_tests {
             .unwrap();
         assert_eq!(items2.len(), 1);
         assert_eq!(page2, 3, "旧 /todos 分页同样返回有效页码（评审 F2）");
+    }
+
+    /// 096-W2：get_recent_completed_todos 的 hours 过滤（参数化 `er.finished_at >= ?`）±1 小时边界。
+    /// 数据用生产契约的 T/Z ISO 格式；函数语义是「每 todo 取最新一条执行记录」。
+    #[tokio::test]
+    async fn test_get_recent_completed_todos_hours_boundary() {
+        let db = fresh_db().await;
+        // todo_recent：最新执行完成于 23 小时前（24h 窗口内，应命中）
+        let recent = seed_todo(&db, "最近完成").await;
+        // todo_old：最新执行完成于 25 小时前（窗口外，应排除）
+        let old = seed_todo(&db, "较早完成").await;
+        // 两 todo 状态都置为 completed（函数只统计 completed/failed 终态）
+        db.exec("UPDATE todos SET status = 'completed'")
+            .await
+            .expect("mark completed");
+        db.exec(&format!(
+            "INSERT INTO execution_records (todo_id, status, trigger_type, started_at, finished_at) \
+             VALUES ({recent}, 'success', 'manual', \
+             strftime('%Y-%m-%dT%H:%M:%SZ','now','-23 hours','-5 minutes'), \
+             strftime('%Y-%m-%dT%H:%M:%SZ','now','-23 hours'))"
+        ))
+        .await
+        .expect("insert recent record");
+        db.exec(&format!(
+            "INSERT INTO execution_records (todo_id, status, trigger_type, started_at, finished_at) \
+             VALUES ({old}, 'success', 'manual', \
+             strftime('%Y-%m-%dT%H:%M:%SZ','now','-25 hours','-5 minutes'), \
+             strftime('%Y-%m-%dT%H:%M:%SZ','now','-25 hours'))"
+        ))
+        .await
+        .expect("insert old record");
+
+        let items = db
+            .get_recent_completed_todos(24, None)
+            .await
+            .expect("query recent completed");
+        assert_eq!(items.len(), 1, "25 小时前完成的应被 24h 窗口排除");
+        assert_eq!(items[0].title, "最近完成");
+
+        // 窗口放大到 26 小时 → 两条都命中（验证排除效果来自 hours 参数而非其他条件）
+        let items = db
+            .get_recent_completed_todos(26, None)
+            .await
+            .expect("query wider window");
+        assert_eq!(items.len(), 2);
     }
 }
 

@@ -231,8 +231,33 @@ pub(super) fn assemble_dashboard_response(
 pub(super) struct DashboardQueryContext<'a> {
     pub conn: &'a dyn ConnectionTrait,
     pub backend: DbBackend,
+    /// 「N 小时前」UTC cutoff（T/Z 毫秒级 ISO 字面量，由 `utc_timestamp_minus_hours` 生成）。
+    /// 供 execution_records 各统计查询以 `started_at >= ?` 参数绑定使用——裸列比较保持
+    /// idx_execution_records_started_at 索引命中（096-W2 替代 REPLACE(REPLACE(...)) 旧写法）。
+    pub time_cutoff: String,
+    /// 热力图固定 cutoff：当年 1 月 1 日 00:00:00（T/Z ISO 字面量，与存储格式同构）。
+    /// 热力图时间范围不受 hours 过滤影响，独立成字段。
+    pub heatmap_cutoff: String,
+    /// skills 统计专用的时间过滤表达式（`datetime('now',...)` SQL 片段，存量口径）。
+    /// 注意：该片段与 T/Z 存储格式做字符串比较存在精度退化（' ' < 'T'），
+    /// 属存量行为，本结构仅为兼容保留；新代码应使用 `time_cutoff` 参数绑定。
     pub time_filter: String,
-    pub heatmap_filter: String,
+}
+
+impl DashboardQueryContext<'_> {
+    /// 构造绑定了单个时间 cutoff 参数的 Statement。
+    ///
+    /// 9 处 execution_records 统计查询的统一入口：SQL 中以 `started_at >= ?` 占位，
+    /// cutoff 经参数绑定传入（096-W2）——替代 `REPLACE(REPLACE(...)) >= datetime('now',...)`
+    /// 拼接写法，裸列比较保持索引命中，同时消除 SQL 拼接。
+    pub(super) fn stmt_with_cutoff(&self, sql: impl Into<String>, cutoff: &str) -> Statement {
+        Statement::from_sql_and_values(self.backend, sql.into(), vec![cutoff.to_string().into()])
+    }
+
+    /// `time_cutoff` 绑定的便捷入口（绝大多数查询的口径）。
+    pub(super) fn stmt_with_time_cutoff(&self, sql: impl Into<String>) -> Statement {
+        self.stmt_with_cutoff(sql, &self.time_cutoff)
+    }
 }
 
 /// 查询 Todo 统计（总数、各状态计数、定时任务数）。
@@ -269,8 +294,7 @@ pub(super) async fn fetch_todo_stats(
 pub(super) async fn fetch_execution_overall(
     ctx: &DashboardQueryContext<'_>,
 ) -> Result<(i64, i64, i64, u64, u64, u64, u64, f64, u64, u64), sea_orm::DbErr> {
-    let sql = format!(
-        "SELECT \
+    let sql = "SELECT \
         COUNT(*) as total, \
         COALESCE(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END), 0) as success, \
         COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) as failed, \
@@ -282,12 +306,10 @@ pub(super) async fn fetch_execution_overall(
         COALESCE(SUM(CASE WHEN json_extract(usage, '$.duration_ms') IS NOT NULL THEN json_extract(usage, '$.duration_ms') ELSE 0 END), 0) as total_duration, \
         COALESCE(SUM(CASE WHEN json_extract(usage, '$.duration_ms') IS NOT NULL THEN 1 ELSE 0 END), 0) as duration_count \
         FROM execution_records \
-        WHERE REPLACE(REPLACE(started_at, 'T', ' '), 'Z', '') >= {}",
-        ctx.time_filter
-    );
+        WHERE started_at >= ?";
 
     if let Some(row) = ctx.conn
-        .query_one(Statement::from_string(ctx.backend, sql))
+        .query_one(ctx.stmt_with_time_cutoff(sql))
         .await?
     {
         let t: i64 = row.try_get_by("total").unwrap_or(0);
@@ -334,8 +356,7 @@ pub(super) async fn fetch_executor_distribution(
     ctx: &DashboardQueryContext<'_>,
     executor_todo_counts: &HashMap<String, i64>,
 ) -> Result<Vec<ExecutorCount>, sea_orm::DbErr> {
-    let sql = format!(
-        "SELECT \
+    let sql = "SELECT \
         COALESCE(executor, 'claudecode') as executor, \
         COUNT(*) as execution_count, \
         COALESCE(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END), 0) as success_count, \
@@ -344,13 +365,11 @@ pub(super) async fn fetch_executor_distribution(
         COALESCE(SUM(COALESCE(json_extract(usage, '$.output_tokens'), 0)), 0) as output_tokens, \
         COALESCE(SUM(COALESCE(json_extract(usage, '$.total_cost_usd'), 0.0)), 0.0) as cost \
         FROM execution_records \
-        WHERE REPLACE(REPLACE(started_at, 'T', ' '), 'Z', '') >= {} \
-        GROUP BY COALESCE(executor, 'claudecode')",
-        ctx.time_filter
-    );
+        WHERE started_at >= ? \
+        GROUP BY COALESCE(executor, 'claudecode')";
 
     let mut distribution: Vec<ExecutorCount> = ctx.conn
-        .query_all(Statement::from_string(ctx.backend, sql))
+        .query_all(ctx.stmt_with_time_cutoff(sql))
         .await?
         .into_iter()
         .filter_map(|row| {
@@ -383,8 +402,7 @@ pub(super) async fn fetch_executor_distribution(
 pub(super) async fn fetch_model_distribution(
     ctx: &DashboardQueryContext<'_>,
 ) -> Result<Vec<ModelCount>, sea_orm::DbErr> {
-    let sql = format!(
-        "SELECT \
+    let sql = "SELECT \
         COALESCE(model, 'unknown') as model, \
         COUNT(*) as execution_count, \
         COALESCE(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END), 0) as success_count, \
@@ -395,13 +413,11 @@ pub(super) async fn fetch_model_distribution(
         COALESCE(SUM(COALESCE(json_extract(usage, '$.cache_creation_input_tokens'), 0)), 0) as cache_creation, \
         COALESCE(SUM(COALESCE(json_extract(usage, '$.total_cost_usd'), 0.0)), 0.0) as cost \
         FROM execution_records \
-        WHERE REPLACE(REPLACE(started_at, 'T', ' '), 'Z', '') >= {} \
-        GROUP BY COALESCE(model, 'unknown')",
-        ctx.time_filter
-    );
+        WHERE started_at >= ? \
+        GROUP BY COALESCE(model, 'unknown')";
 
     let mut distribution: Vec<ModelCount> = ctx.conn
-        .query_all(Statement::from_string(ctx.backend, sql))
+        .query_all(ctx.stmt_with_time_cutoff(sql))
         .await?
         .into_iter()
         .filter_map(|row| {
@@ -438,20 +454,17 @@ pub(super) async fn fetch_model_distribution(
 pub(super) async fn fetch_trigger_distribution(
     ctx: &DashboardQueryContext<'_>,
 ) -> Result<Vec<TriggerTypeCount>, sea_orm::DbErr> {
-    let sql = format!(
-        "SELECT \
+    let sql = "SELECT \
         COALESCE(trigger_type, 'manual') as trigger_type, \
         COUNT(*) as count, \
         COALESCE(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END), 0) as success_count, \
         COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) as failed_count \
         FROM execution_records \
-        WHERE REPLACE(REPLACE(started_at, 'T', ' '), 'Z', '') >= {} \
-        GROUP BY COALESCE(trigger_type, 'manual')",
-        ctx.time_filter
-    );
+        WHERE started_at >= ? \
+        GROUP BY COALESCE(trigger_type, 'manual')";
 
     let mut distribution: Vec<TriggerTypeCount> = ctx.conn
-        .query_all(Statement::from_string(ctx.backend, sql))
+        .query_all(ctx.stmt_with_time_cutoff(sql))
         .await?
         .into_iter()
         .filter_map(|row| {
@@ -476,19 +489,16 @@ pub(super) async fn fetch_trigger_distribution(
 pub(super) async fn fetch_executor_durations(
     ctx: &DashboardQueryContext<'_>,
 ) -> Result<Vec<ExecutorDuration>, sea_orm::DbErr> {
-    let sql = format!(
-        "SELECT \
+    let sql = "SELECT \
         COALESCE(executor, 'claudecode') as executor, \
         ROUND(AVG(json_extract(usage, '$.duration_ms')), 0) as avg_duration, \
         COUNT(*) as execution_count \
         FROM execution_records \
-        WHERE REPLACE(REPLACE(started_at, 'T', ' '), 'Z', '') >= {} AND json_extract(usage, '$.duration_ms') IS NOT NULL \
-        GROUP BY COALESCE(executor, 'claudecode')",
-        ctx.time_filter
-    );
+        WHERE started_at >= ? AND json_extract(usage, '$.duration_ms') IS NOT NULL \
+        GROUP BY COALESCE(executor, 'claudecode')";
 
     let mut stats: Vec<ExecutorDuration> = ctx.conn
-        .query_all(Statement::from_string(ctx.backend, sql))
+        .query_all(ctx.stmt_with_time_cutoff(sql))
         .await?
         .into_iter()
         .filter_map(|row| {
@@ -510,19 +520,16 @@ pub(super) async fn fetch_executor_durations(
 pub(super) async fn fetch_model_cache_stats(
     ctx: &DashboardQueryContext<'_>,
 ) -> Result<Vec<ModelCacheStat>, sea_orm::DbErr> {
-    let sql = format!(
-        "SELECT \
+    let sql = "SELECT \
         COALESCE(model, 'unknown') as model, \
         COALESCE(SUM(COALESCE(json_extract(usage, '$.input_tokens'), 0)), 0) as input_tokens, \
         COALESCE(SUM(COALESCE(json_extract(usage, '$.cache_read_input_tokens'), 0)), 0) as cache_read \
         FROM execution_records \
-        WHERE REPLACE(REPLACE(started_at, 'T', ' '), 'Z', '') >= {} AND model IS NOT NULL \
-        GROUP BY COALESCE(model, 'unknown')",
-        ctx.time_filter
-    );
+        WHERE started_at >= ? AND model IS NOT NULL \
+        GROUP BY COALESCE(model, 'unknown')";
 
     let mut stats: Vec<ModelCacheStat> = ctx.conn
-        .query_all(Statement::from_string(ctx.backend, sql))
+        .query_all(ctx.stmt_with_time_cutoff(sql))
         .await?
         .into_iter()
         .filter_map(|row| {
@@ -560,15 +567,15 @@ pub(super) async fn fetch_daily_stats(
         COALESCE(SUM(COALESCE(json_extract(usage, '$.cache_creation_input_tokens'), 0)), 0) as cache_creation, \
         COALESCE(SUM(COALESCE(json_extract(usage, '$.total_cost_usd'), 0.0)), 0.0) as cost \
         FROM execution_records \
-        WHERE started_at IS NOT NULL AND LENGTH(started_at) >= 10 AND REPLACE(REPLACE(started_at, 'T', ' '), 'Z', '') >= {} \
+        WHERE started_at IS NOT NULL AND LENGTH(started_at) >= 10 AND started_at >= ? \
         GROUP BY SUBSTR(started_at, 1, 10) \
         ORDER BY day DESC \
         LIMIT {}",
-        ctx.heatmap_filter, heatmap_limit
+        heatmap_limit
     );
 
     let rows = ctx.conn
-        .query_all(Statement::from_string(ctx.backend, sql))
+        .query_all(ctx.stmt_with_cutoff(sql, &ctx.heatmap_cutoff))
         .await?;
 
     let mut daily_executions = Vec::with_capacity(rows.len());
@@ -608,8 +615,7 @@ pub(super) async fn fetch_tag_distribution(
     tags: &[crate::models::Tag],
     tag_todo_counts: &HashMap<i64, i64>,
 ) -> Result<Vec<TagCount>, sea_orm::DbErr> {
-    let sql = format!(
-        "SELECT \
+    let sql = "SELECT \
         tt.tag_id, \
         COUNT(*) as execution_count, \
         COALESCE(SUM(CASE WHEN er.status = 'success' THEN 1 ELSE 0 END), 0) as success_count, \
@@ -619,13 +625,11 @@ pub(super) async fn fetch_tag_distribution(
         COALESCE(SUM(COALESCE(json_extract(er.usage, '$.total_cost_usd'), 0.0)), 0.0) as cost \
         FROM execution_records er \
         INNER JOIN todo_tags tt ON tt.todo_id = er.todo_id \
-        WHERE er.todo_id IS NOT NULL AND REPLACE(REPLACE(er.started_at, 'T', ' '), 'Z', '') >= {} \
-        GROUP BY tt.tag_id",
-        ctx.time_filter
-    );
+        WHERE er.todo_id IS NOT NULL AND er.started_at >= ? \
+        GROUP BY tt.tag_id";
 
     let tag_rows = ctx.conn
-        .query_all(Statement::from_string(ctx.backend, sql))
+        .query_all(ctx.stmt_with_time_cutoff(sql))
         .await?;
 
     let mut tag_exec_stats: HashMap<i64, (i64, i64, i64, u64, u64, f64)> = HashMap::new();
@@ -672,16 +676,13 @@ pub(super) async fn fetch_tag_distribution(
 pub(super) async fn fetch_recent_executions(
     ctx: &DashboardQueryContext<'_>,
 ) -> Result<Vec<ExecutionRecord>, sea_orm::DbErr> {
-    let sql = format!(
-        "SELECT id, todo_id, executor, trigger_type, status, started_at, finished_at, usage, task_id, session_id, result, resume_message FROM execution_records \
-        WHERE REPLACE(REPLACE(started_at, 'T', ' '), 'Z', '') >= {} \
-        ORDER BY started_at DESC LIMIT 10",
-        ctx.time_filter
-    );
+    let sql = "SELECT id, todo_id, executor, trigger_type, status, started_at, finished_at, usage, task_id, session_id, result, resume_message FROM execution_records \
+        WHERE started_at >= ? \
+        ORDER BY started_at DESC LIMIT 10";
 
     use crate::db::entity::execution_records;
     let records: Vec<ExecutionRecord> = ctx.conn
-        .query_all(Statement::from_string(ctx.backend, sql))
+        .query_all(ctx.stmt_with_time_cutoff(sql))
         .await?
         .into_iter()
         .map(|row| {
@@ -1035,6 +1036,83 @@ mod tests {
         assert_eq!(resp.top_model_tokens, Some(200));
         assert!(resp.skills_stats.is_none());
         assert!(resp.backup_stats.is_none());
+    }
+
+    // ─── 096-W2：参数化时间过滤的 DB 级验证 ───
+
+    async fn fresh_db() -> crate::db::Database {
+        crate::db::Database::new(":memory:").await.expect("memory db must open")
+    }
+
+    /// 构造仅用于测试的查询上下文：time_cutoff 取 24h 前（T/Z 毫秒级，与生产同口径），
+    /// 其余字段给占位值（被测函数不消费）。
+    fn test_ctx(db: &crate::db::Database) -> DashboardQueryContext<'_> {
+        DashboardQueryContext {
+            conn: &db.conn,
+            backend: sea_orm::DbBackend::Sqlite,
+            time_cutoff: crate::models::utc_timestamp_minus_hours(24),
+            heatmap_cutoff: "2026-01-01T00:00:00.000Z".to_string(),
+            time_filter: String::new(),
+        }
+    }
+
+    /// 参数化 `started_at >= ?` 的 ±1 小时边界：窗口内命中、窗口外排除。
+    /// 以 fetch_recent_executions 为代表（单表直返，断言最直观）；数据用生产 T/Z ISO 格式。
+    #[tokio::test]
+    async fn test_fetch_recent_executions_cutoff_boundary() {
+        let db = fresh_db().await;
+        db.exec(
+            "INSERT INTO execution_records (todo_id, status, trigger_type, started_at) \
+             VALUES (NULL, 'success', 'manual', strftime('%Y-%m-%dT%H:%M:%SZ','now','-23 hours'))",
+        )
+        .await
+        .expect("insert recent");
+        db.exec(
+            "INSERT INTO execution_records (todo_id, status, trigger_type, started_at) \
+             VALUES (NULL, 'success', 'manual', strftime('%Y-%m-%dT%H:%M:%SZ','now','-25 hours'))",
+        )
+        .await
+        .expect("insert old");
+
+        let ctx = test_ctx(&db);
+        let records = fetch_recent_executions(&ctx).await.expect("fetch recent");
+        assert_eq!(records.len(), 1, "25 小时前的记录应被 24h cutoff 排除");
+        let started = records[0].started_at.as_str();
+        assert!(started >= ctx.time_cutoff.as_str(), "命中记录应不早于 cutoff");
+    }
+
+    /// 查询计划实证：`started_at >= ?` 裸列比较必须命中 idx_execution_records_started_at，
+    /// 而非全表扫描（REPLACE(REPLACE(...)) 旧写法的核心问题即索引失效）。
+    #[tokio::test]
+    async fn test_started_at_filter_query_plan_uses_index() {
+        let db = fresh_db().await;
+        // 插几行数据，避免优化器对空表退化为 SCAN 的边界形态
+        for i in 0..3 {
+            db.exec(&format!(
+                "INSERT INTO execution_records (todo_id, status, trigger_type, started_at) \
+                 VALUES (NULL, 'success', 'manual', '2026-08-1{i}T00:00:00Z')"
+            ))
+            .await
+            .expect("insert rows");
+        }
+        let rows = db
+            .conn
+            .query_all(Statement::from_sql_and_values(
+                sea_orm::DbBackend::Sqlite,
+                "EXPLAIN QUERY PLAN SELECT COUNT(*) FROM execution_records WHERE started_at >= ?",
+                vec![crate::models::utc_timestamp_minus_hours(24).into()],
+            ))
+            .await
+            .expect("explain query plan");
+        let plan = rows
+            .iter()
+            .filter_map(|r| r.try_get_by::<String, _>("detail").ok())
+            .collect::<Vec<_>>()
+            .join("; ");
+        assert!(
+            plan.contains("idx_execution_records_started_at"),
+            "started_at 裸列过滤应命中索引而非全表扫描，实际计划: {plan}"
+        );
     }
 }
 
