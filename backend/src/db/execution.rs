@@ -232,11 +232,9 @@ impl Database {
         };
 
         let filter = if let Some(h) = query.hours.filter(|&h| h > 0) {
-            // hours 已验证 > 0，format! 是构建 SQL 字面量的唯一途径
-            let time_expr = sea_orm::sea_query::Expr::cust(format!(
-                "REPLACE(REPLACE(started_at, 'T', ' '), 'Z', '') >= datetime('now', '-{} hours')", h
-            ));
-            filter.add(time_expr)
+            // 096-W2：预计算 UTC cutoff 做裸列 gte 绑定（093 同款口径）——
+            // 替代 REPLACE(REPLACE(...)) >= datetime('now',...) 旧写法，started_at 索引保持命中
+            filter.and(execution_records::Column::StartedAt.gte(crate::models::utc_timestamp_minus_hours(h)))
         } else {
             filter
         };
@@ -1013,15 +1011,19 @@ impl Database {
         let backend = self.conn.get_database_backend();
         // default 30 days = 720 hours (matches frontend)
         let hours = hours.unwrap_or(720);
+        // 096-W2：cutoff 预计算为 T/Z ISO 字面量（与存储格式同构，字典序=时间序），
+        // 供各统计查询 `started_at >= ?` 参数绑定——裸列比较保持索引命中。
+        let time_cutoff = crate::models::utc_timestamp_minus_hours(hours);
+        // 热力图固定范围：当年 1 月 1 日起（不受 hours 过滤影响），同构 T/Z 字面量
+        let heatmap_cutoff = format!("{}-01-01T00:00:00.000Z", chrono::Utc::now().format("%Y"));
+        // skills 统计仍消费 datetime('now') 表达式（存量口径，精度退化问题见 ctx 字段注释）
         let time_filter = format!("datetime('now', '-{} hours')", hours);
-        // 热力图使用固定时间范围：当年1月1日到12月31日，不受过滤条件影响
-        // 热力图固定用字符串字面量，无需 format! 拼接
-        let heatmap_filter = "datetime(strftime('%Y', 'now') || '-01-01 00:00:00')".to_string();
         crate::db::dashboard::DashboardQueryContext {
             conn: &self.conn,
             backend,
+            time_cutoff,
+            heatmap_cutoff,
             time_filter,
-            heatmap_filter,
         }
     }
 
@@ -2313,6 +2315,47 @@ mod center_aggregate_tests {
         let map = db.get_consecutive_failure_counts_for_todos(&[t]).await.unwrap();
         // 计数 0 时 todo 不在 map 中（GROUP BY 不产生 0 行），unwrap_or(0) 表达「无连续失败」
         assert_eq!(map.get(&t).copied().unwrap_or(0), 0, "最近一条 success 应计数 0");
+    }
+
+    /// 096-W2：get_execution_records 的 hours 过滤（参数化 `started_at >= ?`）±1 小时边界。
+    /// 数据用生产契约的 T/Z ISO 格式（应用层 utc_timestamp 写入；秒级为触发器兜底形态）。
+    #[tokio::test]
+    async fn test_get_execution_records_hours_filter_boundary() {
+        let db = fresh_db().await;
+        let t = seed_todo(&db, "T").await;
+        // 23 小时前（24h 窗口内，应命中）与 25 小时前（窗口外，应排除）
+        db.exec(&format!(
+            "INSERT INTO execution_records (todo_id, status, trigger_type, started_at) \
+             VALUES ({t}, 'success', 'manual', strftime('%Y-%m-%dT%H:%M:%SZ','now','-23 hours'))"
+        ))
+        .await
+        .expect("insert recent exec");
+        db.exec(&format!(
+            "INSERT INTO execution_records (todo_id, status, trigger_type, started_at) \
+             VALUES ({t}, 'success', 'manual', strftime('%Y-%m-%dT%H:%M:%SZ','now','-25 hours'))"
+        ))
+        .await
+        .expect("insert old exec");
+
+        let query = |hours: Option<u32>| ExecutionRecordQuery {
+            todo_id: Some(t),
+            step_id: None,
+            workspace_id: None,
+            limit: 20,
+            offset: 0,
+            status: None,
+            hours,
+        };
+        // 不过滤 → 两条全返回（对照组，确认排除效果来自 hours 而非其他条件）
+        let (_, total_all) = db.get_execution_records(query(None)).await.expect("query all");
+        assert_eq!(total_all, 2);
+        // hours=24 → 仅窗口内一条；total 与分页数据一致（过滤下推 SQL 而非内存裁剪）
+        let (records, total) = db.get_execution_records(query(Some(24))).await.expect("query 24h");
+        assert_eq!(total, 1, "25 小时前的记录应被 24h 窗口排除");
+        assert_eq!(records.len(), 1);
+        // hours=0 按契约视为不过滤（filter(|&h| h > 0) 短路）
+        let (_, total_zero) = db.get_execution_records(query(Some(0))).await.expect("query h0");
+        assert_eq!(total_zero, 2, "hours=0 应退化为不过滤");
     }
 
     /// 连续失败计数：全部 failed（无非 failed 断点）→ 计数全部。
