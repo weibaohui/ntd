@@ -163,11 +163,11 @@ export const HELP_PAGES: HelpPage[] = [
     ],
   },
   {
-    pageId: 'memorial',
-    title: '看板',
-    overviewDoc: 'memorial.md',
+    pageId: 'ops',
+    title: '运行中心',
+    overviewDoc: 'ops.md',
     features: [
-      { id: 'board-mode-switch', title: '视图模式切换（四视图）', docFile: 'board-mode-switch.md' },
+      { id: 'board-mode-switch', title: '视图模式切换（三视图）', docFile: 'board-mode-switch.md' },
       { id: 'board-search', title: '搜索任务', docFile: 'board-search.md' },
       { id: 'board-time-filter', title: '时间窗过滤', docFile: 'board-time-filter.md' },
       { id: 'board-run-history-switch', title: '切换历史运行记录', docFile: 'board-run-history-switch.md' },

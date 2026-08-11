@@ -8,7 +8,7 @@ import {
   RocketOutlined,
   DashboardOutlined,
   CompassOutlined,
-  ReadOutlined,
+  EyeOutlined,
   SettingOutlined,
   ThunderboltOutlined,
   FolderOutlined,
@@ -31,7 +31,7 @@ import { WorkspaceSwitcher } from './WorkspaceSwitcher';
  *
  * 导航 key 契约（028 后）：
  *   - 顶级视图 key（'todos' / 'loops' / 'tasks' / 'processes' / 'messages' /
- *     'dashboard' / 'memorial' / 'blackboard' / 'onboarding'）必须与
+ *     'dashboard' / 'ops' / 'blackboard' / 'onboarding'）必须与
  *     useViewState.ts 的 View 联合类型一一对应，确保 activeView → navKey 不会失配。
  *   - settings_* 是「设置」面板下的子标签页 key，对应 SettingsPage 内部分支；
  *     顶级 'settings' 由 handleRailSelect 走 showSettings(null) 进入默认标签。
@@ -45,7 +45,7 @@ export type LeftRailKey =
   | 'processes'
   | 'messages'
   | 'dashboard'
-  | 'memorial'
+  | 'ops'
   | 'blackboard'
   | 'settings'
   | 'settings_projectDirectories'
@@ -124,7 +124,7 @@ export function LeftRail({
       items: [
         { key: 'messages', label: '消息', icon: <MessageOutlined />, ariaLabel: '消息' },
         { key: 'blackboard', label: '黑板', icon: <TfiBlackboard />, ariaLabel: '黑板' },
-        { key: 'memorial', label: '看板', icon: <ReadOutlined />, ariaLabel: '看板' },
+        { key: 'ops', label: '运行中心', icon: <EyeOutlined />, ariaLabel: '运行中心' },
       ] satisfies LeftRailItem[],
     },
     // 「配置」：所有配置项合并一处，避免技能/专家与执行器/智能助手分两处导致用户找不到。

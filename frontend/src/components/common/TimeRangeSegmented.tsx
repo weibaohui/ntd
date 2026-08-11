@@ -1,5 +1,5 @@
 // 全站共享的时间过滤分段组件。
-// 为什么存在：看板页（KanbanBoard）与 MemorialBoard 曾各持有一份相同的 TIME_OPTIONS
+// 为什么存在：看板页（KanbanBoard）与 OpsCenter 曾各持有一份相同的 TIME_OPTIONS
 // 和 label↔value 映射渲染逻辑（两处完全重复），任务页接入时间过滤时会出现第三份。
 // 收敛为单一组件后，后期新增时间选项只需改 TIME_RANGE_OPTIONS 一处，各页面同步生效。
 //

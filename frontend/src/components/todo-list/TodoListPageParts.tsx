@@ -12,6 +12,7 @@ import { Button, Input, Modal, Segmented, message } from 'antd';
 import {
   AppstoreOutlined,
   PlusOutlined,
+  ProjectOutlined,
   ReloadOutlined,
   SearchOutlined,
   ThunderboltOutlined,
@@ -22,11 +23,12 @@ import type { TodoCenterItem } from '@/types';
 
 interface TodoListHeaderProps {
   isMobile: boolean;
-  viewMode: 'card' | 'list';
+  /** 视图模式：card 卡片墙 / list 表格 / kanban 看板（复用 KanbanBoard，其自带顶栏，故 header 精简）。 */
+  viewMode: 'card' | 'list' | 'kanban';
   searchKeyword: string;
   loading: boolean;
   onSearchChange: (kw: string) => void;
-  onViewChange: (m: 'card' | 'list') => void;
+  onViewChange: (m: 'card' | 'list' | 'kanban') => void;
   onReload: () => void;
   onCreate: () => void;
 }
@@ -51,10 +53,12 @@ export function TodoListHeader({
     <Segmented
       size="small"
       value={viewMode}
-      onChange={(v) => onViewChange(v as 'card' | 'list')}
+      onChange={(v) => onViewChange(v as 'card' | 'list' | 'kanban')}
       options={[
         { value: 'card', icon: <AppstoreOutlined />, title: isMobile ? '卡片' : '卡片视图' },
         { value: 'list', icon: <UnorderedListOutlined />, title: '列表' },
+        // 看板视图：复用 KanbanBoard（todo 维度状态流转 + 拖拽改状态），与任务页看板形态对齐。
+        { value: 'kanban', icon: <ProjectOutlined />, title: isMobile ? '看板' : '看板视图' },
       ]}
       data-testid="todo-center-view-toggle"
     />
@@ -65,8 +69,9 @@ export function TodoListHeader({
     </Button>
   );
 
-  // 移动端：精简 header，只保留 Segmented + 新建
-  if (isMobile) {
+  // 精简 header：移动端或看板态，只保留 Segmented + 新建。
+  // 看板态精简原因：KanbanBoard 自带顶栏（搜索/时间窗/项目过滤/统计），此处再放搜索框会与之重复。
+  if (isMobile || viewMode === 'kanban') {
     return (
       <>
         {segmented}

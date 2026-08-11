@@ -24,7 +24,7 @@ const ProcessPage = lazy(() => import('@/components/ProcessPage').then(m => ({ d
 const TasksPage = lazy(() => import('@/components/tasks/TasksPage').then(m => ({ default: m.TasksPage })));
 const TaskDetailPage = lazy(() => import('@/components/tasks/TaskDetailPage').then(m => ({ default: m.TaskDetailPage })));
 const ConceptNavPage = lazy(() => import('@/components/onboarding/ConceptNavPage').then(m => ({ default: m.ConceptNavPage })));
-const MemorialBoard = lazy(() => import('@/components/MemorialBoard').then(m => ({ default: m.MemorialBoard })));
+const OpsCenter = lazy(() => import('@/components/OpsCenter').then(m => ({ default: m.OpsCenter })));
 const SettingsPage = lazy(() => import('@/components/SettingsPage').then(m => ({ default: m.SettingsPage })));
 const SkillsPanel = lazy(() => import('@/components/SkillsPanel').then(m => ({ default: m.SkillsPanel })));
 const ProjectDirectoriesPanel = lazy(() => import('@/components/settings/ProjectDirectoriesPanel').then(m => ({ default: m.ProjectDirectoriesPanel })));
@@ -270,7 +270,7 @@ function AppContent() {
     // 消息页：作为独立视图挂载，workspace 由左上角 WorkspaceSwitcher 联动传入。
     if (key === 'messages') { handleShowView('messages'); return; }
     if (key === 'dashboard') { handleShowView('dashboard'); return; }
-    if (key === 'memorial') { handleShowView('memorial'); return; }
+    if (key === 'ops') { handleShowView('ops'); return; }
     if (key === 'blackboard') { handleShowView('blackboard'); return; }
     if (key === 'settings') { showSettings(null); return; }
     if (key === 'settings_projectDirectories') { showStandaloneSettingsPanel('projectDirectories'); return; }
@@ -446,8 +446,8 @@ function AppContent() {
                 <AssistantManagementPage />
               ) : activeView === 'settings' ? (
                 <SettingsPage />
-              ) : activeView === 'memorial' ? (
-                <MemorialBoard />
+              ) : activeView === 'ops' ? (
+                <OpsCenter />
               ) : activeView === 'blackboard' ? (
                 <BlackboardPage workspaceId={state.selectedWorkspace} />
               ) : activeView === 'messages' ? (

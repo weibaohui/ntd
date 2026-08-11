@@ -194,7 +194,7 @@ export function TasksPage({ workspaceId }: TasksPageProps) {
   // 搜索框：所有视图共享（Table/卡片在前端 filter，看板不做 keyword filter）。
   // 时间分段：TimeRangeSegmented（showAll 形态），页级按 created_at 过滤，三态共享。
   // 刷新按钮：自增 refreshKey 触发 useEffect 重拉。
-  // Segmented：三态视图切换，与 MemorialBoard 的 Segmented 风格一致。
+  // Segmented：三态视图切换，与 OpsCenter 的 Segmented 风格一致。
   // 新建按钮：打开 CreateTaskModal。
   const searchInput = (
     <Input

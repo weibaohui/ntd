@@ -1,12 +1,11 @@
 import { useEffect, useState, useMemo } from 'react';
 import { Card, Segmented, Skeleton, Empty, Input } from 'antd';
 import {
-  AppstoreOutlined,
+  EyeOutlined,
   ProfileOutlined,
   SearchOutlined,
-  ThunderboltOutlined,
   SyncOutlined,
-  ReadOutlined,
+  ThunderboltOutlined,
 } from '@ant-design/icons';
 import { PageCard } from '@/components/common/PageCard';
 import { TimeRangeSegmented } from '@/components/common/TimeRangeSegmented';
@@ -14,9 +13,8 @@ import { TimeRangeSegmented } from '@/components/common/TimeRangeSegmented';
 // 执行态（进度/统计推送）变化不再触发本组件重渲染。
 import { useTodos } from '@/hooks/useTodoContext';
 import { useViewState, type BoardMode } from '@/hooks/useViewState';
-import { KanbanBoard } from './KanbanBoard';
 import { RunningBoard } from './running-board';
-// 引入环路视图组件：与 KanbanBoard（todo 看板）、RunningBoard（运行视图）并列，
+// 引入环路视图组件：与 RunningBoard（运行视图）并列，
 // 为什么需要：提供环路维度的执行历史聚合视图，补齐 todo 维度之外的监控缺口。
 import { LoopKanban } from './loop-kanban';
 import { TodoCard } from './TodoCard';
@@ -27,16 +25,16 @@ import type { RecentCompletedTodo, Tag, ExecutionRecord, ProjectDirectory } from
 // 时间分段选项已收敛到共享组件 TimeRangeSegmented（TIME_RANGE_OPTIONS 全站唯一事实源，需求 031），
 // 本文件不再内联 TIME_OPTIONS，避免与 kanban/constants 的历史重复问题重演。
 
-export function MemorialBoard() {
+export function OpsCenter() {
   const { state, dispatch } = useTodos();
   const { boardMode, replaceUrl, pushUrl } = useViewState();
   const handleBoardModeChange = (mode: BoardMode) => {
-    replaceUrl('memorial', { mode });
+    replaceUrl('ops', { mode });
   };
   const [items, setItems] = useState<RecentCompletedTodo[]>([]);
   const [loading, setLoading] = useState(true);
-  // 为什么 hours 和 searchText 在 MemorialBoard 层管理：
-  // 四种视图（memorial/kanban/running/loop_kanban）共享同一个时间过滤和搜索状态，
+  // 为什么 hours 和 searchText 在 OpsCenter 层管理：
+  // 三种视图（running/loop_kanban/conclusion）共享同一个时间过滤和搜索状态，
   // 用户切换视图时保持筛选条件，避免重复输入，提升体验。
   const [hours, setHours] = useState(24);
   const [searchText, setSearchText] = useState('');
@@ -51,7 +49,7 @@ export function MemorialBoard() {
   const [loadingRunIndex, setLoadingRunIndex] = useState<Record<number, number | null>>({});
 
   useEffect(() => {
-    if (boardMode !== 'memorial') return;
+    if (boardMode !== 'conclusion') return;
     let cancelled = false;
     setItems([]); // 切换 workspace 或重新加载时先清空旧数据
     setLoading(true);
@@ -187,8 +185,8 @@ export function MemorialBoard() {
   };
 
   // 环路执行轨迹流程图里点击事项标题：选中该事项并跳到事项详情页。
-  // 看板是只读聚合视图，钻取到具体事项才算完成「环路 → 事项」的链路闭环。
-  // 028：详情独立路由 /#/todos/:id，用 pushUrl 让 history.back 回到看板
+  // 环路视图是只读聚合视图，钻取到具体事项才算完成「环路 → 事项」的链路闭环。
+  // 028：详情独立路由 /#/todos/:id，用 pushUrl 让 history.back 回到环路视图
   const handleOpenTodoFromFlow = (todoId: number) => {
     dispatch({ type: 'SELECT_TODO', payload: todoId });
     pushUrl('todos', { id: todoId });
@@ -296,7 +294,7 @@ export function MemorialBoard() {
     return (
       <Card
         key={item.todo_id}
-        className={`memorial-card ${expanded ? 'expanded' : ''}`}
+        className={`ops-card ${expanded ? 'expanded' : ''}`}
         size='small'
         onClick={() => toggleExpand(item.todo_id)}
         style={{
@@ -335,16 +333,14 @@ export function MemorialBoard() {
 
   return (
     <PageCard
-      icon={<ReadOutlined />}
-      title="看板"
+      icon={<EyeOutlined />}
+      title="运行中心"
       extra={
         <>
-          {/* 视图模式切换：四种视图平铺展示。
-              为什么新增"环路视图"选项：
-              - memorial：按完成时间聚合 todo 的执行结论，适合快速回顾成果
-              - kanban：todo 维度的状态流转看板（待办/进行中/已完成/失败）
-              - running：实时运行状态监控
+          {/* 视图模式切换：三种视图平铺展示（看板视图已归位到「事项」菜单）。
+              - running：实时运行状态监控（默认视图，运行中心高频核心场景）
               - loop_kanban：环路维度的执行历史看板，补齐 loop 视角的监控缺口
+              - conclusion：按完成时间聚合 todo 的执行结论，适合快速回顾成果
               为什么用 SyncOutlined 图标：loop 强调循环执行，sync 图标语义匹配。
           */}
           <Segmented
@@ -352,17 +348,16 @@ export function MemorialBoard() {
             value={boardMode}
             onChange={value => handleBoardModeChange(value as BoardMode)}
             options={[
-              { label: <span><AppstoreOutlined /> 看板视图</span>, value: 'kanban' },
               { label: <span><ThunderboltOutlined /> 运行视图</span>, value: 'running' },
               { label: <span><SyncOutlined /> 环路视图</span>, value: 'loop_kanban' },
-              { label: <span><ProfileOutlined /> 结论视图</span>, value: 'memorial' },
+              { label: <span><ProfileOutlined /> 结论视图</span>, value: 'conclusion' },
             ]}
           />
         </>
       }
     >
-      <div className="memorial-board">
-        <div className="memorial-toolbar">
+      <div className="ops-board">
+        <div className="ops-toolbar">
           <Input
             placeholder="搜索任务…"
             prefix={<SearchOutlined />}
@@ -382,22 +377,20 @@ export function MemorialBoard() {
             为什么 loop_kanban 分支复用 searchText 和 hours：
             - LoopKanban 支持受控模式，接受外部 searchText/hours 并回传 onChange
             - 用户从其他视图切换过来时，保持已输入的搜索词和时间窗口，避免状态丢失
-            - onSearchChange/onHoursChange 回传给 MemorialBoard，使得多视图间筛选条件同步
+            - onSearchChange/onHoursChange 回传给 OpsCenter，使得多视图间筛选条件同步
             为什么 loop_kanban 不传 selectedProject：
-            - loop 没有 workspace 概念，项目过滤仅适用于 todo 维度（memorial/kanban/running）
+            - loop 没有 workspace 概念，项目过滤仅适用于 todo 维度（running/conclusion）
         */}
         {boardMode === 'running' ? (
           <RunningBoard searchText={searchText} hours={hours} />
-        ) : boardMode === 'kanban' ? (
-          <KanbanBoard searchText={searchText} hours={hours} onSearchChange={setSearchText} onHoursChange={setHours} />
         ) : boardMode === 'loop_kanban' ? (
           <LoopKanban searchText={searchText} hours={hours} onSearchChange={setSearchText} onHoursChange={setHours} onOpenTodo={handleOpenTodoFromFlow} />
         ) : loading ? (
-          <div className="memorial-grid">
+          <div className="ops-grid">
             {Array.from({ length: columnCount }).map((_, colIdx) => (
-              <div key={colIdx} className="memorial-column">
+              <div key={colIdx} className="ops-column">
                 {Array.from({ length: 6 }).map((__, idx) => (
-                  <Card key={`skeleton-${colIdx}-${idx}`} className="memorial-card" size="small" bodyStyle={{ padding: 12 }}>
+                  <Card key={`skeleton-${colIdx}-${idx}`} className="ops-card" size="small" bodyStyle={{ padding: 12 }}>
                     <Skeleton active paragraph={{ rows: 4 }} />
                   </Card>
                 ))}
@@ -405,13 +398,13 @@ export function MemorialBoard() {
             ))}
           </div>
         ) : items.length === 0 ? (
-          <div className="memorial-empty">
+          <div className="ops-empty">
             <Empty description={<span style={{ color: 'var(--color-text-tertiary)' }}>最近 {hours} 小时内暂无完成的任务</span>} />
           </div>
         ) : (
-          <div className="memorial-grid">
+          <div className="ops-grid">
             {columns.map((col, colIdx) => (
-              <div key={colIdx} className="memorial-column">
+              <div key={colIdx} className="ops-column">
                 {col.map(item => renderCard(item))}
               </div>
             ))}
