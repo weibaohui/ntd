@@ -628,80 +628,26 @@ pub(crate) async fn inject_workspace_background(
 ///
 /// 失败时静默返回原 message，不阻断执行——专家 prompt 注入是增强项，
 /// 不应该让专家索引读取失败导致整个 todo 执行失败。
+/// 注入格式以 `crate::expert::inject_expert_message` 的 doc 注释为权威定义。
 ///
-/// 注入格式：
-/// ```text
-/// # 专家角色定义
-/// {agent_md_content}
+/// 任一前置条件缺失都静默回退到原 message——专家注入是增强项，不应阻断执行。
 ///
-/// # 可用技能
-/// {skill_name}: {skill_description}
-/// ...
-///
-/// # 任务
-/// {original_message}
-/// ```
+/// 核心注入逻辑（查索引 → 读 Agent MD → 拼技能 → 三段式拼接）已收口到
+/// `crate::expert::inject_expert_message`（096-W1-PR3），与 wiki chat 通路共用一份；
+/// 本函数只保留 todo 执行管线特有的前置条件取数（todo.expert_name + request.expert_manager）。
+/// 保持 async 签名仅为兼容既有调用链（stages.rs），函数体本身无异步操作。
 pub(crate) async fn inject_expert_context(
     request: &super::RunTodoExecutionRequest,
     todo: &Option<crate::models::Todo>,
     message: &str,
 ) -> String {
-    // 任一前置条件缺失都静默回退到原 message——专家注入是增强项，不应阻断执行。
     let Some(expert_name) = todo.as_ref().and_then(|t| t.expert_name.as_deref()) else {
         return message.to_string();
     };
     let Some(expert_manager) = &request.expert_manager else {
         return message.to_string();
     };
-    let Some(metadata) = expert_manager.get_expert_by_name(expert_name) else {
-        tracing::warn!("未找到专家 '{}'，跳过专家上下文注入", expert_name);
-        return message.to_string();
-    };
-    // 解析主理 agent：team 用 lead_agent、agent 用 agent_name（resolve_agent_name 统一），
-    // 并按 (expert_name, agent_name) 复合键查找，避免不同专家同名 agent 互窜。
-    let Some(agent_name) = metadata.resolve_agent_name() else {
-        tracing::warn!(
-            "专家 '{}' 没有可用 agent（agent_name/lead_agent 都为空）",
-            expert_name
-        );
-        return message.to_string();
-    };
-    let Ok(agent_md) = expert_manager.get_agent_md_content(expert_name, agent_name) else {
-        tracing::warn!(
-            "未找到专家 '{}' 的 Agent '{}' MD 内容，跳过注入",
-            expert_name,
-            agent_name
-        );
-        return message.to_string();
-    };
-    let skills_text = build_expert_skills_text(expert_manager, expert_name);
-    build_expert_prompt(&agent_md, &skills_text, message)
-}
-
-/// 拼接专家技能列表文本：复用 loader 模块的 build_skills_context，支持中文描述优先。
-///
-/// 抽出来单独成函数是为了让 `inject_expert_context` 保持在 30 行内。
-fn build_expert_skills_text(
-    expert_manager: &crate::expert::ExpertIndexManager,
-    expert_name: &str,
-) -> String {
-    // 复用 loader::build_skills_context，它已实现中文优先回退逻辑。
-    crate::expert::build_skills_context(&expert_manager.get_expert_skills(expert_name))
-}
-
-/// 把 Agent MD、技能列表、原 message 拼成最终 prompt。
-///
-/// 三段式结构：专家角色定义 → 可用技能（由 build_skills_context 生成） → 任务。
-/// skills_text 为空时不添加技能段落，避免无谓标题。
-fn build_expert_prompt(agent_md: &str, skills_text: &str, original_message: &str) -> String {
-    if skills_text.is_empty() {
-        format!("# 专家角色定义\n{}\n\n# 任务\n{}", agent_md, original_message)
-    } else {
-        format!(
-            "# 专家角色定义\n{}\n\n{}\n\n# 任务\n{}",
-            agent_md, skills_text, original_message
-        )
-    }
+    crate::expert::inject_expert_message(expert_manager, Some(expert_name), message)
 }
 
 // ─── 环节级「期望产物 + spec 模板」注入（需求 054）───
@@ -1003,86 +949,6 @@ mod tests {
             resolve_exec_model(Some("  gpt-4  "), Some("sonnet"), None),
             Some("gpt-4".to_string())
         );
-    }
-
-    /// `build_expert_prompt` 把 Agent MD、技能列表、原 message 拼成三段式 prompt。
-    /// 有技能时保留技能段落（由 build_skills_context 生成，含标题行）。
-    #[test]
-    fn test_build_expert_prompt_three_sections() {
-        let agent_md = "你是一个 Rust 专家";
-        let skills = "## 可用技能\n你可以使用以下技能来辅助完成任务：\n- **code-review**: 代码评审技能\n";
-        let original = "请帮我写一个函数";
-        let result = build_expert_prompt(agent_md, skills, original);
-        // 三段标题按顺序出现，且原 message 在末尾
-        assert!(result.contains("# 专家角色定义\n你是一个 Rust 专家"));
-        assert!(result.contains("## 可用技能"));
-        assert!(result.contains("# 任务\n请帮我写一个函数"));
-    }
-
-    /// `build_expert_prompt` 技能列表为空时省略技能段落。
-    #[test]
-    fn test_build_expert_prompt_empty_skills_omits_section() {
-        let result = build_expert_prompt("agent", "", "do something");
-        // 空技能时不出现技能段落，直接从角色定义跳到任务
-        assert!(!result.contains("可用技能"));
-        assert!(result.contains("# 专家角色定义\nagent"));
-        assert!(result.contains("# 任务\ndo something"));
-    }
-
-    /// `build_expert_skills_text` 复用 loader::build_skills_context，
-    /// 返回 Markdown 格式的技能列表（含标题行和项目符号）。
-    #[test]
-    fn test_build_expert_skills_text_formats_each_skill() {
-        use crate::expert::{ExpertIndexManager, SkillMetadata};
-        let manager = ExpertIndexManager::new();
-        // 准备两个 skill 的元数据并更新到索引
-        let skills = vec![
-            SkillMetadata {
-                skill_name: "code-review".to_string(),
-                skill_dir: "/tmp/skills/code-review".to_string(),
-                skill_md_path: "/tmp/skills/code-review/SKILL.md".to_string(),
-                yaml_name: None,
-                yaml_description: Some("代码评审".to_string()),
-                yaml_description_zh: None,
-                yaml_description_en: None,
-                yaml_version: None,
-                yaml_allowed_tools: vec![],
-                yaml_emoji: None,
-            },
-            SkillMetadata {
-                skill_name: "test-gen".to_string(),
-                skill_dir: "/tmp/skills/test-gen".to_string(),
-                skill_md_path: "/tmp/skills/test-gen/SKILL.md".to_string(),
-                yaml_name: None,
-                // description 为 None 时回退到 "(无描述)"
-                yaml_description: None,
-                yaml_description_zh: None,
-                yaml_description_en: None,
-                yaml_version: None,
-                yaml_allowed_tools: vec![],
-                yaml_emoji: None,
-            },
-        ];
-        // 借用一个最小 ExpertMetadata 把 skill 绑到 "test-expert"
-        let expert = make_minimal_expert_metadata("test-expert", Some("test-agent"), None);
-        manager.update_index(&expert, &[], &skills);
-        let text = build_expert_skills_text(&manager, "test-expert");
-        // build_skills_context 输出 Markdown 格式：标题 + 项目符号列表
-        assert!(text.contains("## 可用技能"));
-        // build_skills_context 将技能名渲染为 Markdown 链接指向 SKILL.md 路径
-        assert!(text.contains("- **[code-review]("));
-        assert!(text.contains("**: 代码评审"));
-        assert!(text.contains("- **[test-gen]("));
-        assert!(text.contains("**: (无描述)"));
-    }
-
-    /// `build_expert_skills_text` 查询不存在的专家时返回空串（get_expert_skills 容错）。
-    #[test]
-    fn test_build_expert_skills_text_unknown_expert_returns_empty() {
-        use crate::expert::ExpertIndexManager;
-        let manager = ExpertIndexManager::new();
-        let text = build_expert_skills_text(&manager, "non-existent-expert");
-        assert!(text.is_empty());
     }
 
     /// `inject_expert_context` 在 todo 为 None 时直接返回原 message。
