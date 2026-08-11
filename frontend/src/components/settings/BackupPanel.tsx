@@ -6,6 +6,8 @@ import { TodoBackupTab } from './backup/TodoBackupTab';
 import { SkillBackupTab } from './backup/SkillBackupTab';
 import { DatabaseBackupTab } from './backup/DatabaseBackupTab';
 import { ImportExportModals, BackupDataYaml, ImportItem } from './backup/ImportExportModals';
+import { useBackupDomain } from './useBackupDomain';
+import { backupTimestamp, downloadBlob, downloadByUrl } from '@/utils/download';
 import type { ProjectDirectory } from '@/utils/database/todos';
 
 // 备份子 tab 的合法 key——每个子 tab 对应 URL 里的一个 sub 参数，支持深链直达
@@ -49,46 +51,36 @@ export function BackupPanel() {
     setBackupSubInHash(key as BackupSubKey);
   }, []);
 
-  // Database backup state
-  const [backupStatus, setBackupStatus] = useState<{
-    auto_backup_enabled: boolean;
-    auto_backup_cron: string;
-    auto_backup_max_files: number;
-    last_backup: string | null;
-    files: { name: string; size: number; created_at: string }[];
-  } | null>(null);
-  const [autoBackupEnabled, setAutoBackupEnabled] = useState(false);
-  const [autoBackupCron, setAutoBackupCron] = useState('0 0 3 * * *');
-  const [autoBackupMaxFiles, setAutoBackupMaxFiles] = useState(30);
-  const [backupLoading, setBackupLoading] = useState(false);
+  // 三个备份域（database/todo/skill）的状态与操作已由 useBackupDomain 收口（096-W1-PR4）：
+  // 原为 5 个 useState ×3 + 4 个 handler ×3 + 初始加载 useEffect ×3 的逐字同构复制，
+  // 现每域只剩一份差异配置（4 个端点 + 保存文案 + 错开的默认 cron 时刻）。
+  const databaseDomain = useBackupDomain({
+    getStatus: db.getDatabaseBackupStatus,
+    updateAuto: db.updateAutoBackup,
+    trigger: db.triggerLocalBackup,
+    deleteFile: db.deleteBackupFile,
+    saveSuccessText: '自动备份配置已保存',
+    defaultCron: '0 0 3 * * *',
+  });
+  const todoDomain = useBackupDomain({
+    getStatus: db.getTodoBackupStatus,
+    updateAuto: db.updateTodoAutoBackup,
+    trigger: db.triggerTodoBackup,
+    deleteFile: db.deleteTodoBackupFile,
+    saveSuccessText: 'Todo自动备份配置已保存',
+    defaultCron: '0 0 4 * * *',
+  });
+  const skillDomain = useBackupDomain({
+    getStatus: db.getSkillBackupStatus,
+    updateAuto: db.updateSkillAutoBackup,
+    trigger: db.triggerSkillBackup,
+    deleteFile: db.deleteSkillBackupFile,
+    saveSuccessText: 'Skill自动备份配置已保存',
+    defaultCron: '0 0 5 * * *',
+  });
+
+  // 日志清理配置为数据库域独有（非三域同构部分），保留在组件层
   const [logCleanupDays, setLogCleanupDays] = useState<number | null>(30);
-
-  // Todo backup state
-  const [todoBackupStatus, setTodoBackupStatus] = useState<{
-    auto_backup_enabled: boolean;
-    auto_backup_cron: string;
-    auto_backup_max_files: number;
-    last_backup: string | null;
-    files: { name: string; size: number; created_at: string }[];
-  } | null>(null);
-  const [autoTodoBackupEnabled, setAutoTodoBackupEnabled] = useState(false);
-  const [autoTodoBackupCron, setAutoTodoBackupCron] = useState('0 0 4 * * *');
-  const [autoTodoBackupMaxFiles, setAutoTodoBackupMaxFiles] = useState(30);
-  const [todoBackupLoading, setTodoBackupLoading] = useState(false);
-
-  // Skill backup state
-  const [skillBackupStatus, setSkillBackupStatus] = useState<{
-    auto_backup_enabled: boolean;
-    auto_backup_cron: string;
-    auto_backup_max_files: number;
-    last_backup: string | null;
-    files: { name: string; size: number; created_at: string }[];
-    executor_skills: { executor: string; skills_count: number; skills_dir_exists: boolean }[];
-  } | null>(null);
-  const [autoSkillBackupEnabled, setAutoSkillBackupEnabled] = useState(false);
-  const [autoSkillBackupCron, setAutoSkillBackupCron] = useState('0 0 5 * * *');
-  const [autoSkillBackupMaxFiles, setAutoSkillBackupMaxFiles] = useState(30);
-  const [skillBackupLoading, setSkillBackupLoading] = useState(false);
 
   // Import/Export state
   const [importing, setImporting] = useState(false);
@@ -138,17 +130,8 @@ export function BackupPanel() {
     return map;
   };
 
-  // Load status
+  // Load status（三域状态的初始加载已收口进 useBackupDomain，这里只剩日志清理配置）
   useEffect(() => {
-    db.getDatabaseBackupStatus()
-      .then((status) => {
-        setBackupStatus(status);
-        setAutoBackupEnabled(status.auto_backup_enabled);
-        setAutoBackupCron(status.auto_backup_cron);
-        setAutoBackupMaxFiles(status.auto_backup_max_files);
-      })
-      .catch(() => {});
-
     db.getLogCleanupStatus()
       .then((status) => {
         setLogCleanupDays(status.cleanup_days);
@@ -156,54 +139,12 @@ export function BackupPanel() {
       .catch(() => {});
   }, []);
 
-  useEffect(() => {
-    db.getTodoBackupStatus()
-      .then((status) => {
-        setTodoBackupStatus(status);
-        setAutoTodoBackupEnabled(status.auto_backup_enabled);
-        setAutoTodoBackupCron(status.auto_backup_cron);
-        setAutoTodoBackupMaxFiles(status.auto_backup_max_files);
-      })
-      .catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    db.getSkillBackupStatus()
-      .then((status) => {
-        setSkillBackupStatus(status);
-        setAutoSkillBackupEnabled(status.auto_backup_enabled);
-        setAutoSkillBackupCron(status.auto_backup_cron);
-        setAutoSkillBackupMaxFiles(status.auto_backup_max_files);
-      })
-      .catch(() => {});
-  }, []);
-
-  // Handlers - Database backup
-  const handleTriggerBackup = async () => {
-    setBackupLoading(true);
-    try {
-      const msg = await db.triggerLocalBackup();
-      message.success(msg);
-      const status = await db.getDatabaseBackupStatus();
-      setBackupStatus(status);
-    } catch (err: any) {
-      message.error(err?.message || '备份失败');
-    } finally {
-      setBackupLoading(false);
-    }
-  };
-
-  const handleOptimizeDatabase = async () => {
-    setBackupLoading(true);
-    try {
-      const msg = await db.optimizeDatabase();
-      message.success(msg);
-    } catch (err: any) {
-      message.error(err?.message || '优化失败');
-    } finally {
-      setBackupLoading(false);
-    }
-  };
+  // 数据库域附加操作（优化/日志清理，非三域同构部分）：
+  // 复用 databaseDomain.runWithLoading 共享同一 loading 灯——与原实现复用 setBackupLoading 一致。
+  const handleOptimizeDatabase = () =>
+    databaseDomain.runWithLoading(async () => {
+      message.success(await db.optimizeDatabase());
+    }, '优化失败');
 
   const handleDownloadDatabase = async () => {
     try {
@@ -211,174 +152,32 @@ export function BackupPanel() {
       const response = await fetch('/api/v1/backup/database/download');
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-      a.download = `ntd-database-${timestamp}.db`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      downloadBlob(blob, `ntd-database-${backupTimestamp()}.db`);
       message.success('数据库下载成功');
     } catch (err: any) {
       message.error(err?.message || '下载失败');
     }
   };
 
-  const handleSaveAutoBackup = async () => {
-    setBackupLoading(true);
-    try {
-      await db.updateAutoBackup(autoBackupEnabled, autoBackupCron, autoBackupMaxFiles);
-      message.success('自动备份配置已保存');
-    } catch (err: any) {
-      message.error(err?.message || '保存失败');
-    } finally {
-      setBackupLoading(false);
-    }
-  };
-
-  const handleDeleteBackup = async (filename: string) => {
-    try {
-      await db.deleteBackupFile(filename);
-      message.success('已删除');
-      const status = await db.getDatabaseBackupStatus();
-      setBackupStatus(status);
-    } catch (err: any) {
-      message.error(err?.message || '删除失败');
-    }
-  };
-
-  const handleDownloadBackupFile = (filename: string) => {
-    const url = db.downloadBackupFileUrl(filename);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-  };
-
   // Log cleanup handlers
-  const handleSaveLogCleanup = async () => {
-    setBackupLoading(true);
-    try {
+  const handleSaveLogCleanup = () =>
+    databaseDomain.runWithLoading(async () => {
       await db.updateLogCleanup(logCleanupDays);
       message.success('日志清理配置已保存');
-    } catch (err: any) {
-      message.error(err?.message || '保存失败');
-    } finally {
-      setBackupLoading(false);
-    }
-  };
+    }, '保存失败');
 
-  const handleTriggerLogCleanup = async () => {
-    setBackupLoading(true);
-    try {
-      const result = await db.triggerLogCleanup();
-      message.success(result);
-    } catch (err: any) {
-      message.error(err?.message || '清理失败');
-    } finally {
-      setBackupLoading(false);
-    }
-  };
+  const handleTriggerLogCleanup = () =>
+    databaseDomain.runWithLoading(async () => {
+      message.success(await db.triggerLogCleanup());
+    }, '清理失败');
 
-  // Todo backup handlers
-  const handleTriggerTodoBackup = async () => {
-    setTodoBackupLoading(true);
-    try {
-      const msg = await db.triggerTodoBackup();
-      message.success(msg);
-      const status = await db.getTodoBackupStatus();
-      setTodoBackupStatus(status);
-    } catch (err: any) {
-      message.error(err?.message || '备份失败');
-    } finally {
-      setTodoBackupLoading(false);
-    }
-  };
-
-  const handleSaveTodoAutoBackup = async () => {
-    setTodoBackupLoading(true);
-    try {
-      await db.updateTodoAutoBackup(autoTodoBackupEnabled, autoTodoBackupCron, autoTodoBackupMaxFiles);
-      message.success('Todo自动备份配置已保存');
-    } catch (err: any) {
-      message.error(err?.message || '保存失败');
-    } finally {
-      setTodoBackupLoading(false);
-    }
-  };
-
-  const handleDeleteTodoBackup = async (filename: string) => {
-    try {
-      await db.deleteTodoBackupFile(filename);
-      message.success('已删除');
-      const status = await db.getTodoBackupStatus();
-      setTodoBackupStatus(status);
-    } catch (err: any) {
-      message.error(err?.message || '删除失败');
-    }
-  };
-
-  const handleDownloadTodoBackupFile = (filename: string) => {
-    const url = db.downloadTodoBackupFileUrl(filename);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-  };
-
-  // Skill backup handlers
-  const handleTriggerSkillBackup = async () => {
-    setSkillBackupLoading(true);
-    try {
-      const msg = await db.triggerSkillBackup();
-      message.success(msg);
-      const status = await db.getSkillBackupStatus();
-      setSkillBackupStatus(status);
-    } catch (err: any) {
-      message.error(err?.message || '备份失败');
-    } finally {
-      setSkillBackupLoading(false);
-    }
-  };
-
-  const handleSaveSkillAutoBackup = async () => {
-    setSkillBackupLoading(true);
-    try {
-      await db.updateSkillAutoBackup(autoSkillBackupEnabled, autoSkillBackupCron, autoSkillBackupMaxFiles);
-      message.success('Skill自动备份配置已保存');
-    } catch (err: any) {
-      message.error(err?.message || '保存失败');
-    } finally {
-      setSkillBackupLoading(false);
-    }
-  };
-
-  const handleDeleteSkillBackup = async (filename: string) => {
-    try {
-      await db.deleteSkillBackupFile(filename);
-      message.success('已删除');
-      const status = await db.getSkillBackupStatus();
-      setSkillBackupStatus(status);
-    } catch (err: any) {
-      message.error(err?.message || '删除失败');
-    }
-  };
-
-  const handleDownloadSkillBackupFile = (filename: string) => {
-    const url = db.downloadSkillBackupFileUrl(filename);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-  };
+  // 三域备份文件的下载 handler：URL 直达下载，各域仅 URL builder 不同
+  const handleDownloadBackupFile = (filename: string) =>
+    downloadByUrl(db.downloadBackupFileUrl(filename), filename);
+  const handleDownloadTodoBackupFile = (filename: string) =>
+    downloadByUrl(db.downloadTodoBackupFileUrl(filename), filename);
+  const handleDownloadSkillBackupFile = (filename: string) =>
+    downloadByUrl(db.downloadSkillBackupFileUrl(filename), filename);
 
   // Export handlers
   const handleExportBackup = async () => {
@@ -392,15 +191,7 @@ export function BackupPanel() {
       }
       const yamlText = await response.text();
       const blob = new Blob([yamlText], { type: 'application/x-yaml' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-      a.download = `aietodo-backup-${timestamp}.yaml`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      downloadBlob(blob, `aietodo-backup-${backupTimestamp()}.yaml`);
       message.success('备份导出成功');
     } catch (err: any) {
       message.error(err?.message || '导出失败');
@@ -533,18 +324,20 @@ export function BackupPanel() {
             key: 'todo',
             label: '事项备份',
             children: (
+              // props 形状保持不变（096-W1-PR4 硬约束：子组件零改动），
+              // 仅数据源从散置 state/handler 换成 todoDomain 聚合返回值
               <TodoBackupTab
-                todoBackupStatus={todoBackupStatus}
-                autoTodoBackupEnabled={autoTodoBackupEnabled}
-                autoTodoBackupCron={autoTodoBackupCron}
-                autoTodoBackupMaxFiles={autoTodoBackupMaxFiles}
-                todoBackupLoading={todoBackupLoading}
-                setAutoTodoBackupEnabled={setAutoTodoBackupEnabled}
-                setAutoTodoBackupCron={setAutoTodoBackupCron}
-                setAutoTodoBackupMaxFiles={setAutoTodoBackupMaxFiles}
-                onTriggerBackup={handleTriggerTodoBackup}
-                onSaveAutoBackup={handleSaveTodoAutoBackup}
-                onDeleteBackup={handleDeleteTodoBackup}
+                todoBackupStatus={todoDomain.status}
+                autoTodoBackupEnabled={todoDomain.enabled}
+                autoTodoBackupCron={todoDomain.cron}
+                autoTodoBackupMaxFiles={todoDomain.maxFiles}
+                todoBackupLoading={todoDomain.loading}
+                setAutoTodoBackupEnabled={todoDomain.setEnabled}
+                setAutoTodoBackupCron={todoDomain.setCron}
+                setAutoTodoBackupMaxFiles={todoDomain.setMaxFiles}
+                onTriggerBackup={todoDomain.triggerBackup}
+                onSaveAutoBackup={todoDomain.saveAutoBackup}
+                onDeleteBackup={todoDomain.deleteBackup}
                 onDownloadBackupFile={handleDownloadTodoBackupFile}
                 onExportBackup={handleExportBackup}
                 onImportFile={handleImportFile}
@@ -556,17 +349,17 @@ export function BackupPanel() {
             label: 'Skill备份',
             children: (
               <SkillBackupTab
-                skillBackupStatus={skillBackupStatus}
-                autoSkillBackupEnabled={autoSkillBackupEnabled}
-                autoSkillBackupCron={autoSkillBackupCron}
-                autoSkillBackupMaxFiles={autoSkillBackupMaxFiles}
-                skillBackupLoading={skillBackupLoading}
-                setAutoSkillBackupEnabled={setAutoSkillBackupEnabled}
-                setAutoSkillBackupCron={setAutoSkillBackupCron}
-                setAutoSkillBackupMaxFiles={setAutoSkillBackupMaxFiles}
-                onTriggerBackup={handleTriggerSkillBackup}
-                onSaveAutoBackup={handleSaveSkillAutoBackup}
-                onDeleteBackup={handleDeleteSkillBackup}
+                skillBackupStatus={skillDomain.status}
+                autoSkillBackupEnabled={skillDomain.enabled}
+                autoSkillBackupCron={skillDomain.cron}
+                autoSkillBackupMaxFiles={skillDomain.maxFiles}
+                skillBackupLoading={skillDomain.loading}
+                setAutoSkillBackupEnabled={skillDomain.setEnabled}
+                setAutoSkillBackupCron={skillDomain.setCron}
+                setAutoSkillBackupMaxFiles={skillDomain.setMaxFiles}
+                onTriggerBackup={skillDomain.triggerBackup}
+                onSaveAutoBackup={skillDomain.saveAutoBackup}
+                onDeleteBackup={skillDomain.deleteBackup}
                 onDownloadBackupFile={handleDownloadSkillBackupFile}
               />
             ),
@@ -576,19 +369,19 @@ export function BackupPanel() {
             label: '数据库备份',
             children: (
               <DatabaseBackupTab
-                backupStatus={backupStatus}
-                autoBackupEnabled={autoBackupEnabled}
-                autoBackupCron={autoBackupCron}
-                autoBackupMaxFiles={autoBackupMaxFiles}
-                backupLoading={backupLoading}
+                backupStatus={databaseDomain.status}
+                autoBackupEnabled={databaseDomain.enabled}
+                autoBackupCron={databaseDomain.cron}
+                autoBackupMaxFiles={databaseDomain.maxFiles}
+                backupLoading={databaseDomain.loading}
                 logCleanupDays={logCleanupDays}
-                setAutoBackupEnabled={setAutoBackupEnabled}
-                setAutoBackupCron={setAutoBackupCron}
-                setAutoBackupMaxFiles={setAutoBackupMaxFiles}
+                setAutoBackupEnabled={databaseDomain.setEnabled}
+                setAutoBackupCron={databaseDomain.setCron}
+                setAutoBackupMaxFiles={databaseDomain.setMaxFiles}
                 setLogCleanupDays={setLogCleanupDays}
-                onTriggerBackup={handleTriggerBackup}
-                onSaveAutoBackup={handleSaveAutoBackup}
-                onDeleteBackup={handleDeleteBackup}
+                onTriggerBackup={databaseDomain.triggerBackup}
+                onSaveAutoBackup={databaseDomain.saveAutoBackup}
+                onDeleteBackup={databaseDomain.deleteBackup}
                 onDownloadBackupFile={handleDownloadBackupFile}
                 onDownloadDatabase={handleDownloadDatabase}
                 onOptimizeDatabase={handleOptimizeDatabase}
