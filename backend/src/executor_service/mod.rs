@@ -9,6 +9,7 @@
 //! - [`completion`] —— 终态分支（正常/取消/超时）、自动评审、completion hook、emit event
 //! - [`stages`] —— 三阶段 stage 函数 + spawn 闭包 + dispatch 收口
 //! - [`auto_review`] —— 同步自动评审（基于独立 runtime + std::thread 跑评审实例）
+//! - [`session_util`] —— 执行器 session 提取公共 helper（私聊/wiki chat 两通路共用）
 //! - [`types`] —— 跨模块共享的 stage 产物聚合类型
 //!
 //! 各子模块可独立单测；本文件只在「公共 API + 编排骨架」级别保留代码。
@@ -18,6 +19,7 @@ pub(crate) mod completion;
 pub mod events;
 pub(crate) mod log_capture;
 pub(crate) mod pre_spawn;
+pub(crate) mod session_util;
 pub(crate) mod spawn_lifecycle;
 pub(crate) mod stages;
 pub(crate) mod types;

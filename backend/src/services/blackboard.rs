@@ -510,7 +510,9 @@ pub async fn chat_with_wiki(
     );
     // 6.5 注入专家上下文：如果指定了专家名称，将专家角色定义和技能信息拼到 message 前面。
     //     失败时静默使用原 message，不阻断对话——专家注入是增强项而非必需项。
-    let final_message = inject_wiki_expert_context(expert_manager, expert_name, message);
+    //     核心逻辑已收口到 expert::inject_expert_message（096-W1-PR3），与 todo 执行管线共用一份。
+    let final_message =
+        crate::expert::inject_expert_message(expert_manager, expert_name, message, "wiki chat: ");
 
     let _ = tx.send(ExecEvent::WikiChatStarted {
         task_id: task_id.clone(),
@@ -561,7 +563,9 @@ pub async fn chat_with_wiki(
 
             // 9. 成功时从日志中提取 session_id 并持久化到数据库
             if success {
-                if let Some(new_session_id) = extract_session_from_logs(&executor, &logs) {
+                // session 提取逻辑已收口到 executor_service::session_util（096-W1-PR3），
+                // 与飞书私聊通路共用一份公共实现
+                if let Some(new_session_id) = crate::executor_service::session_util::extract_session_from_logs(&executor, &logs) {
                     tracing::info!(
                         "wiki chat: extracted session_id={} for executor={}, saving to DB",
                         new_session_id,
@@ -598,87 +602,6 @@ pub async fn chat_with_wiki(
             });
             Err(e)
         }
-    }
-}
-
-/// 从执行日志中提取 session_id。
-///
-/// 流程：
-/// 1. 先尝试从日志内容中提取（parse_output_session_id）
-/// 2. 如果没有，尝试执行器内部缓存的 session_id（get_session_id）
-///
-/// 不同执行器暴露 session_id 的方式不同：
-/// - Claude Code: stdout JSONL 行含 session_id
-/// - Hermès: `session_id: <sid>` 行
-/// - Pi: `{"type":"session","id":"<sid>"}` 行（通过 get_session_id 获取缓存值）
-///
-/// 返回 None 表示执行器不支持 session 或首次执行。
-fn extract_session_from_logs(
-    executor: &Arc<dyn crate::adapters::CodeExecutor>,
-    logs: &[crate::models::ParsedLogEntry],
-) -> Option<String> {
-    // 1. 优先从日志内容提取
-    for entry in logs {
-        if let Some(sid) = executor.extract_session_id(&entry.content) {
-            return Some(sid);
-        }
-    }
-    // 2. 回退到执行器内部缓存的 session_id（Pi 等执行器在 parse_output_line 时缓存）
-    executor.get_session_id()
-}
-
-/// 为 Wiki 对话注入专家上下文。
-///
-/// 如果指定了专家名称且能在索引中找到对应的 Agent MD，则将专家角色定义
-/// 和技能信息拼到用户消息前面；否则原样返回消息。
-/// 逻辑与 executor_service::pre_spawn::inject_expert_context 一致，但独立实现
-/// 避免 wiki chat 路径依赖 todo 执行管线的内部函数。
-fn inject_wiki_expert_context(
-    expert_manager: &Arc<crate::expert::ExpertIndexManager>,
-    expert_name: Option<&str>,
-    message: &str,
-) -> String {
-    // 未指定专家名称时直接返回原消息
-    let name = match expert_name {
-        Some(n) if !n.is_empty() => n,
-        _ => return message.to_string(),
-    };
-    // 查找专家元数据，找不到则静默回退
-    let metadata = match expert_manager.get_expert_by_name(name) {
-        Some(m) => m,
-        None => {
-            tracing::warn!("wiki chat: 未找到专家 '{}'，跳过专家上下文注入", name);
-            return message.to_string();
-        }
-    };
-    // 获取 Agent MD 内容：team 用 lead_agent、agent 用 agent_name（resolve_agent_name 统一）。
-    // 按 (expert_name, agent_name) 复合键查找，与执行注入路径保持一致。
-    let Some(agent_name) = metadata.resolve_agent_name() else {
-        tracing::warn!(
-            "wiki chat: 专家 '{}' 没有可用 agent（agent_name/lead_agent 都为空）",
-            name
-        );
-        return message.to_string();
-    };
-    let agent_md = match expert_manager.get_agent_md_content(name, agent_name).ok() {
-        Some(content) => content,
-        None => {
-            tracing::warn!("wiki chat: 未找到专家 '{}' 的 Agent MD 内容，跳过注入", name);
-            return message.to_string();
-        }
-    };
-    // 拼接技能列表（复用 loader 的 build_skills_context，中文优先）
-    let skills_text = crate::expert::build_skills_context(
-        &expert_manager.get_expert_skills(name),
-    );
-    // 三段式 prompt：角色定义 → 技能列表 → 用户消息
-    if skills_text.is_empty() {
-        format!("# 专家角色定义\n{}\n\n# 任务\n{}", agent_md, message)
-    } else {
-        format!(
-            "# 专家角色定义\n{}\n\n{}\n\n# 任务\n{}",
-            agent_md, skills_text, message
-        )
     }
 }
 

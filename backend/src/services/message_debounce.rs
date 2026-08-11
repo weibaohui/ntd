@@ -781,32 +781,6 @@ fn executor_empty_end_message(executor_type: &str) -> String {
     format!("✅ {} 执行完成（无输出）", executor_type)
 }
 
-/// 从执行日志中提取 session_id。
-///
-/// 流程：
-/// 1. 先尝试从日志内容中提取（extract_session_id）
-/// 2. 如果没有，尝试执行器内部缓存的 session_id（get_session_id）
-///
-/// 不同执行器暴露 session_id 的方式不同：
-/// - Claude Code: stdout JSONL 行含 session_id
-/// - Hermès: `session_id: <sid>` 行
-/// - Pi: `{"type":"session","id":"<sid>"}` 行（通过 get_session_id 获取缓存值）
-///
-/// 返回 None 表示执行器不支持 session 或首次执行。
-fn extract_session_from_logs(
-    executor: &Arc<dyn crate::adapters::CodeExecutor>,
-    logs: &[ParsedLogEntry],
-) -> Option<String> {
-    // 1. 优先从日志内容提取
-    for entry in logs {
-        if let Some(sid) = executor.extract_session_id(&entry.content) {
-            return Some(sid);
-        }
-    }
-    // 2. 回退到执行器内部缓存的 session_id（Pi 等执行器在 parse_output_line 时缓存）
-    executor.get_session_id()
-}
-
 /// 根据执行结果决定发回飞书的最终内容。
 ///
 /// 成功时统一返回简洁的结束标志（"✅ <执行器名称> 处理完成"），不再重复输出
@@ -1481,7 +1455,9 @@ impl MessageDebounce {
         // 下次私聊时可直接 resume 该 session，实现多轮对话上下文保持。
         if status.success() {
             if let Some(wid) = workspace_id {
-                if let Some(new_session_id) = extract_session_from_logs(&executor, &stream_result.logs) {
+                // session 提取逻辑已收口到 executor_service::session_util（096-W1-PR3），
+                // 与 wiki chat 通路共用一份公共实现
+                if let Some(new_session_id) = crate::executor_service::session_util::extract_session_from_logs(&executor, &stream_result.logs) {
                     tracing::info!(
                         "[debounce] extracted session_id={} for executor={}, saving to DB",
                         new_session_id,
