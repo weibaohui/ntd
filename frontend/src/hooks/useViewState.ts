@@ -10,9 +10,6 @@
  *   /#/tasks/:id              任务详情 #id（独立页）
  *   /#/dashboard              仪表盘
  *   /#/settings?tab=system    设置-系统标签
- *   /#/ops?mode=running       运行中心-运行视图（默认）
- *   /#/ops?mode=loop_kanban   运行中心-环路视图
- *   /#/ops?mode=conclusion    运行中心-结论视图
  *   /#/runtime                运行管理
  *   /#/skills                 Skills
  *   /#/projectDirectories     工作空间
@@ -24,7 +21,7 @@
  *
  * 设计要点：
  * - todos / loops 用 path 段区分列表/详情，刷新/分享/后退可恢复
- * - 其他视图（settings/ops/wiki/blackboard/processes）仍用 query 参数
+ * - 其他视图（settings/wiki/blackboard/processes）仍用 query 参数
  * - 不做旧 `/#/items` URL 兼容重定向，全站统一到 `/#/todos`
  *
  * 只管理 URL + 派生的 React 状态，不持有 Todo/Loop 的 app 数据。
@@ -33,7 +30,7 @@
 import { useState, useEffect, useCallback } from 'react';
 
 // 028 路由同步：history.pushState/replaceState 不会触发 popstate 事件，
-// 因此当 OpsCenter/BlackboardPage/ReferencingLoopsSection 等嵌套组件
+// 因此当 BlackboardPage/ReferencingLoopsSection 等嵌套组件
 // 调用 pushUrl/replaceUrl 时，App 根组件的 useViewState 实例不会更新。
 // 解决方案：用模块级 EventTarget 广播 'nav-change' 事件，
 // 所有 useViewState 实例都监听该事件，从当前 hash 重新同步状态。
@@ -48,7 +45,6 @@ export type View =
   | 'processes'
   | 'dashboard'
   | 'settings'
-  | 'ops'
   | 'runtime'
   | 'skills'
   | 'projectDirectories'
@@ -65,20 +61,14 @@ export type View =
 // 保留 'list' | 'detail' 字面量仅用于 MobileHeader 派生状态，避免大范围改动移动端组件签名。
 export type Panel = 'list' | 'detail' | 'post';
 
-export type BoardMode = 'conclusion' | 'running' | 'loop_kanban';
-
 // 所有合法 View 字面量集合：parseViewFromSegments 用它做 includes 校验，
 // 决定是否接受 URL 第一段为有效视图；新增 View 时必须同步追加，否则会被当成 fallback。
 const ALL_VIEWS: View[] = [
   'todos', 'loops', 'tasks',
-  'dashboard', 'settings', 'ops',
+  'dashboard', 'settings',
   'runtime', 'skills', 'projectDirectories', 'sessions', 'executors', 'experts',
   'blackboard', 'wiki', 'messages', 'bots', 'processes', 'onboarding',
 ];
-
-// 运行中心三种视图模式白名单：getInitialBoardMode/syncFromHash 用它过滤 query 的 mode 值，
-// 非法值（如 ?mode=foo）一律 fallback 到 'running'，避免让用户停留在未定义视图。
-const ALL_BOARD_MODES: BoardMode[] = ['running', 'loop_kanban', 'conclusion'];
 
 /** 从 hash 中提取 path 部分（去 query）。如 `#/todos/123?tab=x` → `/todos/123`。 */
 function getHashPath(): string {
@@ -196,14 +186,6 @@ function getInitialTab(): string | null {
   return tab || null;
 }
 
-function getInitialBoardMode(): BoardMode {
-  const params = getHashSearchParams();
-  const mode = params.get('mode') as BoardMode | null;
-  if (mode && ALL_BOARD_MODES.includes(mode)) return mode;
-  // 默认运行视图：运行中心高频核心场景（看板已归位事项菜单，conclusion 不再作默认）
-  return 'running';
-}
-
 function getInitialWikiSlug(): string | null {
   const params = getHashSearchParams();
   return params.get('slug');
@@ -248,7 +230,6 @@ interface NavOpts {
   /** postBack='task' 时返回的目标任务 id。 */
   postBackTaskId?: number | null;
   tab?: string | null;
-  mode?: BoardMode;
   workspace?: number | null;
   slug?: string | null;
   file?: string | null;
@@ -260,7 +241,7 @@ interface NavOpts {
    * - `'new'`：渲染编辑器空白态，先弹元信息 Modal
    * - `'edit'`：渲染编辑器，加载 `guid` 对应 YAML
    *
-   * 与运行中心 `mode`（BoardMode）通过 query key 区分：运行中心用 `?mode=`，工艺用 `?processMode=`。
+   * 用独立 query key `processMode`，避免与其他 query 参数冲突。
    */
   processMode?: 'list' | 'new' | 'edit';
 }
@@ -307,7 +288,6 @@ export function buildHashUrl(view: View, opts?: NavOpts): string {
   const path = `/${view}`;
   const params = new URLSearchParams();
   if (typeof opts?.tab === 'string' && opts.tab.trim()) params.set('tab', opts.tab);
-  if (opts?.mode) params.set('mode', opts.mode);
   if (view === 'wiki') {
     // wiki 视图需要 workspace 和 slug 来定位文件
     if (opts?.workspace != null) params.set('workspace', String(opts.workspace));
@@ -336,7 +316,6 @@ const VIEW_TO_NAV_KEY: Record<View, string> = {
   tasks: 'tasks',
   processes: 'processes',
   dashboard: 'dashboard',
-  ops: 'ops',
   blackboard: 'blackboard',
   settings: 'settings',
   runtime: 'settings_runtime',
@@ -371,7 +350,6 @@ export function useViewState() {
     () => (isTodosPostUrl() ? parsePostBackFrom(getHashSearchParams()).taskId : null),
   );
   const [activeTab, setActiveTab] = useState<string | null>(getInitialTab);
-  const [boardMode, setBoardMode] = useState<BoardMode>(getInitialBoardMode);
   const [wikiSlug, setWikiSlug] = useState<string | null>(getInitialWikiSlug);
   const [blackboardFile, setBlackboardFile] = useState<string | null>(getInitialBlackboardFile);
   const [processGuid, setProcessGuid] = useState<string | null>(getInitialProcessGuid);
@@ -383,7 +361,7 @@ export function useViewState() {
   const setters = {
     setActiveView, setTodoDetailId, setLoopDetailId, setTaskDetailId, setPostRecordId,
     setPostBackFrom, setPostBackTaskId,
-    setActiveTab, setBoardMode, setWikiSlug, setBlackboardFile, setProcessGuid, setProcessMode,
+    setActiveTab, setWikiSlug, setBlackboardFile, setProcessGuid, setProcessMode,
   };
 
   const pushUrl = useCallback((view: View, opts?: NavOpts) => {
@@ -482,7 +460,6 @@ export function useViewState() {
     // 派生：仅用于 MobileHeader 返回按钮显隐
     activePanel,
     activeTab,
-    boardMode,
     wikiSlug,
     blackboardFile,
     processGuid,
@@ -514,7 +491,6 @@ function syncStateFromOptions(
     setPostBackFrom: (f: 'todo' | 'task') => void;
     setPostBackTaskId: (id: number | null) => void;
     setActiveTab: (t: string | null) => void;
-    setBoardMode: (m: BoardMode) => void;
     setWikiSlug: (s: string | null) => void;
     setBlackboardFile: (f: string | null) => void;
     setProcessGuid: (g: string | null) => void;
@@ -524,7 +500,7 @@ function syncStateFromOptions(
   const {
     setActiveView, setTodoDetailId, setLoopDetailId, setTaskDetailId, setPostRecordId,
     setPostBackFrom, setPostBackTaskId,
-    setActiveTab, setBoardMode, setWikiSlug, setBlackboardFile, setProcessGuid, setProcessMode,
+    setActiveTab, setWikiSlug, setBlackboardFile, setProcessGuid, setProcessMode,
   } = setters;
   setActiveView(view);
   // todos: id+recordId 表示帖子页；仅 id 表示详情；都没有表示列表
@@ -536,7 +512,6 @@ function syncStateFromOptions(
   setLoopDetailId(view === 'loops' ? (opts?.id ?? null) : null);
   setTaskDetailId(view === 'tasks' ? (opts?.id ?? null) : null);
   setActiveTab(opts?.tab ?? null);
-  setBoardMode(opts?.mode ?? 'running');
   setWikiSlug(view === 'wiki' ? (opts?.slug ?? null) : null);
   setBlackboardFile(view === 'blackboard' ? (opts?.file ?? null) : null);
   setProcessGuid(view === 'processes' ? (opts?.guid ?? null) : null);
@@ -559,7 +534,6 @@ function syncFromHash(setters: {
   setPostBackFrom: (f: 'todo' | 'task') => void;
   setPostBackTaskId: (id: number | null) => void;
   setActiveTab: (t: string | null) => void;
-  setBoardMode: (m: BoardMode) => void;
   setWikiSlug: (s: string | null) => void;
   setBlackboardFile: (f: string | null) => void;
   setProcessGuid: (g: string | null) => void;
@@ -569,7 +543,6 @@ function syncFromHash(setters: {
   const view = parseViewFromSegments(segments);
   const params = getHashSearchParams();
   const tab = params.get('tab');
-  const mode = params.get('mode') as BoardMode | null;
   const slug = params.get('slug');
   const file = params.get('file');
   const guid = params.get('guid');
@@ -577,7 +550,6 @@ function syncFromHash(setters: {
   const rawProcessMode = params.get('processMode');
   const processMode: 'list' | 'new' | 'edit' =
     rawProcessMode === 'new' || rawProcessMode === 'edit' ? rawProcessMode : 'list';
-  const resolvedMode = mode && ALL_BOARD_MODES.includes(mode) ? mode : 'running';
 
   setters.setActiveView(view);
   // todos/loops/tasks 详情 id 仅在对应 view 下提取，避免跨视图串台
@@ -592,7 +564,6 @@ function syncFromHash(setters: {
   setters.setLoopDetailId(view === 'loops' ? getPathIdAt(segments, 1) : null);
   setters.setTaskDetailId(view === 'tasks' ? getPathIdAt(segments, 1) : null);
   setters.setActiveTab(tab || null);
-  setters.setBoardMode(resolvedMode);
   setters.setWikiSlug(view === 'wiki' ? (slug || null) : null);
   setters.setBlackboardFile(view === 'blackboard' ? (file || null) : null);
   setters.setProcessGuid(view === 'processes' ? (guid || null) : null);

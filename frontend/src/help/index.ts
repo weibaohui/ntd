@@ -162,19 +162,6 @@ export const HELP_PAGES: HelpPage[] = [
       { id: 'blackboard-wiki-layout', title: 'Wiki 布区切换', docFile: 'blackboard-wiki-layout.md' },
     ],
   },
-  {
-    pageId: 'ops',
-    title: '运行中心',
-    overviewDoc: 'ops.md',
-    features: [
-      { id: 'board-mode-switch', title: '视图模式切换（三视图）', docFile: 'board-mode-switch.md' },
-      { id: 'board-search', title: '搜索任务', docFile: 'board-search.md' },
-      { id: 'board-time-filter', title: '时间窗过滤', docFile: 'board-time-filter.md' },
-      { id: 'board-run-history-switch', title: '切换历史运行记录', docFile: 'board-run-history-switch.md' },
-      { id: 'board-expand-toggle', title: '展开/收起卡片详情', docFile: 'board-expand-toggle.md' },
-      { id: 'board-open-todo', title: '跳转事项详情', docFile: 'board-open-todo.md' },
-    ],
-  },
 
   // ===== 配置 =====
   {

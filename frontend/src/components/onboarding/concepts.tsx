@@ -219,21 +219,21 @@ export interface GraphNode {
 
 export const GRAPH_NODES: readonly GraphNode[] = [
   // 主链 4 节点（横向中线，isMain=true 圆圈加大突出主航线）
-  // 030：主链节点的 highlights 追加 blackboard/ops —— 高亮是单向声明，
-  // 主链侧不声明的话 hover 主链节点时观察层两个新节点不会亮（需求场景 C）。
+  // 030：主链节点的 highlights 追加 blackboard —— 高亮是单向声明，
+  // 主链侧不声明的话 hover 主链节点时观察层节点不会亮（需求场景 C）。
   { id: 'process', label: '工艺', x: 120, y: 200, highlights: ['loop', 'todo'], conceptId: 'process', isMain: true },
   { id: 'loop', label: '环路', x: 400, y: 200, highlights: ['process', 'todo', 'task', 'blackboard'], conceptId: 'loop', isMain: true },
   { id: 'todo', label: '事项', x: 680, y: 200, highlights: ['loop', 'execution', 'executor', 'expert', 'model', 'skill', 'blackboard'], conceptId: 'todo', isMain: true },
-  { id: 'execution', label: '执行记录', x: 900, y: 200, highlights: ['todo', 'blackboard', 'ops'], isMain: true },
+  { id: 'execution', label: '执行记录', x: 900, y: 200, highlights: ['todo', 'blackboard'], isMain: true },
   // 支线节点：与 6 核心概念 + skill 对齐，isMain 缺省 false 圆圈较小
   { id: 'task', label: '任务', x: 400, y: 340, highlights: ['loop'], conceptId: 'task' },
   { id: 'executor', label: '执行器', x: 680, y: 60, highlights: ['todo', 'expert', 'model'], conceptId: 'executor' },
   { id: 'expert', label: '专家', x: 760, y: 340, highlights: ['todo', 'executor', 'model'], conceptId: 'expert' },
   { id: 'skill', label: '技能 Skill', x: 580, y: 340, highlights: ['todo', 'expert'] },
   { id: 'model', label: '模型', x: 860, y: 340, highlights: ['todo', 'executor', 'expert'] },
-  // 030 观察层 2 节点（支线小圆）：黑板/运行中心是「定义→执行」之后的观察出口。
-  // 黑板放执行记录正上方同列（x=900），让「执行记录→黑板」成垂直短边；
-  // 运行中心放底行最右端（x=960），与模型圆心距 100（=专家↔模型既有间距），右缘 996 不出 viewBox。
+  // 030 观察层节点（支线小圆）：黑板是「定义→执行」之后的观察出口。
+  // 黑板放执行记录正上方同列（x=900），让「执行记录→黑板」成垂直短边。
+  // 运行监控/执行历史已归位到「事项/环路」菜单的视图态，不再单列观察节点。
   {
     id: 'blackboard',
     label: '黑板',
@@ -247,19 +247,6 @@ export const GRAPH_NODES: readonly GraphNode[] = [
     drawerDesc:
       '根据事项与执行记录持续自动分析得出的观察报告。环路里还有环节小黑板，逐个记录各个环节的执行结论，汇总到黑板统一观看。',
     navTarget: 'blackboard',
-  },
-  {
-    id: 'ops',
-    label: '运行中心',
-    // 底行最右端（x=960）：与模型圆心距 100（=专家↔模型既有间距），右缘 996 不出 viewBox
-    x: 960,
-    // 底行 y=340 与任务/技能/专家/模型同行
-    y: 340,
-    // 运行中心只有执行记录一个数据来源，故高亮列表只声明它
-    highlights: ['execution'],
-    drawerDesc: '运行中心聚合运行监控、环路执行历史与完成结论，是「定义→执行」之后的观察出口。',
-    // 默认进入运行视图（运行监控为高频核心场景）；原 kanban 进度看板已归位事项菜单，无需 mode 深链。
-    navTarget: 'ops',
   },
 ] as const;
 
@@ -289,13 +276,11 @@ export const GRAPH_EDGES: readonly GraphEdge[] = [
   { from: 'expert', to: 'todo', label: '人格' },
   { from: 'skill', to: 'todo', label: '能力注入' },
   { from: 'model', to: 'todo', label: 'LLM' },
-  // 030 观察层 4 条边（支线细线，均不带 isMain）：
-  // 黑板 = 事项/执行记录持续自动分析 + 环路各环节结论汇总；运行中心 = 运行监控与结论观察。
+  // 030 观察层边（支线细线，均不带 isMain）：黑板 = 事项/执行记录持续自动分析 + 环路各环节结论汇总。
   // 两条「持续分析」label 相同但 from-to key 不同（todo-/execution-blackboard），React key 无冲突。
   { from: 'todo', to: 'blackboard', label: '持续分析' },
   { from: 'execution', to: 'blackboard', label: '持续分析' },
   { from: 'loop', to: 'blackboard', label: '环节结论' },
-  { from: 'execution', to: 'ops', label: '运行监控' },
 ] as const;
 
 /** Hero 区一句话简介。 */

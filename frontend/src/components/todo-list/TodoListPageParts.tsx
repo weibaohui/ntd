@@ -23,12 +23,12 @@ import type { TodoCenterItem } from '@/types';
 
 interface TodoListHeaderProps {
   isMobile: boolean;
-  /** 视图模式：card 卡片墙 / list 表格 / kanban 看板（复用 KanbanBoard，其自带顶栏，故 header 精简）。 */
-  viewMode: 'card' | 'list' | 'kanban';
+  /** 视图模式：card 卡片墙 / list 表格 / kanban 看板 / running 执行监控（复用 RunningBoard）。 */
+  viewMode: 'card' | 'list' | 'kanban' | 'running';
   searchKeyword: string;
   loading: boolean;
   onSearchChange: (kw: string) => void;
-  onViewChange: (m: 'card' | 'list' | 'kanban') => void;
+  onViewChange: (m: 'card' | 'list' | 'kanban' | 'running') => void;
   onReload: () => void;
   onCreate: () => void;
 }
@@ -53,12 +53,14 @@ export function TodoListHeader({
     <Segmented
       size="small"
       value={viewMode}
-      onChange={(v) => onViewChange(v as 'card' | 'list' | 'kanban')}
+      onChange={(v) => onViewChange(v as 'card' | 'list' | 'kanban' | 'running')}
       options={[
         { value: 'card', icon: <AppstoreOutlined />, title: isMobile ? '卡片' : '卡片视图' },
         { value: 'list', icon: <UnorderedListOutlined />, title: '列表' },
         // 看板视图：复用 KanbanBoard（todo 维度状态流转 + 拖拽改状态），与任务页看板形态对齐。
         { value: 'kanban', icon: <ProjectOutlined />, title: isMobile ? '看板' : '看板视图' },
+        // 执行监控：复用 RunningBoard（执行记录 6 列 + 实时 WS + 评审流水线），与 card/kanban 的 todo 定义维度区分。
+        { value: 'running', icon: <ThunderboltOutlined />, title: isMobile ? '运行' : '执行监控' },
       ]}
       data-testid="todo-center-view-toggle"
     />
@@ -69,9 +71,9 @@ export function TodoListHeader({
     </Button>
   );
 
-  // 精简 header：移动端或看板态，只保留 Segmented + 新建。
-  // 看板态精简原因：KanbanBoard 自带顶栏（搜索/时间窗/项目过滤/统计），此处再放搜索框会与之重复。
-  if (isMobile || viewMode === 'kanban') {
+  // 精简 header：移动端或看板/运行态，只保留 Segmented + 新建。
+  // 看板态：KanbanBoard 自带顶栏（搜索/时间窗/项目过滤/统计）；运行态：RunningBoard 自带统计栏+刷新+实时 WS。
+  if (isMobile || viewMode === 'kanban' || viewMode === 'running') {
     return (
       <>
         {segmented}

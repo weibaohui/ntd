@@ -18,6 +18,9 @@ import * as dbLoops from '@/utils/database/loops';
 import { useTodos } from '@/hooks/useTodoContext';
 import { PageCard } from '@/components/common/PageCard';
 import { WorkspaceLoopConfigPage } from '@/components/settings/workspace/WorkspaceLoopConfigPage';
+// LoopKanban：环路执行历史看板（8 列），kanban 视图复用。
+import { LoopKanban } from '@/components/loop-kanban';
+import { useViewState } from '@/hooks/useViewState';
 import { LoopListView } from './LoopListView';
 import {
   LoopListHeader,
@@ -25,6 +28,20 @@ import {
   useLoopConfig,
 } from './LoopListPageParts';
 import type { LoopListItem } from '@/types/loop';
+
+/** localStorage 键：记住用户上次选的列表/看板形态。 */
+const VIEW_STORAGE_KEY = 'ntd_loops_view';
+
+/** 读取持久化的视图模式，默认列表（环路管理默认 table）。 */
+function readInitialView(): 'list' | 'kanban' {
+  try {
+    const v = localStorage.getItem(VIEW_STORAGE_KEY);
+    if (v === 'kanban') return 'kanban';
+    return 'list';
+  } catch {
+    return 'list';
+  }
+}
 
 /** 环路列表数据加载 hook：响应 workspace/loopUpdateCount 变化。 */
 function useLoopListData(workspaceId: number | null, loopUpdateCount: number) {
@@ -77,10 +94,25 @@ export function LoopListPage({
 }: LoopListPageProps) {
   const { state } = useTodos();
   const workspaceId = state.selectedWorkspace;
+  const { pushUrl } = useViewState();
   const [searchKeyword, setSearchKeyword] = useState('');
+  // 视图模式：list 定义 table / kanban 执行历史看板（维度不同，切换会换数据对象）。
+  const [viewMode, setViewMode] = useState<'list' | 'kanban'>(readInitialView);
+  // kanban 态时间窗：LoopKanban 受控，由本层下推 hours。
+  const [hours, setHours] = useState(24);
 
-  // 列表数据加载 hook
+  // 列表数据加载 hook（仅 list 态消费；kanban 态 LoopKanban 自拉执行历史）
   const { items, loading, reload } = useLoopListData(workspaceId, loopUpdateCount);
+
+  const handleViewChange = useCallback((m: 'list' | 'kanban') => {
+    setViewMode(m);
+    try { localStorage.setItem(VIEW_STORAGE_KEY, m); } catch { /* 静默降级 */ }
+  }, []);
+
+  // kanban 态执行轨迹流程图点事项标题 → 跳事项详情。
+  const handleOpenTodo = useCallback((todoId: number) => {
+    pushUrl('todos', { id: todoId });
+  }, [pushUrl]);
 
   // 行操作回调（已拆到 useLoopRowActions）
   // 044：触发/复制已随手工环路能力下线，只剩删除与启停
@@ -110,21 +142,48 @@ export function LoopListPage({
     );
   }
 
-  // 列表态：PageCard + LoopListView；header 内联避免额外函数
+  // header 共用：list/kanban 态共享 searchKeyword/Segmented，按 viewMode 显隐配置/刷新/时间窗。
+  const headerExtra = (
+    <LoopListHeader
+      viewMode={viewMode}
+      onViewChange={handleViewChange}
+      searchKeyword={searchKeyword}
+      hours={hours}
+      onHoursChange={setHours}
+      loading={loading}
+      workspaceId={workspaceId}
+      onSearchChange={setSearchKeyword}
+      onReload={reload}
+      onOpenConfig={handleOpenLoopConfig}
+    />
+  );
+
+  // kanban 态：PageCard + LoopKanban（执行历史，受控 searchText/hours/onOpenTodo）。
+  // 维度提示：list 是 loop 定义管理，kanban 是 loop 执行历史——切换 Segmented 会换数据对象。
+  if (viewMode === 'kanban') {
+    return (
+      <PageCard
+        icon={<RetweetOutlined />}
+        title="环路"
+        extra={headerExtra}
+        style={{ flex: 1, height: '100%' }}
+        contentStyle={{ height: 'calc(100% - 43px)', overflow: 'hidden' }}
+      >
+        <LoopKanban
+          searchText={searchKeyword}
+          hours={hours}
+          onOpenTodo={handleOpenTodo}
+        />
+      </PageCard>
+    );
+  }
+
+  // 列表态：PageCard + LoopListView
   return (
     <PageCard
       icon={<RetweetOutlined />}
       title="环路"
-      extra={
-        <LoopListHeader
-          searchKeyword={searchKeyword}
-          loading={loading}
-          workspaceId={workspaceId}
-          onSearchChange={setSearchKeyword}
-          onReload={reload}
-          onOpenConfig={handleOpenLoopConfig}
-        />
-      }
+      extra={headerExtra}
       style={{ flex: 1, height: '100%' }}
       contentStyle={{ padding: 0, display: 'flex', flexDirection: 'column', height: 'calc(100% - 43px)' }}
     >
