@@ -109,13 +109,12 @@ impl CodewhaleExtractor {
                     // 完成状态
                     if let Some(status) = meta.get("status").and_then(|v| v.as_str()) {
                         if status == "completed" || status == "success" {
-                            self.metadata.mark_success();
+                            // 096-W1：mark_success 死代码删除；set_finished_at 保留（完成时间记录）
                             self.metadata.set_finished_at();
                             events.push(ExecutionEvent::Result {
                                 summary: "Task completed".to_string(),
                             });
                         } else if status == "error" || status == "failed" {
-                            self.metadata.mark_failed();
                             self.metadata.set_finished_at();
                         }
                     }

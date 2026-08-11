@@ -35,9 +35,6 @@ pub struct ExecutionMetadata {
     pub started_at: Option<String>,
     pub finished_at: Option<String>,
 
-    // ── 执行状态 ──────────────────────────────────────
-    pub exit_code: Option<i32>,
-    pub is_success: bool,
 }
 
 impl ExecutionMetadata {
@@ -45,8 +42,6 @@ impl ExecutionMetadata {
     pub fn new(executor: impl Into<String>) -> Self {
         Self {
             executor: executor.into(),
-            // 执行成功的初始值：true，但会被 exit_code 等后续状态覆盖
-            is_success: true,
             ..Default::default()
         }
     }
@@ -96,25 +91,6 @@ impl ExecutionMetadata {
         }
     }
 
-    /// 标记执行成功
-    pub fn mark_success(&mut self) {
-        self.is_success = true;
-    }
-
-    /// 标记执行失败
-    pub fn mark_failed(&mut self) {
-        self.is_success = false;
-    }
-
-    /// 设置退出码
-    pub fn set_exit_code(&mut self, code: i32) {
-        self.exit_code = Some(code);
-        // 非零退出码视为失败
-        if code != 0 {
-            self.is_success = false;
-        }
-    }
-
     /// 设置结束时间
     pub fn set_finished_at(&mut self) {
         self.finished_at = Some(crate::models::utc_timestamp());
@@ -125,38 +101,6 @@ impl ExecutionMetadata {
         self.input_tokens.saturating_add(self.output_tokens)
     }
 
-    /// 获取摘要信息
-    pub fn summary(&self) -> String {
-        let mut parts = Vec::new();
-
-        if self.input_tokens > 0 || self.output_tokens > 0 {
-            parts.push(format!(
-                "tokens: in={}, out={}",
-                self.input_tokens, self.output_tokens
-            ));
-        }
-
-        if self.cache_read_tokens > 0 || self.cache_write_tokens > 0 {
-            parts.push(format!(
-                "cache: read={}, write={}",
-                self.cache_read_tokens, self.cache_write_tokens
-            ));
-        }
-
-        if self.cost_usd > 0.0 {
-            parts.push(format!("cost: ${:.4}", self.cost_usd));
-        }
-
-        if self.duration_ms > 0 {
-            parts.push(format!("duration: {}ms", self.duration_ms));
-        }
-
-        if parts.is_empty() {
-            "无统计信息".to_string()
-        } else {
-            parts.join(", ")
-        }
-    }
 }
 
 #[cfg(test)]
@@ -187,30 +131,6 @@ mod tests {
         assert_eq!(meta.output_tokens, 200);
         assert_eq!(meta.cache_read_tokens, 50);
         assert_eq!(meta.cache_write_tokens, 10);
-    }
-
-    #[test]
-    fn test_mark_success_failed() {
-        let mut meta = ExecutionMetadata::new("test");
-        assert!(meta.is_success); // 默认 true
-
-        meta.mark_failed();
-        assert!(!meta.is_success);
-
-        meta.mark_success();
-        assert!(meta.is_success);
-    }
-
-    #[test]
-    fn test_set_exit_code() {
-        let mut meta = ExecutionMetadata::new("test");
-
-        meta.set_exit_code(0);
-        assert!(meta.is_success);
-
-        meta.set_exit_code(1);
-        assert!(!meta.is_success);
-        assert_eq!(meta.exit_code, Some(1));
     }
 
     #[test]

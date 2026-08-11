@@ -20,8 +20,6 @@ use crate::execution_events::metadata::ExecutionMetadata;
 pub struct PiExtractor {
     /// 元数据
     metadata: ExecutionMetadata,
-    /// 用于累积追踪 tool_results 和 message_end 之间的对应关系
-    pending_tool_calls: Vec<String>,
 }
 
 impl PiExtractor {
@@ -29,7 +27,6 @@ impl PiExtractor {
     pub fn new() -> Self {
         Self {
             metadata: ExecutionMetadata::new("pi".to_string()),
-            pending_tool_calls: Vec::new(),
         }
     }
 
@@ -164,7 +161,7 @@ impl PiExtractor {
             }
             "message_start" => {
                 // 消息开始信号：重置 pending 状态
-                self.pending_tool_calls.clear();
+                // 096-W1：pending_tool_calls 死字段删除（只写不读）
             }
             "agent_start" | "turn_start" => {
                 // agent/turn 开始信号：无事件，仅状态标记
@@ -223,7 +220,7 @@ impl PiExtractor {
                                     input,
                                 });
                                 if !id.is_empty() {
-                                    self.pending_tool_calls.push(id.to_string());
+                                    // 096-W1：pending_tool_calls 死字段删除（原 push 点）
                                 }
                             }
 

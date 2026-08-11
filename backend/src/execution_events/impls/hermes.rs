@@ -16,8 +16,6 @@ use crate::execution_events::metadata::ExecutionMetadata;
 pub struct HermesExtractor {
     /// 元数据
     metadata: ExecutionMetadata,
-    /// 是否已看到完成标记
-    has_done: bool,
 }
 
 impl HermesExtractor {
@@ -25,7 +23,6 @@ impl HermesExtractor {
     pub fn new() -> Self {
         Self {
             metadata: ExecutionMetadata::new("hermes".to_string()),
-            has_done: false,
         }
     }
 
@@ -73,11 +70,6 @@ impl HermesExtractor {
                     session_id: sid.to_string(),
                 }];
             }
-        }
-
-        // 检查是否包含完成标记
-        if trimmed.contains("done") || trimmed.contains("complete") {
-            self.has_done = true;
         }
 
         // 检查是否包含工具调用
@@ -167,7 +159,6 @@ impl HermesExtractor {
                 });
             }
             "finish" | "complete" | "done" => {
-                self.has_done = true;
                 events.push(ExecutionEvent::Result {
                     summary: json.get("message").or_else(|| json.get("summary")).and_then(|v| v.as_str()).unwrap_or("Task completed").to_string(),
                 });
