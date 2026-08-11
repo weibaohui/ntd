@@ -8,7 +8,7 @@ describe('downloadByUrl', () => {
     vi.restoreAllMocks();
   });
 
-  it('创建 <a> 设置 href 与 download 后即插即拔', () => {
+  it('test_downloadByUrl_创建a标签设置属性即插即拔', () => {
     const clickSpy = vi
       .spyOn(HTMLAnchorElement.prototype, 'click')
       // 阻止 jsdom 真实导航（jsdom 对点击跳转只报 not implemented，静默掉保持输出干净）
@@ -36,7 +36,7 @@ describe('downloadBlob', () => {
     vi.unstubAllGlobals();
   });
 
-  it('创建 objectURL 下载后 revoke 回收（含异常路径）', () => {
+  it('test_downloadBlob_objectURL下载后revoke回收', () => {
     // jsdom 未实现 URL.createObjectURL/revokeObjectURL，stub 出可控实现
     const revokeSpy = vi.fn();
     vi.stubGlobal('URL', {
@@ -51,7 +51,7 @@ describe('downloadBlob', () => {
     expect(revokeSpy).toHaveBeenCalledWith('blob:mock-url');
   });
 
-  it('downloadByUrl 抛错时仍回收 objectURL（finally 兜底）', () => {
+  it('test_downloadBlob_抛错时finally仍回收objectURL', () => {
     const revokeSpy = vi.fn();
     vi.stubGlobal('URL', {
       ...URL,
@@ -69,8 +69,8 @@ describe('downloadBlob', () => {
 });
 
 describe('backupTimestamp', () => {
-  it('输出文件名安全的秒级时间戳（冒号与点替换为 -）', () => {
-    // 固定时刻：2026-08-11T13:45:06.789Z
+  it('test_backupTimestamp_输出文件名安全秒级时间戳', () => {
+    // 固定时刻：2026-08-11T13:45:06.789Z；冒号与点须替换为 - 才能进 Windows 文件名
     const fixed = new Date('2026-08-11T13:45:06.789Z');
     expect(backupTimestamp(fixed)).toBe('2026-08-11T13-45-06');
   });

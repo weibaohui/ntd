@@ -12,6 +12,9 @@ vi.mock('antd', () => ({
   message: { success: vi.fn(), error: vi.fn() },
 }));
 
+// 挂载 getStatus 失败时 hook 会 console.warn 排查；测试里静音避免输出噪音
+vi.spyOn(console, 'warn').mockImplementation(() => {});
+
 /** 构造一个最小合法状态对象——字段值刻意异于默认值，便于断言「回填自服务端」 */
 function makeStatus(overrides: Partial<BackupDomainStatusBase> = {}): BackupDomainStatusBase {
   return {
@@ -44,7 +47,7 @@ beforeEach(() => {
 });
 
 describe('useBackupDomain 初始加载', () => {
-  it('挂载时调用 getStatus 并回填 enabled/cron/maxFiles/status', async () => {
+  it('test_useBackupDomain_挂载回填表单与状态', async () => {
     const config = makeConfig();
     const { result } = renderHook(() => useBackupDomain(config));
 
@@ -58,22 +61,25 @@ describe('useBackupDomain 初始加载', () => {
     expect(result.current.maxFiles).toBe(7);
   });
 
-  it('getStatus 失败时静默保持默认值', async () => {
+  it('test_useBackupDomain_初始加载失败静默保持默认值', async () => {
     const config = makeConfig({ getStatus: vi.fn().mockRejectedValue(new Error('网络错误')) });
     const { result } = renderHook(() => useBackupDomain(config));
 
-    // 给 rejected promise 一个 flush 窗口；随后断言状态仍为默认且无任何错误提示
+    // 给 rejected promise 一个 flush 窗口；随后断言状态仍为默认且无用户可见错误提示
     await act(async () => {});
     expect(result.current.status).toBeNull();
     expect(result.current.enabled).toBe(false);
     expect(result.current.cron).toBe('0 0 9 * * *');
     expect(result.current.maxFiles).toBe(30);
+    // 静默语义：失败不弹用户提示（message.error 不触发）
     expect(message.error).not.toHaveBeenCalled();
+    // 规范要求空 catch 至少记录：失败经 console.warn 留痕（钉死该修复，防回退成空 catch）
+    expect(console.warn).toHaveBeenCalled();
   });
 });
 
 describe('useBackupDomain.triggerBackup', () => {
-  it('成功：提示后端文案并刷新状态，loading 翻转后复位', async () => {
+  it('test_triggerBackup_成功提示文案刷新状态并翻转loading', async () => {
     // 可控 deferred：把 trigger 卡在 pending，稳定捕获 loading=true 的中间态
     let resolveTrigger!: (v: string) => void;
     const config = makeConfig({
@@ -96,7 +102,7 @@ describe('useBackupDomain.triggerBackup', () => {
     expect(config.getStatus).toHaveBeenCalledTimes(2);
   });
 
-  it('失败：透传后端错误文案，loading 复位', async () => {
+  it('test_triggerBackup_失败透传后端错误文案', async () => {
     const config = makeConfig({ trigger: vi.fn().mockRejectedValue(new Error('磁盘已满')) });
     const { result } = renderHook(() => useBackupDomain(config));
     await waitFor(() => expect(result.current.status).not.toBeNull());
@@ -110,7 +116,7 @@ describe('useBackupDomain.triggerBackup', () => {
     expect(config.getStatus).toHaveBeenCalledTimes(1);
   });
 
-  it('失败且无后端文案时用兜底文案', async () => {
+  it('test_triggerBackup_无后端文案时用兜底', async () => {
     const config = makeConfig({ trigger: vi.fn().mockRejectedValue({}) });
     const { result } = renderHook(() => useBackupDomain(config));
     await waitFor(() => expect(result.current.status).not.toBeNull());
@@ -118,12 +124,13 @@ describe('useBackupDomain.triggerBackup', () => {
     await act(async () => {
       await result.current.triggerBackup();
     });
+    // 非 Error、无 message 的对象 → 回落操作级兜底文案（extractErrorMessage 的非对象/无 message 分支）
     expect(message.error).toHaveBeenCalledWith('备份失败');
   });
 });
 
 describe('useBackupDomain.saveAutoBackup', () => {
-  it('以当前表单值调 updateAuto 并提示域文案；不刷新状态', async () => {
+  it('test_saveAutoBackup_以表单值保存且不刷新状态', async () => {
     const config = makeConfig();
     const { result } = renderHook(() => useBackupDomain(config));
     await waitFor(() => expect(result.current.status).not.toBeNull());
@@ -145,20 +152,33 @@ describe('useBackupDomain.saveAutoBackup', () => {
 });
 
 describe('useBackupDomain.deleteBackup', () => {
-  it('删除指定文件、提示已删除并刷新状态', async () => {
-    const config = makeConfig();
+  it('test_deleteBackup_删除不翻转loading且成功刷新', async () => {
+    // 用 deferred 把 deleteFile 卡在 pending，稳定捕获「删除进行中」的 loading 态——
+    // 钉死原语义：删除不点亮 loading 灯（若误走 runWithLoading，pending 时 loading 会变 true 而回归）。
+    let resolveDelete!: (v: unknown) => void;
+    const config = makeConfig({
+      deleteFile: vi.fn().mockImplementation(() => new Promise((r) => (resolveDelete = r))),
+    });
     const { result } = renderHook(() => useBackupDomain(config));
     await waitFor(() => expect(result.current.status).not.toBeNull());
 
+    act(() => {
+      void result.current.deleteBackup('a.zip');
+    });
+    // 删除进行中：loading 必须保持 false（原 delete handler 刻意不翻转 loading）
+    expect(result.current.loading).toBe(false);
+
     await act(async () => {
-      await result.current.deleteBackup('a.zip');
+      resolveDelete('ok');
     });
     expect(config.deleteFile).toHaveBeenCalledWith('a.zip');
     expect(message.success).toHaveBeenCalledWith('已删除');
+    expect(result.current.loading).toBe(false);
+    // 初始 1 次 + 删除成功后刷新 1 次
     expect(config.getStatus).toHaveBeenCalledTimes(2);
   });
 
-  it('删除失败时提示兜底文案且不刷新', async () => {
+  it('test_deleteBackup_失败透传错误且不刷新', async () => {
     const config = makeConfig({ deleteFile: vi.fn().mockRejectedValue(new Error('文件被占用')) });
     const { result } = renderHook(() => useBackupDomain(config));
     await waitFor(() => expect(result.current.status).not.toBeNull());
@@ -172,7 +192,7 @@ describe('useBackupDomain.deleteBackup', () => {
 });
 
 describe('useBackupDomain.runWithLoading', () => {
-  it('附加操作复用同一 loading：成功时不提示，失败时按传入文案报错', async () => {
+  it('test_runWithLoading_附加操作复用loading并按文案报错', async () => {
     const config = makeConfig();
     const { result } = renderHook(() => useBackupDomain(config));
     await waitFor(() => expect(result.current.status).not.toBeNull());

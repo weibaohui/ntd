@@ -58,6 +58,25 @@ export interface BackupDomain<S extends BackupDomainStatusBase> {
   runWithLoading: (action: () => Promise<void>, errorText: string) => Promise<void>;
 }
 
+/**
+ * 从未知错误中提取用户可读文案，等价于原实现的 `err?.message || fallback`。
+ *
+ * 后端抛来的错误形态不定——可能是 Error 实例，也可能是带 message 字段的普通对象，
+ * 还可能是 null/字符串等非对象。统一收口为「有非空字符串 message 就透传，否则兜底」，
+ * 让 catch (err: unknown) 下仍保留原 err?.message 的透传语义，又不违背禁 any 规范。
+ */
+function extractErrorMessage(err: unknown, fallback: string): string {
+  // 仅对「非空对象且含 message 字段」尝试透传；string/null/undefined 等非对象直接兜底
+  if (typeof err === 'object' && err !== null && 'message' in err) {
+    const msg = (err as { message?: unknown }).message;
+    // message 必须是非空字符串才透传——与原 || 的 falsy 回落一致（空串/数字等不透传）
+    if (typeof msg === 'string' && msg.length > 0) {
+      return msg;
+    }
+  }
+  return fallback;
+}
+
 export function useBackupDomain<S extends BackupDomainStatusBase>(
   config: BackupDomainConfig<S>,
 ): BackupDomain<S> {
@@ -84,7 +103,11 @@ export function useBackupDomain<S extends BackupDomainStatusBase>(
         setCron(s.auto_backup_cron);
         setMaxFiles(s.auto_backup_max_files);
       })
-      .catch(() => {});
+      .catch((err: unknown) => {
+        // 初始状态拉取失败不弹用户提示（面板仍以默认值展示、不阻断操作，与原实现一致），
+        // 仅留 console.warn 便于线上排查——满足「空 catch 至少记录」的规范要求。
+        console.warn('backup status 初始加载失败', err);
+      });
   }, []);
 
   // 通用 loading 包装：setLoading 翻转 + 统一 catch 文案提示 + finally 复位。
@@ -94,9 +117,9 @@ export function useBackupDomain<S extends BackupDomainStatusBase>(
       setLoading(true);
       try {
         await action();
-      } catch (err: any) {
+      } catch (err: unknown) {
         // 后端有具体错误信息则透传，否则用操作级兜底文案——与原实现的 err?.message || '...' 一致
-        message.error(err?.message || errorText);
+        message.error(extractErrorMessage(err, errorText));
       } finally {
         setLoading(false);
       }
@@ -124,15 +147,20 @@ export function useBackupDomain<S extends BackupDomainStatusBase>(
     [runWithLoading, enabled, cron, maxFiles],
   );
 
-  // 删除文件：成功后刷新状态让文件列表即时消失——与原 handler 逐字一致
+  // 删除文件：成功顺序为「提示已删除 → 重新拉状态让文件列表即时消失」。
+  // 刻意不走 runWithLoading——原三个 delete handler 均不翻转 loading（删除是即时操作，
+  // 无需点亮 loading 灯/禁用按钮），此处保持该语义以避免行为回归。
   const deleteBackup = useCallback(
-    (filename: string) =>
-      runWithLoading(async () => {
+    async (filename: string) => {
+      try {
         await configRef.current.deleteFile(filename);
         message.success('已删除');
         setStatus(await configRef.current.getStatus());
-      }, '删除失败'),
-    [runWithLoading],
+      } catch (err: unknown) {
+        message.error(extractErrorMessage(err, '删除失败'));
+      }
+    },
+    [],
   );
 
   return {
