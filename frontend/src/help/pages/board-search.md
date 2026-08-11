@@ -2,7 +2,7 @@
 
 ## 功能位置
 
-运行中心页 → 工具栏搜索框（`Input` + `SearchOutlined`），四种视图共享
+运行中心页 → 工具栏搜索框（`Input` + `SearchOutlined`），三种视图共享
 
 ## 数据流图（前端 → 后端）
 
@@ -12,8 +12,6 @@ flowchart LR
   IN --> SS["setSearchText(value)"]
   SS --> MEM["filteredItems useMemo 重算"]
   MEM -->|conclusion| FT1["前端按 title/prompt 过滤"]
-  SS -->|kanban| KB["KanbanBoard searchText 受控"]
-  KB --> FT2["filteredTodos useMemo 按 title/prompt 过滤"]
   SS -->|running| RB["RunningBoard searchText 受控"]
   RB --> FT3["filteredRecords 按 title/prompt/model/executor 过滤"]
   SS -->|loop_kanban| LK["LoopKanban searchText 受控"]
@@ -29,8 +27,6 @@ flowchart TD
   Input --> setSearchText["onChange setSearchText"]
   searchText_state --> filteredItems["useMemo filteredItems"]
   filteredItems --> conclusion_filter["items.filter title/prompt includes"]
-  searchText_state --> KanbanBoard["searchText prop"]
-  KanbanBoard --> filteredTodos["useMemo filteredTodos"]
   searchText_state --> RunningBoard["searchText prop"]
   RunningBoard --> filteredRecords["useMemo filteredRecords"]
   searchText_state --> LoopKanban["searchText prop"]
@@ -45,12 +41,6 @@ classDiagram
     +todo_id: number
     +title: string
     +prompt: string_null
-  }
-  class Todo {
-    +id: number
-    +title: string
-    +prompt: string_null
-    +status: string
   }
   class ExecutionRecord {
     +todo_id: number
@@ -80,5 +70,5 @@ end note
 
 - **前端入口**：`frontend/src/components/OpsCenter.tsx` 的 `searchText` state 和 `filteredItems` useMemo；各子视图组件内部各自实现过滤逻辑
 - **后端入口**：无——搜索为纯前端 `filter` 过滤，不打后端
-- **注意**：四种视图共享同一个 `searchText` state，切换视图时保持关键字；结论视图和看板视图按 `title` 和 `prompt` 双字段过滤；运行视图额外匹配 `model` 和 `executor`；环路视图匹配 `loop_name` 和 `trigger_type`；搜索全部用 `toLowerCase().includes()` 做大小写不敏感匹配
+- **注意**：三种视图共享同一个 `searchText` state，切换视图时保持关键字；结论视图按 `title` 和 `prompt` 双字段过滤；运行视图额外匹配 `model` 和 `executor`；环路视图匹配 `loop_name` 和 `trigger_type`；搜索全部用 `toLowerCase().includes()` 做大小写不敏感匹配
 - **扩展**：若需将搜索下沉到后端（如分页场景），改为在 `Input` onChange 中调用带 `keyword` 参数的后端接口并防抖；新增搜索字段时在各视图的 `useMemo` 过滤逻辑中追加字段匹配条件
