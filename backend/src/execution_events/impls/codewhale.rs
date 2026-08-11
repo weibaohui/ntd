@@ -106,17 +106,16 @@ impl CodewhaleExtractor {
                             cache_write: None,
                         });
                     }
-                    // 完成状态
+                    // 完成状态：四种终态都需记录完成时间，统一调用一次避免分支重复
                     if let Some(status) = meta.get("status").and_then(|v| v.as_str()) {
-                        if status == "completed" || status == "success" {
-                            self.metadata.mark_success();
+                        if matches!(status, "completed" | "success" | "error" | "failed") {
                             self.metadata.set_finished_at();
-                            events.push(ExecutionEvent::Result {
-                                summary: "Task completed".to_string(),
-                            });
-                        } else if status == "error" || status == "failed" {
-                            self.metadata.mark_failed();
-                            self.metadata.set_finished_at();
+                            // 仅成功态额外产出 Result 事件
+                            if matches!(status, "completed" | "success") {
+                                events.push(ExecutionEvent::Result {
+                                    summary: "Task completed".to_string(),
+                                });
+                            }
                         }
                     }
                 }

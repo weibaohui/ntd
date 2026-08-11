@@ -156,11 +156,7 @@ impl CodebuddyExtractor {
                         });
                     }
                 }
-                if json.get("is_error").and_then(|v| v.as_bool()).unwrap_or(false) {
-                    self.metadata.mark_failed();
-                } else {
-                    self.metadata.mark_success();
-                }
+                // 096-W1：mark_success/mark_failed 死代码删除（is_success 字段无生产读取方）
                 self.metadata.set_finished_at();
             }
             _ => {}

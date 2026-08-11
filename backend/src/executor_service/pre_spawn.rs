@@ -263,11 +263,6 @@ pub(crate) struct SelectedExecutor {
     pub executable_path: String,
     pub executor_str: String,
     pub todo_workspace_path: Option<String>,
-    // 仅在构造时赋值（= request.resume_session_id），当前无读取方：create_record_or_reject
-    // 刻意不用它（见该函数注释的 resume 语义说明），保留字段以承载未来 executor 对
-    // resume session 的直接消费，故 allow(dead_code) 而非删除。
-    #[allow(dead_code)]
-    pub session_id_for_executor: Option<String>,
 }
 
 /// Stage 1 步骤 5：选定 executor 并构造 command argv。
@@ -307,7 +302,6 @@ pub(crate) async fn select_executor_and_build_command(
         executable_path,
         executor_str,
         todo_workspace_path,
-        session_id_for_executor: request.resume_session_id.clone(),
     })
 }
 
@@ -481,9 +475,10 @@ fn build_command_string(executable_path: &str, command_args: &[String]) -> Strin
 ///   - 首次执行（None）：写 None，真实 sid 由 stdout reader 从 Claude Code 的 system 事件解析后回写。
 ///   - resume（Some(sid)）：写原 sid。
 ///
-/// 不能用 selected.session_id_for_executor——首次执行时它是后台合成的 UUID，
+/// 不能用具象 executor 对象上合成的 sid——首次执行时它是后台合成的 UUID，
 /// 直接写进 DB 会让 feishu_listener::decide_resume_session 拿合成 sid 触发 resume，
 /// 把"Invalid session ID"错误从首次执行搬到第二次。
+/// （096-W1：session_id_for_executor 字段已按 YAGNI 删除，此注释保留语义说明）
 async fn create_record_or_reject(
     request: &RunTodoExecutionRequest,
     task_state: &super::types::TaskState,
