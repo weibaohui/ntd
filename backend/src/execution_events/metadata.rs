@@ -95,6 +95,23 @@ impl ExecutionMetadata {
         self.finished_at = Some(crate::models::utc_timestamp());
     }
 
+    /// session 首现认领（096-W2：收敛 impls 层 15 处逐字同构的「首现即置元数据并发
+    /// SessionStart」模式）。
+    ///
+    /// 语义：首次见到 session_id 时记录到元数据并产出 `SessionStart` 事件；
+    /// 后续再次出现返回 `None`（同会话的后续行不再重复发事件，先到先赢）。
+    /// 调用方通常写作 `events.extend(self.metadata.claim_session(sid));`。
+    pub fn claim_session(&mut self, session_id: &str) -> Option<ExecutionEvent> {
+        if self.session_id.is_none() {
+            self.session_id = Some(session_id.to_string());
+            Some(ExecutionEvent::SessionStart {
+                session_id: session_id.to_string(),
+            })
+        } else {
+            None
+        }
+    }
+
     /// 获取总 token 数量
     pub fn total_tokens(&self) -> u64 {
         self.input_tokens.saturating_add(self.output_tokens)
@@ -137,5 +154,22 @@ mod tests {
         meta.input_tokens = 100;
         meta.output_tokens = 200;
         assert_eq!(meta.total_tokens(), 300);
+    }
+
+    /// claim_session：首次调用置元数据并产出 SessionStart；重复调用幂等返回 None（先到先赢）。
+    #[test]
+    fn test_claim_session_first_wins_and_idempotent() {
+        let mut meta = ExecutionMetadata::new("test");
+        // 首次：返回 SessionStart 且元数据落位
+        let first = meta.claim_session("ses_a");
+        assert!(
+            matches!(first, Some(ExecutionEvent::SessionStart { ref session_id }) if session_id == "ses_a"),
+            "首次认领应产出 SessionStart"
+        );
+        assert_eq!(meta.session_id.as_deref(), Some("ses_a"));
+        // 再次（同 id 或不同 id）：均返回 None，元数据不被覆盖
+        assert!(meta.claim_session("ses_a").is_none());
+        assert!(meta.claim_session("ses_b").is_none());
+        assert_eq!(meta.session_id.as_deref(), Some("ses_a"), "先到先赢，不被后续覆盖");
     }
 }

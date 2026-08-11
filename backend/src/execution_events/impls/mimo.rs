@@ -32,11 +32,9 @@ impl MimoExtractor {
         let mut events = Vec::new();
         let event_type = json.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
+        // session 首现认领（claim_session 幂等：仅首次产出 SessionStart，先到先赢）
         if let Some(sid) = json.get("sessionID").and_then(|v| v.as_str()) {
-            if self.metadata.session_id.is_none() {
-                self.metadata.session_id = Some(sid.to_string());
-                events.push(ExecutionEvent::SessionStart { session_id: sid.to_string() });
-            }
+            events.extend(self.metadata.claim_session(sid));
         }
 
         match event_type {

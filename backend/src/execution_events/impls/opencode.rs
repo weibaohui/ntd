@@ -34,14 +34,9 @@ impl OpencodeExtractor {
     fn extract_from_event(&mut self, event: &OpencodeAgentEvent) -> Vec<ExecutionEvent> {
         let mut events = Vec::new();
 
-        // 提取 session_id（如果首次出现则生成 SessionStart）
-        if let Some(session_id) = &event.session_id {
-            if self.metadata.session_id.is_none() {
-                self.metadata.session_id = Some(session_id.clone());
-                events.push(ExecutionEvent::SessionStart {
-                    session_id: session_id.clone(),
-                });
-            }
+        // session 首现认领（claim_session 幂等：仅首次产出 SessionStart，先到先赢）
+        if let Some(sid) = &event.session_id {
+            events.extend(self.metadata.claim_session(sid));
         }
 
         // 根据事件类型处理

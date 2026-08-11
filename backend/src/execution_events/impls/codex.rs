@@ -97,15 +97,10 @@ impl CodexExtractor {
 
             // Thread 事件：thread.started 是当前版本 Codex 输出会话 ID 的唯一位置
             // （docs/samples/codex/output.txt 实证），thread_id 即 `codex exec resume`
-            // 的会话凭据。is_none() 判重保证只记首次，与旧格式 session_configured 路径先到先赢。
+            // 的会话凭据。claim_session 幂等判重保证只记首次，与旧格式 session_configured 路径先到先赢。
             "thread.started" => {
                 if let Some(tid) = json.get("thread_id").and_then(|v| v.as_str()) {
-                    if self.metadata.session_id.is_none() {
-                        self.metadata.session_id = Some(tid.to_string());
-                        events.push(ExecutionEvent::SessionStart {
-                            session_id: tid.to_string(),
-                        });
-                    }
+                    events.extend(self.metadata.claim_session(tid));
                 }
             }
 
@@ -213,14 +208,9 @@ impl CodexExtractor {
                 });
             }
             "session_configured" | "task_started" => {
-                // 提取 session_id
+                // session 首现认领（claim_session 幂等，先到先赢）
                 if let Some(sid) = json.get("session_id").and_then(|v| v.as_str()) {
-                    if self.metadata.session_id.is_none() {
-                        self.metadata.session_id = Some(sid.to_string());
-                        events.push(ExecutionEvent::SessionStart {
-                            session_id: sid.to_string(),
-                        });
-                    }
+                    events.extend(self.metadata.claim_session(sid));
                 }
 
                 // 提取 model
