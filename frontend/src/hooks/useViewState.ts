@@ -10,10 +10,9 @@
  *   /#/tasks/:id              任务详情 #id（独立页）
  *   /#/dashboard              仪表盘
  *   /#/settings?tab=system    设置-系统标签
- *   /#/memorial?mode=kanban   看板-看板视图
- *   /#/memorial?mode=running  看板-运行视图
- *   /#/memorial?mode=loop_kanban  看板-环路视图
- *   /#/memorial?mode=memorial 看板-结论视图
+ *   /#/ops?mode=running       运行中心-运行视图（默认）
+ *   /#/ops?mode=loop_kanban   运行中心-环路视图
+ *   /#/ops?mode=conclusion    运行中心-结论视图
  *   /#/runtime                运行管理
  *   /#/skills                 Skills
  *   /#/projectDirectories     工作空间
@@ -25,7 +24,7 @@
  *
  * 设计要点：
  * - todos / loops 用 path 段区分列表/详情，刷新/分享/后退可恢复
- * - 其他视图（settings/memorial/wiki/blackboard/processes）仍用 query 参数
+ * - 其他视图（settings/ops/wiki/blackboard/processes）仍用 query 参数
  * - 不做旧 `/#/items` URL 兼容重定向，全站统一到 `/#/todos`
  *
  * 只管理 URL + 派生的 React 状态，不持有 Todo/Loop 的 app 数据。
@@ -34,7 +33,7 @@
 import { useState, useEffect, useCallback } from 'react';
 
 // 028 路由同步：history.pushState/replaceState 不会触发 popstate 事件，
-// 因此当 MemorialBoard/BlackboardPage/ReferencingLoopsSection 等嵌套组件
+// 因此当 OpsCenter/BlackboardPage/ReferencingLoopsSection 等嵌套组件
 // 调用 pushUrl/replaceUrl 时，App 根组件的 useViewState 实例不会更新。
 // 解决方案：用模块级 EventTarget 广播 'nav-change' 事件，
 // 所有 useViewState 实例都监听该事件，从当前 hash 重新同步状态。
@@ -49,7 +48,7 @@ export type View =
   | 'processes'
   | 'dashboard'
   | 'settings'
-  | 'memorial'
+  | 'ops'
   | 'runtime'
   | 'skills'
   | 'projectDirectories'
@@ -66,20 +65,20 @@ export type View =
 // 保留 'list' | 'detail' 字面量仅用于 MobileHeader 派生状态，避免大范围改动移动端组件签名。
 export type Panel = 'list' | 'detail' | 'post';
 
-export type BoardMode = 'memorial' | 'kanban' | 'running' | 'loop_kanban';
+export type BoardMode = 'conclusion' | 'running' | 'loop_kanban';
 
 // 所有合法 View 字面量集合：parseViewFromSegments 用它做 includes 校验，
 // 决定是否接受 URL 第一段为有效视图；新增 View 时必须同步追加，否则会被当成 fallback。
 const ALL_VIEWS: View[] = [
   'todos', 'loops', 'tasks',
-  'dashboard', 'settings', 'memorial',
+  'dashboard', 'settings', 'ops',
   'runtime', 'skills', 'projectDirectories', 'sessions', 'executors', 'experts',
   'blackboard', 'wiki', 'messages', 'bots', 'processes', 'onboarding',
 ];
 
-// 看板视图四种模式白名单：getInitialBoardMode/syncFromHash 用它过滤 query 的 mode 值，
-// 非法值（如 ?mode=foo）一律 fallback 到 'memorial'，避免让用户停留在未定义视图。
-const ALL_BOARD_MODES: BoardMode[] = ['memorial', 'kanban', 'running', 'loop_kanban'];
+// 运行中心三种视图模式白名单：getInitialBoardMode/syncFromHash 用它过滤 query 的 mode 值，
+// 非法值（如 ?mode=foo）一律 fallback 到 'running'，避免让用户停留在未定义视图。
+const ALL_BOARD_MODES: BoardMode[] = ['running', 'loop_kanban', 'conclusion'];
 
 /** 从 hash 中提取 path 部分（去 query）。如 `#/todos/123?tab=x` → `/todos/123`。 */
 function getHashPath(): string {
@@ -201,7 +200,8 @@ function getInitialBoardMode(): BoardMode {
   const params = getHashSearchParams();
   const mode = params.get('mode') as BoardMode | null;
   if (mode && ALL_BOARD_MODES.includes(mode)) return mode;
-  return 'memorial';
+  // 默认运行视图：运行中心高频核心场景（看板已归位事项菜单，conclusion 不再作默认）
+  return 'running';
 }
 
 function getInitialWikiSlug(): string | null {
@@ -260,7 +260,7 @@ interface NavOpts {
    * - `'new'`：渲染编辑器空白态，先弹元信息 Modal
    * - `'edit'`：渲染编辑器，加载 `guid` 对应 YAML
    *
-   * 与看板 `mode`（BoardMode）通过 query key 区分：看板用 `?mode=`，工艺用 `?processMode=`。
+   * 与运行中心 `mode`（BoardMode）通过 query key 区分：运行中心用 `?mode=`，工艺用 `?processMode=`。
    */
   processMode?: 'list' | 'new' | 'edit';
 }
@@ -336,7 +336,7 @@ const VIEW_TO_NAV_KEY: Record<View, string> = {
   tasks: 'tasks',
   processes: 'processes',
   dashboard: 'dashboard',
-  memorial: 'memorial',
+  ops: 'ops',
   blackboard: 'blackboard',
   settings: 'settings',
   runtime: 'settings_runtime',
@@ -536,7 +536,7 @@ function syncStateFromOptions(
   setLoopDetailId(view === 'loops' ? (opts?.id ?? null) : null);
   setTaskDetailId(view === 'tasks' ? (opts?.id ?? null) : null);
   setActiveTab(opts?.tab ?? null);
-  setBoardMode(opts?.mode ?? 'memorial');
+  setBoardMode(opts?.mode ?? 'running');
   setWikiSlug(view === 'wiki' ? (opts?.slug ?? null) : null);
   setBlackboardFile(view === 'blackboard' ? (opts?.file ?? null) : null);
   setProcessGuid(view === 'processes' ? (opts?.guid ?? null) : null);
@@ -577,7 +577,7 @@ function syncFromHash(setters: {
   const rawProcessMode = params.get('processMode');
   const processMode: 'list' | 'new' | 'edit' =
     rawProcessMode === 'new' || rawProcessMode === 'edit' ? rawProcessMode : 'list';
-  const resolvedMode = mode && ALL_BOARD_MODES.includes(mode) ? mode : 'memorial';
+  const resolvedMode = mode && ALL_BOARD_MODES.includes(mode) ? mode : 'running';
 
   setters.setActiveView(view);
   // todos/loops/tasks 详情 id 仅在对应 view 下提取，避免跨视图串台

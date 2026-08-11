@@ -47,7 +47,7 @@ interface MenuGroup {
 const MENU_GROUPS: MenuGroup[] = [
   { title: '概览', pageIds: ['_overview', 'dashboard', 'onboarding'] },
   { title: '工作', pageIds: ['tasks-list', 'tasks-detail', 'todos-list', 'todos-detail', 'loops-list', 'loops-detail', 'processes'] },
-  { title: '观察', pageIds: ['messages', 'blackboard', 'memorial'] },
+  { title: '观察', pageIds: ['messages', 'blackboard', 'ops'] },
   { title: '配置', pageIds: ['settings-skills', 'settings-experts', 'settings-executors', 'settings-bots', 'settings-pd', 'settings-more'] },
 ];
 

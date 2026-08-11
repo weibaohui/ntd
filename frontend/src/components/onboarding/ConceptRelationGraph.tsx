@@ -255,7 +255,7 @@ export function ConceptRelationGraph() {
   const handleNodeNavigate = (node: GraphNode) => {
     if (!node.navTarget) return;
     setDrawerNode(null);
-    pushUrl(node.navTarget, { mode: node.navMode });
+    pushUrl(node.navTarget);
   };
 
   return (

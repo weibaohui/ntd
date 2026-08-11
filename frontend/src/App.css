@@ -2711,7 +2711,7 @@ code {
    Kanban Board — 看板
    ============================================================ */
 
-.memorial-board {
+.ops-board {
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -2719,21 +2719,21 @@ code {
   overflow: hidden;
 }
 
-.memorial-header {
+.ops-header {
   flex-shrink: 0;
   padding: var(--space-lg);
   padding-bottom: var(--space-sm);
   border-bottom: 1px solid var(--color-border);
 }
 
-.memorial-header-top {
+.ops-header-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-bottom: var(--space-sm);
 }
 
-.memorial-toolbar {
+.ops-toolbar {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -2741,7 +2741,7 @@ code {
   flex-wrap: wrap;
 }
 
-.memorial-title {
+.ops-title {
   margin: 0;
   font-size: 18px;
   font-weight: 700;
@@ -2749,27 +2749,27 @@ code {
   letter-spacing: 1px;
 }
 
-.memorial-summary {
+.ops-summary {
   display: flex;
   gap: 16px;
   font-size: 13px;
   color: var(--color-text-secondary);
 }
 
-.memorial-stat-dot {
+.ops-stat-dot {
   display: inline-flex;
   align-items: center;
   gap: 3px;
 }
 
-.memorial-stat-success { color: var(--color-success); }
-.memorial-stat-failed { color: var(--color-error); }
-.memorial-stat-success strong,
-.memorial-stat-failed strong {
+.ops-stat-success { color: var(--color-success); }
+.ops-stat-failed { color: var(--color-error); }
+.ops-stat-success strong,
+.ops-stat-failed strong {
   font-weight: 700;
 }
 
-.memorial-empty {
+.ops-empty {
   flex: 1;
   display: flex;
   align-items: center;
@@ -2777,7 +2777,7 @@ code {
 }
 
 /* ——— Masonry Layout ——— */
-.memorial-grid {
+.ops-grid {
   flex: 1;
   min-width: 0;
   overflow-y: auto;
@@ -2830,7 +2830,7 @@ code {
 }
 
 /* ——— Column ——— */
-.memorial-column {
+.ops-column {
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -2839,7 +2839,7 @@ code {
 }
 
 /* ——— Card ——— */
-.memorial-card {
+.ops-card {
   border-radius: var(--radius-md) !important;
   box-shadow: var(--shadow-sm);
   transition: box-shadow var(--transition-base);
@@ -2847,16 +2847,16 @@ code {
   overflow: hidden;
 }
 
-.memorial-card:hover {
+.ops-card:hover {
   box-shadow: var(--shadow-md);
 }
 
-.memorial-card.expanded {
+.ops-card.expanded {
   box-shadow: var(--shadow-md);
 }
 
 /* ——— Card Header ——— */
-.memorial-card-header {
+.ops-card-header {
   padding: var(--space-md) var(--space-lg);
   border-bottom: 1px solid var(--color-border-light);
   display: flex;
@@ -2864,14 +2864,14 @@ code {
   gap: var(--space-xs);
 }
 
-.memorial-card-top {
+.ops-card-top {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-sm);
 }
 
-.memorial-card-title {
+.ops-card-title {
   font-size: 14px;
   font-weight: 600;
   color: var(--color-text);
@@ -2885,20 +2885,20 @@ code {
   word-break: break-word;
 }
 
-.memorial-card-title:hover {
+.ops-card-title:hover {
   color: var(--color-primary);
 }
 
-.memorial-status-icon {
+.ops-status-icon {
   font-size: 16px;
   flex-shrink: 0;
   margin-top: 2px;
 }
 
-.memorial-success { color: var(--color-success); }
-.memorial-failed { color: var(--color-error); }
+.ops-success { color: var(--color-success); }
+.ops-failed { color: var(--color-error); }
 
-.memorial-card-meta-row {
+.ops-card-meta-row {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -2907,21 +2907,21 @@ code {
   color: var(--color-text-tertiary);
 }
 
-.memorial-meta-time,
-.memorial-meta-model {
+.ops-meta-time,
+.ops-meta-model {
   display: inline-flex;
   align-items: center;
   gap: 2px;
   white-space: nowrap;
 }
 
-.memorial-card-tags {
+.ops-card-tags {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
 }
 
-.memorial-tag {
+.ops-tag {
   font-size: 11px !important;
   padding: 0 6px !important;
   line-height: 18px !important;
@@ -2929,14 +2929,14 @@ code {
 }
 
 /* ——— Card Footer (Result) ——— */
-.memorial-card-footer {
+.ops-card-footer {
   padding: var(--space-md) var(--space-lg);
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
 }
 
-.memorial-result {
+.ops-result {
   font-size: 13px;
   line-height: 1.7;
   color: var(--color-text-secondary);
@@ -2945,33 +2945,33 @@ code {
   position: relative;
 }
 
-.memorial-result::after {
+.ops-result::after {
   content: '';
   display: table;
 }
 
-.memorial-result.expanded {
+.ops-result.expanded {
   max-height: none;
 }
 
 /* Markdown styles inside card */
-.memorial-result p {
+.ops-result p {
   margin: 0 0 4px;
   font-size: 13px;
   line-height: 1.7;
   color: var(--color-text-secondary);
 }
 
-.memorial-result p:last-child {
+.ops-result p:last-child {
   margin-bottom: 0;
 }
 
-.memorial-result strong {
+.ops-result strong {
   font-weight: 600;
   color: var(--color-text);
 }
 
-.memorial-result code {
+.ops-result code {
   background: var(--color-bg);
   padding: 1px 5px;
   border-radius: 3px;
@@ -2980,7 +2980,7 @@ code {
   color: var(--color-primary);
 }
 
-.memorial-result pre {
+.ops-result pre {
   background: var(--color-bg);
   padding: 8px;
   border-radius: 6px;
@@ -2990,47 +2990,47 @@ code {
   margin: 4px 0;
 }
 
-.memorial-result pre code {
+.ops-result pre code {
   background: none;
   padding: 0;
   color: inherit;
 }
 
-.memorial-result ul,
-.memorial-result ol {
+.ops-result ul,
+.ops-result ol {
   margin: 4px 0;
   padding-left: 18px;
 }
 
-.memorial-result li {
+.ops-result li {
   margin: 2px 0;
 }
 
-/* Table styles inside memorial-result */
-.memorial-result table {
+/* Table styles inside ops-result */
+.ops-result table {
   width: 100%;
   border-collapse: collapse;
   font-size: 12px;
   margin: 4px 0;
 }
 
-.memorial-result table th,
-.memorial-result table td {
+.ops-result table th,
+.ops-result table td {
   border: 1px solid var(--color-border);
   padding: 4px 8px;
   text-align: left;
 }
 
-.memorial-result table th {
+.ops-result table th {
   background: var(--color-bg);
   font-weight: 600;
 }
 
-.memorial-result table tr:nth-child(even) td {
+.ops-result table tr:nth-child(even) td {
   background: rgba(0, 0, 0, 0.02);
 }
 
-.memorial-copy-btn {
+.ops-copy-btn {
   float: right;
   background: none;
   border: none;
@@ -3043,12 +3043,12 @@ code {
   line-height: 1;
 }
 
-.memorial-copy-btn:hover {
+.ops-copy-btn:hover {
   color: var(--color-primary);
   background: var(--color-primary-bg);
 }
 
-.memorial-expand-btn {
+.ops-expand-btn {
   display: inline-block;
   margin-top: 4px;
   font-size: 12px;
@@ -3060,18 +3060,18 @@ code {
   transition: opacity var(--transition-fast);
 }
 
-.memorial-expand-btn:hover {
+.ops-expand-btn:hover {
   opacity: 0.7;
 }
 
-.memorial-no-result {
+.ops-no-result {
   font-size: 13px;
   color: var(--color-text-tertiary);
   font-style: italic;
 }
 
 /* ——— Usage Stats Row ——— */
-.memorial-usage-row {
+.ops-usage-row {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -3082,19 +3082,19 @@ code {
   border-top: 1px solid var(--color-border-light);
 }
 
-.memorial-stat {
+.ops-stat {
   display: inline-flex;
   align-items: center;
   gap: 2px;
   white-space: nowrap;
 }
 
-.memorial-tokens {
+.ops-tokens {
   font-family: var(--font-mono);
   font-size: 11px;
 }
 
-.memorial-cost {
+.ops-cost {
   color: var(--color-warning);
   font-family: var(--font-mono);
   font-size: 11px;
@@ -3102,25 +3102,25 @@ code {
 
 /* ——— Responsive ——— */
 @media (max-width: 768px) {
-  .memorial-header {
+  .ops-header {
     padding: var(--space-sm);
   }
 
-  .memorial-header-top {
+  .ops-header-top {
     align-items: center;
   }
 
-  .memorial-back-btn,
+  .ops-back-btn,
   .settings-back-btn {
     margin-right: 8px;
     padding: 4px 8px;
   }
 
-  .memorial-title {
+  .ops-title {
     font-size: 16px;
   }
 
-  .memorial-grid {
+  .ops-grid {
     padding: var(--space-sm);
     flex-direction: column;
   }

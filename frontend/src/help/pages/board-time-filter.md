@@ -2,7 +2,7 @@
 
 ## 功能位置
 
-看板页 → 工具栏 `TimeRangeSegmented` 组件（6h / 24h / 72h / all 分段按钮）
+运行中心页 → 工具栏 `TimeRangeSegmented` 组件（6h / 24h / 72h / all 分段按钮）
 
 ## 数据流图（前端 → 后端）
 
@@ -11,7 +11,7 @@ flowchart LR
   U[用户点击时间分段] --> TRS["TimeRangeSegmented onChange"]
   TRS --> SH["setHours(value)"]
   SH --> MEM["useEffect 依赖 hours 触发"]
-  MEM -->|memorial| DB1["db.getRecentCompletedTodos(hours, ws)"]
+  MEM -->|conclusion| DB1["db.getRecentCompletedTodos(hours, ws)"]
   MEM -->|kanban| DB2["db.getAllTodos(ws, hours)"]
   SH -->|running| RB["RunningBoard hours prop"]
   RB --> DB3["useRunningBoard(ws, hours)"]
@@ -27,11 +27,11 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-  MemorialBoard --> hours_state["hours state 默认24"]
+  OpsCenter --> hours_state["hours state 默认24"]
   hours_state --> TimeRangeSegmented["TimeRangeSegmented value=hours"]
   TimeRangeSegmented --> setHours["onChange setHours"]
-  hours_state --> useEffect_memorial["useEffect 依赖 hours"]
-  useEffect_memorial --> getRecentCompletedTodos["db.getRecentCompletedTodos"]
+  hours_state --> useEffect_conclusion["useEffect 依赖 hours"]
+  useEffect_conclusion --> getRecentCompletedTodos["db.getRecentCompletedTodos"]
   hours_state --> KanbanBoard["hours prop"]
   KanbanBoard --> useEffect_kanban["useEffect 依赖 hours"]
   useEffect_kanban --> getAllTodos["db.getAllTodos(ws, hours)"]
@@ -78,7 +78,7 @@ end note
 
 ## 开发指导
 
-- **前端入口**：`frontend/src/components/MemorialBoard.tsx` 的 `hours` state 和 `TimeRangeSegmented` 共享组件（`frontend/src/components/common/TimeRangeSegmented.tsx`）
+- **前端入口**：`frontend/src/components/OpsCenter.tsx` 的 `hours` state 和 `TimeRangeSegmented` 共享组件（`frontend/src/components/common/TimeRangeSegmented.tsx`）
 - **后端入口**：各视图对应 handler 的 `hours` query 参数（`GET /api/v1/workspaces/{ws}/todos` / `/executions` / `/todos/recent-completed` / `/loops/{id}/executions`）
 - **注意**：`TIME_RANGE_OPTIONS` 是全站唯一事实源（需求 031），从 `TimeRangeSegmented` 组件导出，本页不再自持一份；`hours = null`（all）表示不按时间过滤，各视图的 cutoff 逻辑用 `if (hours && hours > 0)` 守卫；看板视图切 `hours` 后用 `db.getAllTodos(ws, hours)` 拉取覆盖到 `kanbanTodos` 本地 state，不影响全局 store
 - **扩展**：若需新增时间分段选项（如 12h），在 `TimeRangeSegmented` 的 `TIME_RANGE_OPTIONS` 数组中追加，全站所有使用处自动生效；新增视图时确保支持 `hours` prop 并在数据拉取中透传
