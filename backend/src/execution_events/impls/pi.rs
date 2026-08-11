@@ -160,8 +160,8 @@ impl PiExtractor {
                 }
             }
             "message_start" => {
-                // 消息开始信号：重置 pending 状态
-                // 096-W1：pending_tool_calls 死字段删除（只写不读）
+                // 096-W1 删除 pending_tool_calls 死字段后，本分支已无状态需重置。
+                // 保留空分支以显式吞掉该事件——若落入下方 `_` 会被当成未知 JSON 产出 Info 噪声。
             }
             "agent_start" | "turn_start" => {
                 // agent/turn 开始信号：无事件，仅状态标记
@@ -219,9 +219,6 @@ impl PiExtractor {
                                     name: name.to_string(),
                                     input,
                                 });
-                                if !id.is_empty() {
-                                    // 096-W1：pending_tool_calls 死字段删除（原 push 点）
-                                }
                             }
 
                             // toolcall_end 可能携带 usage（在 partial 中）

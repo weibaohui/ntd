@@ -34,7 +34,6 @@ pub struct ExecutionMetadata {
     // ── 时间戳 ─────────────────────────────────────────
     pub started_at: Option<String>,
     pub finished_at: Option<String>,
-
 }
 
 impl ExecutionMetadata {
@@ -100,7 +99,6 @@ impl ExecutionMetadata {
     pub fn total_tokens(&self) -> u64 {
         self.input_tokens.saturating_add(self.output_tokens)
     }
-
 }
 
 #[cfg(test)]
