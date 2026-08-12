@@ -5,10 +5,13 @@ pub mod blackboard;
 pub mod blackboard_debouncer;
 // 黑板防抖 flush 监听与调度（096-W3-PR1 从 executor_service::completion 整族搬入）
 pub mod blackboard_flush;
+pub mod feishu_api_client;
 pub mod feishu_card;
+pub mod feishu_card_actions;
 pub mod feishu_history_fetcher;
 pub mod feishu_listener;
 pub mod feishu_push;
+pub mod feishu_slash_commands;
 pub mod loop_runner;
 // 044：loop_scheduler（cron 触发器调度）随 loop_triggers 表下线，模块已删除。
 pub mod loop_trigger;

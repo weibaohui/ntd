@@ -5,6 +5,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::db::Database;
 use crate::executor_service::ExecEvent;
+use crate::services::feishu_api_client::FeishuApiClient;
 use crate::services::feishu_card::{build_error_card, build_success_card, CardBuilder, render_card};
 use crate::services::feishu_listener::FeishuListener;
 
@@ -75,7 +76,7 @@ impl FeishuPushService {
                                     }
                                     // 使用卡片形式发送执行器输出
                                     let card_json = render_card_message(content);
-                                    let res = feishu_listener.send_card_raw(*bot_id, receive_id, receive_id_type, &card_json).await;
+                                    let res = FeishuApiClient::send_card_raw(&feishu_listener.bot_credentials, &feishu_listener.token_manager, *bot_id, receive_id, receive_id_type, &card_json).await;
                                     if let Err(e) = res {
                                         warn!("[feishu-push] executor direct response (card) failed for bot {}: {}", bot_id, e);
                                     } else {
@@ -111,7 +112,7 @@ impl FeishuPushService {
                                     // 使用无标题卡片样式发送过程消息，支持 markdown 格式（不显示"执行器输出"标题）
                                     let Some(text) = render_log_entry("", entry, tool_idx) else { continue };
                                     let card_json = render_card_message(&text);
-                                    let res = feishu_listener.send_card_raw(*bot_id, receive_id, receive_id_type, &card_json).await;
+                                    let res = FeishuApiClient::send_card_raw(&feishu_listener.bot_credentials, &feishu_listener.token_manager, *bot_id, receive_id, receive_id_type, &card_json).await;
                                     if let Err(e) = res {
                                         warn!("[feishu-push] executor direct output (card) failed for bot {}: {}", bot_id, e);
                                     } else {
@@ -134,7 +135,7 @@ impl FeishuPushService {
                                             let receive_id_type = feishu_receive_id_type.as_deref().unwrap_or("open_id");
                                             // 使用卡片形式发送执行结果
                                             if let Some(card_json) = format_finished_card(&ev) {
-                                                let res = feishu_listener.send_card_raw(*bot_id, receive_id, receive_id_type, &card_json).await;
+                                                let res = FeishuApiClient::send_card_raw(&feishu_listener.bot_credentials, &feishu_listener.token_manager, *bot_id, receive_id, receive_id_type, &card_json).await;
                                                 if let Err(e) = res {
                                                     warn!("[feishu-push] binding card send failed for bot {}: {}", bot_id, e);
                                                 } else {
@@ -143,7 +144,7 @@ impl FeishuPushService {
                                             } else {
                                                 // 降级为纯文本
                                                 let text = Self::format_event(&ev).unwrap_or_default();
-                                                let res = feishu_listener.send_raw(*bot_id, receive_id, receive_id_type, &text).await;
+                                                let res = FeishuApiClient::send_raw(&feishu_listener.bot_credentials, &feishu_listener.token_manager, *bot_id, receive_id, receive_id_type, &text).await;
                                                 if let Err(e) = res {
                                                     warn!("[feishu-push] binding direct send failed for bot {}: {}", bot_id, e);
                                                 }
@@ -207,7 +208,7 @@ impl FeishuPushService {
                                     }
                                     // Finished 事件：使用卡片形式发送
                                     if let Some(card_json) = finished_card_json.as_ref() {
-                                        let res = feishu_listener.send_card_raw(*bot_id, receive_id, receive_id_type, card_json).await;
+                                        let res = FeishuApiClient::send_card_raw(&feishu_listener.bot_credentials, &feishu_listener.token_manager, *bot_id, receive_id, receive_id_type, card_json).await;
                                         if let Err(e) = res {
                                             warn!("[feishu-push] card send failed for bot {}: {}", bot_id, e);
                                         } else {
@@ -231,7 +232,7 @@ impl FeishuPushService {
                                         };
                                         let Some(msg_text) = render_log_entry(task_id, entry, tool_idx) else { continue };
                                         let card_json = render_card_message(&msg_text);
-                                        let res = feishu_listener.send_card_raw(*bot_id, receive_id, receive_id_type, &card_json).await;
+                                        let res = FeishuApiClient::send_card_raw(&feishu_listener.bot_credentials, &feishu_listener.token_manager, *bot_id, receive_id, receive_id_type, &card_json).await;
                                         if let Err(e) = res {
                                             warn!("[feishu-push] output card send failed for bot {}: {}", bot_id, e);
                                         } else {
@@ -243,7 +244,7 @@ impl FeishuPushService {
                                     let Some(text) = text.as_ref() else {
                                         continue;
                                     };
-                                    let res = feishu_listener.send_raw(*bot_id, receive_id, receive_id_type, text).await;
+                                    let res = FeishuApiClient::send_raw(&feishu_listener.bot_credentials, &feishu_listener.token_manager, *bot_id, receive_id, receive_id_type, text).await;
                                     if let Err(e) = res {
                                         warn!("[feishu-push] send failed for bot {}: {}", bot_id, e);
                                     } else {
