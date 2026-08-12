@@ -160,26 +160,20 @@ export function LoopListPage({
 
   // kanban 态：PageCard + LoopKanban（执行历史，受控 searchText/hours/onOpenTodo）。
   // 维度提示：list 是 loop 定义管理，kanban 是 loop 执行历史——切换 Segmented 会换数据对象。
-  if (viewMode === 'kanban') {
-    return (
-      <PageCard
-        icon={<RetweetOutlined />}
-        title="环路"
-        extra={headerExtra}
-        style={{ flex: 1, height: '100%' }}
-        contentStyle={{ height: 'calc(100% - 43px)', overflow: 'hidden' }}
-      >
-        <LoopKanban
-          searchText={searchKeyword}
-          hours={hours}
-          onOpenTodo={handleOpenTodo}
-        />
-      </PageCard>
-    );
-  }
+  const renderKanbanView = () => (
+    <PageCard
+      icon={<RetweetOutlined />}
+      title="环路"
+      extra={headerExtra}
+      style={{ flex: 1, height: '100%' }}
+      contentStyle={{ height: 'calc(100% - 43px)', overflow: 'hidden' }}
+    >
+      <LoopKanban searchText={searchKeyword} hours={hours} onOpenTodo={handleOpenTodo} />
+    </PageCard>
+  );
 
   // 列表态：PageCard + LoopListView
-  return (
+  const renderListView = () => (
     <PageCard
       icon={<RetweetOutlined />}
       title="环路"
@@ -198,4 +192,6 @@ export function LoopListPage({
       />
     </PageCard>
   );
+
+  return viewMode === 'kanban' ? renderKanbanView() : renderListView();
 }

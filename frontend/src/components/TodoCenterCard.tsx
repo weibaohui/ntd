@@ -432,7 +432,7 @@ function buildMenuItems(
  * 为什么保留：status 通常由执行驱动，但偶尔需人工修正（如卡在 running 的僵尸事项改回 pending/failed）。
  * 原 kanban 看板的「拖拽改状态」随组件删除，这里以菜单形式补回该能力。
  */
-function changeStatusMenuItem(
+export function changeStatusMenuItem(
   item: TodoCenterItem,
   wsId: number,
   runMutation: (label: string, fn: () => Promise<unknown>) => void,

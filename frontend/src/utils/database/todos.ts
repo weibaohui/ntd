@@ -122,7 +122,7 @@ export async function deleteTodo(workspaceId: number, id: number): Promise<void>
 }
 
 /** 单字段改状态（056：看板拖拽用）——后端 force-status 端点只改 status，无需携带 prompt 全量字段。 */
-export async function updateTodoStatus(workspaceId: number, id: number, status: string): Promise<Todo> {
+export async function updateTodoStatus(workspaceId: number, id: number, status: Todo['status']): Promise<Todo> {
   return unwrap(await api.put(`/api/v1/workspaces/${workspaceId}/todos/${id}/force-status`, { status }));
 }
 
