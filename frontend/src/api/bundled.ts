@@ -668,6 +668,12 @@ export const bundledApi = {
   async deleteTaskPost(wsId: number, taskId: number, postId: number): Promise<{ deleted: number }> {
     return unwrap(await api.delete(`/api/v1/workspaces/${wsId}/tasks/${taskId}/posts/${postId}`));
   },
+
+  /** 删除任务（NTD-014-A）。硬删除任务记录；与「删除环路」严格区分——
+   *  任务详情页删除按钮必须走这里，避免误删任务关联的环路实例。 */
+  async deleteTask(wsId: number, taskId: number): Promise<void> {
+    await api.delete(`/api/v1/workspaces/${wsId}/tasks/${taskId}`);
+  },
 };
 
 export default bundledApi;

@@ -2,7 +2,7 @@
 // 验证 hook 返回的回调函数行为：调 API → 弹消息 → onReload。
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { message } from 'antd';
+import { message, Modal } from 'antd';
 import * as dbLoops from '@/utils/database/loops';
 import * as todos from '@/utils/database/todos';
 
@@ -39,6 +39,12 @@ describe('useLoopRowActions', () => {
 
     it('删除成功后弹消息、刷新、通知变化', async () => {
       vi.mocked(dbLoops.deleteLoop).mockResolvedValueOnce(undefined as never);
+      // NTD-014-C：删除走 Modal.confirm 二次确认，测试中自动点「确定」放行 onOk；
+      // 返回 antd 要求的 { destroy, update } 形状，避免 TS 报错。
+      vi.mocked(Modal.confirm).mockImplementationOnce((cfg) => {
+        void cfg.onOk?.();
+        return { destroy: vi.fn(), update: vi.fn() };
+      });
       const { result } = renderHook(() => useLoopRowActions({ workspaceId: 1, onReload: mockReload, onLoopChanged: mockOnLoopChanged }));
       await act(() => result.current.handleDelete(mockLoop));
       expect(dbLoops.deleteLoop).toHaveBeenCalledWith(1, 10);
@@ -49,6 +55,12 @@ describe('useLoopRowActions', () => {
 
     it('删除失败时弹错误消息', async () => {
       vi.mocked(dbLoops.deleteLoop).mockRejectedValueOnce(new Error('引用冲突'));
+      // 确认框放行后 onOk 内的 deleteLoop 抛错，应弹错误提示。
+      // 注意：onOk 失败会 re-throw（保持对话框打开），测试 mock 里需接住，避免未处理 rejection。
+      vi.mocked(Modal.confirm).mockImplementationOnce((cfg) => {
+        void cfg.onOk?.().catch(() => {});
+        return { destroy: vi.fn(), update: vi.fn() };
+      });
       const { result } = renderHook(() => useLoopRowActions({ workspaceId: 1, onReload: mockReload }));
       await act(() => result.current.handleDelete(mockLoop));
       expect(message.error).toHaveBeenCalled();

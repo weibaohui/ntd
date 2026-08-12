@@ -19,8 +19,8 @@ interface TaskDetailPageProps {
   onBack: () => void;
   /** 点击 DAG 节点上的事项标题跳转事项详情（legacy todo 系统）。 */
   onSelectTodo?: (todoId: number) => void;
-  /** 环路变更（删除）后通知宿主刷新列表。 */
-  onLoopChanged?: () => void;
+  /** 任务删除成功后由宿主跳回任务列表（NTD-014-A）。 */
+  onDeleted?: () => void;
 }
 
 /**
@@ -28,11 +28,11 @@ interface TaskDetailPageProps {
  *
  * 整体处理思路：
  * 1. PageCard 包裹 TaskDetailPanel，标题动态显示任务名。
- * 2. 传递 onSelectTodo / onLoopChanged 给内部面板。
+ * 2. 传递 onSelectTodo / onDeleted 给内部面板。
  * 3. 返回列表走 onBack（推荐 history.back()）保留列表状态。
  */
 export function TaskDetailPage({
-  taskId, onBack, onSelectTodo, onLoopChanged,
+  taskId, onBack, onSelectTodo, onDeleted,
 }: TaskDetailPageProps) {
   const { state } = useTodos();
   const wsId = state.selectedWorkspace ?? 0;
@@ -52,7 +52,7 @@ export function TaskDetailPage({
         workspaceId={wsId}
         onTitleReady={(title) => setDetailTitle(`任务 #${taskId}: ${title}`)}
         onOpenTodo={onSelectTodo}
-        onLoopChanged={onLoopChanged}
+        onDeleted={onDeleted}
       />
     </PageCard>
   );

@@ -40,7 +40,9 @@ function GateTypesTable() {
   return (
     <div style={{ marginTop: 16 }}>
       <Text strong style={{ display: 'block', marginBottom: 8 }}>
-        门禁 4 种类型（验收机制）
+        {/* NTD-014-E：门禁数量跟随 GATE_TYPES 数据源（046 起仅 2 类），
+            避免硬编码「4 种类型」与真实数据脱节。 */}
+        门禁 {GATE_TYPES.length} 种类型（验收机制）
       </Text>
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
         {GATE_TYPES.map((g) => (

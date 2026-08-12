@@ -30,7 +30,7 @@ export interface TaskDetailState {
   // —— 动作 ——
   /** 提交新执行：接收需求文本，成功返回 true（组件据此关 Modal），空/失败返回 false。 */
   handleNewExec: (requirement: string) => Promise<boolean>;
-  /** 删除环路（deleteLoop → 通知宿主刷新）。 */
+  /** 删除任务（NTD-014-A）：删除成功后通知宿主跳回列表。 */
   handleDelete: () => Promise<void>;
   /** 内联调整接力上限覆盖（updateTask → 刷新详情；失败向上抛错让 Popover 不关）。 */
   handleUpdateMax: (max: number | null) => Promise<void>;
@@ -42,8 +42,8 @@ interface UseTaskDetailCallbacks {
   onTitleReady?: (title: string) => void;
   /** 再次执行 / 调上限成功后回调，让宿主重拉列表。 */
   onTriggered?: () => void;
-  /** 环路删除后通知宿主刷新列表。 */
-  onLoopChanged?: () => void;
+  /** 任务删除成功后回调，让宿主跳回任务列表（NTD-014-A）。 */
+  onDeleted?: () => void;
 }
 
 /**
@@ -69,7 +69,7 @@ export function useTaskDetail(
   workspaceId: number,
   cb: UseTaskDetailCallbacks,
 ): TaskDetailState {
-  const { onTitleReady, onTriggered, onLoopChanged } = cb;
+  const { onTitleReady, onTriggered, onDeleted } = cb;
 
   const [loading, setLoading] = useState(false);
   const [detail, setDetail] = useState<TaskDetailData | null>(null);
@@ -118,18 +118,17 @@ export function useTaskDetail(
     return () => { alive = false; };
   }, [detail, workspaceId]);
 
-  // 删除环路。
+  // 删除任务（NTD-014-A）。原实现误删关联环路（deleteLoop），导致任务悬空 + 环路丢失；
+  // 现改为调任务删除接口，成功后通知宿主跳回列表；失败透传后端错误信息。
   const handleDelete = useCallback(async () => {
-    if (!loopDetail) return;
-    const wsId = loopDetail.workspace_id ?? workspaceId;
     try {
-      await dbLoops.deleteLoop(wsId, loopDetail.id);
-      message.success('已删除');
-      onLoopChanged?.();
-    } catch {
-      message.error('删除失败，环路可能正在被引用');
+      await bundledApi.deleteTask(workspaceId, taskId);
+      message.success('任务已删除');
+      onDeleted?.();
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : '删除任务失败');
     }
-  }, [loopDetail, workspaceId, onLoopChanged]);
+  }, [workspaceId, taskId, onDeleted]);
 
   // 提交新执行：接收需求文本（Modal 输入态由组件持有），成功返回 true。
   // 成功后重拉详情 + 通知宿主刷新；Modal 关闭 / 输入清空交由组件在 true 时处理。
