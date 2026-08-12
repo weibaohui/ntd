@@ -432,6 +432,8 @@ async fn dispatch_completed(
             workspace_id: runtime.prepared.request.workspace_id,
             // 092 P2：接力回写需要专家索引解析管家结论里的 @，从原 request 透传（Arc 浅克隆）。
             expert_manager: runtime.prepared.request.expert_manager.clone(),
+            // 096-W4-5：DI 实例随 request 透传（与 expert_manager 同链路）
+            blackboard_debouncer: runtime.prepared.request.blackboard_debouncer.clone(),
         },
     )
     .await;
@@ -709,6 +711,7 @@ mod tests {
         // 与生产路径同口径：cancel_rx 从 guard 中 take（register_task_and_load_todo 的模式）
         let cancel_rx = task_guard.take_receiver();
         let request = RunTodoExecutionRequest {
+            blackboard_debouncer: crate::services::blackboard_debouncer::BlackboardDebouncer::new(),
             db: db.clone(),
             executor_registry: Arc::new(crate::adapters::ExecutorRegistry::new()),
             tx: tx.clone(),

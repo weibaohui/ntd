@@ -414,6 +414,7 @@ async fn execute_review_instance(
         tx: tx.clone(),
         task_manager: task_manager.clone(),
         config: config.clone(),
+        blackboard_debouncer: deps.blackboard_debouncer.clone(),
         todo_id: review_todo_id,
         message: composed_prompt,
         req_executor: original.executor.clone(),

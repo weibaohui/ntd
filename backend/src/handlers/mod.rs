@@ -49,6 +49,8 @@ pub struct AppState {
     pub loop_runner: Option<Arc<crate::services::loop_runner::LoopRunner>>,
     /// 专家索引管理器（内存缓存，启动时从 ~/.ntd/experts/ 加载）
     pub expert_manager: Arc<ExpertIndexManager>,
+    /// 黑板防抖服务实例（096-W4-5 DI 化）：替代全静态函数调用
+    pub blackboard_debouncer: Arc<crate::services::blackboard_debouncer::BlackboardDebouncer>,
 }
 
 impl AppState {
@@ -512,20 +514,26 @@ async fn build_app_state(
     // 注意：防抖阈值已迁移到 per-workspace 配置（blackboards 表），此处使用系统级默认值
     //（600s / 10 条），实际防抖逻辑在 push_pending_record / remove_specific_pending_record_ids
     // 时会从对应工作空间的黑板配置中读取真实值。
-    let flush_rx = crate::services::blackboard_debouncer::init().await;
-    // 096-W3-PR1：listener 已从 executor_service::completion 搬入 services::blackboard_flush
-    // （黑板服务域归宿），消除 handlers → executor_service 的跨层倒挂
-    tokio::spawn(crate::services::blackboard_flush::blackboard_flush_listener(
-        flush_rx,
-        // 096-W2-PR3：共享依赖五元组已对象化，调用点从 5 个实参塌缩为 1 个聚合对象
-        crate::executor_service::types::ExecutionDeps {
-            db: db.clone(),
-            executor_registry: executor_registry.clone(),
-            tx: tx.clone(),
-            task_manager: task_manager.clone(),
-            config: config.clone(),
-        },
-    ));
+    // 096-W4-5：实例经 ServiceContext 注入（DI 化替代全静态 init），rx 一次性取出
+    if let Some(flush_rx) = ctx.blackboard_debouncer.take_flush_rx().await {
+        // 096-W3-PR1：listener 已从 executor_service::completion 搬入 services::blackboard_flush
+        // （黑板服务域归宿），消除 handlers → executor_service 的跨层倒挂
+        tokio::spawn(crate::services::blackboard_flush::blackboard_flush_listener(
+            flush_rx,
+            // 096-W2-PR3：共享依赖五元组已对象化，调用点从 5 个实参塌缩为 1 个聚合对象
+            crate::executor_service::types::ExecutionDeps {
+                db: db.clone(),
+                executor_registry: executor_registry.clone(),
+                tx: tx.clone(),
+                task_manager: task_manager.clone(),
+                config: config.clone(),
+                blackboard_debouncer: ctx.blackboard_debouncer.clone(),
+            },
+        ));
+    } else {
+        // take_flush_rx 仅装配期调用一次；None 表示被重复取出（非正常路径），降级不启动 listener
+        tracing::warn!("blackboard flush_rx 已被取出，flush listener 未启动（黑板防抖将不工作）");
+    }
 
     // 后台监听 todo 执行完成事件，派发给 loop_trigger_dispatcher
     // 044：todo_completed 触发器已下线，不再启动该监听器。
@@ -552,6 +560,7 @@ async fn build_app_state(
         loop_trigger_dispatcher,
         loop_runner,
         expert_manager: ctx.expert_manager.clone(),
+        blackboard_debouncer: ctx.blackboard_debouncer.clone(),
     };
 
     // 启动检查（一次性异步任务）：按配置同步内置资源（专家/事项模板），全程非阻塞。
@@ -584,6 +593,7 @@ fn init_loop_studio_services(
         executor_registry: ctx.executor_registry.clone(),
         task_manager: ctx.task_manager.clone(),
         config: ctx.config.clone(),
+        blackboard_debouncer: ctx.blackboard_debouncer.clone(),
         expert_manager: ctx.expert_manager.clone(),
     };
     // clone tx 进 LoopRunner 内部，broadcast::Sender 是 Arc 包装，clone 只增加引用计数
@@ -953,6 +963,7 @@ mod app_state_config_helpers_tests {
             task_manager: Arc::new(TaskManager::default()),
             config: Arc::new(RwLock::new(Config::default())),
             expert_manager: Arc::new(crate::expert::ExpertIndexManager::new()),
+            blackboard_debouncer: crate::services::blackboard_debouncer::BlackboardDebouncer::new(),
         };
 
         // TodoScheduler::new 是 async 的；其内部 `JobScheduler` 需要 tokio runtime。
@@ -986,6 +997,7 @@ mod app_state_config_helpers_tests {
             loop_trigger_dispatcher: None,
             loop_runner: None,
             expert_manager: ctx.expert_manager.clone(),
+            blackboard_debouncer: ctx.blackboard_debouncer.clone(),
         }
     }
 

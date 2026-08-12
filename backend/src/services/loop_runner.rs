@@ -55,6 +55,8 @@ pub struct LoopRunnerCtx {
     /// 专家索引管理器：loop 环节执行时也需注入专家上下文，
     /// 让 loop 触发的 todo 尊重其绑定的 expert_name
     pub expert_manager: Arc<crate::expert::ExpertIndexManager>,
+    /// 黑板防抖服务实例（096-W4-5 DI 化）：step 成功后 pending 入队的承接点
+    pub blackboard_debouncer: Arc<crate::services::blackboard_debouncer::BlackboardDebouncer>,
 }
 
 pub struct LoopRunner {
@@ -1166,7 +1168,7 @@ impl LoopRunner {
                 .map_err(|e| e.to_string())?;
             *st.consecutive_retries.get_mut(&step.id).unwrap_or(&mut 0) = 0;
             if let Some(ws_id) = run.loop_.workspace_id.filter(|&id| id != 0) {
-                crate::services::blackboard_debouncer::push_pending_record(
+                self.ctx.blackboard_debouncer.push_pending_record(
                     ws_id, record_id, &self.ctx.db,
                 )
                 .await;
@@ -1272,7 +1274,7 @@ impl LoopRunner {
             // 4l. 触发黑板更新：Step 执行成功，将 execution_record_id 追加到黑板 pending 队列。
             // 与普通 Todo 执行完成后的处理保持一致，让 LLM 将 step 结论整合到黑板。
             if let Some(ws_id) = run.loop_.workspace_id.filter(|&id| id != 0) {
-                crate::services::blackboard_debouncer::push_pending_record(
+                self.ctx.blackboard_debouncer.push_pending_record(
                     ws_id,
                     record_id,
                     &self.ctx.db,
@@ -1333,6 +1335,7 @@ impl LoopRunner {
             tx: self.tx.clone(),
             task_manager: self.ctx.task_manager.clone(),
             config: self.ctx.config.clone(),
+            blackboard_debouncer: self.ctx.blackboard_debouncer.clone(),
             // 使用 todo.id 而非 0，确保 execution_record 能关联到正确的 todo，
             // 使 todo 执行历史界面能看到 loop 环节的执行记录。
             todo_id: todo.id,
@@ -1712,6 +1715,7 @@ impl LoopRunner {
             tx: self.tx.clone(),
             task_manager: self.ctx.task_manager.clone(),
             config: self.ctx.config.clone(),
+            blackboard_debouncer: self.ctx.blackboard_debouncer.clone(),
             todo_id: handler_todo_id,
             message: enhanced_prompt,
             req_executor: handler_todo.executor.clone(),
@@ -2245,6 +2249,7 @@ mod tests {
             config: Arc::new(RwLock::new(Config::default())),
             // 测试场景下用空专家索引，触发 inject_expert_context 时会因找不到专家而静默回退
             expert_manager: Arc::new(ExpertIndexManager::new()),
+            blackboard_debouncer: crate::services::blackboard_debouncer::BlackboardDebouncer::new(),
         };
         let runner = LoopRunner::new(ctx, broadcast::channel(1).0);
         (runner, db)

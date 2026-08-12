@@ -324,6 +324,7 @@ async fn trigger_discussion_execution(
         tx: state.tx.clone(),
         task_manager: state.task_manager.clone(),
         config: state.config.clone(),
+        blackboard_debouncer: state.blackboard_debouncer.clone(),
         todo_id,
         message: carrier_prompt.to_string(),
         req_executor: executor_name.map(|s| s.to_string()),
@@ -929,6 +930,8 @@ pub(crate) struct DelegateRelayHandles<'a> {
     pub task_manager: &'a Arc<TaskManager>,
     pub config: &'a Arc<RwLock<Config>>,
     pub expert_manager: &'a Arc<ExpertIndexManager>,
+    /// 黑板防抖实例（096-W4-5）：接力触发的执行完成后 pending 入队承接点
+    pub blackboard_debouncer: &'a Arc<crate::services::blackboard_debouncer::BlackboardDebouncer>,
 }
 
 /// 自动接力入口（completion 回写讨论帖后调用）：读占位帖 / 任务元信息 → 计数 → 决策 → 推进。
@@ -1079,6 +1082,7 @@ async fn spawn_relay_execution(
         tx: handles.tx.clone(),
         task_manager: handles.task_manager.clone(),
         config: handles.config.clone(),
+        blackboard_debouncer: handles.blackboard_debouncer.clone(),
         todo_id,
         message: prompt,
         req_executor: executor_name.map(str::to_string),

@@ -851,6 +851,7 @@ async fn resume_batch_schedulers(state: &AppState, ids: &[i64]) -> Result<u64, A
                 tx: state.tx.clone(),
                 task_manager: state.task_manager.clone(),
                 config: state.config.clone(),
+                blackboard_debouncer: state.blackboard_debouncer.clone(),
                 expert_manager: state.expert_manager.clone(),
             };
     for id in ids {

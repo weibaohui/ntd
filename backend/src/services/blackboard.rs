@@ -224,6 +224,7 @@ async fn run_wiki_execution(
     tx: broadcast::Sender<ExecEvent>,
     task_manager: Arc<TaskManager>,
     config: Arc<std::sync::RwLock<Config>>,
+    blackboard_debouncer: Arc<crate::services::blackboard_debouncer::BlackboardDebouncer>,
     workspace_id: i64,
     todo_id: i64,
     message: String,
@@ -239,6 +240,7 @@ async fn run_wiki_execution(
         tx,
         task_manager,
         config,
+        blackboard_debouncer,
         todo_id,
         message,
         req_executor: None,
@@ -357,12 +359,15 @@ async fn wait_for_finished(
 /// 3. 构造 prompt（含 workspace_id 和 record_ids）
 /// 4. 单次 LLM 调用
 /// 5. 后处理：生成 index.md、追加 log.md
+#[allow(clippy::too_many_arguments)] // 参数来自调用方的多个独立数据源（096-W4-5 增 debouncer 后超阈值）
 pub async fn update_blackboard_wiki(
     db: Arc<Database>,
     executor_registry: Arc<ExecutorRegistry>,
     tx: broadcast::Sender<ExecEvent>,
     task_manager: Arc<TaskManager>,
     config: Arc<std::sync::RwLock<Config>>,
+    // 096-W4-5：DI 实例透传至 run_wiki_execution 的 request 构造
+    blackboard_debouncer: Arc<crate::services::blackboard_debouncer::BlackboardDebouncer>,
     workspace_id: i64,
     pending_record_ids: Vec<i64>,
 ) -> Result<(), AppError> {
@@ -402,6 +407,7 @@ pub async fn update_blackboard_wiki(
         tx,
         task_manager,
         config,
+        blackboard_debouncer,
         workspace_id,
         todo_id,
         message,

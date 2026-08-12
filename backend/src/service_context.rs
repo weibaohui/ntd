@@ -31,4 +31,6 @@ pub struct ServiceContext {
     pub config: Arc<std::sync::RwLock<Config>>,
     /// 专家索引管理器（内存缓存，启动时从 ~/.ntd/experts/ 加载）
     pub expert_manager: Arc<ExpertIndexManager>,
+    /// 黑板防抖服务实例（096-W4-5 DI 化）：替代全静态函数调用
+    pub blackboard_debouncer: Arc<crate::services::blackboard_debouncer::BlackboardDebouncer>,
 }

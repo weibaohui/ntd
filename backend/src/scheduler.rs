@@ -457,6 +457,8 @@ impl TodoScheduler {
         let config_clone = ctx.config.clone();
         // 专家管理器 Arc clone 进闭包，让 cron 触发的执行也能注入专家上下文
         let expert_manager_clone = Some(ctx.expert_manager.clone());
+        // 096-W4-5：黑板防抖实例随闭包捕获（cron 触发执行的 pending 入队承接点）
+        let debouncer_clone = ctx.blackboard_debouncer.clone();
 
         info!("Creating job for todo {} with cron: {} (original: {:?})", todo_id, cron_expr_utc, timezone);
         let job = Job::new_async(&cron_expr_utc, move |_uuid, _l| {
@@ -467,6 +469,8 @@ impl TodoScheduler {
             let cfg = config_clone.clone();
             // 专家管理器在闭包内 move 进 async block，让 cron 触发路径也能拿到专家索引
             let expert_manager = expert_manager_clone.clone();
+            // 闭包内再克隆（FnMut 多次调用各持一份；直接 async move 捕获外层 Arc 会被二次调用报 move）
+            let debouncer = debouncer_clone.clone();
 
             Box::pin(async move {
                 match db.get_todo(todo_id).await {
@@ -491,6 +495,7 @@ impl TodoScheduler {
                             tx,
                             task_manager: tm,
                             config: cfg,
+                            blackboard_debouncer: debouncer.clone(),
                             todo_id,
                             message,
                             req_executor: executor,

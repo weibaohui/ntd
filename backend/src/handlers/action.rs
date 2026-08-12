@@ -81,6 +81,7 @@ pub async fn execute_action(
             tx: state.tx.clone(),
             task_manager: state.task_manager.clone(),
             config: state.config.clone(),
+            blackboard_debouncer: state.blackboard_debouncer.clone(),
             todo_id,
             message,
             req_executor: req.executor.clone(), // 使用请求中指定的执行器

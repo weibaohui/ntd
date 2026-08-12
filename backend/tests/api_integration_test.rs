@@ -43,6 +43,7 @@ async fn create_test_app() -> (axum::Router, i64) {
         task_manager: task_manager.clone(),
         config: config.clone(),
         expert_manager: Arc::new(ntd::expert::ExpertIndexManager::new()),
+    blackboard_debouncer: ntd::services::blackboard_debouncer::BlackboardDebouncer::new(),
     };
     scheduler
         .load_from_db(&ctx)
@@ -762,6 +763,7 @@ async fn test_cross_workspace_todo_other_ws_rejected() {
         task_manager: task_manager.clone(),
         config: config.clone(),
         expert_manager: Arc::new(ntd::expert::ExpertIndexManager::new()),
+    blackboard_debouncer: ntd::services::blackboard_debouncer::BlackboardDebouncer::new(),
     };
     scheduler.load_from_db(&ctx).await.unwrap();
     scheduler.start().await.unwrap();

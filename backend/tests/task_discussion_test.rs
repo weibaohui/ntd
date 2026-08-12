@@ -46,6 +46,7 @@ async fn create_discussion_app() -> (axum::Router, i64, Arc<Database>) {
         task_manager: task_manager.clone(),
         config: config.clone(),
         expert_manager: Arc::new(ntd::expert::ExpertIndexManager::new()),
+    blackboard_debouncer: ntd::services::blackboard_debouncer::BlackboardDebouncer::new(),
     };
     scheduler.load_from_db(&ctx).await.unwrap();
     scheduler.start().await.unwrap();

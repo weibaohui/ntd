@@ -71,6 +71,7 @@ async fn trigger_todo_webhook_internal(
             tx: state.tx.clone(),
             task_manager: state.task_manager.clone(),
             config: state.config.clone(),
+            blackboard_debouncer: state.blackboard_debouncer.clone(),
             todo_id,
             message: todo.prompt.clone(),
             req_executor: todo.executor.clone(),

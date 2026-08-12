@@ -459,7 +459,7 @@ pub(crate) async fn finalize_normal_completion(
     // 避免无限循环；即使以后新增相同 action_type 的非黑板 todo，也不会被错误地跳过。
     if success && trigger_type != "blackboard" {
         if let Some(ws_id) = workspace_id {
-            crate::services::blackboard_debouncer::push_pending_record(ws_id, record_id, &db).await;
+            ctx.blackboard_debouncer.push_pending_record(ws_id, record_id, &db).await;
         }
     }
 
@@ -484,6 +484,7 @@ pub(crate) async fn finalize_normal_completion(
                 task_manager: &task_manager,
                 config: &config,
                 expert_manager: &em,
+                blackboard_debouncer: &ctx.blackboard_debouncer,
             };
             crate::handlers::task_posts::continue_delegated_task(&handles, record_id, &result_str)
                 .await;

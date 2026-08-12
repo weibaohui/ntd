@@ -39,6 +39,7 @@ pub async fn update_scheduler(
                 tx: state.tx.clone(),
                 task_manager: state.task_manager.clone(),
                 config: state.config.clone(),
+                blackboard_debouncer: state.blackboard_debouncer.clone(),
                 expert_manager: state.expert_manager.clone(),
             };
             // issue #499：`upsert_task` 现在返回 `SchedulerError`，`?` 通过

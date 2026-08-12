@@ -599,6 +599,8 @@ async fn run_server(cli_port: Option<u16>) {
     let (tx, _rx) = broadcast::channel(cfg.broadcast_channel_capacity);
     let task_manager = Arc::new(TaskManager::new());
     let config = Arc::new(std::sync::RwLock::new(cfg.clone()));
+    // 096-W4-5：黑板防抖服务 DI 实例（替代全静态 init），随 ServiceContext 分发各调用点
+    let blackboard_debouncer = ntd::services::blackboard_debouncer::BlackboardDebouncer::new();
 
     let scheduler = Arc::new({
         // TodoScheduler 现在不再持有 hook_service（todo hook 已整块移除），
@@ -614,6 +616,7 @@ async fn run_server(cli_port: Option<u16>) {
             task_manager: task_manager.clone(),
             config: config.clone(),
             expert_manager: expert_manager.clone(),
+            blackboard_debouncer: blackboard_debouncer.clone(),
         };
         if let Err(e) = sched.load_from_db(&ctx).await {
             tracing::warn!("Failed to load scheduled tasks: {}", e);
@@ -674,6 +677,7 @@ async fn run_server(cli_port: Option<u16>) {
             task_manager: task_manager.clone(),
             config: config.clone(),
             expert_manager: expert_manager.clone(),
+            blackboard_debouncer: blackboard_debouncer.clone(),
         },
         scheduler,
     )

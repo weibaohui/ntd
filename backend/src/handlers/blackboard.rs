@@ -191,13 +191,13 @@ pub async fn update_blackboard_config(
     // timer 逻辑取消（清除状态 + 标记未运行）后，即使 timer task 自然到期发送 flush 消息，
     // handle_flush_msg 的 enabled 检查也会拦截，不会派生 worker 执行 wiki 维护。
     if let Some(false) = req.enabled {
-        crate::services::blackboard_debouncer::cancel_timer(workspace_id).await;
+        state.blackboard_debouncer.cancel_timer(workspace_id).await;
     }
 
     // debounce_secs 变更时，根据已计时长决定：超则立即触发 flush，未超则继续用新阈值计时
     if let Some(new_secs) = req.blackboard_debounce_secs {
         let clamped = new_secs.max(10);
-        crate::services::blackboard_debouncer::reconcile_timer_after_config_change(
+        state.blackboard_debouncer.reconcile_timer_after_config_change(
             workspace_id,
             clamped,
         )
