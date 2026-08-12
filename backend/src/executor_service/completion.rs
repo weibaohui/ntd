@@ -15,11 +15,10 @@ use std::sync::Arc;
 
 use tokio::sync::broadcast;
 
-use crate::adapters::{CodeExecutor, ExecutorRegistry};
+use crate::adapters::CodeExecutor;
 use crate::db::Database;
 use crate::executor_service::ExecEvent;
 use crate::models::{ExecutionUsage, ParsedLogEntry};
-use crate::task_manager::TaskManager;
 
 use super::auto_review::run_auto_review;
 use super::log_capture::send_event;
@@ -421,11 +420,8 @@ pub(crate) async fn finalize_normal_completion(
     //   - trigger_type != "auto_review" 避免评审实例本身反向触发评审
     //   - 正常执行 (success/failed), 不是被中断
     maybe_run_auto_review(
-        &db,
-        &executor_registry,
-        &tx,
-        &task_manager,
-        &config,
+        // 096-W2-PR3：五元组依赖由 ctx 提取（execution_deps 方法），不再逐字段解包传递
+        &ctx.execution_deps(),
         todo_id,
         record_id,
         &trigger_type,
@@ -608,16 +604,12 @@ async fn broadcast_ticker_status(
 /// 处理成功后移除已处理 ID（保留期间新到达的记录），
 /// 若队列仍有剩余则继续处理下一批。
 /// 失败时保留队列不删除，退出循环避免死循环。
-#[allow(clippy::too_many_arguments)]
 fn spawn_flush_worker(
     ws_id: i64,
     debounce_secs: i64,
     debounce_count: i64,
-    db: Arc<Database>,
-    executor_registry: Arc<ExecutorRegistry>,
-    tx: broadcast::Sender<ExecEvent>,
-    task_manager: Arc<TaskManager>,
-    config: Arc<std::sync::RwLock<crate::config::Config>>,
+    // 096-W2-PR3：五元组依赖已对象化（ExecutionDeps），签名从 9 参塌缩为 5 参
+    deps: super::types::ExecutionDeps,
     refreshing_workspaces: Arc<tokio::sync::Mutex<std::collections::HashSet<i64>>>,
 ) {
     tokio::spawn(async move {
@@ -630,7 +622,7 @@ fn spawn_flush_worker(
         // 循环处理，直到队列为空或某次处理失败
         loop {
             // 非破坏性读取 pending 队列（不用 take_pending_record_ids）
-            let all_record_ids = match db.get_blackboard(ws_id).await {
+            let all_record_ids = match deps.db.get_blackboard(ws_id).await {
                 Ok(Some(board)) => {
                     serde_json::from_str::<Vec<i64>>(&board.pending_record_ids).unwrap_or_default()
                 }
@@ -655,7 +647,7 @@ fn spawn_flush_worker(
             }
 
             // 广播 refreshing=true 状态（用全队列长度，让 UI 看到真实剩余量）
-            let _ = tx.send(ExecEvent::BlackboardDebounceStatus {
+            let _ = deps.tx.send(ExecEvent::BlackboardDebounceStatus {
                 workspace_id: ws_id,
                 pending_count: all_record_ids.len() as u64,
                 threshold: debounce_count as u64,
@@ -665,11 +657,11 @@ fn spawn_flush_worker(
             });
 
             let update_result = crate::services::blackboard::update_blackboard_wiki(
-                db.clone(),
-                executor_registry.clone(),
-                tx.clone(),
-                task_manager.clone(),
-                config.clone(),
+                deps.db.clone(),
+                deps.executor_registry.clone(),
+                deps.tx.clone(),
+                deps.task_manager.clone(),
+                deps.config.clone(),
                 ws_id,
                 record_ids,
             )
@@ -693,7 +685,7 @@ fn spawn_flush_worker(
         // 旧实现写死 pending_count=0，但失败时队列实际仍有残留（update_blackboard_wiki
         // 失败不调 remove_specific_pending_record_ids），下一秒 ticker 会从 DB 读回真实值，
         // 造成 UI 在 0 和真实值之间反复跳；这里一次性广播真实值，避免抖动。
-        let final_pending_count = match db.get_blackboard(ws_id).await {
+        let final_pending_count = match deps.db.get_blackboard(ws_id).await {
             Ok(Some(board)) => {
                 serde_json::from_str::<Vec<i64>>(&board.pending_record_ids)
                     .map(|v| v.len() as u64)
@@ -703,7 +695,7 @@ fn spawn_flush_worker(
         };
 
         // 广播 refreshing=false 状态（携带真实 pending_count）
-        let _ = tx.send(ExecEvent::BlackboardDebounceStatus {
+        let _ = deps.tx.send(ExecEvent::BlackboardDebounceStatus {
             workspace_id: ws_id,
             pending_count: final_pending_count,
             threshold: debounce_count as u64,
@@ -725,7 +717,7 @@ fn spawn_flush_worker(
                 "worker 退出，队列仍有 {} 条残留，重启防抖 timer 触发下一轮: workspace_id={}",
                 final_pending_count, ws_id
             );
-            crate::services::blackboard_debouncer::restart_timer(ws_id, &db).await;
+            crate::services::blackboard_debouncer::restart_timer(ws_id, &deps.db).await;
         }
 
         // 释放 per-workspace 互斥锁
@@ -738,14 +730,10 @@ fn spawn_flush_worker(
 ///
 /// 若 workspace 已有 worker 运行中（refreshing_workspaces 包含），
 /// 不丢弃消息：worker 内部循环会自然处理新到达的记录。
-#[allow(clippy::too_many_arguments)]
 async fn handle_flush_msg(
     msg: crate::services::blackboard_debouncer::BlackboardFlushMsg,
-    db: &Arc<Database>,
-    executor_registry: &Arc<ExecutorRegistry>,
-    tx: &broadcast::Sender<ExecEvent>,
-    task_manager: &Arc<TaskManager>,
-    config: &Arc<std::sync::RwLock<crate::config::Config>>,
+    // 096-W2-PR3：五元组依赖已对象化（ExecutionDeps），借用现场按引用接参
+    deps: &super::types::ExecutionDeps,
     refreshing_workspaces: &Arc<tokio::sync::Mutex<std::collections::HashSet<i64>>>,
     known_workspaces: &mut Vec<i64>,
 ) {
@@ -754,7 +742,7 @@ async fn handle_flush_msg(
     // 优先检查黑板功能总开关：关闭时直接返回，不执行任何 wiki 维护操作。
     // 这是第二道防线（第一道在 push_pending_record 阻止新记录入队）：
     // 即使 timer 在用户禁用前已调度、在禁用后自然到期发送了 flush 消息，也在此拦截。
-    match db.get_blackboard_config(ws_id).await {
+    match deps.db.get_blackboard_config(ws_id).await {
         Ok(Some(cfg)) if !cfg.enabled => {
             tracing::debug!(
                 "黑板功能已禁用，跳过 flush 消息处理: workspace_id={}",
@@ -799,17 +787,14 @@ async fn handle_flush_msg(
     }
 
     // 读取 per-workspace 防抖配置
-    let (debounce_secs, debounce_count) = get_workspace_debounce(db, ws_id).await;
+    let (debounce_secs, debounce_count) = get_workspace_debounce(&deps.db, ws_id).await;
 
     spawn_flush_worker(
         ws_id,
         debounce_secs,
         debounce_count,
-        db.clone(),
-        executor_registry.clone(),
-        tx.clone(),
-        task_manager.clone(),
-        config.clone(),
+        // spawn move 闭包需要 owned deps，Arc 字段克隆廉价
+        deps.clone(),
         refreshing_workspaces.clone(),
     );
 }
@@ -823,11 +808,8 @@ async fn handle_flush_msg(
 /// 实现工作空间隔离。
 pub async fn blackboard_flush_listener(
     mut rx: tokio::sync::mpsc::Receiver<crate::services::blackboard_debouncer::BlackboardFlushMsg>,
-    db: Arc<Database>,
-    executor_registry: Arc<ExecutorRegistry>,
-    tx: broadcast::Sender<ExecEvent>,
-    task_manager: Arc<TaskManager>,
-    config: Arc<std::sync::RwLock<crate::config::Config>>,
+    // 096-W2-PR3：五元组依赖已对象化（ExecutionDeps），6 参塌缩为 2 参
+    deps: super::types::ExecutionDeps,
 ) {
     // 每秒 ticker 用于推送状态
     let mut ticker = tokio::time::interval(tokio::time::Duration::from_secs(1));
@@ -846,7 +828,7 @@ pub async fn blackboard_flush_listener(
     // 导致残留队列永久卡死。启动时统一检查所有 blackboard，若有非空 pending 队列
     // 则重启 timer，让它们在 debounce_secs 后重新触发 flush。
     {
-        let rescan_timer = db.clone();
+        let rescan_timer = deps.db.clone();
         tokio::spawn(async move {
             match rescan_timer.get_all_blackboards().await {
                 Ok(boards) => {
@@ -878,7 +860,7 @@ pub async fn blackboard_flush_listener(
             // 每秒 ticker：广播所有已知 workspace 的状态
             _ = ticker.tick() => {
                 broadcast_ticker_status(
-                    &db, &tx, &mut known_workspaces, &refreshing_workspaces,
+                    &deps.db, &deps.tx, &mut known_workspaces, &refreshing_workspaces,
                 ).await;
             }
 
@@ -887,7 +869,7 @@ pub async fn blackboard_flush_listener(
                 match msg {
                     Some(msg) => {
                         handle_flush_msg(
-                            msg, &db, &executor_registry, &tx, &task_manager, &config,
+                            msg, &deps,
                             &refreshing_workspaces, &mut known_workspaces,
                         ).await;
                     }
@@ -903,13 +885,9 @@ pub async fn blackboard_flush_listener(
 /// 设计 034 统一路径：所有 loop_stage 步骤（无论 min_rating 是否有值）都走统一评审，
 /// 查出 step 内联 `review_prompt` 和所属 loop 的 `review_template_id` 传给
 /// `run_auto_review`，由 `resolve_review_template` 实现三级回退。
-#[allow(clippy::too_many_arguments)]
 async fn maybe_run_auto_review(
-    db: &Arc<Database>,
-    executor_registry: &Arc<crate::adapters::ExecutorRegistry>,
-    tx: &broadcast::Sender<ExecEvent>,
-    task_manager: &Arc<TaskManager>,
-    config: &Arc<std::sync::RwLock<crate::config::Config>>,
+    // 096-W2-PR3：五元组依赖已对象化（ExecutionDeps），借用现场按引用接参
+    deps: &super::types::ExecutionDeps,
     todo_id: i64,
     record_id: i64,
     trigger_type: &str,
@@ -927,7 +905,7 @@ async fn maybe_run_auto_review(
         // loop_stage 触发：按当前 todo 反查启用中的 loop_step，取其中联的 review_prompt。
         // 一个 todo 至多被一个启用中的 step 引用，用 LIMIT 1 取首个。
         // 查询返回 None（无关联 step/step 未启用）→ auto_review 走默认模板，不阻塞评审。
-        db.find_loop_step_review_prompt_by_todo(todo_id)
+        deps.db.find_loop_step_review_prompt_by_todo(todo_id)
             .await
             .ok()       // 查询出错（如 DB 连接断开）转为 None，不阻断 auto_review 流程
             .flatten()  // 解开 Option<Option<String>> 的嵌套：外层 Option 是 Result 转换结果，
@@ -938,11 +916,7 @@ async fn maybe_run_auto_review(
     };
 
     run_auto_review(
-        db.clone(),
-        executor_registry.clone(),
-        tx.clone(),
-        task_manager.clone(),
-        config.clone(),
+        deps.clone(),
         todo_id,
         record_id,
         step_review_prompt,
