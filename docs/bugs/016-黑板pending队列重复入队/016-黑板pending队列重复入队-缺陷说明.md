@@ -24,7 +24,7 @@
 
 黑板 pending 队列 `blackboards.pending_record_ids` 中出现同一 `execution_record_id` 重复：
 
-```
+```text
 [3,54,53,53,56,52]
       ^^ ^^   ← record 53 入队两次
 ```
@@ -38,7 +38,7 @@
 
 日志证据（backend.dev.log，2026-08-12T15:43:20）：
 
-```
+```text
 15:43:20.129999  push_pending_record called: workspace_id=1, record_id=53
 15:43:20.130383  append_pending_record_id 成功: workspace_id=1, record_id=53   ← 第一次
 15:43:20.690021  push_pending_record called: workspace_id=1, record_id=53

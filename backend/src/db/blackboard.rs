@@ -244,11 +244,19 @@ impl Database {
         // 解析 + 幂等判定：队列已含该 record_id 时不再追加（NTD-016 双路径去重）。
         // 注意：此时已持有 queue_lock，检查与后续写回在同一临界区内，
         // 不会出现「检查后、写回前」被并发 append 插入相同 ID 的窗口。
-        let mut ids: Vec<i64> = serde_json::from_str(&board.pending_record_ids)
-            .unwrap_or_default();
+        // 解析失败（损坏 JSON）时返回含 workspace_id 的 DbErr 而非静默清空：
+        // unwrap_or_default 会把队列当空 Vec 写回，覆盖并丢失原有 pending 记录
+        //（CodeRabbit 数据完整性意见，NTD-016 修复顺带收敛）。
+        let ids: Vec<i64> = serde_json::from_str(&board.pending_record_ids).map_err(|e| {
+            sea_orm::DbErr::Custom(format!(
+                "blackboard pending_record_ids 损坏（workspace_id={}）: {e}",
+                workspace_id
+            ))
+        })?;
         if ids.contains(&record_id) {
             return Ok(());
         }
+        let mut ids = ids;
         ids.push(record_id);
         let ids_json = serde_json::to_string(&ids).unwrap_or_default();
 
@@ -984,6 +992,50 @@ mod tests {
             ids, vec![53, 54, 56],
             "不同 ID 应全部保留且 53 仅一次（NTD-016），实际 {:?}",
             ids
+        );
+    }
+
+    /// 验证 pending_record_ids 损坏（非法 JSON）时 append 返回含 workspace_id 的
+    /// DbErr 且不覆盖原队列（CodeRabbit 数据完整性意见）：
+    /// unwrap_or_default 静默清空会丢失待处理记录，改为显式报错终止写入。
+    #[tokio::test]
+    async fn test_append_pending_record_id_corrupt_json_returns_err_and_preserves() {
+        let db = Database::new(":memory:").await.expect(":memory: must open");
+        let ws_id = create_test_workspace(&db).await;
+        db.create_blackboard(ws_id).await.unwrap();
+
+        // 直接把队列写成损坏 JSON
+        let board = db.get_blackboard(ws_id).await.unwrap().unwrap();
+        let now = crate::models::utc_timestamp();
+        use sea_orm::ActiveValue;
+        blackboards::ActiveModel {
+            id: ActiveValue::Unchanged(board.id),
+            workspace_id: ActiveValue::Unchanged(ws_id),
+            pending_record_ids: ActiveValue::Set("{not-a-queue".to_string()),
+            updated_at: ActiveValue::Set(Some(now)),
+            ..Default::default()
+        }
+        .update(&db.conn)
+        .await
+        .unwrap();
+
+        // append 应返回错误而非静默清空
+        let err = db
+            .append_pending_record_id(ws_id, 99)
+            .await
+            .expect_err("损坏 JSON 时应返回 Err");
+        let err_str = format!("{err}");
+        assert!(
+            err_str.contains(&format!("workspace_id={}", ws_id)),
+            "错误信息应包含 workspace_id，实际: {err_str}"
+        );
+
+        // 原队列必须原样保留（未被覆盖为空）
+        let board = db.get_blackboard(ws_id).await.unwrap().unwrap();
+        assert_eq!(
+            board.pending_record_ids, "{not-a-queue",
+            "解析失败时不得覆盖原队列，实际: {}",
+            board.pending_record_ids
         );
     }
 }
