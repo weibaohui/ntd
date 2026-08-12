@@ -105,6 +105,20 @@ enum LoopRunOutcome {
     Paused,
 }
 
+/// 恢复模式的推算计数器（096-W3-PR3：`init_or_resume_counters` 的返回聚合）。
+///
+/// 从既有 step_executions 记录推算续跑起点；全新执行时全零/None。
+struct ResumedCounters {
+    completed: i32,
+    failed: i32,
+    /// 注意 quirk：恢复模式下与 `sequence_counter` 同源（皆取 max sequence_index）——
+    /// 沿袭原实现，两个变量名历史遗留但值相同。
+    total_executed: i32,
+    sequence_counter: i32,
+    last_conclusion: Option<String>,
+    last_step_name: Option<String>,
+}
+
 impl LoopRunner {
     pub fn new(
         ctx: LoopRunnerCtx,
@@ -636,98 +650,32 @@ impl LoopRunner {
         trigger_type: String,
         resume_step_idx: Option<usize>,
     ) -> Result<LoopRunOutcome, String> {
-        // 1. 校验 loop 状态
-        let loop_ = self
-            .ctx
-            .db
-            .get_loop(loop_id)
-            .await
-            .map_err(|e| e.to_string())?
-            .ok_or_else(|| format!("loop #{} not found", loop_id))?;
-        if loop_.status != "enabled" {
-            return Err(format!("loop #{} is not enabled (status={})", loop_id, loop_.status));
-        }
-
-        // 2. 加载所有 enabled steps
-        let all_steps = self
-            .ctx
-            .db
-            .list_enabled_loop_steps_by_loop(loop_id)
-            .await
-            .map_err(|e| e.to_string())?;
-        if all_steps.is_empty() {
-            self.ctx
-                .db
-                .finish_loop_execution(loop_execution_id, "success", 0, 0, None)
-                .await
-                .map_err(|e| e.to_string())?;
+        // 准备段（096-W3-PR3 提取为阶段函数，行为与原直线实现逐字等价）：
+        // 1. 校验 loop 状态 → 2. 加载 enabled steps（空集直接完成）→ 3. 工作空间一致性
+        let loop_ = self.validate_loop_enabled(loop_id).await?;
+        let Some(all_steps) = self.load_enabled_steps_or_finish(loop_id, loop_execution_id).await? else {
             return Ok(LoopRunOutcome::Finished);
-        }
-
-        // 3. 校验所有步骤的 todo 是否都在同一工作空间下
-        // 环路运行时要求所有环节（step.todo）与 loop 属于同一 workspace，
-        // 否则 cwd/worktree 无法统一，跨空间数据流会导致不可预期的行为。
+        };
         self.check_workspace_consistency(&loop_, &all_steps).await?;
 
-        // 4. 加载 trigger_meta 中的 params 与 requirement。
-        let (trigger_params, task_requirement) = {
-            if let Ok(Some(exec)) = self.ctx.db.get_loop_execution(loop_execution_id).await {
-                if let Ok(meta) = serde_json::from_str::<serde_json::Value>(&exec.trigger_meta) {
-                    let params = meta.get("params").and_then(|v| v.as_object())
-                        .map(|obj| obj.iter().filter_map(|(k,v)| v.as_str().map(|s| (k.clone(), s.to_string()))).collect())
-                        .unwrap_or_default();
-                    let req = meta.get("requirement").and_then(|v| v.as_str().map(|s| s.to_string())).unwrap_or_default();
-                    (params, req)
-                } else { (HashMap::new(), String::new()) }
-            } else { (HashMap::new(), String::new()) }
-        };
+        // 4. 加载 trigger_meta 中的 params 与 requirement
+        let (trigger_params, task_requirement) = self.load_trigger_meta(loop_execution_id).await;
 
-        // 4. 初始化（全新执行）或恢复状态（续跑）
-        let is_resume = resume_step_idx.is_some();
-        if !is_resume {
-            // 全新执行：设置 loop execution 状态
-            self.ctx
-                .db
-                .finish_loop_execution(loop_execution_id, "running", 0, 0, None)
-                .await
-                .map_err(|e| e.to_string())?;
-            self.clear_finished_at(loop_execution_id).await?;
-            self.update_total_steps(loop_execution_id, all_steps.len() as i32)
-                .await?;
-        }
+        // 4'. 初始化（全新执行）或恢复（续跑）计数器
+        let resumed = self
+            .init_or_resume_counters(loop_execution_id, resume_step_idx, &all_steps)
+            .await?;
 
         let limits: LimitsConfig = serde_json::from_str(&loop_.limits_config).unwrap_or_default();
         let max_executions = limits.max_step_executions.unwrap_or(i32::MAX);
         let max_total_tokens = limits.max_total_tokens.unwrap_or(i64::MAX);
 
-        // 恢复模式下从已有记录推算状态计数器
-        let (prev_completed, prev_failed, prev_total_executed, prev_max_sequence, prev_last_output, prev_last_conclusion, prev_last_step_name) =
-            if is_resume {
-                let execs = self.ctx.db.list_loop_step_executions(loop_execution_id).await
-                    .unwrap_or_default();
-                let completed = execs.iter().filter(|se| se.status == "success").count() as i32;
-                let failed = execs.iter().filter(|se| se.status == "failed").count() as i32;
-                let total_exec = execs.iter().map(|se| se.sequence_index).max().unwrap_or(0);
-                let max_seq = execs.iter().map(|se| se.sequence_index).max().unwrap_or(0);
-                // 找最后完成的 step 用于模板变量
-                let last_success = execs.iter()
-                    .filter(|se| se.status == "success" || se.status == "pending_approval")
-                    .max_by_key(|se| se.sequence_index);
-                let last_conclusion = last_success.and_then(|se| se.conclusion.clone());
-                let last_step_name = last_success.and_then(|se| {
-                    all_steps.iter().find(|s| s.id == se.step_id).map(|s| s.name.clone())
-                });
-                (completed, failed, total_exec, max_seq, None, last_conclusion, last_step_name)
-            } else {
-                (0, 0, 0, 0, None, None, None)
-            };
-
         let mut current_idx: Option<usize> = resume_step_idx.or(Some(0));
-        let mut sequence_counter = if is_resume { prev_max_sequence } else { 0 };
-        let mut total_executed = prev_total_executed;
+        let mut sequence_counter = resumed.sequence_counter;
+        let mut total_executed = resumed.total_executed;
         let mut total_tokens_used: i64 = 0;
-        let mut completed = prev_completed;
-        let mut failed = prev_failed;
+        let mut completed = resumed.completed;
+        let mut failed = resumed.failed;
         let mut consecutive_retries: HashMap<i64, i32> = HashMap::new();
         // PhaseDriver 返回的返工计数，需要跨迭代传递到下一轮新创建的 step_execution。
         // rework_count 在 PhaseDriver 中计算但写入了当前（已结束的）step_execution，
@@ -741,9 +689,10 @@ impl LoopRunner {
             .collect();
 
         // 上一环节的执行结果（用于注入模板变量）
-        let mut last_output: Option<String> = prev_last_output;
-        let mut last_conclusion: Option<String> = prev_last_conclusion;
-        let mut last_step_name: Option<String> = prev_last_step_name;
+        // last_output 恢复值恒 None（原实现 prev_last_output 即硬编码 None，quirk 沿袭）
+        let mut last_output: Option<String> = None;
+        let mut last_conclusion: Option<String> = resumed.last_conclusion;
+        let mut last_step_name: Option<String> = resumed.last_step_name;
 
         // 4. 主循环
         while let Some(idx) = current_idx {
@@ -1091,7 +1040,127 @@ impl LoopRunner {
             };
         }
 
-        // 5. 计算最终 status
+        // 5. 收尾（计算终态/写回/终态化 phase/异常处理/日志——096-W3-PR3 提取为 finalize_dag_run）
+        self.finalize_dag_run(loop_id, loop_execution_id, completed, failed, total_executed, total_tokens_used).await
+    }
+
+    // ─── run_inner_from 阶段函数（096-W3-PR3：496 行 DAG 主循环拆分的准备段/收尾段）──
+
+    /// 阶段 1：校验 loop 存在且 enabled。
+    async fn validate_loop_enabled(&self, loop_id: i64) -> Result<crate::db::entity::loops::Model, String> {
+        let loop_ = self
+            .ctx
+            .db
+            .get_loop(loop_id)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("loop #{} not found", loop_id))?;
+        if loop_.status != "enabled" {
+            return Err(format!("loop #{} is not enabled (status={})", loop_id, loop_.status));
+        }
+        Ok(loop_)
+    }
+
+    /// 阶段 2：加载全部 enabled steps；空集时直接写入 success 终态并返回 None
+    /// （调用方据此提前 return Finished）。
+    async fn load_enabled_steps_or_finish(
+        &self,
+        loop_id: i64,
+        loop_execution_id: i64,
+    ) -> Result<Option<Vec<loop_steps::Model>>, String> {
+        let all_steps = self
+            .ctx
+            .db
+            .list_enabled_loop_steps_by_loop(loop_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        if all_steps.is_empty() {
+            self.ctx
+                .db
+                .finish_loop_execution(loop_execution_id, "success", 0, 0, None)
+                .await
+                .map_err(|e| e.to_string())?;
+            return Ok(None);
+        }
+        Ok(Some(all_steps))
+    }
+
+    /// 阶段 4：加载 trigger_meta 中的 params 与 requirement。
+    /// meta 缺失/解析失败均回退空值——触发元数据是增强项，不应阻断主流程。
+    async fn load_trigger_meta(&self, loop_execution_id: i64) -> (HashMap<String, String>, String) {
+        if let Ok(Some(exec)) = self.ctx.db.get_loop_execution(loop_execution_id).await {
+            if let Ok(meta) = serde_json::from_str::<serde_json::Value>(&exec.trigger_meta) {
+                let params = meta.get("params").and_then(|v| v.as_object())
+                    .map(|obj| obj.iter().filter_map(|(k,v)| v.as_str().map(|s| (k.clone(), s.to_string()))).collect())
+                    .unwrap_or_default();
+                let req = meta.get("requirement").and_then(|v| v.as_str().map(|s| s.to_string())).unwrap_or_default();
+                return (params, req);
+            }
+        }
+        (HashMap::new(), String::new())
+    }
+
+    /// 阶段 4'：初始化（全新执行写 running 态）或从既有记录恢复推算计数器。
+    async fn init_or_resume_counters(
+        &self,
+        loop_execution_id: i64,
+        resume_step_idx: Option<usize>,
+        all_steps: &[loop_steps::Model],
+    ) -> Result<ResumedCounters, String> {
+        if resume_step_idx.is_none() {
+            // 全新执行：设置 loop execution 状态
+            self.ctx
+                .db
+                .finish_loop_execution(loop_execution_id, "running", 0, 0, None)
+                .await
+                .map_err(|e| e.to_string())?;
+            self.clear_finished_at(loop_execution_id).await?;
+            self.update_total_steps(loop_execution_id, all_steps.len() as i32)
+                .await?;
+            return Ok(ResumedCounters {
+                completed: 0,
+                failed: 0,
+                total_executed: 0,
+                sequence_counter: 0,
+                last_conclusion: None,
+                last_step_name: None,
+            });
+        }
+        // 恢复模式：从已有 step_executions 推算状态计数器
+        let execs = self.ctx.db.list_loop_step_executions(loop_execution_id).await
+            .unwrap_or_default();
+        let completed = execs.iter().filter(|se| se.status == "success").count() as i32;
+        let failed = execs.iter().filter(|se| se.status == "failed").count() as i32;
+        let max_seq = execs.iter().map(|se| se.sequence_index).max().unwrap_or(0);
+        // 找最后完成的 step 用于模板变量
+        let last_success = execs.iter()
+            .filter(|se| se.status == "success" || se.status == "pending_approval")
+            .max_by_key(|se| se.sequence_index);
+        let last_conclusion = last_success.and_then(|se| se.conclusion.clone());
+        let last_step_name = last_success.and_then(|se| {
+            all_steps.iter().find(|s| s.id == se.step_id).map(|s| s.name.clone())
+        });
+        Ok(ResumedCounters {
+            completed,
+            failed,
+            total_executed: max_seq, // quirk 沿袭：total_executed 与 sequence 同取 max
+            sequence_counter: max_seq,
+            last_conclusion,
+            last_step_name,
+        })
+    }
+
+    /// 阶段 5：主循环结束后的收尾——计算终态、写回 loop_execution、终态化 phase、
+    /// 触发异常处理 Todo、输出完成日志。
+    async fn finalize_dag_run(
+        &self,
+        loop_id: i64,
+        loop_execution_id: i64,
+        completed: i32,
+        failed: i32,
+        total_executed: i32,
+        total_tokens_used: i64,
+    ) -> Result<LoopRunOutcome, String> {
         let final_status = if failed == 0 {
             "success"
         } else if completed == 0 {
