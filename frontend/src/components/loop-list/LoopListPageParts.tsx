@@ -132,8 +132,11 @@ export function useLoopRowActions({ workspaceId, onReload, onLoopChanged }: UseL
           message.success('已删除');
           onReload();
           onLoopChanged?.();
-        } catch {
+        } catch (e) {
           message.error('删除失败，环路可能正在被引用');
+          // 失败时 re-throw：antd 据此保持确认框打开（loading 复位），用户可原地重试；
+          // 若吞错 resolve，对话框会直接关闭，重试需重新打开行菜单（review finding 1）。
+          throw e;
         }
       },
     });

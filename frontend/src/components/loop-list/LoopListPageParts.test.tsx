@@ -56,8 +56,9 @@ describe('useLoopRowActions', () => {
     it('删除失败时弹错误消息', async () => {
       vi.mocked(dbLoops.deleteLoop).mockRejectedValueOnce(new Error('引用冲突'));
       // 确认框放行后 onOk 内的 deleteLoop 抛错，应弹错误提示。
+      // 注意：onOk 失败会 re-throw（保持对话框打开），测试 mock 里需接住，避免未处理 rejection。
       vi.mocked(Modal.confirm).mockImplementationOnce((cfg) => {
-        void cfg.onOk?.();
+        void cfg.onOk?.().catch(() => {});
         return { destroy: vi.fn(), update: vi.fn() };
       });
       const { result } = renderHook(() => useLoopRowActions({ workspaceId: 1, onReload: mockReload }));
