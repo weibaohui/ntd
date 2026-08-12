@@ -238,6 +238,8 @@ impl MessageDebounce {
             let expert_manager = self.ctx.expert_manager.clone();
             // loop_runner 需要在 async block 之前 clone，避免 self 生命周期问题
             let loop_runner = self.loop_runner.clone();
+            // 096-W4-5：同理，debouncer 也需 owned 克隆进闭包（&self 借用无法 'static）
+            let blackboard_debouncer = self.ctx.blackboard_debouncer.clone();
             let bot_id = key.0;
             let chat_id = key.1.clone();
             let target_type = all_msgs
@@ -291,7 +293,7 @@ impl MessageDebounce {
                     let result = Self::dispatch_execution(
                         last, &merged_content, &resolved,
                         &db, &executor_registry, &task_manager, &config, &tx, &loop_runner,
-                        &expert_manager,
+                        &expert_manager, &blackboard_debouncer,
                     )
                     .await;
 
@@ -345,7 +347,7 @@ impl MessageDebounce {
                             let r = Self::dispatch_execution(
                                 &next, &merged, &resolved,
                                 &db, &executor_registry, &task_manager, &config, &tx, &loop_runner,
-                                &expert_manager,
+                                &expert_manager, &blackboard_debouncer,
                             )
                             .await;
                             Self::update_binding(
@@ -460,6 +462,7 @@ impl MessageDebounce {
         task_manager: &Arc<TaskManager>,
         config: &Arc<std::sync::RwLock<crate::config::Config>>,
         expert_manager: &Arc<crate::expert::ExpertIndexManager>,
+        blackboard_debouncer: &Arc<crate::services::blackboard_debouncer::BlackboardDebouncer>,
     ) -> RunTodoExecutionRequest {
         let (receive_id, receive_id_type) = Self::feishu_reply_target(msg);
         RunTodoExecutionRequest {
@@ -468,6 +471,7 @@ impl MessageDebounce {
             tx: tx.clone(),
             task_manager: task_manager.clone(),
             config: config.clone(),
+            blackboard_debouncer: blackboard_debouncer.clone(),
             todo_id: msg.todo_id,
             message: resolved.exec_message.clone(),
             req_executor: msg.executor.clone(),
@@ -506,6 +510,7 @@ impl MessageDebounce {
         tx: &broadcast::Sender<ExecEvent>,
         loop_runner: &Option<Arc<crate::services::loop_runner::LoopRunner>>,
         expert_manager: &Arc<crate::expert::ExpertIndexManager>,
+        blackboard_debouncer: &Arc<crate::services::blackboard_debouncer::BlackboardDebouncer>,
     ) -> Result<crate::executor_service::ExecutionResult, Option<String>> {
         match msg.trigger_type.as_str() {
             "default_response_loop" | "slash_command_loop" => {
@@ -541,7 +546,7 @@ impl MessageDebounce {
             }
             _ => {
                 let request = Self::build_run_todo_request(
-                    msg, resolved, db, executor_registry, tx, task_manager, config, expert_manager,
+                    msg, resolved, db, executor_registry, tx, task_manager, config, expert_manager, blackboard_debouncer,
                 );
                 let result = if request.params.is_some() {
                     run_todo_execution_with_params(request).await

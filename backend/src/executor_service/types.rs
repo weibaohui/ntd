@@ -116,6 +116,9 @@ pub(crate) struct SpawnContext {
     /// 专家索引（需求 092 P2）：discussion_auto 接力回写时需要据此解析管家结论里的 @。
     /// None 表示该执行路径无专家索引（与 RunTodoExecutionRequest.expert_manager 同源）。
     pub expert_manager: Option<Arc<crate::expert::ExpertIndexManager>>,
+    /// 黑板防抖服务实例（096-W4-5 DI 化）：finalize 完成后 pending 入队的承接点
+    /// （与 RunTodoExecutionRequest.blackboard_debouncer 同源透传）。
+    pub blackboard_debouncer: Arc<crate::services::blackboard_debouncer::BlackboardDebouncer>,
 }
 
 impl SpawnContext {
@@ -128,6 +131,7 @@ impl SpawnContext {
             tx: self.tx.clone(),
             task_manager: Arc::clone(&self.task_manager),
             config: Arc::clone(&self.config),
+            blackboard_debouncer: Arc::clone(&self.blackboard_debouncer),
         }
     }
 }
@@ -207,6 +211,8 @@ pub(crate) struct ExecutionDeps {
     pub tx: broadcast::Sender<ExecEvent>,
     pub task_manager: Arc<crate::task_manager::TaskManager>,
     pub config: Arc<std::sync::RwLock<crate::config::Config>>,
+    /// 黑板防抖服务实例（096-W4-5 DI 化）：flush worker 的 timer 重启承接点
+    pub blackboard_debouncer: Arc<crate::services::blackboard_debouncer::BlackboardDebouncer>,
 }
 
 impl Clone for ExecutionDeps {
@@ -218,6 +224,7 @@ impl Clone for ExecutionDeps {
             tx: self.tx.clone(),
             task_manager: Arc::clone(&self.task_manager),
             config: Arc::clone(&self.config),
+            blackboard_debouncer: Arc::clone(&self.blackboard_debouncer),
         }
     }
 }

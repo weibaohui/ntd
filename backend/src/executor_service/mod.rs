@@ -54,6 +54,9 @@ pub struct RunTodoExecutionRequest {
     pub tx: broadcast::Sender<ExecEvent>,
     pub task_manager: Arc<TaskManager>,
     pub config: Arc<std::sync::RwLock<crate::config::Config>>,
+    /// 黑板防抖服务实例（096-W4-5 DI 化）：执行完成后 pending 入队的承接点，
+    /// 替代原 blackboard_debouncer 模块的全静态函数调用。
+    pub blackboard_debouncer: Arc<crate::services::blackboard_debouncer::BlackboardDebouncer>,
     pub todo_id: i64,
     pub message: String,
     pub req_executor: Option<String>,

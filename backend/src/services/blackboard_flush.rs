@@ -31,6 +31,7 @@ use crate::executor_service::ExecEvent;
 /// 确保 ticker 不会覆盖 spawned task 发出的 refreshing=true 状态。
 async fn build_blackboard_status(
     db: &Database,
+    debouncer: &crate::services::blackboard_debouncer::BlackboardDebouncer,
     workspace_id: i64,
     debounce_secs: i64,
     debounce_count: i64,
@@ -48,7 +49,7 @@ async fn build_blackboard_status(
         })
         .unwrap_or(0);
 
-    let remaining_secs = crate::services::blackboard_debouncer::get_timer_state(workspace_id)
+    let remaining_secs = debouncer.get_timer_state(workspace_id)
         .await
         .map(|state| {
             let elapsed_ms = std::time::SystemTime::now()
@@ -90,6 +91,7 @@ async fn get_workspace_debounce(db: &Database, ws_id: i64) -> (i64, i64) {
 /// 确保 spawned task 发出的 refreshing=true 不被 ticker 覆盖。
 async fn broadcast_ticker_status(
     db: &Database,
+    debouncer: &crate::services::blackboard_debouncer::BlackboardDebouncer,
     tx: &broadcast::Sender<ExecEvent>,
     known_workspaces: &mut Vec<i64>,
     refreshing_workspaces: &Arc<tokio::sync::Mutex<std::collections::HashSet<i64>>>,
@@ -107,7 +109,7 @@ async fn broadcast_ticker_status(
             let guard = refreshing_workspaces.lock().await;
             guard.contains(ws_id)
         };
-        let event = build_blackboard_status(db, *ws_id, debounce_secs, debounce_count, is_refreshing).await;
+        let event = build_blackboard_status(db, debouncer, *ws_id, debounce_secs, debounce_count, is_refreshing).await;
         let _ = tx.send(event);
     }
 }
@@ -176,6 +178,7 @@ fn spawn_flush_worker(
                 deps.tx.clone(),
                 deps.task_manager.clone(),
                 deps.config.clone(),
+                deps.blackboard_debouncer.clone(),
                 ws_id,
                 record_ids,
             )
@@ -231,7 +234,7 @@ fn spawn_flush_worker(
                 "worker 退出，队列仍有 {} 条残留，重启防抖 timer 触发下一轮: workspace_id={}",
                 final_pending_count, ws_id
             );
-            crate::services::blackboard_debouncer::restart_timer(ws_id, &deps.db).await;
+            deps.blackboard_debouncer.restart_timer(ws_id, &deps.db).await;
         }
 
         // 释放 per-workspace 互斥锁
@@ -345,6 +348,8 @@ pub(crate) async fn blackboard_flush_listener(
     // 则重启 timer，让它们在 debounce_secs 后重新触发 flush。
     {
         let rescan_timer = deps.db.clone();
+        // 096-W4-5：debouncer 实例随闭包 move（Arc 克隆仅计数自增）
+        let rescan_debouncer = deps.blackboard_debouncer.clone();
         tokio::spawn(async move {
             match rescan_timer.get_all_blackboards().await {
                 Ok(boards) => {
@@ -356,11 +361,7 @@ pub(crate) async fn blackboard_flush_listener(
                                 "启动时检测到黑板残留队列，重启 timer: workspace_id={}, pending={}",
                                 board.workspace_id, ids.len()
                             );
-                            crate::services::blackboard_debouncer::restart_timer(
-                                board.workspace_id,
-                                &rescan_timer,
-                            )
-                            .await;
+                            rescan_debouncer.restart_timer(board.workspace_id, &rescan_timer).await;
                         }
                     }
                 }
@@ -376,7 +377,7 @@ pub(crate) async fn blackboard_flush_listener(
             // 每秒 ticker：广播所有已知 workspace 的状态
             _ = ticker.tick() => {
                 broadcast_ticker_status(
-                    &deps.db, &deps.tx, &mut known_workspaces, &refreshing_workspaces,
+                    &deps.db, &deps.blackboard_debouncer, &deps.tx, &mut known_workspaces, &refreshing_workspaces,
                 ).await;
             }
 

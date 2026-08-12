@@ -1175,6 +1175,7 @@ mod tests {
         let db = Arc::new(Database::new(":memory:").await.unwrap());
         RunTodoExecutionRequest {
             db,
+            blackboard_debouncer: crate::services::blackboard_debouncer::BlackboardDebouncer::new(),
             executor_registry: Arc::new(ExecutorRegistry::default()),
             tx: broadcast::channel(1).0,
             task_manager: Arc::new(TaskManager::default()),

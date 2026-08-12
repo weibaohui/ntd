@@ -266,6 +266,7 @@ pub(crate) fn format_record_time(started_at: &str) -> String {
             tx: context.ctx.tx.clone(),
             task_manager: context.task_manager.clone(),
             config: context.ctx.config.clone(),
+            blackboard_debouncer: context.ctx.blackboard_debouncer.clone(),
             todo_id,
             message: todo.prompt,
             req_executor: todo.executor,

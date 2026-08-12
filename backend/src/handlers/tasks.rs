@@ -632,6 +632,7 @@ mod tests {
             task_manager: task_manager.clone(),
             config: config.clone(),
             expert_manager: Arc::new(crate::expert::ExpertIndexManager::new()),
+            blackboard_debouncer: crate::services::blackboard_debouncer::BlackboardDebouncer::new(),
         };
         scheduler.load_from_db(&ctx).await.expect("scheduler load");
         scheduler.start().await.expect("scheduler start");
