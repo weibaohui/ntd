@@ -214,6 +214,11 @@ impl Database {
     ///
     /// ORM 方式：读 → JSON parse → push → 序列化 → 写回。
     /// 并发安全由 workspace_id 唯一约束保证串行写入。
+    ///
+    /// 幂等保证（NTD-016）：同一 record_id 已在队列中时直接返回成功、不重复追加。
+    /// loop 步骤的完成事件会被 loop_runner（gate 通过路径）与 completion（finalize
+    /// 路径）双路径各推送一次；若不加幂等，队列会出现重复 ID，既膨胀 JSON 又让
+    /// debounce 阈值提前触发。在唯一写入点收敛幂等，调用方无需感知双路径。
     pub async fn append_pending_record_id(
         &self,
         workspace_id: i64,
@@ -236,9 +241,22 @@ impl Database {
                 workspace_id
             )))?;
 
-        // 解析 + 追加
-        let mut ids: Vec<i64> = serde_json::from_str(&board.pending_record_ids)
-            .unwrap_or_default();
+        // 解析 + 幂等判定：队列已含该 record_id 时不再追加（NTD-016 双路径去重）。
+        // 注意：此时已持有 queue_lock，检查与后续写回在同一临界区内，
+        // 不会出现「检查后、写回前」被并发 append 插入相同 ID 的窗口。
+        // 解析失败（损坏 JSON）时返回含 workspace_id 的 DbErr 而非静默清空：
+        // unwrap_or_default 会把队列当空 Vec 写回，覆盖并丢失原有 pending 记录
+        //（CodeRabbit 数据完整性意见，NTD-016 修复顺带收敛）。
+        let ids: Vec<i64> = serde_json::from_str(&board.pending_record_ids).map_err(|e| {
+            sea_orm::DbErr::Custom(format!(
+                "blackboard pending_record_ids 损坏（workspace_id={}）: {e}",
+                workspace_id
+            ))
+        })?;
+        if ids.contains(&record_id) {
+            return Ok(());
+        }
+        let mut ids = ids;
         ids.push(record_id);
         let ids_json = serde_json::to_string(&ids).unwrap_or_default();
 
@@ -928,5 +946,96 @@ mod tests {
             .unwrap();
         let cfg = db.get_blackboard_config(ws_id).await.unwrap().unwrap();
         assert!(cfg.enabled, "应为启用");
+    }
+
+    /// 验证 append_pending_record_id 幂等（NTD-016）：同一 record_id 重复追加只保留一条。
+    /// 回归场景：loop 步骤完成时 loop_runner（gate 通过路径）与 completion（finalize
+    /// 路径）双路径各 push 一次，此前队列出现重复 ID。
+    #[tokio::test]
+    async fn test_append_pending_record_id_idempotent_for_duplicate() {
+        let db = Database::new(":memory:").await.expect(":memory: must open");
+        let ws_id = create_test_workspace(&db).await;
+        db.create_blackboard(ws_id).await.unwrap();
+
+        // 同一 record 连续追加两次（模拟 loop_runner + completion 双路径）
+        db.append_pending_record_id(ws_id, 53).await.unwrap();
+        db.append_pending_record_id(ws_id, 53).await.unwrap();
+
+        // 队列中应只有一条 53
+        let board = db.get_blackboard(ws_id).await.unwrap().unwrap();
+        let ids: Vec<i64> = serde_json::from_str(&board.pending_record_ids).unwrap_or_default();
+        assert_eq!(
+            ids, vec![53],
+            "重复追加同一 record_id 应幂等（NTD-016），实际 {:?}",
+            ids
+        );
+    }
+
+    /// 验证 append_pending_record_id 幂等不影响正常追加（NTD-016 反向断言）：
+    /// 不同 record_id 仍按序追加，去重只针对已存在的 ID。
+    #[tokio::test]
+    async fn test_append_pending_record_id_different_ids_still_appended() {
+        let db = Database::new(":memory:").await.expect(":memory: must open");
+        let ws_id = create_test_workspace(&db).await;
+        db.create_blackboard(ws_id).await.unwrap();
+
+        // 追加 3 个不同 ID，其中 53 重复出现两次（模拟双路径 + 新记录混入）
+        db.append_pending_record_id(ws_id, 53).await.unwrap();
+        db.append_pending_record_id(ws_id, 54).await.unwrap();
+        db.append_pending_record_id(ws_id, 53).await.unwrap();
+        db.append_pending_record_id(ws_id, 56).await.unwrap();
+
+        // 顺序保持首次出现的相对次序，53 不重复
+        let board = db.get_blackboard(ws_id).await.unwrap().unwrap();
+        let ids: Vec<i64> = serde_json::from_str(&board.pending_record_ids).unwrap_or_default();
+        assert_eq!(
+            ids, vec![53, 54, 56],
+            "不同 ID 应全部保留且 53 仅一次（NTD-016），实际 {:?}",
+            ids
+        );
+    }
+
+    /// 验证 pending_record_ids 损坏（非法 JSON）时 append 返回含 workspace_id 的
+    /// DbErr 且不覆盖原队列（CodeRabbit 数据完整性意见）：
+    /// unwrap_or_default 静默清空会丢失待处理记录，改为显式报错终止写入。
+    #[tokio::test]
+    async fn test_append_pending_record_id_corrupt_json_returns_err_and_preserves() {
+        let db = Database::new(":memory:").await.expect(":memory: must open");
+        let ws_id = create_test_workspace(&db).await;
+        db.create_blackboard(ws_id).await.unwrap();
+
+        // 直接把队列写成损坏 JSON
+        let board = db.get_blackboard(ws_id).await.unwrap().unwrap();
+        let now = crate::models::utc_timestamp();
+        use sea_orm::ActiveValue;
+        blackboards::ActiveModel {
+            id: ActiveValue::Unchanged(board.id),
+            workspace_id: ActiveValue::Unchanged(ws_id),
+            pending_record_ids: ActiveValue::Set("{not-a-queue".to_string()),
+            updated_at: ActiveValue::Set(Some(now)),
+            ..Default::default()
+        }
+        .update(&db.conn)
+        .await
+        .unwrap();
+
+        // append 应返回错误而非静默清空
+        let err = db
+            .append_pending_record_id(ws_id, 99)
+            .await
+            .expect_err("损坏 JSON 时应返回 Err");
+        let err_str = format!("{err}");
+        assert!(
+            err_str.contains(&format!("workspace_id={}", ws_id)),
+            "错误信息应包含 workspace_id，实际: {err_str}"
+        );
+
+        // 原队列必须原样保留（未被覆盖为空）
+        let board = db.get_blackboard(ws_id).await.unwrap().unwrap();
+        assert_eq!(
+            board.pending_record_ids, "{not-a-queue",
+            "解析失败时不得覆盖原队列，实际: {}",
+            board.pending_record_ids
+        );
     }
 }
