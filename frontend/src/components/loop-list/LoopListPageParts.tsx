@@ -117,7 +117,7 @@ interface UseLoopRowActionsArgs {
  */
 export function useLoopRowActions({ workspaceId, onReload, onLoopChanged }: UseLoopRowActionsArgs) {
   // NTD-014-C：删除前必须二次确认——环路被任务引用时删除会连带破坏任务执行，
-  // 用 Modal.confirm 兜底误触；确认后仍失败（如被引用）由 catch 弹后端错误。
+  // 用 Modal.confirm 兜底误触；确认后失败（如被引用）由 catch 弹固定文案提示。
   const handleDelete = useCallback((loop: LoopListItem) => {
     if (workspaceId == null) return;
     Modal.confirm({

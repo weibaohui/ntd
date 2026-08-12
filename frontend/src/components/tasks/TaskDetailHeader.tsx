@@ -217,8 +217,16 @@ export function DetailHeader({
       </div>
       <Space>
         {/* NTD-014-A：删除按钮删除任务本身（原实现误删关联环路）。
-            所有任务（含委派）都可删除，不再依赖 loopDetail 显隐。 */}
-        <Popconfirm title="确定删除任务？" onConfirm={onDelete} okText="删除" cancelText="取消">
+            所有任务（含委派）都可删除，不再依赖 loopDetail 显隐。
+            评审补充：删除会级联销毁该任务全部讨论记录（task_posts ON DELETE CASCADE），
+            确认框用 description 明确提示，避免误删不可恢复的讨论内容。 */}
+        <Popconfirm
+          title="确定删除任务？"
+          description="将同时删除该任务的全部讨论记录（含执行回帖），此操作不可恢复。"
+          onConfirm={onDelete}
+          okText="删除"
+          cancelText="取消"
+        >
           <Button icon={<DeleteOutlined />} danger size="small">删除</Button>
         </Popconfirm>
         {/* 委派任务无环路执行概念，「再次执行」走 loop 路径不适用；用户在讨论区 @ 继续推进。 */}
