@@ -32,11 +32,9 @@ impl MimoExtractor {
         let mut events = Vec::new();
         let event_type = json.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
+        // session 首现认领（claim_session 幂等：仅首次产出 SessionStart，先到先赢）
         if let Some(sid) = json.get("sessionID").and_then(|v| v.as_str()) {
-            if self.metadata.session_id.is_none() {
-                self.metadata.session_id = Some(sid.to_string());
-                events.push(ExecutionEvent::SessionStart { session_id: sid.to_string() });
-            }
+            events.extend(self.metadata.claim_session(sid));
         }
 
         match event_type {
@@ -47,78 +45,31 @@ impl MimoExtractor {
             }
             "text" => {
                 if let Some(part) = json.get("part") {
-                    if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
-                        let trimmed = text.trim();
-                        if !trimmed.is_empty() {
-                            events.push(ExecutionEvent::Assistant {
-                                content: trimmed.to_string(),
-                                thinking: None,
-                                message_id: part.get("messageID").and_then(|v| v.as_str()).map(String::from),
-                            });
-                        }
-                    }
+                    // mimo 的 message_id 键为 camelCase（messageID），共享 text 提取逻辑
+                    events.extend(super::step_json::extract_assistant_text(part, Some("messageID")));
                 }
             }
             "reasoning" => {
                 if let Some(part) = json.get("part") {
-                    if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
-                        let trimmed = text.trim();
-                        if !trimmed.is_empty() {
-                            events.push(ExecutionEvent::Thinking {
-                                content: trimmed.chars().take(500).collect(),
-                            });
-                        }
-                    }
+                    events.extend(super::step_json::extract_thinking(part));
                 }
             }
             "tool_use" => {
                 if let Some(part) = json.get("part") {
-                    let tool = part.get("tool").and_then(|v| v.as_str()).unwrap_or("bash");
-                    let input = part.get("state")
-                        .and_then(|s| s.get("input"))
-                        .cloned()
-                        .unwrap_or(serde_json::json!({}));
-
-                    events.push(ExecutionEvent::ToolCall {
-                        id: part.get("id").or_else(|| part.get("callID")).and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-                        name: tool.to_string(),
-                        input,
-                    });
-
-                    if let Some(output) = part.get("state")
-                        .and_then(|s| s.get("output"))
+                    // id 取法是各家唯一差异（mimo 先 part.id 后 part.callID），工具对提取逻辑共享
+                    let call_id = part
+                        .get("id")
+                        .or_else(|| part.get("callID"))
                         .and_then(|v| v.as_str())
-                    {
-                        if !output.is_empty() {
-                            let is_error = part.get("state")
-                                .and_then(|s| s.get("status"))
-                                .and_then(|v| v.as_str())
-                                .map(|s| s == "error" || s == "failed")
-                                .unwrap_or(false);
-                            events.push(ExecutionEvent::ToolResult {
-                                call_id: String::new(),
-                                output: output.to_string(),
-                                is_error,
-                            });
-                        }
-                    }
+                        .unwrap_or_default()
+                        .to_string();
+                    events.extend(super::step_json::extract_tool_pair(part, &call_id));
                 }
             }
             "step_finish" => {
                 if let Some(part) = json.get("part") {
-                    if let Some(tokens) = part.get("tokens") {
-                        events.push(ExecutionEvent::Tokens {
-                            input: tokens.get("input").and_then(|v| v.as_u64()).unwrap_or(0),
-                            output: tokens.get("output").and_then(|v| v.as_u64()).unwrap_or(0),
-                            cache_read: tokens.get("cache").and_then(|c| c.get("read")).and_then(|v| v.as_u64()),
-                            cache_write: tokens.get("cache").and_then(|c| c.get("write")).and_then(|v| v.as_u64()),
-                        });
-                    }
-                    if let Some(cost) = part.get("cost").and_then(|v| v.as_f64()) {
-                        if cost > 0.0 {
-                            events.push(ExecutionEvent::Cost { cost_usd: cost });
-                        }
-                    }
+                    // tokens/cost 提取（三家逐字同构部分，已收敛）
+                    events.extend(super::step_json::extract_tokens_cost(part));
                 }
                 let idx = self.step_index.saturating_sub(1);
                 events.push(ExecutionEvent::StepFinish { name: "step".to_string(), index: idx });

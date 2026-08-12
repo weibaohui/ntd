@@ -32,14 +32,9 @@ impl CodewhaleExtractor {
 
         match event_type {
             "session_capture" => {
-                // 会话捕获：提取 session_id
+                // 会话捕获：session 首现认领（claim_session 幂等，先到先赢）
                 if let Some(sid) = json.get("content").and_then(|v| v.as_str()) {
-                    if self.metadata.session_id.is_none() {
-                        self.metadata.session_id = Some(sid.to_string());
-                        events.push(ExecutionEvent::SessionStart {
-                            session_id: sid.to_string(),
-                        });
-                    }
+                    events.extend(self.metadata.claim_session(sid));
                 }
             }
             "content" => {
@@ -86,13 +81,11 @@ impl CodewhaleExtractor {
                             });
                         }
                     }
-                    // session_id（兜底，session_capture 可能未触发）
+                    // session_id（兜底，session_capture 可能未触发）；
+                    // claim_session 幂等，命中时保持原有的「插到事件流头部」语义
                     if let Some(sid) = meta.get("session_id").and_then(|v| v.as_str()) {
-                        if self.metadata.session_id.is_none() {
-                            self.metadata.session_id = Some(sid.to_string());
-                            events.insert(0, ExecutionEvent::SessionStart {
-                                session_id: sid.to_string(),
-                            });
+                        if let Some(event) = self.metadata.claim_session(sid) {
+                            events.insert(0, event);
                         }
                     }
                     // Token 统计

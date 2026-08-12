@@ -140,14 +140,9 @@ impl PiExtractor {
 
         match event_type {
             "session" => {
-                // 会话事件：提取 session_id
+                // 会话事件：session 首现认领（claim_session 幂等，先到先赢）
                 if let Some(sid) = json.get("id").and_then(|v| v.as_str()) {
-                    if self.metadata.session_id.is_none() {
-                        self.metadata.session_id = Some(sid.to_string());
-                        events.push(ExecutionEvent::SessionStart {
-                            session_id: sid.to_string(),
-                        });
-                    }
+                    events.extend(self.metadata.claim_session(sid));
                 }
             }
             "model_change" => {

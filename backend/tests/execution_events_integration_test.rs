@@ -11,7 +11,7 @@ mod tests {
     /// 测试 Kilo 管道的完整流程
     #[test]
     fn test_kilo_pipeline_full_flow() {
-        let mut pipeline = EventPipeline::with_extractor(KiloExtractor::new());
+        let mut pipeline = EventPipeline::with_extractor(KiloExtractor::new("kilo"));
 
         // step-start
         pipeline.feed(r#"{"type":"step-start","timestamp":1777471473403,"sessionID":"ses_test123"}"#);
@@ -103,7 +103,7 @@ mod tests {
     /// 测试 Opencode 管道的完整流程
     #[test]
     fn test_opencode_pipeline_full_flow() {
-        let mut pipeline = EventPipeline::with_extractor(OpencodeExtractor::new());
+        let mut pipeline = EventPipeline::with_extractor(OpencodeExtractor::new("opencode"));
 
         // step-start
         pipeline.feed(r#"{"type":"step-start","timestamp":1777471473403,"sessionID":"ses_open789"}"#);
@@ -131,7 +131,7 @@ mod tests {
     /// 测试数据库适配转换
     #[test]
     fn test_db_adapter_conversion() {
-        let mut pipeline = EventPipeline::with_extractor(KiloExtractor::new());
+        let mut pipeline = EventPipeline::with_extractor(KiloExtractor::new("kilo"));
 
         pipeline.feed(r#"{"type":"step-start","sessionID":"ses_db1"}"#);
         pipeline.feed(r#"{"type":"tool-use","part":{"type":"tool_use","tool":"bash","state":{"input":{"command":"ls"}}}}"#);

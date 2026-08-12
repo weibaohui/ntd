@@ -29,14 +29,9 @@ impl CodebuddyExtractor {
 
         match event_type {
             "system" => {
-                // 系统消息：提取 session_id 和 model
+                // 系统消息：session 首现认领 + 提取 model
                 if let Some(sid) = json.get("session_id").and_then(|v| v.as_str()) {
-                    if self.metadata.session_id.is_none() {
-                        self.metadata.session_id = Some(sid.to_string());
-                        events.push(ExecutionEvent::SessionStart {
-                            session_id: sid.to_string(),
-                        });
-                    }
+                    events.extend(self.metadata.claim_session(sid));
                 }
                 if let Some(model) = json.get("model").and_then(|v| v.as_str()) {
                     if self.metadata.model.is_none() {

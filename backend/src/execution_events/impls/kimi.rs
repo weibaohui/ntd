@@ -125,13 +125,10 @@ impl KimiExtractor {
             _ => {}
         }
 
-        // 提取 session_id
+        // session 首现认领；命中时保持原有的「插到事件流头部」语义
         if let Some(sid) = json.get("session_id").and_then(|v| v.as_str()) {
-            if self.metadata.session_id.is_none() {
-                self.metadata.session_id = Some(sid.to_string());
-                events.insert(0, ExecutionEvent::SessionStart {
-                    session_id: sid.to_string(),
-                });
+            if let Some(event) = self.metadata.claim_session(sid) {
+                events.insert(0, event);
             }
         }
 

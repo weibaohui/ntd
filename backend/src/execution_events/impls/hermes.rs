@@ -62,13 +62,11 @@ impl HermesExtractor {
             }
         }
 
-        // 提取 session_id
+        // 提取 session_id（claim_session 幂等：仅首次产出 SessionStart 并短路返回；
+        // 非首次不 return——控制流继续走下方工具调用/思考检查，与重构前一致）
         if let Some(sid) = Self::extract_session_prefix(trimmed) {
-            if self.metadata.session_id.is_none() {
-                self.metadata.session_id = Some(sid.to_string());
-                return vec![ExecutionEvent::SessionStart {
-                    session_id: sid.to_string(),
-                }];
+            if let Some(event) = self.metadata.claim_session(sid) {
+                return vec![event];
             }
         }
 

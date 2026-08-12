@@ -30,14 +30,9 @@ impl ClaudeCodeExtractor {
 
         match msg {
             ClaudeMessage::System { subtype, session_id, model } => {
-                // 提取 session_id
+                // session 首现认领（claim_session 幂等：仅首次产出 SessionStart，先到先赢）
                 if let Some(sid) = session_id {
-                    if self.metadata.session_id.is_none() {
-                        self.metadata.session_id = Some(sid.clone());
-                        events.push(ExecutionEvent::SessionStart {
-                            session_id: sid.clone(),
-                        });
-                    }
+                    events.extend(self.metadata.claim_session(sid));
                 }
 
                 // 提取 model
@@ -58,14 +53,9 @@ impl ClaudeCodeExtractor {
                 }
             }
             ClaudeMessage::Assistant { message, session_id, uuid, .. } => {
-                // 提取 session_id
+                // session 首现认领（claim_session 幂等：仅首次产出 SessionStart，先到先赢）
                 if let Some(sid) = session_id {
-                    if self.metadata.session_id.is_none() {
-                        self.metadata.session_id = Some(sid.clone());
-                        events.push(ExecutionEvent::SessionStart {
-                            session_id: sid.clone(),
-                        });
-                    }
+                    events.extend(self.metadata.claim_session(sid));
                 }
 
                 let mut texts: Vec<String> = Vec::new();
@@ -128,14 +118,9 @@ impl ClaudeCodeExtractor {
                 }
             }
             ClaudeMessage::User { message, session_id, .. } => {
-                // 提取 session_id
+                // session 首现认领（claim_session 幂等：仅首次产出 SessionStart，先到先赢）
                 if let Some(sid) = session_id {
-                    if self.metadata.session_id.is_none() {
-                        self.metadata.session_id = Some(sid.clone());
-                        events.push(ExecutionEvent::SessionStart {
-                            session_id: sid.clone(),
-                        });
-                    }
+                    events.extend(self.metadata.claim_session(sid));
                 }
 
                 let texts: Vec<String> = message
@@ -163,14 +148,9 @@ impl ClaudeCodeExtractor {
                 usage,
                 session_id,
             } => {
-                // 提取 session_id
+                // session 首现认领（claim_session 幂等：仅首次产出 SessionStart，先到先赢）
                 if let Some(sid) = session_id {
-                    if self.metadata.session_id.is_none() {
-                        self.metadata.session_id = Some(sid.clone());
-                        events.push(ExecutionEvent::SessionStart {
-                            session_id: sid.clone(),
-                        });
-                    }
+                    events.extend(self.metadata.claim_session(sid));
                 }
 
                 // usage
