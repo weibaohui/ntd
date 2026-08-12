@@ -118,6 +118,20 @@ pub(crate) struct SpawnContext {
     pub expert_manager: Option<Arc<crate::expert::ExpertIndexManager>>,
 }
 
+impl SpawnContext {
+    /// 提取执行链路共享依赖五元组（096-W2-PR3）——
+    /// 五元组是 SpawnContext 字段的真子集，逐字段 Arc::clone 廉价（原子计数自增）。
+    pub(crate) fn execution_deps(&self) -> ExecutionDeps {
+        ExecutionDeps {
+            db: Arc::clone(&self.db),
+            executor_registry: Arc::clone(&self.executor_registry),
+            tx: self.tx.clone(),
+            task_manager: Arc::clone(&self.task_manager),
+            config: Arc::clone(&self.config),
+        }
+    }
+}
+
 /// select! 三种终态枚举，避免在三个分支里各重复「杀进程 + drain + finalize」
 /// 清理模板。child 仍由调用方持有，可继续调 kill_process_tree。
 pub(crate) enum RunOutcome {
@@ -176,4 +190,34 @@ pub(crate) struct TaskState {
     pub task_guard: crate::task_manager::TaskGuard,
     pub cancel_rx: tokio::sync::mpsc::Receiver<()>,
     pub todo: Option<crate::models::Todo>,
+}
+
+/// 执行链路共享依赖五元组（096-W2-PR3：Introduce Parameter Object）。
+///
+/// `(db, executor_registry, tx, task_manager, config)` 这组依赖在 completion 黑板
+/// 三函数、`maybe_run_auto_review`、auto_review 三函数共 7 个函数签名中原样排列出现
+/// （Data Clump 坏味道，各挂 `#[allow(too_many_arguments)]` 苟活）。聚合成对象后：
+/// - 各函数签名塌缩为 `deps: ExecutionDeps`（owned 现场）或 `&ExecutionDeps`（借用现场）；
+/// - 新增共享依赖只动本结构，不再波及 7 处签名与全部调用点。
+///
+/// 全字段 Arc 包装，clone 廉价；`Clone` derive 供 tokio::spawn move 闭包整体搬入。
+pub(crate) struct ExecutionDeps {
+    pub db: Arc<Database>,
+    pub executor_registry: Arc<ExecutorRegistry>,
+    pub tx: broadcast::Sender<ExecEvent>,
+    pub task_manager: Arc<crate::task_manager::TaskManager>,
+    pub config: Arc<std::sync::RwLock<crate::config::Config>>,
+}
+
+impl Clone for ExecutionDeps {
+    fn clone(&self) -> Self {
+        // 逐字段 Arc::clone：只增引用计数，不复制底层数据
+        Self {
+            db: Arc::clone(&self.db),
+            executor_registry: Arc::clone(&self.executor_registry),
+            tx: self.tx.clone(),
+            task_manager: Arc::clone(&self.task_manager),
+            config: Arc::clone(&self.config),
+        }
+    }
 }

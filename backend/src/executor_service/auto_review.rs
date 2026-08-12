@@ -18,13 +18,12 @@
 //! 为避免与 `run_todo_execution` 的内部逻辑产生循环引用，这里用一个简化的
 //! 同步路径：等 `run_todo_execution` 启动后创建的 record 进入终态，再解析 rating 回填。
 
-use std::sync::{Arc, OnceLock};
+use std::sync::OnceLock;
 
 use tokio::sync::broadcast;
 
 use crate::db::Database;
 use crate::executor_service::ExecEvent;
-use crate::task_manager::TaskManager;
 
 use super::RunTodoExecutionRequest;
 
@@ -55,6 +54,7 @@ fn review_runtime() -> Option<&'static tokio::runtime::Runtime> {
 /// 同步运行自动评审。在原 todo 执行完成、update_execution_record 写入 success/failed 后调用。
 ///
 /// 参数:
+///   - `deps`: 执行链路共享依赖五元组（096-W2-PR3 参数对象化，9 参塌缩为 5 参）
 ///   - `step_review_prompt`: 环节内联评审模板正文（空 = 未设，回退环路/默认）
 ///   - `loop_review_template_id`: 环路级评审模板 ID（本参数优先于全局默认）
 ///
@@ -62,25 +62,17 @@ fn review_runtime() -> Option<&'static tokio::runtime::Runtime> {
 ///
 /// 实现: 由于 `run_auto_review_inner` 内部需要 await `run_todo_execution`（后者会
 /// 进一步 spawn）—— 整个 future 不是 Send —— 必须在独立 runtime 上 block_on。
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_auto_review(
-    db: Arc<Database>,
-    executor_registry: Arc<crate::adapters::ExecutorRegistry>,
-    tx: broadcast::Sender<ExecEvent>,
-    task_manager: Arc<TaskManager>,
-    config: Arc<std::sync::RwLock<crate::config::Config>>,
+    deps: super::types::ExecutionDeps,
     todo_id: i64,
     record_id: i64,
     step_review_prompt: Option<String>,
     loop_review_template_id: Option<i64>,
 ) {
     let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
-    let db_c = db.clone();
-    let er_c = executor_registry.clone();
-    let tx_c = tx.clone();
-    let tx_outer = tx.clone();
-    let tm_c = task_manager.clone();
-    let cfg_c = config.clone();
+    // deps 整体 clone 进独立线程（Arc 字段廉价），tx 单独留一份给外层失败标记
+    let deps_c = deps.clone();
+    let tx_outer = deps.tx.clone();
     let runtime = match review_runtime() {
         Some(r) => r,
         None => {
@@ -90,7 +82,7 @@ pub(crate) async fn run_auto_review(
     };
     std::thread::spawn(move || {
         let result = runtime.block_on(run_auto_review_inner(
-            db_c, er_c, tx_c, tm_c, cfg_c,
+            deps_c,
             todo_id, record_id,
             step_review_prompt, loop_review_template_id,
         ));
@@ -103,14 +95,14 @@ pub(crate) async fn run_auto_review(
                 "auto-review for todo #{} record #{} failed: {}",
                 todo_id, record_id, e
             );
-            mark_review_failed(&db, &tx_outer, record_id, todo_id).await;
+            mark_review_failed(&deps.db, &tx_outer, record_id, todo_id).await;
         }
         Err(_) => {
             tracing::warn!(
                 "auto-review thread dropped reply for todo #{} record #{}",
                 todo_id, record_id
             );
-            mark_review_failed(&db, &tx_outer, record_id, todo_id).await;
+            mark_review_failed(&deps.db, &tx_outer, record_id, todo_id).await;
         }
     }
 }
@@ -152,19 +144,21 @@ async fn mark_review_skipped(
 /// auto_review 的内部实现：在独立 runtime 上同步跑评审实例并轮询终态。
 ///
 /// 拆分为 7 步独立 helper，每个 ≤ 30 行；任一步提前返回前都正确清理状态。
-#[allow(clippy::too_many_arguments)]
 async fn run_auto_review_inner(
-    db: Arc<Database>,
-    executor_registry: Arc<crate::adapters::ExecutorRegistry>,
-    tx: broadcast::Sender<ExecEvent>,
-    task_manager: Arc<TaskManager>,
-    config: Arc<std::sync::RwLock<crate::config::Config>>,
+    // 096-W2-PR3：五元组依赖已对象化（owned——本 future 被 move 进独立 runtime 线程）
+    deps: super::types::ExecutionDeps,
     todo_id: i64,
     record_id: i64,
     // 设计 034：环节内联评审模板正文（空 = 未设，回退环路/默认）
     step_review_prompt: Option<String>,
     loop_review_template_id: Option<i64>,
 ) -> Result<(), String> {
+    // 从 deps 解出与原签名同名的 owned 局部量（Arc::clone 廉价，仅原子计数自增），
+    // 保持函数体零改动（093-B3 既有范式）；
+    // executor_registry/task_manager/config 在 execute_review_instance 调用点收口后
+    // 本函数体内不再直接使用，故不解包（避免死局部量）
+    let db = deps.db.clone();
+    let tx = deps.tx.clone();
     // 1) 加载原 todo + 校验是否需要跳过 review。
     let original = load_original_todo(&db, todo_id).await?;
     if !should_review_todo(&original) {
@@ -193,11 +187,7 @@ async fn run_auto_review_inner(
 
     // 6) 执行评审实例（创建 todo_type=2 的评审实例 todo + 复用 run_todo_execution）。
     let review_record_id = match execute_review_instance(
-        &db,
-        &executor_registry,
-        &tx,
-        &task_manager,
-        &config,
+        &deps,
         &original,
         owning_template_id,
         &owning_template_name,
@@ -368,18 +358,21 @@ async fn mark_review_pending(
 ///
 /// 参数 `owning_template_id`：环节内联模板用 `INLINE_REVIEW_TEMPLATE_ID`（0），
 /// 查表模板用 `review_templates.id`。`owning_template_name` 供创建时写标题。
-#[allow(clippy::too_many_arguments)]
 async fn execute_review_instance(
-    db: &Arc<Database>,
-    executor_registry: &Arc<crate::adapters::ExecutorRegistry>,
-    tx: &broadcast::Sender<ExecEvent>,
-    task_manager: &Arc<TaskManager>,
-    config: &Arc<std::sync::RwLock<crate::config::Config>>,
+    // 096-W2-PR3：五元组依赖已对象化（借用现场按引用接参）
+    deps: &super::types::ExecutionDeps,
     original: &crate::models::Todo,
     owning_template_id: i64,
     owning_template_name: &str,
     composed_prompt: String,
 ) -> Result<i64, String> {
+    // 从 deps 解出与原签名同名的 owned 局部量（Arc::clone 廉价，仅原子计数自增），
+    // 保持函数体零改动（093-B3 既有范式）
+    let db = deps.db.clone();
+    let executor_registry = deps.executor_registry.clone();
+    let tx = deps.tx.clone();
+    let task_manager = deps.task_manager.clone();
+    let config = deps.config.clone();
     // 复用策略：同一 review_template 全局共享一条评审实例 todo,
     // 避免「每次评审都新建 todo」把 todos 表刷成同一评审 N 份。
     // - 已有 → 重置 prompt/executor/status（保留 id 和 execution_records 关联）

@@ -515,11 +515,14 @@ async fn build_app_state(
     let flush_rx = crate::services::blackboard_debouncer::init().await;
     tokio::spawn(crate::executor_service::completion::blackboard_flush_listener(
         flush_rx,
-        db.clone(),
-        executor_registry.clone(),
-        tx.clone(),
-        task_manager.clone(),
-        config.clone(),
+        // 096-W2-PR3：共享依赖五元组已对象化，调用点从 5 个实参塌缩为 1 个聚合对象
+        crate::executor_service::types::ExecutionDeps {
+            db: db.clone(),
+            executor_registry: executor_registry.clone(),
+            tx: tx.clone(),
+            task_manager: task_manager.clone(),
+            config: config.clone(),
+        },
     ));
 
     // 后台监听 todo 执行完成事件，派发给 loop_trigger_dispatcher
