@@ -769,6 +769,30 @@ fn executor_start_message(executor_type: &str, message_preview: &str) -> String 
     format!("⏳ {} 开始处理：{}{}", executor_type, preview, suffix)
 }
 
+/// 工作空间缺失/未绑定时的飞书错误文案，按 wid 区分两种情况：
+///
+/// - `wid == 0`：agent_bots.workspace_id 的「未绑定」哨兵值（见 db/todo.rs 的 0 哨兵约定），
+///   此时用户没做任何配置，提示应该引导去绑定而不是报「工作空间 0 不存在」这种误导性文案。
+/// - `wid > 0`：工作空间记录本身已不存在（悬空 id，如工作空间被删除），提示重新切换。
+///
+/// 两种情况都附上 /help 操作路径（工作空间页可切换工作空间 + 执行器 + 推送级别），
+/// 让用户按提示就能自助恢复，而不是停在「0 不存在」这种无法行动的报错上。
+fn workspace_missing_message(executor_type: &str, wid: i64) -> String {
+    // wid==0 是未绑定哨兵：报「不存在」会把用户引向错误方向，必须明确说「还没绑定」
+    if wid == 0 {
+        executor_error_message(
+            executor_type,
+            "尚未绑定工作空间，请在飞书发送 /help，点选工作空间并切换，再选择执行器和推送范围",
+        )
+    } else {
+        // wid>0 但查不到：工作空间被删或数据不一致，引导重新切换即可
+        executor_error_message(
+            executor_type,
+            &format!("工作空间 {} 不存在（可能已被删除），请在飞书发送 /help 重新切换", wid),
+        )
+    }
+}
+
 /// 执行失败时发回飞书的错误文本，原因原样透传。
 ///
 /// 调用方传入具体原因（超时秒数 / spawn 失败 / wait 失败 / 非零退出码+输出片段），
@@ -1237,7 +1261,9 @@ impl MessageDebounce {
                 Ok(Some(pd)) => pd.path,
                 Ok(None) => {
                     tracing::warn!("[debounce] workspace {} not found", wid);
-                    send_msg(executor_error_message(executor_type, &format!("工作空间 {} 不存在", wid)));
+                    // wid=0 是未绑定哨兵、wid>0 是悬空 id，统一走友好提示（引导 /help 绑定/切换），
+                    // 不再报「工作空间 0 不存在」这种无法行动的误导性文案
+                    send_msg(workspace_missing_message(executor_type, wid));
                     return Err(None);
                 }
                 Err(e) => {
@@ -1596,6 +1622,31 @@ mod executor_feedback_tests {
     fn test_executor_error_message_format() {
         let msg = executor_error_message("pi", "执行超时（300s）");
         assert_eq!(msg, "❌ pi 执行失败：执行超时（300s）");
+    }
+
+    /// 工作空间缺失提示（wid=0 未绑定哨兵）：必须引导去绑定而非报「0 不存在」，
+    /// 因为 0 不是真实工作空间 id，用户看到「0 不存在」会一头雾水，无法行动。
+    #[test]
+    fn test_workspace_missing_message_unbound_zero() {
+        let msg = workspace_missing_message("pi", 0);
+        // 关键断言：不能出现「工作空间 0 不存在」这种误导性文案
+        assert!(!msg.contains("工作空间 0 不存在"));
+        assert!(msg.contains("尚未绑定工作空间"));
+        // 必须给出可操作的 /help 路径：工作空间页可切换工作空间 + 执行器 + 推送级别
+        assert!(msg.contains("/help"));
+        assert!(msg.contains("切换"));
+        assert!(msg.contains("执行器"));
+    }
+
+    /// 工作空间缺失提示（wid>0 悬空 id，如工作空间被删除）：保留真实 id 便于排查，
+    /// 并附重新切换的引导，让用户能自助恢复。
+    #[test]
+    fn test_workspace_missing_message_stale_id() {
+        let msg = workspace_missing_message("pi", 42);
+        // 悬空 id 要保留真实 id，方便用户/排查者知道是哪个工作空间出了问题
+        assert!(msg.contains("工作空间 42 不存在"));
+        assert!(msg.contains("/help"));
+        assert!(msg.contains("重新切换"));
     }
 
     /// 成功但无输出时的结束标志，让用户知道执行跑完了只是没产出文本，
