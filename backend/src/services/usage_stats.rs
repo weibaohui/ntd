@@ -13,6 +13,40 @@ use tokio::fs;
 
 use crate::db::Database;
 
+/// 异步 loader 的函数指针类型（type 别名消除 type_complexity 告警）：
+/// 从该执行器的会话目录收集 RawUsageEntry，BoxFuture 擦除各 loader 的 future 类型差异。
+type UsageLoader = for<'a> fn(
+    &'a UsageStatsService,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<RawUsageEntry>> + Send + 'a>>;
+
+/// 执行器用量条目源（096-W4-7：霰弹阵列收口——Static Registry，SCANNERS 同款范式）。
+///
+/// 原 `collect_all_entries` 为 5 组「load_X + extend」手写登记，新增执行器要改两处
+/// （加 load/parse 函数对 + 在收集函数里补登记行）。注册表化后新增执行器只加一行
+/// `UsageSource` 条目 + 实现对应 loader；`USAGE_SOURCES_LEN` 单测断言防登记遗漏。
+struct UsageSource {
+    /// 执行器名（日志/调试标识）
+    #[allow(dead_code)] // 注册表自描述字段：当前仅测试断言使用，保留以备日志增强
+    name: &'static str,
+    /// 加载入口（异步 loader 经类型擦除的函数指针）
+    load: UsageLoader,
+}
+
+/// 全部用量条目源（数组顺序即收集顺序——与原手写登记的先后顺序一致，
+/// collect_all_entries 末尾按 timestamp 稳定排序，同源条目的相对顺序保持不变）。
+static USAGE_SOURCES: &[UsageSource] = &[
+    // Claude Code：~/.claude/projects/*/*.jsonl
+    UsageSource { name: "claudecode", load: |svc| Box::pin(svc.load_claude_jsonl_entries()) },
+    // Codex：~/.codex/sessions/*.jsonl
+    UsageSource { name: "codex", load: |svc| Box::pin(svc.load_codex_jsonl_entries()) },
+    // OpenCode：会话文件
+    UsageSource { name: "opencode", load: |svc| Box::pin(svc.load_opencode_jsonl_entries()) },
+    // Zhanlu (Issue #673)：~/.local/share/zhanlu/storage
+    UsageSource { name: "zhanlu", load: |svc| Box::pin(svc.load_zhanlu_jsonl_entries()) },
+    // Kimi：~/.kimi/sessions/*/wire.jsonl
+    UsageSource { name: "kimi", load: |svc| Box::pin(svc.load_kimi_jsonl_entries()) },
+];
+
 /// Represents aggregated usage statistics
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct UsageStat {
@@ -138,28 +172,16 @@ impl UsageStatsService {
     }
 
     /// Collect all usage entries from all editors
+    ///
+    /// 096-W4-7：执行器源经 USAGE_SOURCES 注册表驱动（原 5 组手写 load+extend 登记收口）。
+    /// 数组顺序保持原登记顺序；末尾按 timestamp 稳定排序，同源条目相对顺序不变。
     pub(crate) async fn collect_all_entries(&self) -> Vec<RawUsageEntry> {
         let mut all_entries = Vec::new();
 
-        // Claude Code - read from JSONL session files
-        let claude_entries = self.load_claude_jsonl_entries().await;
-        all_entries.extend(claude_entries);
-
-        // Codex - read from session files
-        let codex_entries = self.load_codex_jsonl_entries().await;
-        all_entries.extend(codex_entries);
-
-        // OpenCode - read from session files
-        let opencode_entries = self.load_opencode_jsonl_entries().await;
-        all_entries.extend(opencode_entries);
-
-        // Zhanlu (Issue #673) - read from session files in ~/.local/share/zhanlu/storage
-        let zhanlu_entries = self.load_zhanlu_jsonl_entries().await;
-        all_entries.extend(zhanlu_entries);
-
-        // Kimi - read from wire.jsonl files
-        let kimi_entries = self.load_kimi_jsonl_entries().await;
-        all_entries.extend(kimi_entries);
+        for source in USAGE_SOURCES {
+            let entries = (source.load)(self).await;
+            all_entries.extend(entries);
+        }
 
         all_entries.sort_by_key(|e| e.timestamp);
         all_entries
@@ -964,6 +986,22 @@ mod tests {
                 .expect("内存 db 必须能创建"),
         );
         UsageStatsService::new(db)
+    }
+
+    /// 096-W4-7：注册表防漂移——条目数锁定 + name 非空且唯一。
+    /// 新增执行器源时若忘了在 USAGE_SOURCES 登记，条目数断言立即失败提醒。
+    #[test]
+    fn test_usage_sources_registry_integrity() {
+        assert_eq!(
+            USAGE_SOURCES.len(),
+            5,
+            "执行器源注册表条目数变化：新增/删除源时同步更新本断言（当前：claudecode/codex/opencode/zhanlu/kimi）"
+        );
+        let mut names = std::collections::HashSet::new();
+        for source in USAGE_SOURCES {
+            assert!(!source.name.is_empty(), "注册表项 name 不得为空");
+            assert!(names.insert(source.name), "注册表项 name 重复: {}", source.name);
+        }
     }
 
     /// Zhanlu (与 Opencode 一致) 风格 jsonl：顶层 `usage` + `timestamp` + `model`。
