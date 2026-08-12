@@ -105,18 +105,61 @@ enum LoopRunOutcome {
     Paused,
 }
 
-/// 恢复模式的推算计数器（096-W3-PR3：`init_or_resume_counters` 的返回聚合）。
+/// DAG 主循环的可变运行态（096-W3-PR3：run_inner_from 拆分的参数对象）。
 ///
-/// 从既有 step_executions 记录推算续跑起点；全新执行时全零/None。
-struct ResumedCounters {
+/// 11 个循环变量在主循环各阶段间流转；聚合成 struct 后阶段函数以
+/// `&mut DagLoopState` 单参承接，避免 8+ 参签名复发。
+/// 由 `init_or_resume_counters` 初始化（全新执行全零，续跑从既有记录推算）。
+#[derive(Default)]
+struct DagLoopState {
+    /// 当前待执行步骤下标；None = 主循环结束
+    current_idx: Option<usize>,
+    /// step_execution 的 sequence_index 计数器（每轮 +1；恢复模式从已有记录推算）
+    sequence_counter: i32,
+    /// 已执行步数（步数上限检查口径）
+    total_executed: i32,
+    /// 已消耗 token 总量（token 上限检查口径）
+    total_tokens_used: i64,
     completed: i32,
     failed: i32,
-    /// 注意 quirk：恢复模式下与 `sequence_counter` 同源（皆取 max sequence_index）——
-    /// 沿袭原实现，两个变量名历史遗留但值相同。
-    total_executed: i32,
-    sequence_counter: i32,
+    /// 死循环检测：step_id → 连续执行次数（成功清零、失败 +1，>=5 中止）
+    consecutive_retries: HashMap<i64, i32>,
+    /// PhaseDriver 返回的返工计数，需要跨迭代传递到下一轮新创建的 step_execution。
+    /// rework_count 在 PhaseDriver 中计算但写入了当前（已结束的）step_execution，
+    /// 新创建的 step_execution 默认 0，导致返工计数永远不增长。
+    pending_rework: i32,
+    /// 上一环节的执行结果（注入下一环节模板变量）
+    last_output: Option<String>,
     last_conclusion: Option<String>,
     last_step_name: Option<String>,
+}
+
+/// DAG 主循环的不变上下文（096-W3-PR3：阶段函数共享的只读输入聚合）。
+struct DagRunCtx {
+    loop_id: i64,
+    loop_execution_id: i64,
+    loop_: crate::db::entity::loops::Model,
+    all_steps: Vec<loop_steps::Model>,
+    trigger_params: HashMap<String, String>,
+    task_requirement: String,
+    max_executions: i32,
+    max_total_tokens: i64,
+    step_id_to_idx: HashMap<i64, usize>,
+}
+
+/// `run_one_step` 单轮的控制流走向：承接原主循环的 continue/break/return 三种出口。
+enum StepFlow {
+    Continue,
+    Break,
+    /// 提前终态（capped_step / capped_token / Paused）——原主循环的 return Ok(...)
+    Done(LoopRunOutcome),
+}
+
+/// `prepare_step` 的产物：本轮 step 执行所需的全部准备物。
+struct StepPrep {
+    todo: crate::models::Todo,
+    enhanced_prompt: String,
+    step_exec: crate::db::entity::loop_step_executions::Model,
 }
 
 impl LoopRunner {
@@ -661,387 +704,40 @@ impl LoopRunner {
         // 4. 加载 trigger_meta 中的 params 与 requirement
         let (trigger_params, task_requirement) = self.load_trigger_meta(loop_execution_id).await;
 
-        // 4'. 初始化（全新执行）或恢复（续跑）计数器
-        let resumed = self
+        // 4'. 初始化（全新执行）或恢复（续跑）计数器 → DAG 运行态
+        let mut st = self
             .init_or_resume_counters(loop_execution_id, resume_step_idx, &all_steps)
             .await?;
 
         let limits: LimitsConfig = serde_json::from_str(&loop_.limits_config).unwrap_or_default();
-        let max_executions = limits.max_step_executions.unwrap_or(i32::MAX);
-        let max_total_tokens = limits.max_total_tokens.unwrap_or(i64::MAX);
+        // 不变上下文聚合（阶段函数共享的只读输入）
+        let run = DagRunCtx {
+            loop_id,
+            loop_execution_id,
+            max_executions: limits.max_step_executions.unwrap_or(i32::MAX),
+            max_total_tokens: limits.max_total_tokens.unwrap_or(i64::MAX),
+            step_id_to_idx: all_steps.iter().enumerate().map(|(i, s)| (s.id, i)).collect(),
+            loop_,
+            all_steps,
+            trigger_params,
+            task_requirement,
+        };
 
-        let mut current_idx: Option<usize> = resume_step_idx.or(Some(0));
-        let mut sequence_counter = resumed.sequence_counter;
-        let mut total_executed = resumed.total_executed;
-        let mut total_tokens_used: i64 = 0;
-        let mut completed = resumed.completed;
-        let mut failed = resumed.failed;
-        let mut consecutive_retries: HashMap<i64, i32> = HashMap::new();
-        // PhaseDriver 返回的返工计数，需要跨迭代传递到下一轮新创建的 step_execution。
-        // rework_count 在 PhaseDriver 中计算但写入了当前（已结束的）step_execution，
-        // 新创建的 step_execution 默认 0，导致返工计数永远不增长。
-        let mut pending_rework: i32 = 0;
-
-        let step_id_to_idx: HashMap<i64, usize> = all_steps
-            .iter()
-            .enumerate()
-            .map(|(i, s)| (s.id, i))
-            .collect();
-
-        // 上一环节的执行结果（用于注入模板变量）
-        // last_output 恢复值恒 None（原实现 prev_last_output 即硬编码 None，quirk 沿袭）
-        let mut last_output: Option<String> = None;
-        let mut last_conclusion: Option<String> = resumed.last_conclusion;
-        let mut last_step_name: Option<String> = resumed.last_step_name;
-
-        // 4. 主循环
-        while let Some(idx) = current_idx {
-            if idx >= all_steps.len() {
+        // 4. 主循环（096-W3-PR3：单轮迭代已拆为 run_one_step + 阶段函数族；
+        //    StepFlow 承接原 continue/break/return 三种出口）
+        while let Some(idx) = st.current_idx {
+            if idx >= run.all_steps.len() {
                 break;
             }
-            let step = &all_steps[idx];
-
-            // 4a. 全局限制检查：步数限制 + Token 限制
-            if total_executed >= max_executions {
-                info!("loop #{} capped: total_executed={} >= max={}", loop_id, total_executed, max_executions);
-                self.ctx
-                    .db
-                    .finish_loop_execution(loop_execution_id, "capped_step", completed, failed, None)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                // 触发异常处理 Todo
-                let _ = self
-                    .trigger_abnormal_handler(loop_id, loop_execution_id, "capped_step", total_executed, total_tokens_used, "已达最大执行步数上限")
-                    .await;
-                return Ok(LoopRunOutcome::Finished);
+            match self.run_one_step(&run, &mut st, idx, &trigger_type).await? {
+                StepFlow::Continue => {}
+                StepFlow::Break => break,
+                StepFlow::Done(outcome) => return Ok(outcome),
             }
-            if total_tokens_used >= max_total_tokens {
-                info!(
-                    "loop #{} capped by token: total_tokens_used={} >= max={}",
-                    loop_id, total_tokens_used, max_total_tokens
-                );
-                self.ctx
-                    .db
-                    .finish_loop_execution(loop_execution_id, "capped_token", completed, failed, None)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                // 触发异常处理 Todo
-                let _ = self
-                    .trigger_abnormal_handler(loop_id, loop_execution_id, "capped_token", total_executed, total_tokens_used, "已达最大 Token 上限")
-                    .await;
-                return Ok(LoopRunOutcome::Finished);
-            }
-
-            // 4b. 死循环检测：连续 5 次执行同一 step
-            let retry_count = consecutive_retries.entry(step.id).or_insert(0);
-            if *retry_count >= 5 {
-                warn!("loop #{}: step #{} retried {} times, aborting", loop_id, step.id, retry_count);
-                failed += 1;
-                break;
-            }
-
-            sequence_counter += 1;
-            total_executed += 1;
-
-            // 4c. 加载 todo 元数据
-            let todo = self
-                .ctx
-                .db
-                .get_todo(step.todo_id)
-                .await
-                .map_err(|e| e.to_string())?
-                .ok_or_else(|| format!("todo #{} (todo_id={}) not found", step.id, step.todo_id))?;
-
-            // 4d. 构造增强 Prompt（注入黑板变量 + 上一环节结果）
-            // 设计原则：todo.prompt 是只读模板，此处仅在内存中做字符串替换，
-            // 替换结果 enhanced_prompt 传给执行器，绝不写回 todos 表。
-            // 需求注入与老模板兜底逻辑封装在 build_enhanced_prompt_with_requirement 中，便于单测。
-            // 黑板文本是跨 step 共享的运行时上下文，每次按当前 loop_execution_id 重新拉取，
-            // 避免上一环节写入的内容残留在本次替换链里。
-            let blackboard_text = self.build_blackboard_text(loop_execution_id).await;
-            // 上一环节的输出/结论/步骤名可能在首步为 None，统一兜底成空串，
-            // 让后续占位符替换不会因为 None 而 panic 或注入字面量 "None"。
-            let last_output_text = last_output.as_deref().unwrap_or("");
-            let last_conclusion_text = last_conclusion.as_deref().unwrap_or("");
-            let last_step_name_text = last_step_name.as_deref().unwrap_or("");
-            // 调用纯函数构造 enhanced_prompt：所有替换都在内存中完成，
-            // todo.prompt 本身绝不被改写，从而根治历史 inject_requirement_to_steps 的累加污染。
-            // task_requirement 来自 trigger_meta，代表本次执行绑定的需求（每次执行独立）。
-            // 使用 PromptInput struct 汇集参数，避免 clippy::too_many_arguments。
-            let enhanced_prompt_raw = build_enhanced_prompt_with_requirement(
-                &PromptInput {
-                    template_prompt: &todo.prompt,
-                    task_requirement: &task_requirement,
-                    blackboard: &blackboard_text,
-                    last_output: last_output_text,
-                    last_conclusion: last_conclusion_text,
-                    last_step_name: last_step_name_text,
-                    loop_execution_id,
-                    loop_name: &loop_.name,
-                },
-            );
-            // 4d-bis. 注入工作空间级共识 prompt（需求 022）。
-            // Loop 与 todo 走各自路径，此处补齐 Loop 注入使 workspace 共识全路径生效。
-            // loop_.workspace_id = 0/None 时 inject_workspace_prompt 静默回退原 prompt。
-            let enhanced_prompt = crate::executor_service::pre_spawn::inject_workspace_prompt(
-                &self.ctx.db,
-                loop_.workspace_id.filter(|&id| id != 0),
-                &enhanced_prompt_raw,
-            )
-            .await;
-
-            // 4e. 检查 todo 状态：人工审批步骤的 todo 在所有 execution 间共享，
-            //     如果 todo 已 completed，步骤应直接进入 pending_approval 而非 running
-            //     （否则步骤永远卡在 running，审批界面不会出现）。
-            // 048：人工审批步骤改由 gate_config 含 human_approval 判定（review_type 已废弃）。
-            let is_human_approval_step =
-                crate::services::process::gate_evaluator::has_human_approval_gate(&step.gate_config);
-            let initial_status = if is_human_approval_step {
-                match self.ctx.db.get_todo(step.todo_id).await {
-                    Ok(Some(t)) if t.status == crate::models::TodoStatus::Completed => "pending_approval",
-                    _ => "running",
-                }
-            } else {
-                "running"
-            };
-            tracing::info!(
-                "loop_exec {}: step #{} human_approval={} todo_id={} initial_status={}",
-                loop_execution_id, step.id, is_human_approval_step, step.todo_id, initial_status,
-            );
-            // 4f. 创建 step execution 记录
-            // 044：min_rating/unrated_policy 已从 loop_steps 移除，创建快照时不再透传；
-            // 阈值改由 phase_driver 评价 gate_config 后回写。
-            let step_exec = self
-                .ctx
-                .db
-                .create_loop_step_execution(
-                    loop_execution_id,
-                    step.id,
-                    step.todo_id,
-                    initial_status,
-                    sequence_counter,
-                )
-                .await
-                .map_err(|e| e.to_string())?;
-
-            // 上一轮 PhaseDriver 返回的返工计数，写入新 step_execution。
-            if pending_rework > 0 {
-                let _ = self.ctx.db.set_step_execution_rework_count(step_exec.id, pending_rework).await;
-            }
-
-            self.ctx
-                .db
-                .mark_step_execution_started(step_exec.id)
-                .await
-                .map_err(|e| e.to_string())?;
-
-            // 4f. 执行
-            let record_id = match self
-                .start_step_todo_with_prompt(&todo, &trigger_type, idx as i64, step_exec.id, &enhanced_prompt, loop_.workspace_path.clone(), &trigger_params)
-                .await
-            {
-                Ok(rid) => rid,
-                Err(e) => {
-                    warn!("loop_runner: step #{} start failed: {}", step.id, e);
-                    self.ctx
-                        .db
-                        .finish_step_execution(step_exec.id, "failed", None, Some(&e), None, None)
-                        .await
-                        .map_err(|e| e.to_string())?;
-                    self.ctx
-                        .db
-                        .increment_loop_execution_counters(loop_execution_id, 0, 1, 1)
-                        .await
-                        .map_err(|e| e.to_string())?;
-                    failed += 1;
-                    current_idx = self.resolve_next(step, &step.on_rating_fail, &step_id_to_idx, idx);
-                    *consecutive_retries.entry(step.id).or_insert(0) += 1;
-                    continue;
-                }
-            };
-
-            // 4g. 等待执行完成
-            let step_status = match self.wait_for_step_finish(record_id).await {
-                Ok(s) => s,
-                Err(e) => {
-                    warn!("loop_runner: step #{} wait failed: {}", step.id, e);
-                    "failed".to_string()
-                }
-            };
-
-            // 4h. 工艺步骤 → 委托 PhaseDriver 处理（含产物捕获、门禁评价、流转解析、返工统计、阶段维护）。
-            // 判断标准：步骤配置了 gate_config 或 expected_artifacts（默认值都是 "[]"）。
-            let has_process_config = (!step.gate_config.is_empty() && step.gate_config != "[]")
-                || (!step.expected_artifacts.is_empty() && step.expected_artifacts != "[]");
-
-            if has_process_config {
-                let exec_record = self.ctx.db.get_execution_record(record_id).await
-                    .map_err(|e| e.to_string())?
-                    .ok_or_else(|| format!("execution record #{} not found", record_id))?;
-
-                let ws_path = loop_.workspace_path.as_deref().unwrap_or("");
-
-                let outcome = crate::services::process::phase_driver::execute_step(
-                    &self.ctx.db,
-                    Some(&exec_record),
-                    loop_execution_id,
-                    step,
-                    &step_exec,
-                    &all_steps,
-                    idx,
-                    ws_path,
-                )
-                .await
-                .map_err(|e| format!("phase_driver execute_step failed: {}", e))?;
-
-                let gate_passed = outcome.gate_passed;
-                // 保存返工计数：下一轮创建 step_execution 时写入。
-                pending_rework = outcome.rework_count;
-
-                // 更新计数器（PhaseDriver 已写入 gate/artifact 记录，LoopRunner 维护执行级计数器）。
-                if gate_passed {
-                    completed += 1;
-                    self.ctx
-                        .db
-                        .increment_loop_execution_counters(loop_execution_id, 1, 0, 1)
-                        .await
-                        .map_err(|e| e.to_string())?;
-                    *consecutive_retries.get_mut(&step.id).unwrap_or(&mut 0) = 0;
-                    if let Some(ws_id) = loop_.workspace_id.filter(|&id| id != 0) {
-                        crate::services::blackboard_debouncer::push_pending_record(
-                            ws_id, record_id, &self.ctx.db,
-                        )
-                        .await;
-                    }
-                } else {
-                    failed += 1;
-                    self.ctx
-                        .db
-                        .increment_loop_execution_counters(loop_execution_id, 0, 1, 1)
-                        .await
-                        .map_err(|e| e.to_string())?;
-                    *consecutive_retries.entry(step.id).or_insert(0) += 1;
-                }
-
-                // 记录上一环节输出（供下一环节模板变量）。
-                let conclusion = self.extract_conclusion(record_id).await;
-                let exec_record2 = self.ctx.db.get_execution_record(record_id).await.ok().flatten();
-                last_output = exec_record2.as_ref().and_then(|r| r.result.clone());
-                last_conclusion = if conclusion.is_empty() {
-                    // 回退：取 error 或截断 result。
-                    outcome.error_message.clone()
-                        .or_else(|| exec_record2.as_ref().and_then(|r| r.result.clone().map(|s| {
-                            let truncated: String = s.chars().take(300).collect();
-                            truncated
-                        })))
-                } else {
-                    Some(conclusion.clone())
-                };
-                // 把结论写回 step_execution，供黑板展示。
-                if !conclusion.is_empty() {
-                    let _ = self.ctx.db.update_step_execution_conclusion(step_exec.id, &conclusion).await;
-                }
-                last_step_name = Some(step.name.clone());
-                if let Some(ref usage) = exec_record2.as_ref().and_then(|r| r.usage.clone()) {
-                    let step_tokens = (usage.input_tokens + usage.output_tokens) as i64;
-                    total_tokens_used += step_tokens;
-                }
-
-                // 发送状态更新事件。
-                let final_status = if gate_passed { "success" } else { "failed" };
-                let _ = self.tx.send(crate::executor_service::ExecEvent::ReviewStatusChanged {
-                    record_id,
-                    todo_id: 0,
-                    review_status: final_status.to_string(),
-                });
-
-                // 确定下一步。
-                current_idx = outcome.next_idx;
-
-                if outcome.paused {
-                    return Ok(LoopRunOutcome::Paused);
-                }
-                continue;
-            }
-
-            // 4h. 评分闸门（旧 Loop 兼容路径：无 gate_config/expected_artifacts 的步骤）。
-            // 044：loop_steps 已移除 min_rating，旧评分制评审整体下线；人工审批改由
-            // phase_driver 的 human_approval 门禁处理（4g 分支已 return）。此处对未走
-            // 门禁路径的步骤，直接按执行状态判定通过与否，不再做评分。
-            let (gate_passed, step_rating, error_msg): (bool, Option<i32>, Option<String>) =
-                (step_status == "success", None, None);
-
-            let final_step_status = if gate_passed { "success" } else { "failed" };
-
-            // 4i. 提取结论
-            let conclusion = self.extract_conclusion(record_id).await;
-
-            // 4j. 写回 step execution（携 error_msg 让前端展示失败原因）
-            self.ctx
-                .db
-                .finish_step_execution(step_exec.id, final_step_status, Some(record_id), error_msg.as_deref(), step_rating, Some(&conclusion))
-                .await
-                .map_err(|e| e.to_string())?;
-
-            let _ = self.tx.send(crate::executor_service::ExecEvent::ReviewStatusChanged {
-                record_id,
-                todo_id: 0,
-                review_status: final_step_status.to_string(),
-            });
-
-            // 4k. 更新计数器
-            if gate_passed {
-                completed += 1;
-                self.ctx
-                    .db
-                    .increment_loop_execution_counters(loop_execution_id, 1, 0, 1)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                *consecutive_retries.get_mut(&step.id).unwrap_or(&mut 0) = 0;
-
-                // 4l. 触发黑板更新：Step 执行成功，将 execution_record_id 追加到黑板 pending 队列。
-                // 与普通 Todo 执行完成后的处理保持一致，让 LLM 将 step 结论整合到黑板。
-                if let Some(ws_id) = loop_.workspace_id.filter(|&id| id != 0) {
-                    crate::services::blackboard_debouncer::push_pending_record(
-                        ws_id,
-                        record_id,
-                        &self.ctx.db,
-                    )
-                    .await;
-                }
-            } else {
-                failed += 1;
-                self.ctx
-                    .db
-                    .increment_loop_execution_counters(loop_execution_id, 0, 1, 1)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                *consecutive_retries.entry(step.id).or_insert(0) += 1;
-            }
-
-            // 记录上一环节的输出（供下一环节的 {last_output}/{message} 模板变量使用）
-            // 同时从 execution_record.usage 中提取 token 用量，累加到 total_tokens_used，
-            // 用于下一轮循环 4a 的 token 上限检查。
-            let exec_record = self.ctx.db.get_execution_record(record_id).await.ok().flatten();
-            last_output = exec_record.as_ref().and_then(|r| r.result.clone());
-            last_conclusion = Some(conclusion.clone());
-            last_step_name = Some(step.name.clone());
-            // 从 usage JSON 中取出 input_tokens + output_tokens 作为本次消耗的 token 数
-            if let Some(ref usage) = exec_record.and_then(|r| r.usage) {
-                let step_tokens = (usage.input_tokens + usage.output_tokens) as i64;
-                total_tokens_used += step_tokens;
-            }
-
-            // 4l. 确定下一步
-            current_idx = if gate_passed {
-                self.resolve_next(step, &step.on_success, &step_id_to_idx, idx)
-            } else {
-                self.resolve_next(step, &step.on_rating_fail, &step_id_to_idx, idx)
-            };
         }
 
         // 5. 收尾（计算终态/写回/终态化 phase/异常处理/日志——096-W3-PR3 提取为 finalize_dag_run）
-        self.finalize_dag_run(loop_id, loop_execution_id, completed, failed, total_executed, total_tokens_used).await
+        self.finalize_dag_run(loop_id, loop_execution_id, st.completed, st.failed, st.total_executed, st.total_tokens_used).await
     }
 
     // ─── run_inner_from 阶段函数（096-W3-PR3：496 行 DAG 主循环拆分的准备段/收尾段）──
@@ -1106,7 +802,11 @@ impl LoopRunner {
         loop_execution_id: i64,
         resume_step_idx: Option<usize>,
         all_steps: &[loop_steps::Model],
-    ) -> Result<ResumedCounters, String> {
+    ) -> Result<DagLoopState, String> {
+        let mut state = DagLoopState {
+            current_idx: resume_step_idx.or(Some(0)),
+            ..Default::default()
+        };
         if resume_step_idx.is_none() {
             // 全新执行：设置 loop execution 状态
             self.ctx
@@ -1117,37 +817,27 @@ impl LoopRunner {
             self.clear_finished_at(loop_execution_id).await?;
             self.update_total_steps(loop_execution_id, all_steps.len() as i32)
                 .await?;
-            return Ok(ResumedCounters {
-                completed: 0,
-                failed: 0,
-                total_executed: 0,
-                sequence_counter: 0,
-                last_conclusion: None,
-                last_step_name: None,
-            });
+            return Ok(state);
         }
         // 恢复模式：从已有 step_executions 推算状态计数器
         let execs = self.ctx.db.list_loop_step_executions(loop_execution_id).await
             .unwrap_or_default();
-        let completed = execs.iter().filter(|se| se.status == "success").count() as i32;
-        let failed = execs.iter().filter(|se| se.status == "failed").count() as i32;
+        state.completed = execs.iter().filter(|se| se.status == "success").count() as i32;
+        state.failed = execs.iter().filter(|se| se.status == "failed").count() as i32;
         let max_seq = execs.iter().map(|se| se.sequence_index).max().unwrap_or(0);
+        // quirk 沿袭：恢复模式 total_executed 与 sequence_counter 同取 max sequence_index
+        state.total_executed = max_seq;
+        state.sequence_counter = max_seq;
         // 找最后完成的 step 用于模板变量
         let last_success = execs.iter()
             .filter(|se| se.status == "success" || se.status == "pending_approval")
             .max_by_key(|se| se.sequence_index);
-        let last_conclusion = last_success.and_then(|se| se.conclusion.clone());
-        let last_step_name = last_success.and_then(|se| {
+        state.last_conclusion = last_success.and_then(|se| se.conclusion.clone());
+        state.last_step_name = last_success.and_then(|se| {
             all_steps.iter().find(|s| s.id == se.step_id).map(|s| s.name.clone())
         });
-        Ok(ResumedCounters {
-            completed,
-            failed,
-            total_executed: max_seq, // quirk 沿袭：total_executed 与 sequence 同取 max
-            sequence_counter: max_seq,
-            last_conclusion,
-            last_step_name,
-        })
+        // quirk 沿袭：last_output 恢复值恒 None（原实现 prev_last_output 即硬编码 None）
+        Ok(state)
     }
 
     /// 阶段 5：主循环结束后的收尾——计算终态、写回 loop_execution、终态化 phase、
@@ -1193,6 +883,432 @@ impl LoopRunner {
             loop_id, final_status, completed, failed, total_executed
         );
         Ok(LoopRunOutcome::Finished)
+    }
+
+    // ─── run_inner_from 主循环单轮的阶段函数族（096-W3-PR3 拆分，函数体逐字搬自原实现）──
+
+    /// DAG 主循环单轮迭代编排：4a 限制检查 → 4b 死循环检测 → 4c-4f 准备 →
+    /// 4f'-4g 执行+等待 → 4h/4h' 双分支处理。StepFlow 承接原 continue/break/return。
+    async fn run_one_step(
+        self: &Arc<Self>,
+        run: &DagRunCtx,
+        st: &mut DagLoopState,
+        idx: usize,
+        trigger_type: &str,
+    ) -> Result<StepFlow, String> {
+        // 4a. 全局限制检查：步数限制 + Token 限制
+        if let Some(outcome) = self.check_global_limits(run, st).await? {
+            return Ok(StepFlow::Done(outcome));
+        }
+
+        let step = &run.all_steps[idx];
+        // 4b. 死循环检测：连续 5 次执行同一 step
+        let retry_count = st.consecutive_retries.entry(step.id).or_insert(0);
+        if *retry_count >= 5 {
+            warn!("loop #{}: step #{} retried {} times, aborting", run.loop_id, step.id, retry_count);
+            st.failed += 1;
+            return Ok(StepFlow::Break);
+        }
+
+        st.sequence_counter += 1;
+        st.total_executed += 1;
+
+        // 4c-4f. 准备（加载 todo → 增强 Prompt → 初始状态 → 创建 step_execution）
+        let prep = self.prepare_step(run, st, idx).await?;
+
+        // 4f'-4g. 执行并等待完成（失败分支已在内部计数并设好下一步，直接 Continue）
+        let Some((record_id, step_status)) = self.execute_and_wait(run, st, &prep, idx, trigger_type).await? else {
+            return Ok(StepFlow::Continue);
+        };
+
+        // 4h. 工艺步骤 → PhaseDriver；4h'. 旧评分闸门兼容路径
+        let step = &run.all_steps[idx];
+        let has_process_config = (!step.gate_config.is_empty() && step.gate_config != "[]")
+            || (!step.expected_artifacts.is_empty() && step.expected_artifacts != "[]");
+        if has_process_config {
+            self.handle_process_step(run, st, &prep, record_id, idx).await
+        } else {
+            self.handle_legacy_step(run, st, &prep, record_id, &step_status, idx).await?;
+            Ok(StepFlow::Continue)
+        }
+    }
+
+    /// 4a. 全局限制检查：返回 Some(outcome) 表示已达上限应提前终态（Done）。
+    async fn check_global_limits(
+        &self,
+        run: &DagRunCtx,
+        st: &DagLoopState,
+    ) -> Result<Option<LoopRunOutcome>, String> {
+        if st.total_executed >= run.max_executions {
+            info!("loop #{} capped: total_executed={} >= max={}", run.loop_id, st.total_executed, run.max_executions);
+            self.ctx
+                .db
+                .finish_loop_execution(run.loop_execution_id, "capped_step", st.completed, st.failed, None)
+                .await
+                .map_err(|e| e.to_string())?;
+            // 触发异常处理 Todo
+            let _ = self
+                .trigger_abnormal_handler(run.loop_id, run.loop_execution_id, "capped_step", st.total_executed, st.total_tokens_used, "已达最大执行步数上限")
+                .await;
+            return Ok(Some(LoopRunOutcome::Finished));
+        }
+        if st.total_tokens_used >= run.max_total_tokens {
+            info!(
+                "loop #{} capped by token: total_tokens_used={} >= max={}",
+                run.loop_id, st.total_tokens_used, run.max_total_tokens
+            );
+            self.ctx
+                .db
+                .finish_loop_execution(run.loop_execution_id, "capped_token", st.completed, st.failed, None)
+                .await
+                .map_err(|e| e.to_string())?;
+            // 触发异常处理 Todo
+            let _ = self
+                .trigger_abnormal_handler(run.loop_id, run.loop_execution_id, "capped_token", st.total_executed, st.total_tokens_used, "已达最大 Token 上限")
+                .await;
+            return Ok(Some(LoopRunOutcome::Finished));
+        }
+        Ok(None)
+    }
+
+    /// 4c-4f. 单轮准备：加载 todo → 构造增强 Prompt → 判定初始状态 → 创建 step_execution
+    /// 记录（含 pending_rework 回写）→ 标记 started。
+    async fn prepare_step(
+        &self,
+        run: &DagRunCtx,
+        st: &mut DagLoopState,
+        idx: usize,
+    ) -> Result<StepPrep, String> {
+        let step = &run.all_steps[idx];
+        // 4c. 加载 todo 元数据
+        let todo = self
+            .ctx
+            .db
+            .get_todo(step.todo_id)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("todo #{} (todo_id={}) not found", step.id, step.todo_id))?;
+
+        // 4d. 构造增强 Prompt（注入黑板变量 + 上一环节结果）
+        // 设计原则：todo.prompt 是只读模板，此处仅在内存中做字符串替换，
+        // 替换结果 enhanced_prompt 传给执行器，绝不写回 todos 表。
+        // 需求注入与老模板兜底逻辑封装在 build_enhanced_prompt_with_requirement 中，便于单测。
+        // 黑板文本是跨 step 共享的运行时上下文，每次按当前 loop_execution_id 重新拉取，
+        // 避免上一环节写入的内容残留在本次替换链里。
+        let blackboard_text = self.build_blackboard_text(run.loop_execution_id).await;
+        // 上一环节的输出/结论/步骤名可能在首步为 None，统一兜底成空串，
+        // 让后续占位符替换不会因为 None 而 panic 或注入字面量 "None"。
+        let last_output_text = st.last_output.as_deref().unwrap_or("");
+        let last_conclusion_text = st.last_conclusion.as_deref().unwrap_or("");
+        let last_step_name_text = st.last_step_name.as_deref().unwrap_or("");
+        // 调用纯函数构造 enhanced_prompt：所有替换都在内存中完成，
+        // todo.prompt 本身绝不被改写，从而根治历史 inject_requirement_to_steps 的累加污染。
+        // task_requirement 来自 trigger_meta，代表本次执行绑定的需求（每次执行独立）。
+        // 使用 PromptInput struct 汇集参数，避免 clippy::too_many_arguments。
+        let enhanced_prompt_raw = build_enhanced_prompt_with_requirement(
+            &PromptInput {
+                template_prompt: &todo.prompt,
+                task_requirement: &run.task_requirement,
+                blackboard: &blackboard_text,
+                last_output: last_output_text,
+                last_conclusion: last_conclusion_text,
+                last_step_name: last_step_name_text,
+                loop_execution_id: run.loop_execution_id,
+                loop_name: &run.loop_.name,
+            },
+        );
+        // 4d-bis. 注入工作空间级共识 prompt（需求 022）。
+        // Loop 与 todo 走各自路径，此处补齐 Loop 注入使 workspace 共识全路径生效。
+        // loop_.workspace_id = 0/None 时 inject_workspace_prompt 静默回退原 prompt。
+        let enhanced_prompt = crate::executor_service::pre_spawn::inject_workspace_prompt(
+            &self.ctx.db,
+            run.loop_.workspace_id.filter(|&id| id != 0),
+            &enhanced_prompt_raw,
+        )
+        .await;
+
+        // 4e. 检查 todo 状态：人工审批步骤的 todo 在所有 execution 间共享，
+        //     如果 todo 已 completed，步骤应直接进入 pending_approval 而非 running
+        //     （否则步骤永远卡在 running，审批界面不会出现）。
+        // 048：人工审批步骤改由 gate_config 含 human_approval 判定（review_type 已废弃）。
+        let is_human_approval_step =
+            crate::services::process::gate_evaluator::has_human_approval_gate(&step.gate_config);
+        let initial_status = if is_human_approval_step {
+            match self.ctx.db.get_todo(step.todo_id).await {
+                Ok(Some(t)) if t.status == crate::models::TodoStatus::Completed => "pending_approval",
+                _ => "running",
+            }
+        } else {
+            "running"
+        };
+        tracing::info!(
+            "loop_exec {}: step #{} human_approval={} todo_id={} initial_status={}",
+            run.loop_execution_id, step.id, is_human_approval_step, step.todo_id, initial_status,
+        );
+        // 4f. 创建 step execution 记录
+        // 044：min_rating/unrated_policy 已从 loop_steps 移除，创建快照时不再透传；
+        // 阈值改由 phase_driver 评价 gate_config 后回写。
+        let step_exec = self
+            .ctx
+            .db
+            .create_loop_step_execution(
+                run.loop_execution_id,
+                step.id,
+                step.todo_id,
+                initial_status,
+                st.sequence_counter,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // 上一轮 PhaseDriver 返回的返工计数，写入新 step_execution。
+        if st.pending_rework > 0 {
+            let _ = self.ctx.db.set_step_execution_rework_count(step_exec.id, st.pending_rework).await;
+        }
+
+        self.ctx
+            .db
+            .mark_step_execution_started(step_exec.id)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        Ok(StepPrep { todo, enhanced_prompt, step_exec })
+    }
+
+    /// 4f'-4g. 启动执行并等待完成。失败分支内部已完成计数与下一步解析，返回 None
+    /// （对应原实现的 continue 路径）；成功返回 (record_id, step_status)。
+    /// step_status 是 4h' 旧路径判定 gate_passed 的唯一依据，必须透传。
+    async fn execute_and_wait(
+        self: &Arc<Self>,
+        run: &DagRunCtx,
+        st: &mut DagLoopState,
+        prep: &StepPrep,
+        idx: usize,
+        trigger_type: &str,
+    ) -> Result<Option<(i64, String)>, String> {
+        let step = &run.all_steps[idx];
+        // 4f. 执行
+        let record_id = match self
+            .start_step_todo_with_prompt(&prep.todo, trigger_type, idx as i64, prep.step_exec.id, &prep.enhanced_prompt, run.loop_.workspace_path.clone(), &run.trigger_params)
+            .await
+        {
+            Ok(rid) => rid,
+            Err(e) => {
+                warn!("loop_runner: step #{} start failed: {}", step.id, e);
+                self.ctx
+                    .db
+                    .finish_step_execution(prep.step_exec.id, "failed", None, Some(&e), None, None)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                self.ctx
+                    .db
+                    .increment_loop_execution_counters(run.loop_execution_id, 0, 1, 1)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                st.failed += 1;
+                st.current_idx = self.resolve_next(step, &step.on_rating_fail, &run.step_id_to_idx, idx);
+                *st.consecutive_retries.entry(step.id).or_insert(0) += 1;
+                return Ok(None);
+            }
+        };
+
+        // 4g. 等待执行完成
+        let step_status = match self.wait_for_step_finish(record_id).await {
+            Ok(s) => s,
+            Err(e) => {
+                warn!("loop_runner: step #{} wait failed: {}", step.id, e);
+                "failed".to_string()
+            }
+        };
+        Ok(Some((record_id, step_status)))
+    }
+
+    /// 4h. 工艺步骤分支：委托 PhaseDriver（产物捕获、门禁评价、流转解析、返工统计、阶段维护）。
+    async fn handle_process_step(
+        &self,
+        run: &DagRunCtx,
+        st: &mut DagLoopState,
+        prep: &StepPrep,
+        record_id: i64,
+        idx: usize,
+    ) -> Result<StepFlow, String> {
+        let step = &run.all_steps[idx];
+        let exec_record = self.ctx.db.get_execution_record(record_id).await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("execution record #{} not found", record_id))?;
+
+        let ws_path = run.loop_.workspace_path.as_deref().unwrap_or("");
+
+        let outcome = crate::services::process::phase_driver::execute_step(
+            &self.ctx.db,
+            Some(&exec_record),
+            run.loop_execution_id,
+            step,
+            &prep.step_exec,
+            &run.all_steps,
+            idx,
+            ws_path,
+        )
+        .await
+        .map_err(|e| format!("phase_driver execute_step failed: {}", e))?;
+
+        let gate_passed = outcome.gate_passed;
+        // 保存返工计数：下一轮创建 step_execution 时写入。
+        st.pending_rework = outcome.rework_count;
+
+        // 更新计数器（PhaseDriver 已写入 gate/artifact 记录，LoopRunner 维护执行级计数器）。
+        if gate_passed {
+            st.completed += 1;
+            self.ctx
+                .db
+                .increment_loop_execution_counters(run.loop_execution_id, 1, 0, 1)
+                .await
+                .map_err(|e| e.to_string())?;
+            *st.consecutive_retries.get_mut(&step.id).unwrap_or(&mut 0) = 0;
+            if let Some(ws_id) = run.loop_.workspace_id.filter(|&id| id != 0) {
+                crate::services::blackboard_debouncer::push_pending_record(
+                    ws_id, record_id, &self.ctx.db,
+                )
+                .await;
+            }
+        } else {
+            st.failed += 1;
+            self.ctx
+                .db
+                .increment_loop_execution_counters(run.loop_execution_id, 0, 1, 1)
+                .await
+                .map_err(|e| e.to_string())?;
+            *st.consecutive_retries.entry(step.id).or_insert(0) += 1;
+        }
+
+        // 记录上一环节输出（供下一环节模板变量）。
+        let conclusion = self.extract_conclusion(record_id).await;
+        let exec_record2 = self.ctx.db.get_execution_record(record_id).await.ok().flatten();
+        st.last_output = exec_record2.as_ref().and_then(|r| r.result.clone());
+        st.last_conclusion = if conclusion.is_empty() {
+            // 回退：取 error 或截断 result。
+            outcome.error_message.clone()
+                .or_else(|| exec_record2.as_ref().and_then(|r| r.result.clone().map(|s| {
+                    let truncated: String = s.chars().take(300).collect();
+                    truncated
+                })))
+        } else {
+            Some(conclusion.clone())
+        };
+        // 把结论写回 step_execution，供黑板展示。
+        if !conclusion.is_empty() {
+            let _ = self.ctx.db.update_step_execution_conclusion(prep.step_exec.id, &conclusion).await;
+        }
+        st.last_step_name = Some(step.name.clone());
+        if let Some(ref usage) = exec_record2.as_ref().and_then(|r| r.usage.clone()) {
+            let step_tokens = (usage.input_tokens + usage.output_tokens) as i64;
+            st.total_tokens_used += step_tokens;
+        }
+
+        // 发送状态更新事件。
+        let final_status = if gate_passed { "success" } else { "failed" };
+        let _ = self.tx.send(crate::executor_service::ExecEvent::ReviewStatusChanged {
+            record_id,
+            todo_id: 0,
+            review_status: final_status.to_string(),
+        });
+
+        // 确定下一步。
+        st.current_idx = outcome.next_idx;
+
+        if outcome.paused {
+            return Ok(StepFlow::Done(LoopRunOutcome::Paused));
+        }
+        Ok(StepFlow::Continue)
+    }
+
+    /// 4h'. 旧评分闸门兼容路径（无 gate_config/expected_artifacts 的步骤）：
+    /// 按执行状态直接判定，写回结论、更新计数器、解析下一步。
+    async fn handle_legacy_step(
+        &self,
+        run: &DagRunCtx,
+        st: &mut DagLoopState,
+        prep: &StepPrep,
+        record_id: i64,
+        step_status: &str,
+        idx: usize,
+    ) -> Result<(), String> {
+        let step = &run.all_steps[idx];
+        // 4h. 评分闸门（旧 Loop 兼容路径：无 gate_config/expected_artifacts 的步骤）。
+        // 044：loop_steps 已移除 min_rating，旧评分制评审整体下线；人工审批改由
+        // phase_driver 的 human_approval 门禁处理（4g 分支已 return）。此处对未走
+        // 门禁路径的步骤，直接按执行状态判定通过与否，不再做评分。
+        let (gate_passed, step_rating, error_msg): (bool, Option<i32>, Option<String>) =
+            (step_status == "success", None, None);
+
+        let final_step_status = if gate_passed { "success" } else { "failed" };
+
+        // 4i. 提取结论
+        let conclusion = self.extract_conclusion(record_id).await;
+
+        // 4j. 写回 step execution（携 error_msg 让前端展示失败原因）
+        self.ctx
+            .db
+            .finish_step_execution(prep.step_exec.id, final_step_status, Some(record_id), error_msg.as_deref(), step_rating, Some(&conclusion))
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let _ = self.tx.send(crate::executor_service::ExecEvent::ReviewStatusChanged {
+            record_id,
+            todo_id: 0,
+            review_status: final_step_status.to_string(),
+        });
+
+        // 4k. 更新计数器
+        if gate_passed {
+            st.completed += 1;
+            self.ctx
+                .db
+                .increment_loop_execution_counters(run.loop_execution_id, 1, 0, 1)
+                .await
+                .map_err(|e| e.to_string())?;
+            *st.consecutive_retries.get_mut(&step.id).unwrap_or(&mut 0) = 0;
+
+            // 4l. 触发黑板更新：Step 执行成功，将 execution_record_id 追加到黑板 pending 队列。
+            // 与普通 Todo 执行完成后的处理保持一致，让 LLM 将 step 结论整合到黑板。
+            if let Some(ws_id) = run.loop_.workspace_id.filter(|&id| id != 0) {
+                crate::services::blackboard_debouncer::push_pending_record(
+                    ws_id,
+                    record_id,
+                    &self.ctx.db,
+                )
+                .await;
+            }
+        } else {
+            st.failed += 1;
+            self.ctx
+                .db
+                .increment_loop_execution_counters(run.loop_execution_id, 0, 1, 1)
+                .await
+                .map_err(|e| e.to_string())?;
+            *st.consecutive_retries.entry(step.id).or_insert(0) += 1;
+        }
+
+        // 记录上一环节的输出（供下一环节的 {last_output}/{message} 模板变量使用）
+        // 同时从 execution_record.usage 中提取 token 用量，累加到 total_tokens_used，
+        // 用于下一轮循环 4a 的 token 上限检查。
+        let exec_record = self.ctx.db.get_execution_record(record_id).await.ok().flatten();
+        st.last_output = exec_record.as_ref().and_then(|r| r.result.clone());
+        st.last_conclusion = Some(conclusion.clone());
+        st.last_step_name = Some(step.name.clone());
+        // 从 usage JSON 中取出 input_tokens + output_tokens 作为本次消耗的 token 数
+        if let Some(ref usage) = exec_record.and_then(|r| r.usage) {
+            let step_tokens = (usage.input_tokens + usage.output_tokens) as i64;
+            st.total_tokens_used += step_tokens;
+        }
+
+        // 4l. 确定下一步
+        st.current_idx = if gate_passed {
+            self.resolve_next(step, &step.on_success, &run.step_id_to_idx, idx)
+        } else {
+            self.resolve_next(step, &step.on_rating_fail, &run.step_id_to_idx, idx)
+        };
+        Ok(())
     }
 
     /// 启动 step 的执行，使用增强后的 Prompt。
