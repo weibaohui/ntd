@@ -233,7 +233,10 @@ export function ProcessEditor({ processGuid }: ProcessEditorProps): JSX.Element 
   // 弹 Modal.confirm 二次确认，确认后调 DELETE，成功跳路由回列表页
   const handleDelete = useCallback(() => {
     Modal.confirm({
-      title: `确认删除工艺「${detail?.name ?? processGuid}」？`,
+      // NTD-014-D：优先显示工艺显示名（detail.display_name），
+      // 其次 YAML name，最后才回退 GUID——原实现取 detail.name（恒为空）导致弹 GUID。
+      // 注意：detail 必须进 deps——闭包若捕获初始 null，确认框永远显示 GUID（陈旧闭包）。
+      title: `确认删除工艺「${detail?.display_name ?? detail?.name ?? processGuid}」？`,
       content: '此操作不可恢复。',
       okText: '删除',
       okType: 'danger',
@@ -254,7 +257,7 @@ export function ProcessEditor({ processGuid }: ProcessEditorProps): JSX.Element 
         }
       },
     });
-  }, [processGuid]);
+  }, [processGuid, detail]);
 
   // ── 返回工艺列表页 ─────────────────────────────────
   // 仅设置 location.hash 触发 hashchange；若 isDirty，离开拦截的 hashchange

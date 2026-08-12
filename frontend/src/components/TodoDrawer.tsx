@@ -218,6 +218,8 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
     try {
       // 直接把 id 传给后端 updateTodo；handler 负责按 id 反查 cwd path。
       const workspaceToSave = workspaceId;
+      // 创建成功的新事项（NTD-014-B）：编辑模式保持 undefined，供宿主区分「新建」与「编辑」。
+      let createdTodo: Todo | undefined;
 
       if (isEditMode && todo) {
         // WorkspaceSelect 只允许从下拉列表选择，无需二次校验
@@ -237,7 +239,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
         await db.updateTodoTags(workspaceToSave!, todo.id, selectedTags);
         message.success('任务已更新');
       } else {
-        const newTodo = await db.createTodo(
+        createdTodo = await db.createTodo(
           title.trim(),
           prompt.trim(),
           selectedTags,
@@ -252,7 +254,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
 
         if (workspaceToSave != null || schedulerEnabled || executor !== getDefaultExecutor() || webhookEnabled || expertName) {
           await db.updateTodo(
-            workspaceToSave!, newTodo.id, newTodo.title, newTodo.prompt, newTodo.status,
+            workspaceToSave!, createdTodo.id, createdTodo.title, createdTodo.prompt, createdTodo.status,
             executor, schedulerEnabled, schedulerConfig || null,
             workspaceToSave,
             webhookEnabled,
@@ -262,13 +264,15 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
             // 创建后同步：与编辑一致，null → '' 清除，非空 → 设置。
             model ?? '',
           );
-          await db.updateScheduler(workspaceToSave!, newTodo.id, schedulerEnabled, schedulerConfig || null);
+          await db.updateScheduler(workspaceToSave!, createdTodo.id, schedulerEnabled, schedulerConfig || null);
         }
 
         message.success('任务创建成功');
       }
 
-      onSaved();
+      // NTD-014-B：把新事项传给宿主（编辑模式传 undefined），
+      // App 据此跳转事项详情页，避免「创建成功但界面看不到」的困惑。
+      onSaved(createdTodo);
       onClose();
     } catch (error) {
       message.error('保存失败: ' + (error instanceof Error ? error.message : String(error)));

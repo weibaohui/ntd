@@ -461,7 +461,8 @@ function AppContent() {
                     taskId={taskDetailId}
                     onBack={() => backToList()}
                     onSelectTodo={handleSelectTodo}
-                    onLoopChanged={() => setLoopUpdateCount(c => c + 1)}
+                    // NTD-014-A：任务删除成功后跳回任务列表。
+                    onDeleted={() => backToList()}
                   />
                 ) : (
                   <TasksPage workspaceId={state.selectedWorkspace} />
@@ -517,9 +518,14 @@ function AppContent() {
           // 关闭时清空 editingTodo，避免下次打开仍处于编辑模式
           setEditingTodo(null);
         }}
-        onSaved={() => {
+        onSaved={(created) => {
           // 056：全局 todos 桶已删除，保存后通知列表页重拉当前页即可
           window.dispatchEvent(new Event(TODO_LIST_REFRESH_EVENT));
+          // NTD-014-B：新建事项成功后跳转详情页，让用户立即看到并触发刚创建的事项；
+          // 编辑保存（created 为 undefined）不跳转，停留在原页面。
+          if (created?.id != null) {
+            pushUrl('todos', { id: created.id });
+          }
         }}
         defaultWorkspaceId={state.selectedWorkspace}
       />

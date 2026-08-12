@@ -8,7 +8,7 @@
 // 3. useLoopConfig：工作空间环路配置页入口（拉取 ProjectDirectory + 切换显示）
 
 import { useCallback, useState, type ReactNode } from 'react';
-import { Button, Input, Segmented, message } from 'antd';
+import { Button, Input, Modal, Segmented, message } from 'antd';
 import { AppstoreOutlined, ReloadOutlined, SearchOutlined, SettingOutlined, UnorderedListOutlined } from '@ant-design/icons';
 import { TimeRangeSegmented } from '@/components/common/TimeRangeSegmented';
 import * as dbLoops from '@/utils/database/loops';
@@ -116,16 +116,27 @@ interface UseLoopRowActionsArgs {
  * 拆成 hook 让 LoopListPage 主函数保持简短，便于测试与复用。
  */
 export function useLoopRowActions({ workspaceId, onReload, onLoopChanged }: UseLoopRowActionsArgs) {
-  const handleDelete = useCallback(async (loop: LoopListItem) => {
+  // NTD-014-C：删除前必须二次确认——环路被任务引用时删除会连带破坏任务执行，
+  // 用 Modal.confirm 兜底误触；确认后仍失败（如被引用）由 catch 弹后端错误。
+  const handleDelete = useCallback((loop: LoopListItem) => {
     if (workspaceId == null) return;
-    try {
-      await dbLoops.deleteLoop(workspaceId, loop.id);
-      message.success('已删除');
-      onReload();
-      onLoopChanged?.();
-    } catch {
-      message.error('删除失败，环路可能正在被引用');
-    }
+    Modal.confirm({
+      title: `确定删除环路「${loop.name}」？`,
+      content: '删除后引用该环路的任务将无法再执行，此操作不可恢复。',
+      okText: '删除',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          await dbLoops.deleteLoop(workspaceId, loop.id);
+          message.success('已删除');
+          onReload();
+          onLoopChanged?.();
+        } catch {
+          message.error('删除失败，环路可能正在被引用');
+        }
+      },
+    });
   }, [workspaceId, onReload, onLoopChanged]);
 
   const handleToggleStatus = useCallback(async (loop: LoopListItem) => {

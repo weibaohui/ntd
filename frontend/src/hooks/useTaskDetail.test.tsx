@@ -1,5 +1,5 @@
 // useTaskDetail 单元测试。
-// 覆盖数据层：初次拉详情（含 onTitleReady 上报）、有 loop_id 拉环路、再次执行、调接力上限（含失败抛错）、删除环路。
+// 覆盖数据层：初次拉详情（含 onTitleReady 上报）、有 loop_id 拉环路、再次执行、调接力上限（含失败抛错）、删除任务（NTD-014-A）。
 // 参照 src/components/todo-list/useBatchActions.test.tsx 的 renderHook + vi.hoisted/vi.mock 模式。
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
@@ -8,15 +8,16 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 const mockMessage = vi.hoisted(() => ({ success: vi.fn(), warning: vi.fn(), error: vi.fn() }));
 vi.mock('antd', () => ({ message: mockMessage }));
 
-// 数据层依赖全部桩化：getTaskDetail / createTaskExecution / updateTask。
+// 数据层依赖全部桩化：getTaskDetail / createTaskExecution / updateTask / deleteTask。
 const mockApi = vi.hoisted(() => ({
   getTaskDetail: vi.fn(),
   createTaskExecution: vi.fn(),
   updateTask: vi.fn(),
+  deleteTask: vi.fn(),
 }));
 vi.mock('@/api/bundled', () => ({ default: mockApi }));
 
-// 环路依赖：getLoop / deleteLoop。
+// 环路依赖：getLoop（拉 DAG 详情用；deleteLoop 已从任务详情删除路径移除）。
 const mockLoops = vi.hoisted(() => ({
   getLoop: vi.fn(),
   deleteLoop: vi.fn(),
@@ -34,7 +35,7 @@ const loopTask: TaskDetailData = {
   executions: [],
   loop: { id: 7, workspace_id: 2 },
 };
-// getLoop 返回的最小 LoopDetail（仅 handleDelete 用到 id / workspace_id）。
+// getLoop 返回的最小 LoopDetail（仅 DAG 展示用）。
 const mockLoopDetail = { id: 7, workspace_id: 2, name: '环路7' };
 
 describe('useTaskDetail', () => {
@@ -45,7 +46,7 @@ describe('useTaskDetail', () => {
     mockLoops.getLoop.mockResolvedValue(mockLoopDetail);
     mockApi.createTaskExecution.mockResolvedValue({ id: 100 });
     mockApi.updateTask.mockResolvedValue({});
-    mockLoops.deleteLoop.mockResolvedValue({});
+    mockApi.deleteTask.mockResolvedValue({});
   });
 
   it('test_useTaskDetail_初次挂载_拉详情并上报标题', async () => {
@@ -153,18 +154,19 @@ describe('useTaskDetail', () => {
     expect(mockMessage.error).toHaveBeenCalledWith('轮数越界');
   });
 
-  it('test_useTaskDetail_删除环路_落库并回调onLoopChanged', async () => {
-    const onLoopChanged = vi.fn();
-    const { result } = renderHook(() => useTaskDetail(1, 2, { onLoopChanged }));
-    // 等待 loopDetail 就绪（handleDelete 依赖它）。
-    await waitFor(() => expect(result.current.loopDetail).not.toBeNull());
+  it('test_useTaskDetail_删除任务_调用deleteTask并回调onDeleted', async () => {
+    const onDeleted = vi.fn();
+    const { result } = renderHook(() => useTaskDetail(1, 2, { onDeleted }));
+    // 等待详情就绪（删除依赖 workspaceId/taskId，与环路加载无关）。
+    await waitFor(() => expect(result.current.detail).not.toBeNull());
     vi.clearAllMocks();
 
     await act(() => result.current.handleDelete());
-    // deleteLoop 入参：(workspaceId, loopId)。
-    expect(mockLoops.deleteLoop).toHaveBeenCalledWith(2, 7);
-    expect(mockMessage.success).toHaveBeenCalledWith('已删除');
-    expect(onLoopChanged).toHaveBeenCalled();
+    // NTD-014-A：删除必须走任务删除接口（(workspaceId, taskId)），绝不触碰环路。
+    expect(mockApi.deleteTask).toHaveBeenCalledWith(2, 1);
+    expect(mockLoops.deleteLoop).not.toHaveBeenCalled();
+    expect(mockMessage.success).toHaveBeenCalledWith('任务已删除');
+    expect(onDeleted).toHaveBeenCalled();
   });
 
   // ===== 失败分支：CLAUDE.md 要求测试覆盖预期的错误处理分支 =====
@@ -199,18 +201,18 @@ describe('useTaskDetail', () => {
     expect(mockApi.getTaskDetail).not.toHaveBeenCalled();
   });
 
-  it('test_useTaskDetail_删除环路失败_提示错误且不回调', async () => {
-    // 覆盖 handleDelete 的 catch：deleteLoop 失败时提示错误、不通知宿主刷新列表。
-    const onLoopChanged = vi.fn();
-    const { result } = renderHook(() => useTaskDetail(1, 2, { onLoopChanged }));
-    await waitFor(() => expect(result.current.loopDetail).not.toBeNull());
+  it('test_useTaskDetail_删除任务失败_提示错误且不回调', async () => {
+    // 覆盖 handleDelete 的 catch：deleteTask 失败时提示后端错误、不触发宿主跳回列表。
+    const onDeleted = vi.fn();
+    const { result } = renderHook(() => useTaskDetail(1, 2, { onDeleted }));
+    await waitFor(() => expect(result.current.detail).not.toBeNull());
     vi.clearAllMocks();
-    mockLoops.deleteLoop.mockRejectedValueOnce(new Error('referenced'));
+    mockApi.deleteTask.mockRejectedValueOnce(new Error('任务执行中不可删除'));
 
     await act(() => result.current.handleDelete());
 
-    expect(mockMessage.error).toHaveBeenCalledWith('删除失败，环路可能正在被引用');
-    // 删除未成功，不应触发宿主刷新列表。
-    expect(onLoopChanged).not.toHaveBeenCalled();
+    expect(mockMessage.error).toHaveBeenCalledWith('任务执行中不可删除');
+    // 删除未成功，不应触发宿主跳回列表。
+    expect(onDeleted).not.toHaveBeenCalled();
   });
 });

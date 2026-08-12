@@ -13,7 +13,6 @@ import {
 import {
   ThunderboltOutlined, DeleteOutlined, EditOutlined,
 } from '@ant-design/icons';
-import type { LoopDetail } from '@/types/loop';
 import type { TaskDetailData } from '@/types/task';
 import { complexityColor, complexityLabel, statusColor } from './constants';
 import styles from './TaskDetailPanel.module.css';
@@ -34,11 +33,10 @@ interface RelayMaxEditorProps {
   onUpdateMax: (max: number | null) => Promise<void>;
 }
 
-/** 顶部条入参：任务 / 工艺元数据 + 环路详情 + 删除 / 再次执行 / 调上限回调。 */
+/** 顶部条入参：任务 / 工艺元数据 + 删除 / 再次执行 / 调上限回调。 */
 interface DetailHeaderProps {
   task: TaskDetailData['task'];
   template?: TaskDetailData['template'];
-  loopDetail: LoopDetail | null;
   onExecute: () => void;
   onDelete: () => void;
   // 接力上限内联编辑落库（透传给 RelayBadge）；仅管家接力任务的徽标会用。
@@ -187,7 +185,7 @@ function RelayMaxEditor({
  * 逐行平移自原 TaskDetailPanel，无分支逻辑，拆分只会割裂「顶部条」这一整体视觉单元。
  */
 export function DetailHeader({
-  task, template, loopDetail, onExecute, onDelete, onUpdateMax,
+  task, template, onExecute, onDelete, onUpdateMax,
 }: DetailHeaderProps) {
   return (
     <div className={styles.headerBar}>
@@ -218,11 +216,11 @@ export function DetailHeader({
         </div>
       </div>
       <Space>
-        {loopDetail && (
-          <Popconfirm title="确定删除此环路？" onConfirm={onDelete} okText="删除" cancelText="取消">
-            <Button icon={<DeleteOutlined />} danger size="small">删除</Button>
-          </Popconfirm>
-        )}
+        {/* NTD-014-A：删除按钮删除任务本身（原实现误删关联环路）。
+            所有任务（含委派）都可删除，不再依赖 loopDetail 显隐。 */}
+        <Popconfirm title="确定删除任务？" onConfirm={onDelete} okText="删除" cancelText="取消">
+          <Button icon={<DeleteOutlined />} danger size="small">删除</Button>
+        </Popconfirm>
         {/* 委派任务无环路执行概念，「再次执行」走 loop 路径不适用；用户在讨论区 @ 继续推进。 */}
         {task.execution_mode !== 'delegate' ? (
           <Button icon={<ThunderboltOutlined />} type="primary" onClick={onExecute}>再次执行</Button>

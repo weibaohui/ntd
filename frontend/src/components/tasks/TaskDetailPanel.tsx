@@ -25,8 +25,8 @@ interface TaskDetailPanelProps {
   onTitleReady?: (title: string) => void;
   /** 点击 DAG 节点上的事项标题跳转事项详情。 */
   onOpenTodo?: (todoId: number) => void;
-  /** 环路状态变更（启停/删除）后通知宿主刷新列表。 */
-  onLoopChanged?: () => void;
+  /** 任务删除成功后回调，由宿主跳回任务列表（NTD-014-A）。 */
+  onDeleted?: () => void;
 }
 
 /**
@@ -35,10 +35,10 @@ interface TaskDetailPanelProps {
  */
 export function TaskDetailPanel({
   taskId, workspaceId, onTriggered, onTitleReady,
-  onOpenTodo, onLoopChanged,
+  onOpenTodo, onDeleted,
 }: TaskDetailPanelProps) {
   // 数据层：拉详情/拉环路、删除/再次执行/调接力上限，全部封装在 hook 内（可单测）。
-  const t = useTaskDetail(taskId, workspaceId, { onTitleReady, onTriggered, onLoopChanged });
+  const t = useTaskDetail(taskId, workspaceId, { onTitleReady, onTriggered, onDeleted });
   // 讨论区 running 帖数量（DiscussionTab 上报），用于「讨论」Tab 角标。
   // 纯展示态，不进 hook（与任务数据无关）；声明在 early return 之前以满足 hooks 顺序规则。
   const [discussionRunning, setDiscussionRunning] = useState(0);
@@ -130,7 +130,7 @@ export function TaskDetailPanel({
   return (
     <div className={styles.panel}>
       <DetailHeader
-        task={task} template={template} loopDetail={t.loopDetail}
+        task={task} template={template}
         onExecute={openReqModal} onDelete={t.handleDelete} onUpdateMax={t.handleUpdateMax}
       />
       <div className={styles.tabsWrap}>
