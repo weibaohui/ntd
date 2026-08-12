@@ -3,6 +3,8 @@ pub mod auto_update;
 pub mod bundled_sync;
 pub mod blackboard;
 pub mod blackboard_debouncer;
+// 黑板防抖 flush 监听与调度（096-W3-PR1 从 executor_service::completion 整族搬入）
+pub mod blackboard_flush;
 pub mod feishu_card;
 pub mod feishu_history_fetcher;
 pub mod feishu_listener;

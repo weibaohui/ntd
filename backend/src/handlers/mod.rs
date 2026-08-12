@@ -513,7 +513,9 @@ async fn build_app_state(
     //（600s / 10 条），实际防抖逻辑在 push_pending_record / remove_specific_pending_record_ids
     // 时会从对应工作空间的黑板配置中读取真实值。
     let flush_rx = crate::services::blackboard_debouncer::init().await;
-    tokio::spawn(crate::executor_service::completion::blackboard_flush_listener(
+    // 096-W3-PR1：listener 已从 executor_service::completion 搬入 services::blackboard_flush
+    // （黑板服务域归宿），消除 handlers → executor_service 的跨层倒挂
+    tokio::spawn(crate::services::blackboard_flush::blackboard_flush_listener(
         flush_rx,
         // 096-W2-PR3：共享依赖五元组已对象化，调用点从 5 个实参塌缩为 1 个聚合对象
         crate::executor_service::types::ExecutionDeps {
