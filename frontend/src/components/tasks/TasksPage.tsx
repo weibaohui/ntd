@@ -179,7 +179,7 @@ export function TasksPage({ workspaceId }: TasksPageProps) {
 
   // 时间过滤：hours 为 null（全部）时原样透传；
   // 否则只保留 created_at 在最近 N 小时内的任务（所有状态统一过滤，需求 031 结论 1A）。
-  // created_at 缺失/非法时视为不在窗口内，与 KanbanBoard 对非法时间 NaN-drop 的处理对齐。
+  // created_at 缺失/非法时视为不在窗口内，与 原 KanbanBoard 对非法时间 NaN-drop 的处理对齐。
   // 过滤放在页级而非各视图内：与 searchKeyword 的共享方式一致，三态视图 props 零改动。
   const timeFilteredTasks = useMemo(() => {
     if (hours == null) return tasks;
@@ -194,7 +194,7 @@ export function TasksPage({ workspaceId }: TasksPageProps) {
   // 搜索框：所有视图共享（Table/卡片在前端 filter，看板不做 keyword filter）。
   // 时间分段：TimeRangeSegmented（showAll 形态），页级按 created_at 过滤，三态共享。
   // 刷新按钮：自增 refreshKey 触发 useEffect 重拉。
-  // Segmented：三态视图切换，与 OpsCenter 的 Segmented 风格一致。
+  // Segmented：三态视图切换，与 原运行中心 的 Segmented 风格一致。
   // 新建按钮：打开 CreateTaskModal。
   const searchInput = (
     <Input

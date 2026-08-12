@@ -26,13 +26,13 @@ import { COLUMNS, execStatusView } from './helpers';
 interface Props {
   searchText?: string;
   hours?: number;
-  onSearchChange?: (v: string) => void;
-  onHoursChange?: (h: number) => void;
   /** 执行轨迹流程图中点击事项标题跳转事项详情；未注入时标题不可点击。 */
   onOpenTodo?: (todoId: number) => void;
 }
 
-export function LoopKanban({ searchText: externalSearch, hours: externalHours, onSearchChange: _onSearchChange, onHoursChange: _onHoursChange, onOpenTodo }: Props = {}) {
+// searchText/hours 为受控输入：由宿主（如 LoopListPage）下推，本组件不回传变化
+// （宿主用 TimeRangeSegmented 等组件直接驱动自己的 state）。
+export function LoopKanban({ searchText: externalSearch, hours: externalHours, onOpenTodo }: Props = {}) {
   const [internalSearch] = useState('');
   const [internalHours] = useState(24);
   const searchText = externalSearch ?? internalSearch;

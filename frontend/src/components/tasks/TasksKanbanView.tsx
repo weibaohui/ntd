@@ -1,5 +1,5 @@
 // 任务看板视图：按状态横向分泳道。
-// 形态参考 OpsCenter 的 KanbanBoard：
+// 形态参考 原运行中心 的 原 KanbanBoard：
 //   5 列泳道（待审批 / pending / running / success / failed），每列卡片墙垂直排列。
 //   「待审批」为 063 新增的虚拟泳道：pending_approval_count>0 的任务优先进该列，
 //   让用户打开看板第一眼就看到需要人工审批的任务。

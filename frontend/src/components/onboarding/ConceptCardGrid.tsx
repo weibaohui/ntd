@@ -138,7 +138,7 @@ function ConceptCard({
       onClick={onClick}
       data-testid={`onboarding-card-${concept.id}`}
       style={{
-        // 卡片基础样式：白底、圆角、轻阴影，与 TodoCard 一致。
+        // 卡片基础样式：白底、圆角、轻阴影，与 原 TodoCard 一致。
         background: 'var(--color-bg-card, #fff)',
         borderRadius: 'var(--radius-md, 8px)',
         padding: 20,

@@ -419,10 +419,34 @@ function buildMenuItems(
         ];
   return [
     archiveMenuItem(item, wsId, runMutation),
+    { type: 'divider' as const, key: 'div_status' },
+    changeStatusMenuItem(item, wsId, runMutation),
     ...timeDrivenMenuItems(item, wsId, runMutation, openSchedulerModal),
     webhookMenuItem(item, wsId, runMutation),
     ...workspaceItems,
   ];
+}
+
+/**
+ * 改状态子菜单：手动强制改 Todo.status（边缘操作）。
+ * 为什么保留：status 通常由执行驱动，但偶尔需人工修正（如卡在 running 的僵尸事项改回 pending/failed）。
+ * 原 kanban 看板的「拖拽改状态」随组件删除，这里以菜单形式补回该能力。
+ */
+export function changeStatusMenuItem(
+  item: TodoCenterItem,
+  wsId: number,
+  runMutation: (label: string, fn: () => Promise<unknown>) => void,
+): NonNullable<MenuProps['items']>[number] {
+  return {
+    key: 'change_status',
+    label: '改状态',
+    children: [
+      { key: 'cs_pending', label: '待办', onClick: () => runMutation('改状态为待办', () => db.updateTodoStatus(wsId, item.id, 'pending')) },
+      { key: 'cs_running', label: '进行中', onClick: () => runMutation('改状态为进行中', () => db.updateTodoStatus(wsId, item.id, 'running')) },
+      { key: 'cs_completed', label: '已完成', onClick: () => runMutation('改状态为已完成', () => db.updateTodoStatus(wsId, item.id, 'completed')) },
+      { key: 'cs_failed', label: '失败', onClick: () => runMutation('改状态为失败', () => db.updateTodoStatus(wsId, item.id, 'failed')) },
+    ],
+  };
 }
 
 /** 删除菜单项：Modal.confirm 二次确认。被 Loop 引用时后端返回 400，runMutation 会提示。 */

@@ -8,14 +8,21 @@
 // 3. useLoopConfig：工作空间环路配置页入口（拉取 ProjectDirectory + 切换显示）
 
 import { useCallback, useState, type ReactNode } from 'react';
-import { Button, Input, message } from 'antd';
-import { ReloadOutlined, SearchOutlined, SettingOutlined } from '@ant-design/icons';
+import { Button, Input, Segmented, message } from 'antd';
+import { AppstoreOutlined, ReloadOutlined, SearchOutlined, SettingOutlined, UnorderedListOutlined } from '@ant-design/icons';
+import { TimeRangeSegmented } from '@/components/common/TimeRangeSegmented';
 import * as dbLoops from '@/utils/database/loops';
 import { getProjectDirectories, type ProjectDirectory } from '@/utils/database/todos';
 import type { LoopListItem } from '@/types/loop';
 
 interface LoopListHeaderProps {
+  /** 视图模式：list loop 定义 table / kanban loop 执行历史看板。 */
+  viewMode: 'list' | 'kanban';
+  onViewChange: (m: 'list' | 'kanban') => void;
   searchKeyword: string;
+  /** kanban 态时间窗：下推给 LoopKanban 过滤执行历史。 */
+  hours: number;
+  onHoursChange: (h: number) => void;
   loading: boolean;
   workspaceId: number | null;
   onSearchChange: (kw: string) => void;
@@ -29,15 +36,33 @@ interface LoopListHeaderProps {
  * 拆出独立组件避免 LoopListPage 主函数膨胀。
  */
 export function LoopListHeader({
+  viewMode,
+  onViewChange,
   searchKeyword,
+  hours,
+  onHoursChange,
   loading,
   workspaceId,
   onSearchChange,
   onReload,
   onOpenConfig,
 }: LoopListHeaderProps): ReactNode {
+  // 视图切换：list（定义 table）/ kanban（执行历史看板）。两者数据维度不同，切换会换数据对象。
+  const segmented = (
+    <Segmented
+      size="small"
+      value={viewMode}
+      onChange={(v) => onViewChange(v as 'list' | 'kanban')}
+      options={[
+        { value: 'list', icon: <UnorderedListOutlined />, title: '列表' },
+        { value: 'kanban', icon: <AppstoreOutlined />, title: '看板' },
+      ]}
+      data-testid="loop-list-view-toggle"
+    />
+  );
   return (
     <>
+      {segmented}
       <Input
         allowClear
         size="small"
@@ -48,23 +73,32 @@ export function LoopListHeader({
         style={{ width: 200 }}
         data-testid="loop-list-search"
       />
-      <Button
-        size="small"
-        icon={<SettingOutlined />}
-        onClick={onOpenConfig}
-        disabled={workspaceId == null}
-      >
-        配置
-      </Button>
-      <Button
-        size="small"
-        icon={<ReloadOutlined />}
-        onClick={onReload}
-        loading={loading}
-        aria-label="刷新"
-      >
-        刷新
-      </Button>
+      {/* kanban 态时间窗：LoopKanban 受控，下推 hours 过滤执行历史。 */}
+      {viewMode === 'kanban' && (
+        <TimeRangeSegmented value={hours} onChange={onHoursChange} />
+      )}
+      {/* list 态专属：环路配置 + 刷新（kanban 态 LoopKanban 自拉执行历史）。 */}
+      {viewMode === 'list' && (
+        <Button
+          size="small"
+          icon={<SettingOutlined />}
+          onClick={onOpenConfig}
+          disabled={workspaceId == null}
+        >
+          配置
+        </Button>
+      )}
+      {viewMode === 'list' && (
+        <Button
+          size="small"
+          icon={<ReloadOutlined />}
+          onClick={onReload}
+          loading={loading}
+          aria-label="刷新"
+        >
+          刷新
+        </Button>
+      )}
     </>
   );
 }
