@@ -10,12 +10,15 @@ export interface ProviderModel {
   supports_1m_context?: boolean;
 }
 
+/** Provider 接入协议。后端 provider_config 仅支持这两种，summary/detail/input 三处复用，故抽成具名联合（08-类型定义规范 §2）。 */
+export type ProviderProtocol = 'openai' | 'anthropic';
+
 /** 列表接口返回的摘要——不含 api_key / models，只给计数。对应后端 ProviderSummary。 */
 export interface ProviderSummary {
   name: string;
   display_name: string;
   base_url: string;
-  protocol: 'openai' | 'anthropic';
+  protocol: ProviderProtocol;
   model_count: number;
 }
 
@@ -25,7 +28,7 @@ export interface ProviderDetail {
   display_name: string;
   api_key: string;
   base_url: string;
-  protocol: 'openai' | 'anthropic';
+  protocol: ProviderProtocol;
   models: ProviderModel[];
 }
 
@@ -43,7 +46,7 @@ export interface ProviderInput {
   display_name: string;
   api_key: string;
   base_url: string;
-  protocol: 'openai' | 'anthropic';
+  protocol: ProviderProtocol;
   models: ProviderModel[];
 }
 

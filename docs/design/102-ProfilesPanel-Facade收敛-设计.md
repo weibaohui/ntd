@@ -33,7 +33,9 @@
 | `applyProviderToExecutors` | POST `/api/v1/providers/{name}/apply` | `name, executorModels` | `ApplyResult` | |
 
 实现要点：
-- 除 `exportProviders` 外，统一 `return unwrap(await api.<method>(url, [body]))`，与 `experts.ts` 一致。
+- 有返回值的函数统一 `return unwrap(await api.<method>(url, [body]))`，与 `experts.ts` 一致。
+- `createProvider`/`updateProvider`/`deleteProvider` 返回 `void`，只 `await api.<method>(...)` 不走 `unwrap`——`client.ts` 响应拦截器已对 `code!==0`/非 2xx 自动 reject，§5 的假成功修复由此成立，无需再解包 data（与 `experts.ts` 的 `deleteExpert` 等 void 函数一致）。
+- preview/apply 的请求体用 providers.ts 内部别名 `type ExecutorModels = Record<string, string>`（执行器→模型名映射），对应后端 `executor_models` 字段。
 - `exportProviders`：`api.get(BASE + '/export', { responseType: 'text' })`。`client.ts` 拦截器对非 object 响应（字符串）原样放行，故不会误走 `code!==0` 分支；返回 `res.data`（YAML 文本）。
 
 ## 4. 类型归位
@@ -41,11 +43,12 @@
 新建 `frontend/src/types/provider.ts`（仿 `types/expert.ts`），把现内联在 ProfilesPanel 的类型迁出，并补齐后端实际返回的字段：
 
 ```ts
+export type ProviderProtocol = 'openai' | 'anthropic';
 export interface ProviderModel { name: string; display_name?: string; supports_1m_context?: boolean; }
-export interface ProviderSummary { name: string; display_name: string; base_url: string; protocol: 'openai'|'anthropic'; model_count: number; }
-export interface ProviderDetail { name: string; display_name: string; api_key: string; base_url: string; protocol: 'openai'|'anthropic'; models: ProviderModel[]; }
+export interface ProviderSummary { name: string; display_name: string; base_url: string; protocol: ProviderProtocol; model_count: number; }
+export interface ProviderDetail { name: string; display_name: string; api_key: string; base_url: string; protocol: ProviderProtocol; models: ProviderModel[]; }
 export interface ExecutorConfigDef { name: string; display_name: string; config_path: string; has_generator: boolean; }
-export interface ProviderInput { name?: string; display_name: string; api_key: string; base_url: string; protocol: 'openai'|'anthropic'; models: ProviderModel[]; }
+export interface ProviderInput { name?: string; display_name: string; api_key: string; base_url: string; protocol: ProviderProtocol; models: ProviderModel[]; }
 export interface PreviewEntry { executor: string; model: string; path: string; content: string; }
 export interface ApplyResult { applied: string[]; errors: string[]; }
 export interface ImportResult { imported: string[]; errors: string[]; }
@@ -92,7 +95,7 @@ Facade 与组件都从 `@/types/provider` 导入（前端强制 `@/`）。
 - [ ] `cd frontend && npm run build` 零新告警。
 - [ ] `grep -n 'fetch(' frontend/src/components/settings/ProfilesPanel.tsx` → 0 命中。
 - [ ] vitest 新增用例全过；既有用例不回归。
-- [ ] Playwright 冒烟：API Key 面板加载 / 新增 / 删除 / 导出 流程正常（证据发 PR 评论，不提交截图）。
+- [x] Playwright 冒烟：API Key 面板加载 / 新增→删除 / 导出 流程正常（`frontend/tests/verify_api_key_panel.spec.ts`，证据发 PR 评论，不提交截图）。
 
 ## 10. 文件清单
 
@@ -100,3 +103,4 @@ Facade 与组件都从 `@/types/provider` 导入（前端强制 `@/`）。
 - 新增 `frontend/src/types/provider.ts`
 - 改 `frontend/src/utils/database/index.ts`（barrel `export * from './providers'`）
 - 改 `frontend/src/components/settings/ProfilesPanel.tsx`（删内联类型 + 11 处 fetch，改用 Facade；组件签名不变）
+- 新增 `frontend/tests/verify_api_key_panel.spec.ts`（Playwright 冒烟：加载 / 新增→删除 / 导出 三个用例）
