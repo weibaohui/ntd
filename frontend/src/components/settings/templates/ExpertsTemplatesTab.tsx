@@ -26,6 +26,7 @@ import {
 } from '@ant-design/icons';
 import * as db from '@/utils/database';
 import type { ExpertMetadata } from '@/types/expert';
+import { ContributeButton } from '@/components/settings/experts/ContributeButton';
 import {
   getExpertDisplayName,
   getExpertDescription,
@@ -154,7 +155,7 @@ export function ExpertsTemplatesTab() {
               {
                 title: '操作',
                 key: 'actions',
-                width: 200,
+                width: 240,
                 render: (_, record: ExpertMetadata) => (
                   <Space>
                     <Button
@@ -169,6 +170,7 @@ export function ExpertsTemplatesTab() {
                       icon={<EditOutlined />}
                       onClick={() => handleOpenEdit(record)}
                     />
+                    <ContributeButton expert={record} size="small" />
                     <Popconfirm
                       title="确定删除此专家？"
                       onConfirm={() => handleDelete(record.name)}

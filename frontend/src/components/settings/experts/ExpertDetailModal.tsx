@@ -24,6 +24,7 @@ import {
   getMemberAvatarUrl,
   getCategoryName,
 } from '@/types/expert';
+import { ContributeButton } from './ContributeButton';
 
 const { Paragraph, Text } = Typography;
 
@@ -213,6 +214,7 @@ export function ExpertDetailModal({
               flexShrink: 0,
               alignSelf: isMobile ? 'flex-end' : 'auto',
             }}>
+              <ContributeButton expert={expert} />
               <Tooltip title="导出为 zip 包">
                 <Button
                   type="text"
