@@ -23,8 +23,8 @@ export interface ContributionIssueDraft {
 
 /** 提交 Issue 结果 */
 export interface ContributionIssueResult {
-  /** Issue 编号 */
-  issue_number: number;
+  /** Issue 编号（GitCode 编号为字符串，如 "I5YJX2"） */
+  issue_number: string;
   /** Issue 网页链接 */
   issue_url: string;
   /** Issue 标题 */

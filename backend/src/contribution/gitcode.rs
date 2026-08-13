@@ -158,20 +158,11 @@ pub async fn refresh_access_token(refresh_token: &str) -> Result<GitCodeToken, S
     Ok(resp.into_token(now))
 }
 
-/// GitCode 创建 Issue 响应体（字段名以真实 API 为准，用 Option 容错）。
-#[derive(Debug, Deserialize)]
-struct CreateIssueResponse {
-    number: Option<i64>,
-    html_url: Option<String>,
-    url: Option<String>,
-    title: Option<String>,
-}
-
 /// 创建 Issue 的结果（返回给前端）。
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct IssueResult {
-    /// Issue 编号
-    pub issue_number: i64,
+    /// Issue 编号（GitCode 沿用 Gitee 语义，编号是字符串，如 "I5YJX2"）
+    pub issue_number: String,
     /// Issue 网页链接
     pub issue_url: String,
     /// Issue 标题
@@ -191,7 +182,7 @@ pub async fn create_issue(
     title: &str,
     body: &str,
 ) -> Result<IssueResult, String> {
-    let resp: CreateIssueResponse = reqwest::Client::new()
+    let response = reqwest::Client::new()
         .post(format!("{API_BASE}/api/v5/repos/{owner}/{repo}/issues"))
         .bearer_auth(access_token)
         .json(&serde_json::json!({
@@ -201,25 +192,75 @@ pub async fn create_issue(
         }))
         .send()
         .await
-        .map_err(|e| format!("请求创建 Issue 失败: {e}"))?
-        .error_for_status()
-        .map_err(|e| format!("创建 Issue 失败: {e}"))?
-        .json()
-        .await
-        .map_err(|e| format!("解析 Issue 响应失败: {e}"))?;
+        .map_err(|_| "请求创建 Issue 失败".to_string())?;
 
-    // 优先用官方返回的链接，缺失时用编号拼网页链接兜底。
-    let number = resp.number.unwrap_or(0);
-    let issue_url = resp
-        .html_url
-        .or(resp.url)
-        .unwrap_or_else(|| format!("https://gitcode.com/{owner}/{repo}/issues/{number}"));
-    let title = resp.title.unwrap_or_else(|| title.to_string());
+    let status = response.status();
+    // 先取原始文本：非 2xx 或非 JSON 时能带上 body 帮助定位（响应是用户自己的 issue，不含凭据）。
+    let body_text = response
+        .text()
+        .await
+        .map_err(|_| "读取 Issue 响应失败".to_string())?;
+
+    if !status.is_success() {
+        return Err(format!(
+            "创建 Issue 失败（HTTP {status}）: {}",
+            truncate_for_log(&body_text)
+        ));
+    }
+
+    // 解析为通用 JSON 再宽松提取字段；GitCode 的 number 是字符串，不能用 i64 强反序列化。
+    let resp: serde_json::Value = serde_json::from_str(&body_text).map_err(|_| {
+        format!("解析 Issue 响应失败（非 JSON）: {}", truncate_for_log(&body_text))
+    })?;
+
+    let issue_number = extract_issue_number(&resp);
+    let issue_url = extract_issue_url(&resp, owner, repo, &issue_number);
+    let title = resp
+        .get("title")
+        .and_then(|v| v.as_str())
+        .unwrap_or(title)
+        .to_string();
+
     Ok(IssueResult {
-        issue_number: number,
+        issue_number,
         issue_url,
         title,
     })
+}
+
+/// 从响应里提取 Issue 编号：优先 `number`，其次 `id`；数字或字符串都兼容。
+fn extract_issue_number(resp: &serde_json::Value) -> String {
+    resp.get("number")
+        .and_then(number_value_to_string)
+        .or_else(|| resp.get("id").and_then(number_value_to_string))
+        .unwrap_or_else(|| "?".to_string())
+}
+
+/// 把数字或字符串类型的 JSON 值统一转为字符串（GitCode 的 number 是字符串）。
+fn number_value_to_string(v: &serde_json::Value) -> Option<String> {
+    if let Some(s) = v.as_str() {
+        return Some(s.to_string());
+    }
+    v.as_i64().map(|n| n.to_string())
+}
+
+/// 提取 Issue 网页链接：优先官方返回的 html_url / url，缺失时用编号拼兜底。
+fn extract_issue_url(resp: &serde_json::Value, owner: &str, repo: &str, number: &str) -> String {
+    resp.get("html_url")
+        .and_then(|v| v.as_str())
+        .or_else(|| resp.get("url").and_then(|v| v.as_str()))
+        .map(String::from)
+        .unwrap_or_else(|| format!("https://gitcode.com/{owner}/{repo}/issues/{number}"))
+}
+
+/// 截断日志/错误信息里的响应体，避免超长 body 刷屏。
+fn truncate_for_log(s: &str) -> String {
+    const MAX: usize = 200;
+    if s.chars().count() <= MAX {
+        return s.to_string();
+    }
+    let head: String = s.chars().take(MAX).collect();
+    format!("{head}...（已截断，共 {} 字符）", s.chars().count())
 }
 
 #[cfg(test)]
@@ -279,5 +320,55 @@ mod tests {
         assert!(credential_present(Some("x")));
         assert!(!credential_present(Some("")));
         assert!(!credential_present(None));
+    }
+
+    #[test]
+    fn extract_issue_number_prefers_string_number() {
+        let v = serde_json::json!({"number": "I5YJX2"});
+        assert_eq!(extract_issue_number(&v), "I5YJX2");
+    }
+
+    #[test]
+    fn extract_issue_number_accepts_numeric_number() {
+        let v = serde_json::json!({"number": 123});
+        assert_eq!(extract_issue_number(&v), "123");
+    }
+
+    #[test]
+    fn extract_issue_number_falls_back_to_id() {
+        let v = serde_json::json!({"id": 456});
+        assert_eq!(extract_issue_number(&v), "456");
+    }
+
+    #[test]
+    fn extract_issue_number_missing_returns_placeholder() {
+        let v = serde_json::json!({});
+        assert_eq!(extract_issue_number(&v), "?");
+    }
+
+    #[test]
+    fn extract_issue_url_prefers_html_url() {
+        let v = serde_json::json!({"html_url": "https://gitcode.com/o/r/issues/I1"});
+        assert_eq!(
+            extract_issue_url(&v, "o", "r", "I1"),
+            "https://gitcode.com/o/r/issues/I1"
+        );
+    }
+
+    #[test]
+    fn extract_issue_url_falls_back_to_constructed() {
+        let v = serde_json::json!({});
+        assert_eq!(
+            extract_issue_url(&v, "o", "r", "I1"),
+            "https://gitcode.com/o/r/issues/I1"
+        );
+    }
+
+    #[test]
+    fn truncate_for_log_truncates_long_text() {
+        let long = "x".repeat(300);
+        let out = truncate_for_log(&long);
+        assert!(out.contains("已截断"));
+        assert!(out.chars().count() < 300);
     }
 }
