@@ -111,14 +111,15 @@ pub async fn evaluate_step_gates(
 
         match result {
             Ok(gate_result) => {
+                use crate::models::LoopGateStatus;
                 // human_approval 未通过是「等待人工」而非失败：持久化为 pending，
                 // 避免 UI 把待审批门禁渲染成 failed（审批动作才会把它推进 passed/failed）。
                 let status = if gate_result.passed {
-                    "passed"
+                    LoopGateStatus::Passed
                 } else if gate_def.gate_type == "human_approval" {
-                    "pending"
+                    LoopGateStatus::Pending
                 } else {
-                    "failed"
+                    LoopGateStatus::Failed
                 };
                 db.update_loop_step_execution_gate(
                     gate_model.id,
@@ -137,14 +138,16 @@ pub async fn evaluate_step_gates(
                 }
 
                 let mut updated = gate_model;
-                updated.status = status.to_string();
+                // Model.status 字段仍是 String（DB 协议不变），枚举经 as_str() 回写。
+                updated.status = status.as_str().to_string();
                 updated.result = gate_result.detail.clone();
                 gate_records.push(updated);
             }
             Err(gate_err) => {
                 // 评估失败视为门禁失败。
+                use crate::models::LoopGateStatus;
                 let err_msg = gate_err.to_string();
-                let status = "failed";
+                let status = LoopGateStatus::Failed;
                 db.update_loop_step_execution_gate(
                     gate_model.id,
                     status,
@@ -156,7 +159,7 @@ pub async fn evaluate_step_gates(
 
                 all_passed = false;
                 let mut updated = gate_model;
-                updated.status = status.to_string();
+                updated.status = status.as_str().to_string();
                 updated.result = Some(err_msg);
                 gate_records.push(updated);
             }
@@ -183,8 +186,12 @@ async fn find_pending_gate(
         .list_loop_step_execution_gates(step_execution_id)
         .await
         .map_err(|e| crate::services::process::ProcessError::Db(Box::new(e)))?;
+    use crate::models::LoopGateStatus;
+    // 只匹配 pending：经 from_db 解析回枚举再比较，避免裸串与写入侧脱钩。
     Ok(existing.into_iter().find(|g| {
-        g.status == "pending" && g.gate_type == gate_def.gate_type && g.gate_name == gate_def.name
+        LoopGateStatus::from_db(&g.status) == Some(LoopGateStatus::Pending)
+            && g.gate_type == gate_def.gate_type
+            && g.gate_name == gate_def.name
     }))
 }
 

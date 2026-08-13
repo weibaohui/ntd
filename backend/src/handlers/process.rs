@@ -977,12 +977,15 @@ pub async fn approve_gate(
     let step_exec = load_pending_step_execution(&state, loop_id, eid, seid).await?;
     validate_pending_human_gate(&state, seid, gid).await?;
 
+    use crate::models::LoopGateStatus;
     // 布尔审批映射为环节终态与展示评分：通过→success/100，拒绝→failed/0。
     // 评分 0 配合 resume 的 status 判定（不再用 rating>=min_rating），拒绝不会误判为通过。
-    let (gate_status, final_status, rating) = if req.approved {
-        ("passed", "success", 100)
+    // gate_status 走 D6 枚举（LoopGateStatus）；final_status 是 step 终态（D4，
+    // approve_step_execution 形参仍 &str，不在本 PR 范围）。
+    let (gate_status, final_status, rating): (LoopGateStatus, &str, i32) = if req.approved {
+        (LoopGateStatus::Passed, "success", 100)
     } else {
-        ("failed", "failed", 0)
+        (LoopGateStatus::Failed, "failed", 0)
     };
     state
         .db
@@ -1060,12 +1063,16 @@ fn ensure_step_approvable(status: &str) -> Result<(), AppError> {
 /// 校验门禁可经人工审批（纯函数，便于单测）。
 /// 只允许 human_approval 类型走本接口，防止借道篡改 AI 评审/脚本校验的结果。
 fn ensure_gate_approvable(gate_type: &str, gate_status: &str) -> Result<(), AppError> {
+    use crate::models::LoopGateStatus;
     if gate_type != "human_approval" {
         return Err(AppError::BadRequest(
             "该门禁不是人工审批类型".to_string(),
         ));
     }
-    if gate_status != "pending" {
+    // 只允许 pending 态门禁走审批：已评价（passed/failed）或未知值一律拒绝，
+    // 防止覆盖终态。读比较走 D6 枚举 from_db，与 gate_evaluator 同口径；
+    // 形参仍 &str 以保留纯函数的单测边界（测试直接喂字面量）。
+    if LoopGateStatus::from_db(gate_status) != Some(LoopGateStatus::Pending) {
         return Err(AppError::BadRequest(
             "该门禁已被评价".to_string(),
         ));

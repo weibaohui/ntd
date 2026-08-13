@@ -88,17 +88,20 @@ impl Database {
             gate_type: ActiveValue::Set(gate_type.to_string()),
             gate_name: ActiveValue::Set(gate_name.to_string()),
             config: ActiveValue::Set(config.to_string()),
-            status: ActiveValue::Set("pending".to_string()),
+            // 初始态 pending 走 D6 枚举（LoopGateStatus），与 update 写入侧共享同一词汇表。
+            status: ActiveValue::Set(crate::models::LoopGateStatus::Pending.as_str().to_string()),
             ..Default::default()
         };
         am.insert(&self.conn).await
     }
 
     /// 更新门禁评价结果（状态、结果 JSON、评价时间、评价者）。
+    /// status 收 LoopGateStatus 枚举（D6 收口）——杜绝调用方传裸串拼写错误；
+    /// DB 仍存 String（as_str 锁原字面量），行为逐字节不变。
     pub async fn update_loop_step_execution_gate(
         &self,
         id: i64,
-        status: &str,
+        status: crate::models::LoopGateStatus,
         result: Option<&str>,
         evaluated_by: Option<&str>,
     ) -> Result<(), sea_orm::DbErr> {
@@ -107,7 +110,7 @@ impl Database {
             .await?;
         if let Some(c) = existing {
             let mut am: loop_step_execution_gates::ActiveModel = c.into();
-            am.status = ActiveValue::Set(status.to_string());
+            am.status = ActiveValue::Set(status.as_str().to_string());
             am.result = ActiveValue::Set(result.map(|s| s.to_string()));
             am.evaluated_at = ActiveValue::Set(Some(utc_timestamp()));
             am.evaluated_by = ActiveValue::Set(evaluated_by.map(|s| s.to_string()));
