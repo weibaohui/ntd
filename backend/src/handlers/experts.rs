@@ -332,7 +332,7 @@ fn infer_image_mime(path: &Path) -> &'static str {
     }
 }
 
-/// `POST /api/v1/experts`：创建新专家（集合路径，取代旧 `POST /api/v1/experts/create`，旧路由仍保留兼容）
+/// `POST /api/v1/experts`：创建新专家（REST 集合路径；旧 `POST /api/experts/create` 已随路由收口移除，不再注册）
 ///
 /// 根据传入的 plugin_json 和 agent_md 内容创建新专家。
 /// 流程：

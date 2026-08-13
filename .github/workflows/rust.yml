@@ -91,22 +91,13 @@ jobs:
         if: matrix.use-cross == true
         env:
           # Mount frontend/dist + ntd-skills for rust-embed + .git for vergen
-          # -e 显式把 NTD_GITCODE_* 传进 cross 容器（编译期 option_env! 读取）
-          CROSS_CONTAINER_OPTS: "-v ${{ github.workspace }}/frontend/dist:/frontend/dist:ro -v ${{ github.workspace }}/ntd-skills:/ntd-skills:ro -v ${{ github.workspace }}/.git:/project/.git:ro -e NTD_GITCODE_CLIENT_ID -e NTD_GITCODE_CLIENT_SECRET"
+          CROSS_CONTAINER_OPTS: "-v ${{ github.workspace }}/frontend/dist:/frontend/dist:ro -v ${{ github.workspace }}/ntd-skills:/ntd-skills:ro -v ${{ github.workspace }}/.git:/project/.git:ro"
           # Point GIT_DIR to where .git is mounted inside the container
           GIT_DIR: /project/.git
-          # 专家贡献 OAuth 凭据：编译期注入。pull_request 事件下 secrets 为空，
-          # 后端会因空值降级为「贡献功能禁用」；仅 tag/release 构建拿到真实凭据。
-          NTD_GITCODE_CLIENT_ID: ${{ secrets.NTD_GITCODE_CLIENT_ID }}
-          NTD_GITCODE_CLIENT_SECRET: ${{ secrets.NTD_GITCODE_CLIENT_SECRET }}
         run: cd backend && cross build --release --target ${{ matrix.target }}
 
       - name: Build (native)
         if: matrix.use-cross == false
-        env:
-          # 专家贡献 OAuth 凭据：编译期注入（macOS 原生构建），同上空值降级。
-          NTD_GITCODE_CLIENT_ID: ${{ secrets.NTD_GITCODE_CLIENT_ID }}
-          NTD_GITCODE_CLIENT_SECRET: ${{ secrets.NTD_GITCODE_CLIENT_SECRET }}
         run: cd backend && cargo build --release --target ${{ matrix.target }}
 
       - name: Prepare binary for upload

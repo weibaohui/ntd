@@ -52,7 +52,10 @@ pub async fn save_pat(Json(req): Json<PatRequest>) -> Result<ApiResponse<String>
     // 长度与字符集校验：reqwest 的 HeaderValue 不接受控制字符/超长值，提前拦截防 panic。
     validate_pat(pat_trimmed)?;
     // 用 PAT 调 /user 验证有效性（不落盘 username）；失败不落盘。
-    gitcode::verify_pat(pat_trimmed).await.map_err(AppError::BadRequest)?;
+    // 校验错误按原因分类映射：PAT 无效→400，网络/上游故障→500（避免误报诱导轮换令牌）。
+    gitcode::verify_pat(pat_trimmed)
+        .await
+        .map_err(map_verify_error)?;
     // 验证通过才持久化，避免写入无效 PAT。
     pat::save(&pat::PatCredential {
         pat: pat_trimmed.to_string(),
@@ -82,6 +85,16 @@ fn validate_pat(pat: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+/// 把 PAT 校验错误映射为合适的 HTTP 状态码：
+/// `Invalid`（PAT 被服务端拒绝）→ 400；`Upstream`（网络/上游故障）→ 500。
+/// 抽成独立函数便于单测，并让 save_pat 保持简短。
+fn map_verify_error(err: gitcode::VerifyError) -> AppError {
+    match err {
+        gitcode::VerifyError::Invalid(msg) => AppError::BadRequest(msg),
+        gitcode::VerifyError::Upstream(msg) => AppError::Internal(msg),
+    }
+}
+
 /// 专家贡献路由。
 pub fn contribution_routes() -> Router<AppState> {
     Router::new()
@@ -108,5 +121,19 @@ mod tests {
     #[test]
     fn validate_pat_rejects_control_chars() {
         assert!(validate_pat("abc\r\n").is_err());
+    }
+
+    #[test]
+    fn map_verify_error_invalid_to_bad_request() {
+        // PAT 被服务端拒绝属用户输入问题，映射 400。
+        let app = map_verify_error(gitcode::VerifyError::Invalid("bad pat".to_string()));
+        assert!(matches!(app, AppError::BadRequest(msg) if msg == "bad pat"));
+    }
+
+    #[test]
+    fn map_verify_error_upstream_to_internal() {
+        // 网络/上游故障不是 PAT 本身问题，映射 500，避免误报诱导用户轮换令牌。
+        let app = map_verify_error(gitcode::VerifyError::Upstream("timeout".to_string()));
+        assert!(matches!(app, AppError::Internal(msg) if msg == "timeout"));
     }
 }
