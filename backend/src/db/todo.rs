@@ -1605,7 +1605,7 @@ impl Database {
                     .iter()
                     .filter_map(|tid| all_tags.get(tid).cloned())
                     .collect();
-Self::todo_backup_from_model(&m, tag_names)
+                Self::todo_backup_from_model(&m, tag_names)
             })
             .collect::<Vec<_>>())
     }
@@ -1642,7 +1642,7 @@ Self::todo_backup_from_model(&m, tag_names)
                     .iter()
                     .filter_map(|tid| all_tags.get(tid).cloned())
                     .collect();
-Self::todo_backup_from_model(&m, tag_names)
+                Self::todo_backup_from_model(&m, tag_names)
             })
             .collect())
     }
