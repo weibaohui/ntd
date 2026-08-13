@@ -18,7 +18,10 @@ vi.mock('@/utils/database/client', () => ({
   unwrap: vi.fn(),
 }));
 
+// @/ 绝对路径块须连续：client 是被 mock 的实例、ProviderInput 是其入参类型契约，
+// 两者同属 @/ 块紧邻，再接 ./ 相对导入（前端 @/ 导入规范）。
 import { api, unwrap } from '@/utils/database/client';
+import type { ProviderInput } from '@/types/provider';
 import {
   listProviders,
   getSupportedExecutors,
@@ -31,7 +34,6 @@ import {
   previewProviderToExecutors,
   applyProviderToExecutors,
 } from './providers';
-import type { ProviderInput } from '@/types/provider';
 
 // TS 仍按真实 axios 类型看 api.*，这里统一转成 vitest Mock 以便断言（不经 any）。
 const mockGet = api.get as unknown as Mock;

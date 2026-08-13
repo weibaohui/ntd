@@ -89,7 +89,9 @@ export function ProfilesPanel() {
     setCreateVisible(true);
   }, [form]);
 
-  // 打开编辑：先拉详情回填表单。失败则提示并直接返回（不打开空弹窗），与原 !r.ok 提前返回语义一致。
+  // 打开编辑：先拉详情回填表单。失败则提示并直接返回（不打开空弹窗）。
+  // Facade 已把原 !r.ok 与网络异常一并 reject 进 catch，故提示文案沿用原 catch 的
+  // 「加载失败」前缀，而非原 !r.ok 的「获取详情失败」（设计 §6 文案不变）。
   const openEdit = useCallback(async (name: string) => {
     setEditingName(name);
     form.resetFields();
@@ -105,7 +107,7 @@ export function ProfilesPanel() {
       });
       setModelList(d.models || []);
     } catch (err) {
-      message.error('获取详情失败: ' + (err instanceof Error ? err.message : String(err)));
+      message.error('加载失败: ' + (err instanceof Error ? err.message : String(err)));
       return;
     }
     setEditVisible(true);
