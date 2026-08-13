@@ -20,8 +20,9 @@ const TOKEN_URL: &str = "https://gitcode.com/oauth/token";
 const API_BASE: &str = "https://api.gitcode.com";
 /// 创建贡献 Issue 时打上的固定标签，便于官方仓库后台筛选。
 const CONTRIBUTION_LABEL: &str = "expert-contribution";
-/// 创建 Issue 时申请的 OAuth 权限范围：仅 issue，遵循最小权限。
-const ISSUE_SCOPE: &str = "all_issue";
+/// 发起贡献 PR 所需的 OAuth 权限范围：用户信息 + 仓库读写（fork/写文件/建分支）+ PR。
+/// 比纯 issue 更宽，因为 PR 需要 fork 官方仓库并向 fork 写入专家文件。
+const PR_SCOPE: &str = "all_user all_projects all_pr all_repository";
 
 /// 贡献功能是否启用：`client_id` 与 `client_secret` 均已注入且非空。
 ///
@@ -76,7 +77,7 @@ pub fn build_authorize_url(client_id: &str, redirect_uri: &str, state: &str) -> 
         .append_pair("client_id", client_id)
         .append_pair("redirect_uri", redirect_uri)
         .append_pair("response_type", "code")
-        .append_pair("scope", ISSUE_SCOPE)
+        .append_pair("scope", PR_SCOPE)
         .append_pair("state", state);
     url.to_string()
 }
@@ -253,6 +254,200 @@ fn extract_issue_url(resp: &serde_json::Value, owner: &str, repo: &str, number: 
         .unwrap_or_else(|| format!("https://gitcode.com/{owner}/{repo}/issues/{number}"))
 }
 
+/// 创建 PR 的结果（返回给前端）。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PrResult {
+    /// PR 编号
+    pub pr_number: String,
+    /// PR 网页链接
+    pub pr_url: String,
+    /// PR 标题
+    pub title: String,
+}
+
+/// 获取当前授权用户的 username（作为 fork 后的 owner）。
+pub async fn get_current_username(access_token: &str) -> Result<String, String> {
+    let response = reqwest::Client::new()
+        .get(format!("{API_BASE}/api/v5/user"))
+        .bearer_auth(access_token)
+        .send()
+        .await
+        .map_err(|_| "请求用户信息失败".to_string())?;
+    let status = response.status();
+    let body_text = response
+        .text()
+        .await
+        .map_err(|_| "读取用户响应失败".to_string())?;
+    if !status.is_success() {
+        return Err(format!(
+            "获取用户信息失败（HTTP {status}）: {}",
+            truncate_for_log(&body_text)
+        ));
+    }
+    let resp: serde_json::Value =
+        serde_json::from_str(&body_text).map_err(|_| "解析用户响应失败".to_string())?;
+    resp.get("login")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .ok_or_else(|| "用户响应缺少 login 字段".to_string())
+}
+
+/// 确保官方仓库已 fork 到当前用户：fork 成功或「已 fork」都视为就绪。
+pub async fn ensure_fork(access_token: &str, owner: &str, repo: &str) -> Result<(), String> {
+    let response = reqwest::Client::new()
+        .post(format!("{API_BASE}/api/v5/repos/{owner}/{repo}/forks"))
+        .bearer_auth(access_token)
+        .send()
+        .await
+        .map_err(|_| "请求 fork 仓库失败".to_string())?;
+    let status = response.status();
+    let body_text = response
+        .text()
+        .await
+        .map_err(|_| "读取 fork 响应失败".to_string())?;
+    if status.is_success() {
+        return Ok(());
+    }
+    // 已 fork 过（409/422）视为成功，复用现有 fork；其余错误上抛。
+    if status == reqwest::StatusCode::CONFLICT || status == reqwest::StatusCode::UNPROCESSABLE_ENTITY {
+        return Ok(());
+    }
+    Err(format!(
+        "fork 仓库失败（HTTP {status}）: {}",
+        truncate_for_log(&body_text)
+    ))
+}
+
+/// 在仓库上创建分支。
+pub async fn create_branch(
+    access_token: &str,
+    owner: &str,
+    repo: &str,
+    branch_name: &str,
+    refs: &str,
+) -> Result<(), String> {
+    let response = reqwest::Client::new()
+        .post(format!("{API_BASE}/api/v5/repos/{owner}/{repo}/branches"))
+        .bearer_auth(access_token)
+        .json(&serde_json::json!({"branch_name": branch_name, "refs": refs}))
+        .send()
+        .await
+        .map_err(|_| "请求创建分支失败".to_string())?;
+    let status = response.status();
+    let body_text = response
+        .text()
+        .await
+        .map_err(|_| "读取建分支响应失败".to_string())?;
+    if !status.is_success() {
+        return Err(format!(
+            "创建分支 {branch_name} 失败（HTTP {status}）: {}",
+            truncate_for_log(&body_text)
+        ));
+    }
+    Ok(())
+}
+
+/// 向仓库分支写入一个文件（content 为 base64 编码的字节内容）。
+pub async fn create_file(
+    access_token: &str,
+    owner: &str,
+    repo: &str,
+    branch: &str,
+    path: &str,
+    content_base64: &str,
+    message: &str,
+) -> Result<(), String> {
+    let url = contents_url(owner, repo, path)?;
+    let response = reqwest::Client::new()
+        .post(&url)
+        .bearer_auth(access_token)
+        .form(&[
+            ("content", content_base64),
+            ("message", message),
+            ("branch", branch),
+        ])
+        .send()
+        .await
+        .map_err(|_| "请求写入文件失败".to_string())?;
+    let status = response.status();
+    let body_text = response
+        .text()
+        .await
+        .map_err(|_| "读取写文件响应失败".to_string())?;
+    if !status.is_success() {
+        return Err(format!(
+            "写入文件 {path} 失败（HTTP {status}）: {}",
+            truncate_for_log(&body_text)
+        ));
+    }
+    Ok(())
+}
+
+/// 构造 contents API 完整 URL，path 各段做 URL 编码（防空格/中文等破坏 URL）。
+fn contents_url(owner: &str, repo: &str, path: &str) -> Result<String, String> {
+    let mut url = reqwest::Url::parse(&format!("{API_BASE}/api/v5/repos/{owner}/{repo}/contents"))
+        .map_err(|_| "构造 contents URL 失败".to_string())?;
+    {
+        let mut segs = url
+            .path_segments_mut()
+            .map_err(|_| "无法修改 URL 路径".to_string())?;
+        for seg in path.split('/') {
+            segs.push(seg);
+        }
+    }
+    Ok(url.to_string())
+}
+
+/// 创建 Pull Request：head 为源（fork 的 `owner:branch`），base 为目标分支。
+pub async fn create_pr(
+    access_token: &str,
+    owner: &str,
+    repo: &str,
+    title: &str,
+    body: &str,
+    head: &str,
+    base: &str,
+) -> Result<PrResult, String> {
+    let response = reqwest::Client::new()
+        .post(format!("{API_BASE}/api/v5/repos/{owner}/{repo}/pulls"))
+        .bearer_auth(access_token)
+        .json(&serde_json::json!({"title": title, "body": body, "head": head, "base": base}))
+        .send()
+        .await
+        .map_err(|_| "请求创建 PR 失败".to_string())?;
+    let status = response.status();
+    let body_text = response
+        .text()
+        .await
+        .map_err(|_| "读取 PR 响应失败".to_string())?;
+    if !status.is_success() {
+        return Err(format!(
+            "创建 PR 失败（HTTP {status}）: {}",
+            truncate_for_log(&body_text)
+        ));
+    }
+    let resp: serde_json::Value =
+        serde_json::from_str(&body_text).map_err(|_| "解析 PR 响应失败".to_string())?;
+    // number 提取逻辑与 issue 通用（兼容数字/字符串），复用同一函数。
+    let pr_number = extract_issue_number(&resp);
+    let pr_url = resp
+        .get("html_url")
+        .and_then(|v| v.as_str())
+        .or_else(|| resp.get("url").and_then(|v| v.as_str()))
+        .map(String::from)
+        .unwrap_or_else(|| format!("https://gitcode.com/{owner}/{repo}/pulls/{pr_number}"));
+    let title = resp
+        .get("title")
+        .and_then(|v| v.as_str())
+        .unwrap_or(title)
+        .to_string();
+    Ok(PrResult {
+        pr_number,
+        pr_url,
+        title,
+    })
+}
+
 /// 截断日志/错误信息里的响应体，避免超长 body 刷屏。
 fn truncate_for_log(s: &str) -> String {
     const MAX: usize = 200;
@@ -311,7 +506,8 @@ mod tests {
         assert!(url.starts_with("https://gitcode.com/oauth/authorize?"));
         assert!(url.contains("client_id=cid"));
         assert!(url.contains("response_type=code"));
-        assert!(url.contains("scope=all_issue"));
+        // scope 已改为 PR 所需权限组合，值经 URL 编码（空格变 +），只断言前缀。
+        assert!(url.contains("scope=all_user"));
         assert!(url.contains("state=s123"));
     }
 
@@ -370,5 +566,12 @@ mod tests {
         let out = truncate_for_log(&long);
         assert!(out.contains("已截断"));
         assert!(out.chars().count() < 300);
+    }
+
+    #[test]
+    fn contents_url_encodes_path_segments() {
+        let url = contents_url("o", "r", "a b/c.md").unwrap();
+        // 空格被编码为 %20，`/` 作为路径分隔保留。
+        assert!(url.ends_with("/contents/a%20b/c.md"));
     }
 }

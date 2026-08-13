@@ -49,3 +49,58 @@ pub(crate) fn now_unix() -> i64 {
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
 }
+
+/// 编排 PR 提交流程：fork → 建分支 → 写文件 → 建 PR。
+///
+/// 返回创建好的 PR 结果；任一步失败则上抛错误（此时 fork/分支可能已创建，
+/// 属无害残留，用户下次重试会复用 fork、以新时间戳分支重新提交）。
+pub async fn submit_pr(
+    token: &GitCodeToken,
+    owner: &str,
+    repo: &str,
+    expert: &crate::expert::ExpertMetadata,
+    title: &str,
+    body: &str,
+) -> Result<gitcode::PrResult, String> {
+    let access_token = &token.access_token;
+
+    // 1. 取当前用户 username，作为 fork 后的 owner。
+    let username = gitcode::get_current_username(access_token).await?;
+    // 2. fork 官方仓库到用户账号（幂等：已 fork 则复用）。
+    gitcode::ensure_fork(access_token, owner, repo).await?;
+    // 3. 收集专家目录全部文件（含二进制头像）。
+    let files = issue::collect_expert_files(expert)?;
+
+    // 4. 用时间戳保证分支名唯一，避免与历史贡献分支冲突。
+    let branch = format!("contrib/{}-{}", expert.name, now_unix());
+    gitcode::create_branch(access_token, &username, repo, &branch, "main").await?;
+
+    // 5. 逐个把文件写入 fork 分支。
+    let message = format!("贡献专家 {} v{}", expert.name, expert.version);
+    for f in &files {
+        let content_b64 = encode_base64(&f.content);
+        gitcode::create_file(access_token, &username, repo, &branch, &f.path, &content_b64, &message)
+            .await?;
+    }
+
+    // 6. 创建 PR：head = "{username}:{branch}"，base 固定 main。
+    let head = format!("{username}:{branch}");
+    gitcode::create_pr(access_token, owner, repo, title, body, &head, "main").await
+}
+
+/// base64 编码字节内容（GitCode contents API 要求 content 为 base64）。
+fn encode_base64(bytes: &[u8]) -> String {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn encode_base64_encodes_standard() {
+        // "abc" 的标准 base64 为 "YWJj"。
+        assert_eq!(encode_base64(b"abc"), "YWJj");
+    }
+}

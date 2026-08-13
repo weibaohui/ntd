@@ -21,13 +21,13 @@ export interface ContributionIssueDraft {
   files: string[];
 }
 
-/** 提交 Issue 结果 */
-export interface ContributionIssueResult {
-  /** Issue 编号（GitCode 编号为字符串，如 "I5YJX2"） */
-  issue_number: string;
-  /** Issue 网页链接 */
-  issue_url: string;
-  /** Issue 标题 */
+/** 提交 PR 结果 */
+export interface ContributionPrResult {
+  /** PR 编号 */
+  pr_number: string;
+  /** PR 网页链接 */
+  pr_url: string;
+  /** PR 标题 */
   title: string;
 }
 
@@ -46,19 +46,19 @@ export async function getContributionOAuthUrl(): Promise<{ url: string }> {
 }
 
 /**
- * 组装某专家的贡献 Issue 草稿（不提交），供预览框展示。
+ * 组装某专家的贡献 PR 草稿（不提交），供预览框展示。
  */
 export async function previewExpertIssue(name: string): Promise<ContributionIssueDraft> {
   return unwrap(await api.post(`/api/v1/contribution/experts/${encodeURIComponent(name)}/preview`));
 }
 
 /**
- * 提交某专家的贡献 Issue。
+ * 提交某专家的贡献 PR。
  */
-export async function submitExpertIssue(
+export async function submitExpertPr(
   name: string,
   data: { title: string; body: string },
-): Promise<ContributionIssueResult> {
+): Promise<ContributionPrResult> {
   return unwrap(await api.post(`/api/v1/contribution/experts/${encodeURIComponent(name)}/submit`, data));
 }
 

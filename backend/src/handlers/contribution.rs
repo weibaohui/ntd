@@ -110,12 +110,12 @@ pub async fn preview(
     Ok(ApiResponse::ok(draft))
 }
 
-/// `POST /api/v1/contribution/experts/{name}/submit`：提交 Issue。
+/// `POST /api/v1/contribution/experts/{name}/submit`：提交 PR。
 pub async fn submit(
     State(state): State<AppState>,
     Path(name): Path<String>,
     Json(req): Json<SubmitRequest>,
-) -> Result<ApiResponse<gitcode::IssueResult>, AppError> {
+) -> Result<ApiResponse<gitcode::PrResult>, AppError> {
     // 1. 组装默认草稿；用户预览时可能覆盖标题/正文。
     let expert = state
         .expert_manager
@@ -133,8 +133,8 @@ pub async fn submit(
     // 3. 取有效 token（过期自动刷新）。
     let token = get_valid_token().await?;
 
-    // 4. 调用 GitCode 创建 Issue。
-    let result = gitcode::create_issue(&owner, &repo, &token.access_token, &title, &body)
+    // 4. 走 PR 链路：fork → 建分支 → 写文件 → 建 PR。
+    let result = crate::contribution::submit_pr(&token, &owner, &repo, &expert, &title, &body)
         .await
         .map_err(AppError::Internal)?;
 

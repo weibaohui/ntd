@@ -1,4 +1,4 @@
-// 专家「分享到官方仓库」按钮：OAuth 登录引导 + 预览确认 + 提交 Issue。
+// 专家「分享到官方仓库」按钮：OAuth 登录引导 + 预览确认 + 提交 PR。
 // 独立「专家」页与「专家模板」Tab 复用，保证两条入口交互一致。
 
 import { useState } from 'react';
@@ -9,7 +9,7 @@ import {
   getContributionAuthStatus,
   getContributionOAuthUrl,
   previewExpertIssue,
-  submitExpertIssue,
+  submitExpertPr,
   type ContributionIssueDraft,
 } from '@/utils/database/contribution';
 
@@ -18,7 +18,7 @@ import {
  *
  * 交互流程：
  * 1. 点击后查询登录态：未配置凭据 → 提示；未登录 → 跳 GitCode 授权页；已登录 → 拉预览草稿。
- * 2. 弹出预览 Modal：标题/正文可编辑，文件清单只读；确认后提交并展示 Issue 链接。
+ * 2. 弹出预览 Modal：标题/描述可编辑，文件清单只读；确认后提交并展示 PR 链接。
  */
 export function ContributeButton({
   expert,
@@ -60,17 +60,17 @@ export function ContributeButton({
     }
   };
 
-  // 确认提交 Issue。
+  // 确认提交 PR。
   const handleSubmit = async () => {
     setSubmitting(true);
     try {
-      const result = await submitExpertIssue(expert.name, { title, body });
+      const result = await submitExpertPr(expert.name, { title, body });
       setDraft(null);
       message.success({
         content: (
           <span>
-            已提交为 Issue #{result.issue_number}，{' '}
-            <a href={result.issue_url} target="_blank" rel="noreferrer">点击查看</a>
+            已提交 PR #{result.pr_number}，{' '}
+            <a href={result.pr_url} target="_blank" rel="noreferrer">点击查看</a>
           </span>
         ),
         duration: 10,
@@ -104,7 +104,7 @@ export function ContributeButton({
         okText="提交"
         cancelText="取消"
         confirmLoading={submitting}
-        title="提交到官方仓库"
+        title="提交 PR"
         width={680}
         centered
       >
@@ -112,7 +112,7 @@ export function ContributeButton({
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <div>
               <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginBottom: 4 }}>
-                Issue 标题
+                PR 标题
               </div>
               <Input value={title} onChange={(e) => setTitle(e.target.value)} />
             </div>
@@ -128,7 +128,7 @@ export function ContributeButton({
             </div>
             <div>
               <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginBottom: 4 }}>
-                Issue 正文（可编辑）
+                PR 描述（可编辑）
               </div>
               <Input.TextArea
                 value={body}
