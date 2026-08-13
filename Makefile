@@ -7,9 +7,10 @@ CARGO_ENV := . $(HOME)/.cargo/env &&
 # 编译期 GitCode OAuth 凭据：从用户 shell rc 文件提取 export 行并加载。
 # make 的 recipe 用 /bin/sh 执行，不会自动加载 zshrc/bashrc；而 zshrc 含 zsh 专有
 # 语法无法直接 source，故用 grep 只提取需要的两行，避免引入 .env 文件。
-# 提取结果是 `export NTD_GITCODE_CLIENT_ID="..." export NTD_GITCODE_CLIENT_SECRET="..."`
-# 形式的 shell 语句，插到 cargo 命令前即可让 option_env! 读到凭据。
-GITCODE_OAUTH_ENV := $(shell grep -h '^export NTD_GITCODE_CLIENT' $(HOME)/.zshrc $(HOME)/.bashrc 2>/dev/null)
+# 提取结果去掉 `export` 关键字，得到 `NAME=value NAME=value` 列表，作为 cargo 命令前
+# 的环境变量前缀（不能用 `export` 语句，否则 shell 会把后面的 NTD_MODE/RUST_* 等参数
+# 也当变量名，报 `export: --: not a valid identifier`）。
+GITCODE_OAUTH_ENV := $(shell grep -h '^export NTD_GITCODE_CLIENT' $(HOME)/.zshrc $(HOME)/.bashrc 2>/dev/null | sed 's/^export //')
 
 # Setup: install all dependencies for frontend and backend
 setup:
