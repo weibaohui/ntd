@@ -45,8 +45,8 @@ export function useSkillInstall(): SkillInstallState {
       try {
         await bundledApi.installSkill(selectedSkill.name, executor);
         results.push(`${executor}: 成功`);
-      } catch (e: any) {
-        results.push(`${executor}: 失败 (${e?.message || e})`);
+      } catch (e: unknown) {
+        results.push(`${executor}: 失败 (${e instanceof Error ? e.message : String(e)})`);
       }
     }
     setInstalling(false);

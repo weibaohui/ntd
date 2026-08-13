@@ -141,10 +141,10 @@ export function useSkillCatalog(): SkillCatalogState {
       setSkills(res.skills);
       setSources(res.sources);
       setTotal(res.total);
-    } catch (e: any) {
+    } catch (e: unknown) {
       // 过期请求的错误信息也不展示：用户看到的是「上一次」的错误，已经不准确
       if (myGen !== reqGenRef.current) return;
-      message.error('加载技能列表失败: ' + (e?.message || e));
+      message.error('加载技能列表失败: ' + (e instanceof Error ? e.message : String(e)));
     } finally {
       // 仅最新请求负责关 loading，否则中途失败的过期请求会把 loading 提前关掉
       if (myGen === reqGenRef.current) setLoading(false);
@@ -179,9 +179,9 @@ export function useSkillCatalog(): SkillCatalogState {
       // 避免「来源网格数据」误覆盖「技能列表」数据
       setSourcesList(res.sources);
       setSourcesTotal(res.total);
-    } catch (e: any) {
+    } catch (e: unknown) {
       if (myGen !== reqGenRef.current) return;
-      message.error('加载来源列表失败: ' + (e?.message || e));
+      message.error('加载来源列表失败: ' + (e instanceof Error ? e.message : String(e)));
     } finally {
       if (myGen === reqGenRef.current) setLoading(false);
     }

@@ -95,4 +95,25 @@ describe('useSkillCatalog 视图切换联动重置', () => {
     expect(result.current.browseSkillsPage).toBe(1);
     expect(result.current.searchText).toBe('');
   });
+
+  it('backToSourceGrid：清空 activeSource 并重置两个浏览页码回 1（保留搜索词）', async () => {
+    const { result } = renderHook(() => useSkillCatalog());
+    // 先进入某来源，把页码推到非默认、写入搜索词，制造需要被重置的状态
+    act(() => {
+      result.current.enterSource('openclaw');
+      result.current.setBrowseSkillsPage(5);
+      result.current.setBrowseSourcesPage(3);
+      result.current.setSearchText('keep');
+    });
+    act(() => {
+      result.current.backToSourceGrid();
+    });
+    // 回到来源网格：activeSource 清空、两个浏览页码复位（与 switchToSourceBrowse 同族的重置契约）
+    expect(result.current.activeSource).toBeNull();
+    expect(result.current.browseSkillsPage).toBe(1);
+    expect(result.current.browseSourcesPage).toBe(1);
+    // backToSourceGrid 故意不重置搜索词——来源网格视图下搜索词仍用于过滤来源列表，
+    // 与 switchToSourceBrowse（切视图才清搜索词）区分，锁定该差异防回归
+    expect(result.current.searchText).toBe('keep');
+  });
 });

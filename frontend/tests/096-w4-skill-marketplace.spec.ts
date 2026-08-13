@@ -48,8 +48,11 @@ test.describe('SkillMarketplace 拆分冒烟', () => {
         // 详情 Drawer 打开（drawerOpen 状态）——内容区或加载态出现
         const drawer = page.locator('.ant-drawer-content, .ant-drawer-body');
         const opened = await drawer.first().isVisible().catch(() => false);
-        // 若该卡片非技能卡（是来源卡）则不强制 Drawer；此处只要求页面无崩溃
-        expect(typeof opened).toBe('boolean');
+        // 若点中的是技能卡：Drawer 应打开且 body 渲染，佐证 useSkillDetail 详情请求已驱动渲染；
+        // 若是来源卡则进入来源列表、不开 Drawer——两种都是合法 UI 变化，不强制 Drawer。
+        if (opened) {
+          await expect(page.locator('.ant-drawer-body')).toBeVisible({ timeout: 5000 });
+        }
       }
     }
   });
