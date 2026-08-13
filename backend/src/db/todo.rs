@@ -227,6 +227,33 @@ impl Database {
         }
     }
 
+    /// todos::Model → TodoBackup 的字段映射单点（096-W4-1：原 get_todo_backups /
+    /// get_todo_backups_by_ids 两处逐字复制收敛）。
+    /// 加备份字段时只需改此一处 + TodoBackup struct + 导入侧映射。
+    fn todo_backup_from_model(m: &todos::Model, tag_names: Vec<String>) -> TodoBackup {
+        TodoBackup {
+            title: m.title.clone(),
+            prompt: m.prompt.clone().unwrap_or_default(),
+            status: m
+                .status
+                .as_deref()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(TodoStatus::Pending),
+            executor: m.executor.clone(),
+            scheduler_enabled: m.scheduler_enabled.unwrap_or(false),
+            scheduler_config: m.scheduler_config.clone(),
+            tag_names,
+            workspace_path: m.workspace_path.clone(),
+            worktree: None,
+            action_type: m.action_type.clone(),
+            action_key: m.action_key.clone(),
+            // 备份时保留任务级模型，导入时恢复。
+            model: m.model.clone(),
+            // 备份时保留工作空间 ID，导入时用于关联到正确的工作空间
+            workspace_id: m.workspace_id,
+        }
+    }
+
     pub(crate) async fn fetch_tag_ids_for_many(
         &self,
         todo_ids: &[i64],
@@ -1578,27 +1605,7 @@ impl Database {
                     .iter()
                     .filter_map(|tid| all_tags.get(tid).cloned())
                     .collect();
-                TodoBackup {
-                    title: m.title,
-                    prompt: m.prompt.unwrap_or_default(),
-                    status: m
-                        .status
-                        .as_deref()
-                        .and_then(|s| s.parse().ok())
-                        .unwrap_or(TodoStatus::Pending),
-                    executor: m.executor,
-                    scheduler_enabled: m.scheduler_enabled.unwrap_or(false),
-                    scheduler_config: m.scheduler_config,
-                    tag_names,
-                    workspace_path: m.workspace_path.clone(),
-                    worktree: None,
-                    action_type: m.action_type,
-                    action_key: m.action_key,
-                    // 备份时保留任务级模型，导入时恢复。
-                    model: m.model.clone(),
-                    // 备份时保留工作空间 ID，导入时用于关联到正确的工作空间
-                    workspace_id: m.workspace_id,
-                }
+Self::todo_backup_from_model(&m, tag_names)
             })
             .collect::<Vec<_>>())
     }
@@ -1635,26 +1642,7 @@ impl Database {
                     .iter()
                     .filter_map(|tid| all_tags.get(tid).cloned())
                     .collect();
-                TodoBackup {
-                    title: m.title,
-                    prompt: m.prompt.unwrap_or_default(),
-                    status: m
-                        .status
-                        .as_deref()
-                        .and_then(|s| s.parse().ok())
-                        .unwrap_or(TodoStatus::Pending),
-                    executor: m.executor,
-                    scheduler_enabled: m.scheduler_enabled.unwrap_or(false),
-                    scheduler_config: m.scheduler_config,
-                    tag_names,
-                    workspace_path: m.workspace_path.clone(),
-                    worktree: None,
-                    action_type: m.action_type,
-                    action_key: m.action_key,
-                    model: m.model.clone(),
-                    // 备份时保留工作空间 ID，导入时用于关联到正确的工作空间
-                    workspace_id: m.workspace_id,
-                }
+Self::todo_backup_from_model(&m, tag_names)
             })
             .collect())
     }
@@ -1877,22 +1865,8 @@ impl Database {
                 // 新建
                 let now = crate::models::utc_timestamp();
                 // workspace_id / workspace_path 用上面解析出的成对值（目标 > 当前库校验过的备份值 > 未分配 0）
-                let am = todos::ActiveModel {
-                    title: ActiveValue::Set(todo.title.clone()),
-                    prompt: ActiveValue::Set(Some(todo.prompt.clone())),
-                    status: ActiveValue::Set(Some(todo.status.to_string())),
-                    executor: ActiveValue::Set(todo.executor.clone()),
-                    scheduler_enabled: ActiveValue::Set(Some(todo.scheduler_enabled)),
-                    scheduler_config: ActiveValue::Set(todo.scheduler_config.clone()),
-                    workspace_path: ActiveValue::Set(resolved_path),
-                    workspace_id: ActiveValue::Set(Some(resolved_id)),
-                    created_at: ActiveValue::Set(Some(now.clone())),
-                    updated_at: ActiveValue::Set(Some(now)),
-                    action_type: ActiveValue::Set(todo.action_type.clone()),
-                    action_key: ActiveValue::Set(todo.action_key.clone()),
-                    model: ActiveValue::Set(todo.model.clone()),
-                    ..Default::default()
-                };
+                // 096-W4-1：字段映射收敛为 TodoBackup::into_active_model 单点（与导出侧映射同族）
+                let am = todo.into_active_model((resolved_id, resolved_path), now);
                 let inserted = am.insert(&txn).await?;
 
                 for tag_name in &todo.tag_names {
@@ -2186,6 +2160,105 @@ mod todo_center_tests {
 
     async fn fresh_db() -> Database {
         Database::new(":memory:").await.expect("memory db must open")
+    }
+
+    /// todos::Model 全字段测试夹具（entity 未 derive Default，27 字段显式构造）。
+    /// 加字段时本函数编译失败——这正是 096-W4-1 的防线：字段变更触点之一被显式登记。
+    fn full_todos_model() -> todos::Model {
+        todos::Model {
+            id: 1,
+            title: "完整标题".into(),
+            prompt: Some("完整提示".into()),
+            status: Some("completed".into()),
+            created_at: Some("2026-08-01T00:00:00.000Z".into()),
+            updated_at: Some("2026-08-02T00:00:00.000Z".into()),
+            deleted_at: None,
+            archived_at: None,
+            executor: Some("kimi".into()),
+            scheduler_enabled: Some(true),
+            scheduler_config: Some("0 0 9 * * *".into()),
+            scheduler_timezone: Some("Asia/Shanghai".into()),
+            task_id: None,
+            workspace_path: Some("/ws".into()),
+            workspace_id: Some(7),
+            webhook_enabled: Some(false),
+            acceptance_criteria: None,
+            todo_type: Some(0),
+            parent_todo_id: None,
+            review_template_id: None,
+            auto_review_enabled: Some(false),
+            kind: None,
+            action_type: Some("at".into()),
+            action_key: Some("ak".into()),
+            expert_name: None,
+            model: Some("k3".into()),
+            skills: "[]".into(),
+        }
+    }
+
+    /// 096-W4-1：todo_backup_from_model 的映射契约——全字段覆盖 + 回退逻辑锁定。
+    /// TodoBackup 加字段时本测试编译失败/断言失败即提醒同步映射。
+    #[test]
+    fn test_todo_backup_from_model_maps_all_fields() {
+        let m = full_todos_model();
+        let b = Database::todo_backup_from_model(&m, vec!["tag1".into()]);
+        assert_eq!(b.title, "完整标题");
+        assert_eq!(b.prompt, "完整提示");
+        assert_eq!(b.status, TodoStatus::Completed);
+        assert_eq!(b.executor.as_deref(), Some("kimi"));
+        assert!(b.scheduler_enabled);
+        assert_eq!(b.scheduler_config.as_deref(), Some("0 0 9 * * *"));
+        assert_eq!(b.tag_names, vec!["tag1".to_string()]);
+        assert_eq!(b.workspace_path.as_deref(), Some("/ws"));
+        assert_eq!(b.workspace_id, Some(7));
+        assert_eq!(b.action_type.as_deref(), Some("at"));
+        assert_eq!(b.action_key.as_deref(), Some("ak"));
+        assert_eq!(b.model.as_deref(), Some("k3"));
+        // worktree 恒为 None（导出侧不含 worktree 信息）
+        assert!(b.worktree.is_none());
+    }
+
+    /// 回退逻辑锁定：status 脏数据回退 Pending、prompt None 回退空串、scheduler_enabled None 回退 false。
+    #[test]
+    fn test_todo_backup_from_model_fallbacks() {
+        let m = todos::Model {
+            prompt: None,
+            status: Some("garbage".into()),
+            // 显式覆盖 None——夹具默认 Some(true)，不覆盖则测不到回退路径
+            scheduler_enabled: None,
+            ..full_todos_model()
+        };
+        let b = Database::todo_backup_from_model(&m, vec![]);
+        assert_eq!(b.prompt, "", "prompt None 应回退空串");
+        assert_eq!(b.status, TodoStatus::Pending, "status 脏数据应回退 Pending");
+        assert!(!b.scheduler_enabled, "scheduler_enabled None 应回退 false");
+    }
+
+    /// TodoBackup::into_active_model（导入侧映射）：字段覆盖 + resolved 成对写入。
+    #[test]
+    fn test_todo_backup_into_active_model_covers_fields() {
+        let b = crate::models::TodoBackup {
+            title: "T".into(),
+            prompt: "P".into(),
+            status: TodoStatus::Completed,
+            executor: Some("kilo".into()),
+            scheduler_enabled: true,
+            scheduler_config: Some("cron".into()),
+            tag_names: vec!["x".into()],
+            workspace_path: Some("/old".into()),
+            worktree: None,
+            action_type: Some("at".into()),
+            action_key: Some("ak".into()),
+            workspace_id: Some(3),
+            model: Some("m1".into()),
+        };
+        let am = b.into_active_model((9, Some("/new".to_string())), "now-ts".to_string());
+        use sea_orm::ActiveValue::*;
+        assert!(matches!(am.title, Set(ref v) if v == "T"));
+        assert!(matches!(am.workspace_id, Set(Some(9))));
+        assert!(matches!(am.workspace_path, Set(Some(ref p)) if p == "/new"), "workspace_path 应用 resolved 值覆盖备份源路径");
+        assert!(matches!(am.created_at, Set(Some(ref t)) if t == "now-ts"));
+        assert!(matches!(am.model, Set(Some(ref m)) if m == "m1"));
     }
 
     /// 用最小列集插一条 todo，返回其 id。
