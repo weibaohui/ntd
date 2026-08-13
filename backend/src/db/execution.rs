@@ -1669,15 +1669,17 @@ impl Database {
 
     // ===== 自动评审辅助方法 =====
 
-    /// 写入/更新原执行记录的 last_review_status 字段（pending/success/failed/interrupted/skipped）.
+    /// 写入/更新原执行记录的 last_review_status 字段。
+    /// 形参收 ReviewStatus 枚举（D7 收口）——杜绝调用方传裸串拼写错误导致的 silent drift；
+    /// DB 仍存 String（as_str 锁原字面量），行为逐字节不变。
     pub async fn set_record_last_review_status(
         &self,
         record_id: i64,
-        status: &str,
+        status: crate::models::ReviewStatus,
     ) -> Result<(), sea_orm::DbErr> {
         let am = execution_records::ActiveModel {
             id: ActiveValue::Unchanged(record_id),
-            last_review_status: ActiveValue::Set(Some(status.to_string())),
+            last_review_status: ActiveValue::Set(Some(status.as_str().to_string())),
             ..Default::default()
         };
         self.exec_update(am).await
@@ -1698,17 +1700,17 @@ impl Database {
 
     /// 评审实例完成时调用: 把评审实例的 source_execution_record_id 指向"原那条",
     /// 并把 last_review_status 设为终态 (success/failed/interrupted).
-    /// 同步更新原记录的 last_review_status.
+    /// 同步更新原记录的 last_review_status. final_status 收 ReviewStatus 枚举（D7 收口）。
     pub async fn link_review_to_source(
         &self,
         review_record_id: i64,
         source_record_id: i64,
-        final_status: &str,
+        final_status: crate::models::ReviewStatus,
     ) -> Result<(), sea_orm::DbErr> {
         let am = execution_records::ActiveModel {
             id: ActiveValue::Unchanged(review_record_id),
             source_execution_record_id: ActiveValue::Set(Some(source_record_id)),
-            last_review_status: ActiveValue::Set(Some(final_status.to_string())),
+            last_review_status: ActiveValue::Set(Some(final_status.as_str().to_string())),
             ..Default::default()
         };
         self.exec_update(am).await
