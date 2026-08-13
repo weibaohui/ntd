@@ -1,7 +1,7 @@
 // ─── 专家系统类型定义 ────────────────────────────────────────
 //
 // 兼容 WorkBuddy 的 plugin.json 格式，支持单个专家和专家团队两种类型。
-// 数据来源：后端 /api/experts 接口，从 ~/.ntd/experts/ 目录加载。
+// 数据来源：后端 /api/v1/experts 接口，从 ~/.ntd/experts/ 目录加载。
 
 /** 专家类型：单个专家 或 专家团队 */
 export type ExpertType = 'agent' | 'team';

@@ -7,10 +7,10 @@
 
 ```mermaid
 flowchart LR
-  SkillMarketplace["SkillMarketplace.tsx"] -->|"loadSkills<br>bundledApi.getSkills"| API1["GET /api/bundled/skills?page&page_size&source&keyword"]
-  SkillMarketplace -->|"loadSources<br>bundledApi.getSkillSources"| API2["GET /api/bundled/skill-sources?page&page_size&keyword"]
-  SkillMarketplace -->|"handleCardClick<br>bundledApi.getSkillContent"| API3["GET /api/bundled/skills/{name}/content"]
-  SkillMarketplace -->|"handleInstall<br>bundledApi.installSkill"| API4["POST /api/bundled/skills/install"]
+  SkillMarketplace["SkillMarketplace.tsx"] -->|"loadSkills<br>bundledApi.getSkills"| API1["GET /api/v1/bundled/skills?page&page_size&source&keyword"]
+  SkillMarketplace -->|"loadSources<br>bundledApi.getSkillSources"| API2["GET /api/v1/bundled/skill-sources?page&page_size&keyword"]
+  SkillMarketplace -->|"handleCardClick<br>bundledApi.getSkillContent"| API3["GET /api/v1/bundled/skills/{name}/content"]
+  SkillMarketplace -->|"handleInstall<br>bundledApi.installSkill"| API4["POST /api/v1/bundled/skills/install"]
   SkillMarketplace -->|"loadInstalled<br>db.getSkillsList"| API5["GET /api/v1/skills"]
 ```
 
@@ -81,6 +81,6 @@ stateDiagram-v2
 
 ## 开发指导
 - **前端入口**：`frontend/src/components/skills/SkillMarketplace.tsx` 的 `SkillMarketplace` 组件
-- **后端入口**：`backend/src/handlers/bundled.rs` 处理 `/api/bundled/skills` 系列接口
+- **后端入口**：`backend/src/handlers/bundled.rs` 处理 `/api/v1/bundled/skills` 系列接口
 - **注意**：`loadSkills` 与 `loadSources` 共用 `reqGenRef` 做竞态守卫，快速翻页/切换视图时过期请求静默丢弃；`handleCardClick` 用独立的 `detailReqIdRef` 防止详情内容覆盖
 - **扩展**：新增来源只需在 `~/.ntd/bundled/skills/` 下放置来源目录及 `metadata.json`，后端扫描即自动识别；前端 `ALL_SKILLS_PAGE_SIZE` 控制每页条数（默认 30）

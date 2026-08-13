@@ -117,7 +117,9 @@ export async function deleteExpert(name: string): Promise<void> {
  * 后端会自动创建目录结构并加载到索引中。
  */
 export async function createExpertFromAi(pluginJson: string, agentMd: string): Promise<void> {
-  await api.post('/api/v1/experts/create', {
+  // 创建走 POST 集合路径 /api/v1/experts（REST 语义，见 docs/design/api-routing-redesign.md）；
+  // /api/v1/experts/create 已随路由重构移除，POST 会命中 {name} 路由（name="create"）导致 405。
+  await api.post('/api/v1/experts', {
     plugin_json: pluginJson,
     agent_md: agentMd,
   });

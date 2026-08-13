@@ -10,7 +10,7 @@ flowchart LR
   User["点击 AI 创建专家"] --> ActionButton["ActionButton Drawer"]
   ActionButton -->|"填写 description 模板"| Execute["执行 AI 生成"]
   Execute -->|"completedView"| ExpertCreateCompleted["ExpertCreateCompleted"]
-  ExpertCreateCompleted -->|"handleCreate<br>db.createExpert"| API["POST /api/v1/experts/create"]
+  ExpertCreateCompleted -->|"handleCreate<br>db.createExpert"| API["POST /api/v1/experts"]
   API --> onCreated["onCreated → loadExperts"]
 ```
 
@@ -63,6 +63,6 @@ stateDiagram-v2
 
 ## 开发指导
 - **前端入口**：`frontend/src/components/settings/ExpertCreateModal.tsx` 的 `ExpertCreateModal` 组件，复用 `ActionButton` 交互流程；完成态由 `ExpertCreateCompleted.tsx` 渲染
-- **后端入口**：`backend/src/handlers/experts.rs` 处理 `POST /api/v1/experts/create`，写入 `plugin.json` 和 `agent.md`
+- **后端入口**：`backend/src/handlers/experts.rs` 处理 `POST /api/v1/experts`，写入 `plugin.json` 和 `agent.md`
 - **注意**：`parseResult` 用正则 `` ```json `` 和 `` ```markdown `` 提取 AI 输出块，若任一缺失则 `raw=true` 展示原始文本供用户手动修正
 - **扩展**：新增 AI 模板字段时改 `EXPERT_CREATE_PROMPT` 和 `ExpertCreateCompleted` 的解析逻辑

@@ -394,8 +394,7 @@ pub async fn create_app(
     Router::new()
         .merge(mount_v1_domain_routes())
         // project_directory::v1_routes() 已包含在 action::v1_routes() 中，
-        // 不再单独 merge，避免路由重复注册。旧版本 project_directory::routes()
-        // 在 mount_domain_routes() 中保留供过渡期使用。
+        // 不再单独 merge，避免路由重复注册。
         .layer(DefaultBodyLimit::max(10 * 1024 * 1024))
         .layer(CompressionLayer::new())
         .layer(cors_layer())

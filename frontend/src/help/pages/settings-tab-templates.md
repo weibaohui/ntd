@@ -7,10 +7,10 @@
 
 ```mermaid
 flowchart LR
-  TemplatesPanel["TemplatesPanel.tsx"] -->|"bundledApi.getStatus"| API1["GET /api/bundled/status?subdir"]
-  TemplatesPanel -->|"bundledApi.sync"| API2["POST /api/bundled/sync"]
-  TemplatesPanel -->|"bundledApi.getConfig"| API3["GET /api/bundled/config"]
-  TemplatesPanel -->|"bundledApi.updateConfig"| API4["PUT /api/bundled/config"]
+  TemplatesPanel["TemplatesPanel.tsx"] -->|"bundledApi.getStatus"| API1["GET /api/v1/bundled/status?subdir"]
+  TemplatesPanel -->|"bundledApi.sync"| API2["POST /api/v1/bundled/sync"]
+  TemplatesPanel -->|"bundledApi.getConfig"| API3["GET /api/v1/bundled/config"]
+  TemplatesPanel -->|"bundledApi.updateConfig"| API4["PUT /api/v1/bundled/config"]
   TemplatesPanel --> ExpertsTemplatesTab["templates/ExpertsTemplatesTab"]
   TemplatesPanel --> TodoTemplatesTab["templates/TodoTemplatesTab"]
   TemplatesPanel --> SkillTemplatesTab["templates/SkillTemplatesTab"]
@@ -85,6 +85,6 @@ stateDiagram-v2
 
 ## 开发指导
 - **前端入口**：`frontend/src/components/settings/TemplatesPanel.tsx` 的 `TemplatesPanel` 组件；内部 Tabs 分专家/事项/技能/工艺模板，各子 Tab 由 `templates/` 下独立组件承载
-- **后端入口**：`backend/src/handlers/bundled.rs` 处理 `/api/bundled/*` 系列接口
+- **后端入口**：`backend/src/handlers/bundled.rs` 处理 `/api/v1/bundled/*` 系列接口
 - **注意**：同步前需检查 `git_available`，未安装 git 时展示 `InstallGitButton`；`handleSync` 的结果用 `SyncResult.is_first_clone` 区分首次克隆与后续 fetch
 - **扩展**：新增模板子目录类型时 `Subdir` union 追加值，`TemplatesPanel` 内部 Tabs 新增对应子 Tab 组件
