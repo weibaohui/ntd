@@ -13,6 +13,12 @@ fn main() {
     let out_dir = env::var("OUT_DIR").unwrap();
     let dist_path = PathBuf::from(&manifest_dir).join("../frontend/dist");
 
+    // 让 cargo 跟踪贡献 OAuth 凭据环境变量：值变化时触发重编。
+    // option_env! 在编译期读取，若不声明 rerun-if-env-changed，
+    // 改了 env 但源码未变时 cargo 不会重编，凭据注入会静默失效。
+    println!("cargo:rerun-if-env-changed=NTD_GITCODE_CLIENT_ID");
+    println!("cargo:rerun-if-env-changed=NTD_GITCODE_CLIENT_SECRET");
+
     if dist_path.exists() {
         println!("cargo:rerun-if-changed={}", dist_path.display());
     }
