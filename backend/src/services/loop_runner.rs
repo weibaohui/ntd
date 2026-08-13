@@ -526,11 +526,15 @@ impl LoopRunner {
                 let loop_status = le.ok().flatten().map(|l| l.status).unwrap_or_else(|| LoopExecutionStatus::Failed.to_string());
                 // loop 终态 → phase 终态（D5 收口）：loop success 才让 phase success，其余归 failed，
                 // 与 finalize_phase 内部二值归一语义一致；调用方负责 D3→D5 映射。
-                let phase_status = if loop_status == LoopExecutionStatus::Success.as_str() {
-                    LoopPhaseExecutionStatus::Success
-                } else {
-                    LoopPhaseExecutionStatus::Failed
-                };
+                // 读比较走 D3 枚举 from_db，与本 PR 其余读点（gate_evaluator/phase_driver）同口径，
+                // 避免裸串 "success" 与写入侧脱钩；未知值 → None → 归 Failed（与原 String 比较等价）。
+                let phase_status =
+                    if LoopExecutionStatus::from_db(&loop_status) == Some(LoopExecutionStatus::Success)
+                    {
+                        LoopPhaseExecutionStatus::Success
+                    } else {
+                        LoopPhaseExecutionStatus::Failed
+                    };
                 let _ = self.ctx.db.finalize_phase_executions(loop_execution_id, phase_status).await;
                 self.sync_task_status(loop_execution_id).await;
                 self.broadcast_loop_finished(loop_id, loop_execution_id).await;
@@ -680,13 +684,15 @@ impl LoopRunner {
                 loop_execution_id, final_status, completed, failed, None,
             ).await;
             // 终态化所有 running phase（BUG-004）：与 run_inner 路径一致。
-            // loop 终态 → phase 终态（D5 收口）：success→success，否则 failed。
-            // final_status 仍是 &str 喂 finish_loop_execution（D3 列），phase 单独按 D5 枚举传。
-            let phase_status = if completed > 0 {
-                LoopPhaseExecutionStatus::Success
-            } else {
-                LoopPhaseExecutionStatus::Failed
-            };
+            // loop 终态 → phase 终态（D5 收口）：直接从 final_status 派生（单一真相源），
+            // 不再重复 completed>0 判定——避免与上面 final_status 的派生逻辑隐式耦合。
+            // final_status 仍是 &str 喂 finish_loop_execution（D3 列），读比较走 from_db。
+            let phase_status =
+                if LoopExecutionStatus::from_db(final_status) == Some(LoopExecutionStatus::Success) {
+                    LoopPhaseExecutionStatus::Success
+                } else {
+                    LoopPhaseExecutionStatus::Failed
+                };
             let _ = self.ctx.db.finalize_phase_executions(loop_execution_id, phase_status).await;
             info!("resume: loop_execution #{} ended with status {}", loop_execution_id, final_status);
             // 就地终态化同样要完成收尾：同步任务状态 + 广播 LoopFinished（NTD-005）。
