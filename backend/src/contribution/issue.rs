@@ -40,6 +40,13 @@ fn walk_dir(base: &Path, dir: &Path, out: &mut Vec<ExpertFile>) -> Result<(), St
         .map_err(|e| format!("读取目录 {} 失败: {e}", dir.display()))?;
     for entry in entries.flatten() {
         let path = entry.path();
+        // 跳过同步/来源产生的元数据：时间戳文件、skill 来源目录、git 目录，
+        // 它们不是专家内容本身，不应随贡献提交到官方仓库。
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if matches!(name.as_ref(), ".downloaded_at" | ".clawhub" | ".git") {
+            continue;
+        }
         // file_type 不跟随符号链接：symlink 的 is_dir 为 false，不会递归进去。
         let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
         if is_dir {
@@ -186,5 +193,21 @@ mod tests {
         assert!(draft.files.iter().any(|f| f == ".codebuddy-plugin/plugin.json"));
         assert!(draft.files.iter().any(|f| f == "agents/demo.md"));
         assert!(draft.files.iter().any(|f| f == "skills/my-skill/SKILL.md"));
+    }
+
+    #[test]
+    fn collect_expert_files_skips_sync_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let expert = build_sample_expert(dir.path());
+        // 追加同步/来源元数据，应被过滤。
+        fs::write(dir.path().join(".downloaded_at"), "2026-01-01").unwrap();
+        let clawhub = dir.path().join(".clawhub");
+        fs::create_dir_all(&clawhub).unwrap();
+        fs::write(clawhub.join("origin.json"), "{}").unwrap();
+
+        let files = collect_expert_files(&expert).unwrap();
+        let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
+        assert!(!paths.contains(&".downloaded_at"));
+        assert!(!paths.iter().any(|p| p.contains(".clawhub")));
     }
 }
