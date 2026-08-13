@@ -114,13 +114,15 @@ async fn mark_review_failed(
     record_id: i64,
     todo_id: i64,
 ) {
+    use crate::models::ReviewStatus;
+    // review 状态走枚举，杜绝拼写 silent drift；事件字段仍 String（对外契约不变）。
     let _ = db
-        .set_record_last_review_status(record_id, "failed")
+        .set_record_last_review_status(record_id, ReviewStatus::Failed)
         .await;
     let _ = tx.send(ExecEvent::ReviewStatusChanged {
         record_id,
         todo_id,
-        review_status: "failed".to_string(),
+        review_status: ReviewStatus::Failed.as_str().to_string(),
     });
 }
 
@@ -131,13 +133,14 @@ async fn mark_review_skipped(
     record_id: i64,
     todo_id: i64,
 ) {
+    use crate::models::ReviewStatus;
     let _ = db
-        .set_record_last_review_status(record_id, "skipped")
+        .set_record_last_review_status(record_id, ReviewStatus::Skipped)
         .await;
     let _ = tx.send(ExecEvent::ReviewStatusChanged {
         record_id,
         todo_id,
-        review_status: "skipped".to_string(),
+        review_status: ReviewStatus::Skipped.as_str().to_string(),
     });
 }
 
@@ -231,7 +234,7 @@ async fn load_and_validate_record(
     todo_id: i64,
     record_id: i64,
 ) -> Result<crate::models::ExecutionRecord, String> {
-    use crate::models::ExecutionStatus;
+    use crate::models::{ExecutionStatus, ReviewStatus};
     let record = match db.get_execution_record(record_id).await {
         Ok(Some(r)) => r,
         Ok(None) => return Err(format!("record #{} not found", record_id)),
@@ -241,7 +244,11 @@ async fn load_and_validate_record(
         mark_review_skipped(db, tx, record_id, todo_id).await;
         return Err("skipped: record not in terminal state".to_string());
     }
-    if record.last_review_status.as_deref() == Some("success") {
+    // 已评审过的记录不重复评审——last_review_status 列经 from_db 解析回枚举再比较，
+    // 避免裸串 "success" 与写入侧枚举脱钩（典型 Primitive Obsession 修复）。
+    if record.last_review_status.as_deref().and_then(ReviewStatus::from_db)
+        == Some(ReviewStatus::Success)
+    {
         // 避免重复评审；不算错误，直接返回。
         return Err("skipped: already reviewed".to_string());
     }
@@ -341,12 +348,15 @@ async fn mark_review_pending(
     record_id: i64,
     todo_id: i64,
 ) {
-    let _ = db.set_record_last_review_status(record_id, "pending").await;
+    use crate::models::ReviewStatus;
+    let _ = db
+        .set_record_last_review_status(record_id, ReviewStatus::Pending)
+        .await;
     let _ = db.set_record_last_reviewed_at(record_id).await;
     let _ = tx.send(ExecEvent::ReviewStatusChanged {
         record_id,
         todo_id,
-        review_status: "pending".to_string(),
+        review_status: ReviewStatus::Pending.as_str().to_string(),
     });
 }
 
@@ -456,16 +466,18 @@ async fn poll_review_to_terminal(
     let max_wait = std::time::Duration::from_secs(300);
     let poll = std::time::Duration::from_millis(500);
     let start = std::time::Instant::now();
+    // review 终态走 ReviewStatus 枚举（D7）——超时分支与正常 break 后的映射统一收口。
+    use crate::models::ReviewStatus;
     let final_review = loop {
         if start.elapsed() > max_wait {
             tracing::warn!("auto-review record #{} timed out", review_record_id);
             let _ = db
-                .set_record_last_review_status(record_id, "failed")
+                .set_record_last_review_status(record_id, ReviewStatus::Failed)
                 .await;
             let _ = tx.send(ExecEvent::ReviewStatusChanged {
                 record_id,
                 todo_id,
-                review_status: "failed".to_string(),
+                review_status: ReviewStatus::Failed.as_str().to_string(),
             });
             return;
         }
@@ -477,29 +489,32 @@ async fn poll_review_to_terminal(
         tokio::time::sleep(poll).await;
     };
 
-    let review_status_str = match final_review.status {
-        ExecutionStatus::Success => "success",
-        ExecutionStatus::Failed => "failed",
-        _ => "interrupted",
+    // 执行终态 → review 终态：Success/Failed 直映，其余（Running 不会到这、超时已 return）
+    // 归 Interrupted——不能默认 Failed，否则把「未完成」误标成「评审不通过」。
+    let review_status = match final_review.status {
+        ExecutionStatus::Success => ReviewStatus::Success,
+        ExecutionStatus::Failed => ReviewStatus::Failed,
+        _ => ReviewStatus::Interrupted,
     };
     let rating = parse_rating_from_result(final_review.result.as_deref());
     if let Some(r) = rating {
         let _ = db.update_execution_record_rating(record_id, Some(r)).await;
     }
     let _ = db
-        .link_review_to_source(review_record_id, record_id, review_status_str)
+        .link_review_to_source(review_record_id, record_id, review_status)
         .await;
     let _ = db
-        .set_record_last_review_status(record_id, review_status_str)
+        .set_record_last_review_status(record_id, review_status)
         .await;
+    // 事件字段仍 String（对外契约不变），枚举经 as_str() 回到原字面量。
     let _ = tx.send(ExecEvent::ReviewStatusChanged {
         record_id,
         todo_id,
-        review_status: review_status_str.to_string(),
+        review_status: review_status.as_str().to_string(),
     });
     tracing::info!(
         "auto-review done: original_todo=#{} record=#{} review_record=#{} status={} rating={:?}",
-        todo_id, record_id, review_record_id, review_status_str, rating
+        todo_id, record_id, review_record_id, review_status, rating
     );
 }
 

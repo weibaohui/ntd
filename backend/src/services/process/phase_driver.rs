@@ -315,22 +315,32 @@ async fn update_phase_execution(
         return Ok(());
     };
 
+    use crate::models::LoopPhaseExecutionStatus;
     // 检查是否已有 phase execution 记录。
     let existing = loop_phase_executions_for_execution(db, loop_execution_id, phase_id).await?;
     if let Some(pex) = existing {
         // 已有记录：步骤完成且未挂起时，更新为 success（或 failed）。
         // 人工挂起时保持 running，不标失败（BUG-004：挂起不应让 phase 终态化）。
-        if pex.status == "running" && !human_pending {
-            let new_status = if gates_passed { "success" } else { "failed" };
+        // pex.status 经 from_db 解析回枚举再比较，避免裸串与写入侧脱钩。
+        if LoopPhaseExecutionStatus::from_db(&pex.status) == Some(LoopPhaseExecutionStatus::Running)
+            && !human_pending
+        {
+            // new_status 由枚举 as_str() 产出（D5 收口）；update_phase_status 形参仍是 &str，
+            // 故在此降回字面——DB 列协议不变，枚举只在判定/构造侧收口。
+            let new_status = if gates_passed {
+                LoopPhaseExecutionStatus::Success.as_str()
+            } else {
+                LoopPhaseExecutionStatus::Failed.as_str()
+            };
             update_phase_status(db, pex.id, new_status).await?;
         }
     } else {
-        // 新阶段：创建 running 记录。
+        // 新阶段：创建 running 记录（初始态走 D5 枚举，与终态判定共享词汇表）。
         let now = crate::models::utc_timestamp();
         let am = crate::db::entity::loop_phase_executions::ActiveModel {
             loop_execution_id: ActiveValue::Set(loop_execution_id),
             phase_id: ActiveValue::Set(phase_id),
-            status: ActiveValue::Set("running".to_string()),
+            status: ActiveValue::Set(LoopPhaseExecutionStatus::Running.as_str().to_string()),
             started_at: ActiveValue::Set(Some(now)),
             ..Default::default()
         };

@@ -45,6 +45,50 @@ impl std::str::FromStr for ExecutionStatus {
     }
 }
 
+/// `execution_records.last_review_status` 取值族（5 态）。
+/// 自动评审对原执行记录的复核结果；`Interrupted` 表示执行非成功非失败（如超时、取消），
+/// 不能默认归为 Failed——否则会把「未完成」误标成「评审不通过」。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewStatus {
+    Pending,
+    Success,
+    Failed,
+    Interrupted,
+    Skipped,
+}
+
+impl ReviewStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Success => "success",
+            Self::Failed => "failed",
+            Self::Interrupted => "interrupted",
+            Self::Skipped => "skipped",
+        }
+    }
+
+    /// DB 读取侧解析：未知值回退 None（调用方按场景兜底），不写死默认态。
+    /// 与 loop_ 域统一用 from_db（Option），不沿用本文件 D2 的 FromStr 历史范式。
+    pub fn from_db(s: &str) -> Option<Self> {
+        Some(match s {
+            "pending" => Self::Pending,
+            "success" => Self::Success,
+            "failed" => Self::Failed,
+            "interrupted" => Self::Interrupted,
+            "skipped" => Self::Skipped,
+            _ => return None,
+        })
+    }
+}
+
+impl std::fmt::Display for ReviewStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutionRecord {
     pub id: i64,
@@ -441,4 +485,52 @@ pub fn utc_timestamp_minus_hours(hours: u32) -> String {
     (chrono::Utc::now() - chrono::Duration::hours(i64::from(hours)))
         .format("%Y-%m-%dT%H:%M:%S%.3fZ")
         .to_string()
+}
+
+// 测试模块允许 unwrap/expect/panic：单测里 panic 即断言失败，语义正当；
+// clippy::unwrap_used 默认对 #[cfg(test)] 不豁免，故显式 allow（同 loop_.rs 范式）。
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::*;
+
+    /// ReviewStatus 枚举族契约（5 态）——as_str/from_db 往返恒等 + 全集锁定。
+    /// 新增状态须同步枚举；删除属破坏性变更需评审。
+    #[test]
+    fn test_review_status_roundtrip_and_full_set() {
+        let all = [
+            (ReviewStatus::Pending, "pending"),
+            (ReviewStatus::Success, "success"),
+            (ReviewStatus::Failed, "failed"),
+            (ReviewStatus::Interrupted, "interrupted"),
+            (ReviewStatus::Skipped, "skipped"),
+        ];
+        for (variant, db_str) in all {
+            assert_eq!(variant.as_str(), db_str, "as_str 与 DB 字面量必须一致");
+            assert_eq!(
+                ReviewStatus::from_db(db_str),
+                Some(variant),
+                "from_db 必须能解析全部枚举值"
+            );
+        }
+        // 未知值返回 None（调用方按场景兜底，不写死默认态）
+        assert_eq!(ReviewStatus::from_db("unknown_x"), None);
+        assert_eq!(ReviewStatus::from_db(""), None);
+    }
+
+    /// serde 形态与存量 DB/前端 JSON 的 snake_case 字面量一致；
+    /// interrupted/skipped 是本族独有值，须锁定字面。
+    #[test]
+    fn test_review_status_serde_snake_case_compatible() {
+        assert_eq!(
+            serde_json::to_string(&ReviewStatus::Interrupted).unwrap(),
+            r#""interrupted""#
+        );
+        assert_eq!(
+            serde_json::to_string(&ReviewStatus::Skipped).unwrap(),
+            r#""skipped""#
+        );
+        let back: ReviewStatus = serde_json::from_str(r#""interrupted""#).unwrap();
+        assert_eq!(back, ReviewStatus::Interrupted);
+    }
 }
