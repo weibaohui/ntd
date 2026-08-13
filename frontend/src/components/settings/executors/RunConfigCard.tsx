@@ -45,8 +45,9 @@ export function RunConfigCard() {
       if (secs !== 0) {
         lastEnabledExecutionTimeoutSecsRef.current = secs;
       }
-    } catch {
-      // 加载失败时使用默认值（保留 state 初值）。
+    } catch (err: unknown) {
+      // 加载失败时使用默认值（保留 state 初值）；记录原因便于排查后端/网络问题（禁止清单 #6：空 catch 需留痕）。
+      console.warn('加载运行配置失败，使用默认值', err);
     }
   };
 

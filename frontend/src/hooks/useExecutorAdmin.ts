@@ -348,8 +348,9 @@ export function useExecutorAdmin(): UseExecutorAdminReturn {
       const models = await db.getExecutorModels(name);
       // 无论结果是否为空都缓存，让 fetchedModelsRef 拦截后续请求。
       setExecutorModels((prev) => ({ ...prev, [name]: models }));
-    } catch {
-      // 请求失败也写空数组，避免「一直加载中」的 stuck 状态。
+    } catch (err: unknown) {
+      // 请求失败也写空数组，避免「一直加载中」的 stuck 状态；记录原因便于排查（禁止清单 #6：空 catch 需留痕）。
+      console.warn(`拉取执行器 ${name} 模型列表失败`, err);
       setExecutorModels((prev) => ({ ...prev, [name]: [] }));
     } finally {
       setModelsLoading((prev) => ({ ...prev, [name]: false }));

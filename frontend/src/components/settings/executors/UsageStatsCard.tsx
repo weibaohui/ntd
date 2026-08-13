@@ -30,8 +30,9 @@ export function UsageStatsCard() {
       const settings = await db.getUsageStatsSettings();
       setUsageStatsEnabled(settings.auto_usage_stats_enabled);
       setUsageStatsCron(settings.auto_usage_stats_cron);
-    } catch {
-      // 加载失败用默认值（保留 state 初值）。
+    } catch (err: unknown) {
+      // 加载失败用默认值（保留 state 初值）；记录原因便于排查（禁止清单 #6：空 catch 需留痕）。
+      console.warn('加载 AI 使用统计设置失败，使用默认值', err);
     } finally {
       setUsageStatsLoading(false);
     }
