@@ -18,40 +18,51 @@ pub struct IssueDraft {
 
 /// 组装专家贡献 Issue 草稿。
 ///
-/// body 依次内嵌 plugin.json、agents/*.md、skills/*/SKILL.md 的完整文本，
-/// 供官方维护者 review 后重建目录合入。
+/// body 依次内嵌 plugin.json、agents/*.md、skills/*/SKILL.md 的完整文本；
+/// 每个文件用 <details> 折叠，正文只保留元信息表格 + 文件清单，避免正文冗长。
 pub fn build_issue_draft(expert: &ExpertMetadata) -> Result<IssueDraft, String> {
     let dir = Path::new(&expert.definition_dir);
-
     let title = format!("[专家贡献] {} v{}", expert.name, expert.version);
-    let mut body = build_header(expert);
+
+    // 先收集所有文件并生成各自的折叠块；缺失文件（如专家无 skill）跳过。
     let mut files = Vec::new();
-
-    // 1. plugin.json（专家能加载说明必然存在）
-    append_file(&mut body, &mut files, dir, ".codebuddy-plugin/plugin.json")?;
-
-    // 2. agents/*.md（扫描目录，覆盖 plugin.agents 未声明的情况）
+    let mut sections = Vec::new();
+    collect_file(dir, ".codebuddy-plugin/plugin.json", &mut files, &mut sections)?;
     for rel in list_agent_md_files(dir) {
-        append_file(&mut body, &mut files, dir, &rel)?;
+        collect_file(dir, &rel, &mut files, &mut sections)?;
     }
-
-    // 3. skills/*/SKILL.md（路径来自 plugin.json 的 skills 字段）
     for skill_rel in &expert.skills {
         let skill_md_rel = format!("{skill_rel}/SKILL.md");
-        append_file(&mut body, &mut files, dir, &skill_md_rel)?;
+        collect_file(dir, &skill_md_rel, &mut files, &mut sections)?;
     }
 
+    let body = build_body(expert, &files, &sections);
     Ok(IssueDraft { title, body, files })
 }
 
-/// 组装 body 头部（专家元信息）。
-fn build_header(expert: &ExpertMetadata) -> String {
+/// 组装 body：元信息表格 + 文件清单 + 各文件折叠块。
+fn build_body(expert: &ExpertMetadata, files: &[String], sections: &[String]) -> String {
+    let mut body = build_header(expert, files);
+    for section in sections {
+        body.push_str(section);
+    }
+    body
+}
+
+/// 组装 body 头部：元信息表格 + 文件清单。
+fn build_header(expert: &ExpertMetadata, files: &[String]) -> String {
     let mut s = String::from("## 专家贡献\n\n> 由 ntd 用户提交，等待官方审核合入。\n\n");
-    s.push_str(&format!("- 专家名称：`{}`\n", expert.name));
-    s.push_str(&format!("- 类型：{}\n", expert_type_label(&expert.expert_type)));
-    s.push_str(&format!("- 版本：`{}`\n", expert.version));
+    s.push_str("| 属性 | 值 |\n|---|---|\n");
+    s.push_str(&format!("| 名称 | `{}` |\n", expert.name));
+    s.push_str(&format!("| 类型 | {} |\n", expert_type_label(&expert.expert_type)));
+    s.push_str(&format!("| 版本 | `{}` |\n", expert.version));
     if let Some(desc) = expert.description_zh.as_ref().or(expert.description_en.as_ref()) {
-        s.push_str(&format!("- 说明：{}\n", desc));
+        s.push_str(&format!("| 说明 | {} |\n", desc));
+    }
+    s.push('\n');
+    s.push_str(&format!("**包含文件（{} 个）**：\n", files.len()));
+    for f in files {
+        s.push_str(&format!("- `{f}`\n"));
     }
     s.push('\n');
     s
@@ -65,12 +76,12 @@ fn expert_type_label(t: &ExpertType) -> &'static str {
     }
 }
 
-/// 读取单个文件并以 markdown 代码块追加到 body；同时记录到文件清单。
-fn append_file(
-    body: &mut String,
-    files: &mut Vec<String>,
+/// 读取单个文件，生成折叠块并记录到文件清单。
+fn collect_file(
     dir: &Path,
     rel: &str,
+    files: &mut Vec<String>,
+    sections: &mut Vec<String>,
 ) -> Result<(), String> {
     // resolve_within 校验 rel 仍在专家目录内，防 plugin.json 里的 .. 逃逸。
     let Some(full) = resolve_within(dir, rel) else {
@@ -78,20 +89,22 @@ fn append_file(
         return Ok(());
     };
     let content = std::fs::read_to_string(&full).map_err(|e| format!("读取 {rel} 失败: {e}"))?;
-    push_code_block(body, rel, &content);
     files.push(rel.to_string());
+    sections.push(build_details_block(rel, &content));
     Ok(())
 }
 
-/// 把文本以带语言标签的 markdown 代码块追加到 body。
-fn push_code_block(body: &mut String, rel: &str, content: &str) {
+/// 生成单个文件的 <details> 折叠块，内嵌带语言标签的 markdown 代码块。
+fn build_details_block(rel: &str, content: &str) -> String {
     // 按扩展名选语言标签，便于 issue 页面语法高亮。
     let lang = match rel.rsplit('.').next() {
         Some("json") => "json",
         Some("md") => "markdown",
         _ => "",
     };
-    body.push_str(&format!("### {rel}\n\n```{lang}\n{content}\n```\n\n"));
+    format!(
+        "<details>\n<summary>📄 {rel}（点击展开）</summary>\n\n```{lang}\n{content}\n```\n\n</details>\n\n"
+    )
 }
 
 /// 扫描 `agents/` 目录，返回相对专家根目录的 .md 文件路径（已排序）。
@@ -177,8 +190,9 @@ mod tests {
 
         // 标题以固定前缀开头并带版本号。
         assert!(draft.title.starts_with("[专家贡献] demo v1.0.0"));
-        // body 含元信息与三个文件内容。
-        assert!(draft.body.contains("专家名称"));
+        // body 含元信息表格、<details> 折叠块与三个文件内容。
+        assert!(draft.body.contains("| 名称 | `demo` |"));
+        assert!(draft.body.contains("<details>"));
         assert!(draft.body.contains("我是 demo 专家"));
         assert!(draft.body.contains("我是技能"));
         // files 清单包含 plugin.json 与 agent md 与 skill md。
