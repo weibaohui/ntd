@@ -412,7 +412,7 @@ impl LoopRunner {
                         .send(crate::executor_service::ExecEvent::ReviewStatusChanged {
                             record_id: 0,
                             todo_id: 0,
-                            review_status: LoopExecutionStatus::Failed.to_string(),
+                            review_status: ExecutionStatus::Failed.to_string(),
                         });
                     // 失败路径：有绑定对话时直接回复，否则广播 LoopFinished 事件
                     if let Some(ref receive_id) = feishu_receive_id {
@@ -550,7 +550,7 @@ impl LoopRunner {
                 let _ = self.tx.send(crate::executor_service::ExecEvent::ReviewStatusChanged {
                     record_id: 0,
                     todo_id: 0,
-                    review_status: LoopExecutionStatus::Failed.to_string(),
+                    review_status: ExecutionStatus::Failed.to_string(),
                 });
                 self.broadcast_loop_finished(loop_id, loop_execution_id).await;
             }
@@ -1046,10 +1046,10 @@ impl LoopRunner {
         let initial_status = if is_human_approval_step {
             match self.ctx.db.get_todo(step.todo_id).await {
                 Ok(Some(t)) if t.status == crate::models::TodoStatus::Completed => LoopStepStatus::PendingApproval.as_str(),
-                _ => "running",
+                _ => LoopStepStatus::Running.as_str(),
             }
         } else {
-            "running"
+            LoopStepStatus::Running.as_str()
         };
         tracing::info!(
             "loop_exec {}: step #{} human_approval={} todo_id={} initial_status={}",
