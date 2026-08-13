@@ -1,941 +1,468 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Button, Card, Input, Select, Switch, Spin, Tooltip, Modal, message, Typography, InputNumber, Form, Table, Space, Empty, Tabs, Popconfirm } from 'antd';
-import { SearchOutlined, PlayCircleOutlined, ClockCircleOutlined, BugOutlined, CodeOutlined, InfoCircleOutlined, SaveOutlined, StopOutlined, ReloadOutlined, StarOutlined, StarFilled } from '@ant-design/icons';
-import { Cron } from 'react-js-cron';
-import 'react-js-cron/dist/styles.css';
-import { CronPresetSelect } from '@/components/CronPresetSelect';
-import { CRON_ZH_LOCALE, cronTo5, cronTo6 } from '@/utils/cron';
+import { Button, Input, Select, Switch, Spin, Tooltip, Modal, Typography, Table, Space, Empty, Tabs, Popconfirm } from 'antd';
+import { SearchOutlined, PlayCircleOutlined, BugOutlined, CodeOutlined, StopOutlined, ReloadOutlined, StarOutlined, StarFilled } from '@ant-design/icons';
 import { PageCard } from '@/components/common/PageCard';
 import { ProfilesPanel } from '@/components/settings/ProfilesPanel';
 import { InstallExecutorButton } from '@/components/settings/InstallExecutorButton';
 import { getExecutorInstallPrompt } from '@/components/settings/executorInstallPrompts';
-import * as db from '@/utils/database';
-import type { ExecutorConfig, ExecutionRecord, TodoBrief } from '@/types';
-// 093：本组件只消费 todo 域状态，用细粒度 useTodos 替代合并版 useApp，
-// 执行态（进度/统计推送）变化不再触发本组件重渲染。
-import { useTodos } from '@/hooks/useTodoContext';
-import { useAutoRefreshRunningBoard } from '@/hooks/useRunningBoard';
+import { RunConfigCard } from '@/components/settings/executors/RunConfigCard';
+import { UsageStatsCard } from '@/components/settings/executors/UsageStatsCard';
+import type { ExecutorConfig, ExecutionRecord } from '@/types';
 import { SessionManager } from '@/components/SessionManager';
-
-import { DEFAULT_EXECUTION_TIMEOUT_SECS, MAX_EXECUTION_TIMEOUT_MINUTES } from '@/constants';
-import { setDefaultExecutorCache } from '@/utils/executors';
+import { useExecutorAdmin } from '@/hooks/useExecutorAdmin';
+import { useExecutorFieldSaver } from '@/hooks/useExecutorFieldSaver';
+import { useRunningRecords } from '@/hooks/useRunningRecords';
 
 const { Paragraph } = Typography;
 
-/** 执行器管理面板，负责展示和管理各执行器的配置与可用性检测。 */
+/**
+ * 执行器管理面板（096-W4-4-3 拆分后）：纯编排层。
+ *
+ * 原 942 行单体拆为 3 个 hook + 2 个卡片子组件，本组件只负责把它们接到 Tabs/Tables 的 JSX 上：
+ * - useExecutorAdmin：列表 + 检测/测试/修复/设默认/安装刷新 + 模型缓存
+ * - useExecutorFieldSaver：行内字段保存收敛（saveExecutorField + inlineFieldSave）
+ * - useRunningRecords：运行监控族 + 面板 Tab 状态
+ * - RunConfigCard / UsageStatsCard：运行配置 / AI 使用统计两块全局配置
+ */
 export function ExecutorsPanel() {
-  const [executors, setExecutors] = useState<ExecutorConfig[]>([]);
-  const [executorsLoading, setExecutorsLoading] = useState(false);
-  const [detectResults, setDetectResults] = useState<Record<string, { found: boolean; resolved: string | null }>>({});
-  const [detectingExecutor, setDetectingExecutor] = useState<string | null>(null);
-  const [testingExecutor, setTestingExecutor] = useState<string | null>(null);
-  const [batchDetecting, setBatchDetecting] = useState(false);
-  const [testModalVisible, setTestModalVisible] = useState(false);
-  const [testModalData, setTestModalData] = useState<{ name: string; result: { test_passed: boolean; output: string | null; error: string | null } } | null>(null);
-  const [savingExecutor, setSavingExecutor] = useState<string | null>(null);
-  const [settingDefaultExecutor, setSettingDefaultExecutor] = useState<string | null>(null);
-  // 各执行器可选模型（调 models 子命令拉取），用于默认模型列下拉建议，按 name 缓存。
-  // 空数组（[]）也缓存，避免 supports_models 执行器每次展开都请求——空结果意味着该执行器不支持动态列举。
-  const [executorModels, setExecutorModels] = useState<Record<string, string[]>>({});
-  // 各执行器模型加载状态：true = 请求进行中，false/undefined = 空闲。
-  // 与 executorModels 分开维护，避免空结果被误判为"正在加载"。
-  const [modelsLoading, setModelsLoading] = useState<Record<string, boolean>>({});
-  // 记录已拉取过的执行器（ref 是同步的，在异步请求前就标记，避免并发重复请求）。
-  const fetchedModelsRef = useRef<Record<string, boolean>>({});
-  // 懒加载：首次展开下拉时拉取该执行器支持的模型，按 name 缓存。
-  const fetchExecutorModels = async (name: string) => {
-    // 空名或已请求过（含空结果）→ 跳过。
-    if (!name || fetchedModelsRef.current[name]) return;
-    // 在 await 前标记已请求，避免并发重入。
-    fetchedModelsRef.current[name] = true;
-    setModelsLoading((prev) => ({ ...prev, [name]: true }));
-    try {
-      const models = await db.getExecutorModels(name);
-      // 无论结果是否为空都缓存，让 fetchedModelsRef 拦截后续请求。
-      setExecutorModels((prev) => ({ ...prev, [name]: models }));
-    } catch {
-      // 请求失败也写空数组，避免「一直加载中、出不来结果」的 stuck 状态。
-      setExecutorModels((prev) => ({ ...prev, [name]: [] }));
-    } finally {
-      setModelsLoading((prev) => ({ ...prev, [name]: false }));
-    }
-  };
-
-
-
-
-  // 运行配置：并发数、超时等
-  const [configForm] = Form.useForm();
-  const [configSaving, setConfigSaving] = useState(false);
-  const [executionTimeoutSecs, setExecutionTimeoutSecs] = useState<number>(() => DEFAULT_EXECUTION_TIMEOUT_SECS);
-  const lastEnabledExecutionTimeoutSecsRef = useRef<number>(DEFAULT_EXECUTION_TIMEOUT_SECS);
-
-  // 0 表示禁用执行超时，其余值至少为 60 秒
-  const executionTimeoutEnabled = executionTimeoutSecs !== 0;
-  const executionTimeoutMinutes = executionTimeoutEnabled
-    ? Math.max(1, Math.round(executionTimeoutSecs / 60))
-    : undefined;
-
-  // Usage stats settings
-  const [usageStatsEnabled, setUsageStatsEnabled] = useState(false);
-  const [usageStatsCron, setUsageStatsCron] = useState('0 0 1 * * *');
-  const [usageStatsLoading, setUsageStatsLoading] = useState(false);
-  const [usageStatsSaving, setUsageStatsSaving] = useState(false);
-
-  // 正在运行 tab 相关状态
-  const { state } = useTodos();
-  // 056：运行记录的 todo 标题按 id 集轻量反查（替代原全局全量桶）
-  const [recordTodos, setRecordTodos] = useState<TodoBrief[]>([]);
-  const [runningTab, setRunningTab] = useState<'executors' | 'running' | 'sessions'>('executors');
-  const [selectedRecordIds, setSelectedRecordIds] = useState<number[]>([]);
-  const [stoppingRecords, setStoppingRecords] = useState(false);
-  const [runningRecords, setRunningRecords] = useState<ExecutionRecord[]>([]);
-
-  useEffect(() => {
-    loadExecutors();
-    loadConfig();
-    loadUsageStatsSettings();
-  }, []);
-
-  // 正在运行 tab：加载运行中记录
-  const loadRunningRecords = async () => {
-    try {
-      const records = await db.getRunningExecutionRecords(state.selectedWorkspace ?? 0);
-      setRunningRecords(records);
-      // 056：按记录的 todo_id 集合拉 brief 反查标题；失败时保留旧映射避免闪空
-      const todoIds = [...new Set(records.map(r => r.todo_id))];
-      if (todoIds.length > 0 && state.selectedWorkspace != null) {
-        const briefs = await db.getTodoBriefs(state.selectedWorkspace, { ids: todoIds }).catch(() => null);
-        if (briefs) setRecordTodos(briefs);
-      } else {
-        setRecordTodos([]);
-      }
-    } catch (err) {
-      console.error('加载运行中任务失败:', err);
-    }
-  };
-
-  // 091：正在运行 tab——切到该 tab 时做一次初始加载；执行态变化全由事件驱动刷新
-  // （见下方 useAutoRefreshRunningBoard，订阅 Started/Finished/ReviewStatusChanged，
-  //  以及 WS 重连 Sync + 切回标签页）。彻底移除原 60s 兜底定时轮询，无变化时不打请求。
-  useEffect(() => {
-    if (runningTab !== 'running') return;
-    loadRunningRecords();
-  }, [runningTab]);
-
-  // 事件驱动刷新：executionStarted/Finished/ReviewStatusChanged 时立即重拉运行记录
-  //（Finished 延迟 1s 等后端落库）。始终订阅，refresh 内部轻量。
-  useAutoRefreshRunningBoard(loadRunningRecords);
-
-  // 正在运行 tab：批量停止
-  const handleBatchStop = async () => {
-    if (selectedRecordIds.length === 0) return;
-    setStoppingRecords(true);
-    const results = await Promise.allSettled(
-      selectedRecordIds.map(async (recordId) => {
-        await db.forceFailExecution(state.selectedWorkspace ?? 0, recordId);
-      })
-    );
-    const successCount = results.filter(r => r.status === 'fulfilled').length;
-    const failCount = results.filter(r => r.status === 'rejected').length;
-    setSelectedRecordIds([]);
-    setStoppingRecords(false);
-    if (successCount > 0) message.success(`已停止 ${successCount} 个任务`);
-    if (failCount > 0) message.error(`${failCount} 个任务停止失败`);
-    loadRunningRecords();
-  };
-
-  // 执行器 display_name 映射（供正在运行 tab 使用）
-  const executorDisplayNames = useMemo(() => {
-    const map: Record<string, string> = {};
-    for (const ec of executors) {
-      map[ec.name] = ec.display_name;
-    }
-    return map;
-  }, [executors]);
-
-  /** 加载应用配置（并发数、超时等）。 */
-  const loadConfig = async () => {
-    try {
-      const cfg = await db.getConfig();
-      configForm.setFieldsValue(cfg);
-      // 超时控件脱离 Form 托管（见 JSX），表单不再持有 execution_timeout_secs；
-      // 这里手动把后端秒值同步到 state，并刷新「上次启用值」，
-      // 保证 Switch/InputNumber 显示与后端一致、关闭后重开能恢复到加载值。
-      const secs = cfg.execution_timeout_secs ?? DEFAULT_EXECUTION_TIMEOUT_SECS;
-      setExecutionTimeoutSecs(secs);
-      if (secs !== 0) {
-        lastEnabledExecutionTimeoutSecsRef.current = secs;
-      }
-    } catch {
-      // 加载失败时使用默认值
-    }
-  };
-
-  /** 从数据库加载执行器配置列表。 */
-  const loadExecutors = async () => {
-    try {
-      setExecutorsLoading(true);
-      const list = await db.getExecutors();
-      setExecutors(list);
-    } catch (err: any) {
-      message.error('加载执行器配置失败: ' + (err?.message || String(err)));
-    } finally {
-      setExecutorsLoading(false);
-    }
-  };
-
-  const loadUsageStatsSettings = async () => {
-    try {
-      setUsageStatsLoading(true);
-      const settings = await db.getUsageStatsSettings();
-      setUsageStatsEnabled(settings.auto_usage_stats_enabled);
-      setUsageStatsCron(settings.auto_usage_stats_cron);
-    } catch {
-      // Ignore errors, use defaults
-    } finally {
-      setUsageStatsLoading(false);
-    }
-  };
-
-  const handleSaveUsageStats = async () => {
-    try {
-      setUsageStatsSaving(true);
-      await db.updateUsageStatsSettings(usageStatsEnabled, usageStatsCron);
-      message.success('AI 使用统计配置已更新');
-    } catch (err: any) {
-      message.error('保存失败: ' + (err?.message || String(err)));
-    } finally {
-      setUsageStatsSaving(false);
-    }
-  };
-
-  /**
-   * 保存运行配置（并发数、超时等）。
-   */
-  const handleSaveConfig = async () => {
-    try {
-      const values = await configForm.validateFields();
-      // 超时控件脱离 Form 托管（见 JSX），validateFields 不再带 execution_timeout_secs；
-      // 这里从 state 注入秒值，保证保存体与后端字段一致。
-      values.execution_timeout_secs = executionTimeoutSecs;
-      setConfigSaving(true);
-      await db.updateConfig(values);
-      message.success('配置已保存');
-    } catch (err: any) {
-      if (err?.errorFields) return;
-      message.error('保存失败: ' + (err?.message || String(err)));
-    } finally {
-      setConfigSaving(false);
-    }
-  };
-
-  /**
-   * 切换是否启用执行超时控制。
-   */
-  const handleExecutionTimeoutToggle = (checked: boolean) => {
-    if (!checked) {
-      // 关闭时记录当前非零值，供后续重新开启时恢复。
-      lastEnabledExecutionTimeoutSecsRef.current = executionTimeoutSecs;
-    }
-    const next = checked ? lastEnabledExecutionTimeoutSecsRef.current : 0;
-    // 仅更新本地 state 驱动 Switch/InputNumber；保存体由 handleSaveConfig 从 state 注入，
-    // 不再向表单写 execution_timeout_secs（该字段已脱离 Form 托管）。
-    setExecutionTimeoutSecs(next);
-  };
+  // 三族状态分别由 hook 托管；saver 需要 admin 的 replaceExecutor 把保存结果回写列表。
+  const admin = useExecutorAdmin();
+  const saver = useExecutorFieldSaver(admin.replaceExecutor);
+  // 运行监控族依赖执行器列表（派生 name→display_name 映射）。
+  const running = useRunningRecords(admin.executors);
 
   return (
     <PageCard icon={<CodeOutlined />} title="执行器">
       <Tabs
-        activeKey={runningTab}
-        onChange={(key) => setRunningTab(key as 'executors' | 'running')}
+        activeKey={running.runningTab}
+        onChange={(key) => running.setRunningTab(key as 'executors' | 'running')}
         items={[
           {
             key: 'executors',
             label: '执行器',
             children: (
-              <Spin spinning={executorsLoading}>
+              <Spin spinning={admin.executorsLoading}>
                 <div>
-        <Paragraph type="secondary" style={{ marginBottom: 16 }}>
-          管理执行器的路径、开关状态，并检测二进制是否可用。关闭开关的执行器不会出现在 Todo 的执行器选择列表中。
-        </Paragraph>
-        <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ color: 'var(--color-text-secondary)', fontSize: 13 }}>
-            共 {executors.length} 个执行器
-          </span>
-          <Button
-            type="primary"
-            icon={<SearchOutlined />}
-            loading={batchDetecting}
-            onClick={async () => {
-              setBatchDetecting(true);
-              let availableCount = 0;
-              try {
-                for (const ec of executors) {
-                  try {
-                    const result = await db.detectExecutor(ec.name);
-                    setDetectResults((prev) => ({
-                      ...prev,
-                      [ec.name]: { found: result.binary_found, resolved: result.path_resolved },
-                    }));
-                    if (result.binary_found) {
-                      availableCount++;
-                      if (!ec.enabled) {
-                        const updated = await db.updateExecutor(ec.name, { enabled: true });
-                        setExecutors((prev) =>
-                          prev.map((e) => (e.name === ec.name ? updated : e))
-                        );
-                      }
-                    } else if (ec.enabled) {
-                      const updated = await db.updateExecutor(ec.name, { enabled: false });
-                      setExecutors((prev) =>
-                        prev.map((e) => (e.name === ec.name ? updated : e))
-                      );
-                    }
-                  } catch (err) {
-                  }
-                }
-                message.success(`批量检测完成：${availableCount}/${executors.length} 个执行器可用`);
-              } catch (err: any) {
-                message.error('批量检测失败: ' + (err?.message || String(err)));
-              } finally {
-                setBatchDetecting(false);
-              }
-            }}
-          >
-            批量检测
-          </Button>
-        </div>
-
-        <Table
-          rowKey="name"
-          dataSource={executors}
-          pagination={false}
-          size="middle"
-          locale={{ emptyText: <Empty description="暂无执行器" image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
-          columns={[
-            {
-              title: '状态',
-              dataIndex: 'enabled',
-              key: 'enabled',
-              align: 'center',
-              render: (enabled: boolean, record: ExecutorConfig) => (
-                <Switch
-                  size="small"
-                  checked={enabled}
-                  loading={savingExecutor === record.name}
-                  onChange={async (checked) => {
-                    setSavingExecutor(record.name);
-                    try {
-                      const updated = await db.updateExecutor(record.name, { enabled: checked });
-                      setExecutors((prev) => prev.map((e) => e.name === record.name ? updated : e));
-                    } catch (err: any) {
-                      message.error('更新失败: ' + (err?.message || String(err)));
-                    } finally {
-                      setSavingExecutor(null);
-                    }
-                  }}
-                />
-              ),
-            },
-            {
-              title: '执行器',
-              dataIndex: 'display_name',
-              key: 'display_name',
-              render: (name: string, record: ExecutorConfig) => (
-                <span style={{ fontWeight: 500, opacity: record.enabled ? 1 : 0.5, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                  {name}
-                  {record.is_default && (
-                    <Tooltip title="默认执行器">
-                      <StarFilled style={{ color: '#faad14', fontSize: 12 }} />
-                    </Tooltip>
-                  )}
-                </span>
-              ),
-            },
-            {
-              title: '二进制路径',
-              dataIndex: 'path',
-              key: 'path',
-              render: (path: string, record: ExecutorConfig) => (
-                <Input
-                  size="small"
-                  placeholder="二进制路径或命令名"
-                  defaultValue={path}
-                  onBlur={async (e) => {
-                    const newPath = e.target.value.trim();
-                    if (newPath === path) return;
-                    setSavingExecutor(record.name);
-                    try {
-                      const updated = await db.updateExecutor(record.name, { path: newPath });
-                      setExecutors((prev) => prev.map((ex) => ex.name === record.name ? updated : ex));
-                      setDetectResults((prev) => {
-                        const next = { ...prev };
-                        delete next[record.name];
-                        return next;
-                      });
-                    } catch (err: any) {
-                      message.error('保存失败: ' + (err?.message || String(err)));
-                    } finally {
-                      setSavingExecutor(null);
-                    }
-                  }}
-                  onPressEnter={(e) => {
-                    (e.target as HTMLInputElement).blur();
-                  }}
-                />
-              ),
-            },
-            {
-              title: 'Session 目录',
-              dataIndex: 'session_dir',
-              key: 'session_dir',
-              render: (sessionDir: string, record: ExecutorConfig) => (
-                <Input
-                  size="small"
-                  placeholder="如 ~/.claude"
-                  defaultValue={sessionDir}
-                  onBlur={async (e) => {
-                    const newDir = e.target.value.trim();
-                    if (newDir === sessionDir) return;
-                    setSavingExecutor(record.name);
-                    try {
-                      const updated = await db.updateExecutor(record.name, { session_dir: newDir });
-                      setExecutors((prev) => prev.map((ex) => ex.name === record.name ? updated : ex));
-                    } catch (err: any) {
-                      message.error('保存失败: ' + (err?.message || String(err)));
-                    } finally {
-                      setSavingExecutor(null);
-                    }
-                  }}
-                  onPressEnter={(e) => {
-                    (e.target as HTMLInputElement).blur();
-                  }}
-                />
-              ),
-            },
-            {
-              // 默认模型：执行器级默认，所有未单独指定模型的 todo 用该执行器时默认传此模型。
-              // 留空 = 不传 --model，由执行器配置文件决定（向后兼容）。
-              title: '默认模型',
-              dataIndex: 'default_model',
-              key: 'default_model',
-              render: (defaultModel: string | null | undefined, record: ExecutorConfig) => {
-                // 已知能列模型的执行器（需和后端 list_models match 分支保持一致）。
-                if (!record.supports_models) {
-                  return (
-                    <Input size="small" placeholder="留空用执行器自带配置" defaultValue={defaultModel ?? ''}
-                      onBlur={(e: React.FocusEvent<HTMLInputElement>) => {
-                        const newModel = e.target.value.trim();
-                        if (newModel === (defaultModel ?? '')) return;
-                        setSavingExecutor(record.name);
-                        db.updateExecutor(record.name, { default_model: newModel })
-                          .then((updated) => setExecutors((prev) => prev.map((ex) => ex.name === record.name ? updated : ex)))
-                          .catch((err: any) => message.error('保存失败: ' + (err?.message || String(err))))
-                          .finally(() => setSavingExecutor(null));
-                      }}
-                      onPressEnter={(e: React.KeyboardEvent<HTMLInputElement>) => (e.target as HTMLInputElement).blur()} />
-                  );
-                }
-                const models = executorModels[record.name] || [];
-                const groups: Record<string, { label: string; value: string }[]> = {};
-                models.forEach((full) => {
-                  const slash = full.indexOf('/');
-                  const provider = slash > 0 ? full.slice(0, slash) : '其他';
-                  const mn = slash > 0 ? full.slice(slash + 1) : full;
-                  if (!groups[provider]) groups[provider] = [];
-                  groups[provider].push({ label: mn, value: full });
-                });
-                return (
-                  <Select size="small" value={defaultModel || undefined} placeholder="留空用执行器自带配置" allowClear showSearch
-                    notFoundContent={modelsLoading[record.name] ? '加载中，请稍后...' : models.length === 0 ? '暂无可选模型' : undefined}
-                    onDropdownVisibleChange={(open) => {
-                      if (open && !fetchedModelsRef.current[record.name]) {
-                        fetchedModelsRef.current[record.name] = true;
-                        fetchExecutorModels(record.name);
-                      }
-                    }}
-                    filterOption={(input: string, option?: { label: string; value: string }) =>
-                      (option?.label ?? '').toLowerCase().includes(input.toLowerCase())}
-                    onChange={(v: unknown) => {
-                      const newModel = (v as string)?.trim() || '';
-                      if (newModel === (defaultModel ?? '')) return;
-                      setSavingExecutor(record.name);
-                      db.updateExecutor(record.name, { default_model: newModel })
-                        .then((updated) => setExecutors((prev) => prev.map((ex) => ex.name === record.name ? updated : ex)))
-                        .catch((err: any) => message.error('保存失败: ' + (err?.message || String(err))))
-                        .finally(() => setSavingExecutor(null));
-                    }}
-                    style={{ width: '100%' }}>
-                    {Object.entries(groups).map(([provider, items]) => (
-                      <Select.OptGroup key={provider} label={provider}>
-                        {items.map((item) => (
-                          <Select.Option key={item.value} value={item.value}>{item.label}</Select.Option>
-                        ))}
-                      </Select.OptGroup>
-                    ))}
-                  </Select>
-                );
-              },
-            },
-            {
-              title: '检测状态',
-              key: 'detect_status',
-              align: 'center',
-              render: (_: unknown, record: ExecutorConfig) => {
-                const detectResult = detectResults[record.name];
-                if (!detectResult) {
-                  return <span style={{ color: 'var(--color-text-tertiary)', fontSize: 12 }}>未检测</span>;
-                }
-                return (
-                  <Tooltip title={detectResult.resolved || '未找到'}>
-                    {detectResult.found ? (
-                      <span style={{ color: '#52c41a', fontSize: 12, fontWeight: 500 }}>
-                        ✓ 可用
-                      </span>
-                    ) : (
-                      <span style={{ color: '#ff4d4f', fontSize: 12, fontWeight: 500 }}>
-                        ✗ 不可用
-                      </span>
-                    )}
-                  </Tooltip>
-                );
-              },
-            },
-            {
-              title: '操作',
-              key: 'action',
-              width: 240,
-              render: (_: unknown, record: ExecutorConfig) => {
-                const detectResult = detectResults[record.name];
-                const isDetecting = detectingExecutor === record.name;
-                const isTesting = testingExecutor === record.name;
-                const isSettingDefault = settingDefaultExecutor === record.name;
-                return (
-                  <Space size={4}>
-                    <Tooltip title={record.is_default ? '当前为默认执行器' : '设为默认执行器'}>
-                      <Button
-                        size="small"
-                        type={record.is_default ? 'primary' : 'default'}
-                        icon={record.is_default ? <StarFilled /> : <StarOutlined />}
-                        loading={isSettingDefault}
-                        disabled={record.is_default}
-                        onClick={async () => {
-                          if (record.is_default) return;
-                          setSettingDefaultExecutor(record.name);
-                          try {
-                            const updated = await db.setDefaultExecutor(record.name);
-                            // 更新前端缓存，使新的默认值立即生效
-                            setDefaultExecutorCache(updated.name);
-                            setExecutors((prev) =>
-                              prev.map((e) => ({
-                                ...e,
-                                is_default: e.name === updated.name,
-                              }))
-                            );
-                            message.success(`${record.display_name} 已设为默认执行器`);
-                          } catch (err: any) {
-                            message.error('设置失败: ' + (err?.message || String(err)));
-                          } finally {
-                            setSettingDefaultExecutor(null);
-                          }
-                        }}
-                      >
-                        {record.is_default ? '默认' : '设为默认'}
-                      </Button>
-                    </Tooltip>
+                  <Paragraph type="secondary" style={{ marginBottom: 16 }}>
+                    管理执行器的路径、开关状态，并检测二进制是否可用。关闭开关的执行器不会出现在 Todo 的执行器选择列表中。
+                  </Paragraph>
+                  <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ color: 'var(--color-text-secondary)', fontSize: 13 }}>
+                      共 {admin.executors.length} 个执行器
+                    </span>
                     <Button
-                      size="small"
-                      icon={<SearchOutlined />}
-                      loading={isDetecting}
-                      onClick={async () => {
-                        setDetectingExecutor(record.name);
-                        try {
-                          const result = await db.detectExecutor(record.name);
-                          setDetectResults((prev) => ({ ...prev, [record.name]: { found: result.binary_found, resolved: result.path_resolved } }));
-                          if (result.binary_found) {
-                            message.success(`${record.display_name}: 找到 (${result.path_resolved})`);
-                          } else {
-                            message.warning(`${record.display_name}: 未找到`);
-                          }
-                        } catch (err: any) {
-                          message.error('检测失败: ' + (err?.message || String(err)));
-                        } finally {
-                          setDetectingExecutor(null);
-                        }
-                      }}
-                    >
-                      检测
-                    </Button>
-                    {!detectResult?.found && (
-                      <Button
-                        size="small"
-                        icon={<BugOutlined />}
-                        onClick={async () => {
-                          try {
-                            const result = await db.repairExecutor(record.name);
-                            if (result.binary_found) {
-                              setDetectResults((prev) => ({ ...prev, [record.name]: { found: true, resolved: result.path_resolved! } }));
-                              const updated = await db.updateExecutor(record.name, { path: result.path_resolved!, enabled: true });
-                              setExecutors((prev) => prev.map((e) => e.name === record.name ? updated : e));
-                              if (result.path_updated) {
-                                message.success(`已修复：${record.display_name} 路径更新为 ${result.path_resolved}`);
-                              } else {
-                                message.info(`路径已是最新：${result.path_resolved}`);
-                              }
-                            } else {
-                              message.error(`未找到 ${record.display_name}，请手动填写路径`);
-                            }
-                          } catch (err: any) {
-                            message.error('修复失败: ' + (err?.message || String(err)));
-                          }
-                        }}
-                      >
-                        修复
-                      </Button>
-                    )}
-                    {detectResult && !detectResult.found && (() => {
-                      // 把 getExecutorInstallPrompt 结果存为临时变量，避免条件判断和 prompt prop 重复调用
-                      const installPrompt = getExecutorInstallPrompt(record.name);
-                      return installPrompt && (
-                        <InstallExecutorButton
-                          executorName={record.name}
-                          displayName={record.display_name}
-                          prompt={installPrompt.prompt}
-                          buttonSize="small"
-                          showLabel={true}
-                          // 安装完成后：重新检测 → 若找到则修复路径 + 启用 → 刷新前端状态
-                          // 用 repair.path_resolved || detect.path_resolved || record.path 三选一兜底，
-                          // 因为 repair 后端可能返回更新后的路径，detect 仅返回 which 结果，record.path 是旧值
-                          // force enabled:true 是因为 detect 成功说明 binary 可用，没必要让用户手动去开开关
-                          onInstalled={async () => {
-                            try {
-                              const detect = await db.detectExecutor(record.name);
-                              setDetectResults((prev) => ({
-                                ...prev,
-                                [record.name]: { found: detect.binary_found, resolved: detect.path_resolved },
-                              }));
-                              if (detect.binary_found) {
-                                const repair = await db.repairExecutor(record.name);
-                                // 优先级: repair 更新路径 > detect 检测路径 > 数据库原有路径
-                                const updatedPath = repair.path_resolved || detect.path_resolved || record.path;
-                                const updated = await db.updateExecutor(record.name, {
-                                  path: updatedPath,
-                                  enabled: true,
-                                });
-                                setExecutors((prev) => prev.map((e) => (e.name === record.name ? updated : e)));
-                                message.success(`${record.display_name} 安装/修复完成：${updatedPath}`);
-                              } else {
-                                // 安装后仍检测不到：可能 PATH 未刷新、需要新开终端、或安装脚本失败
-                                message.warning(`${record.display_name} 安装后仍未检测到，请检查安装日志或手动填写路径`);
-                              }
-                            } catch (err) {
-                              // err 已由前端 API 统一包装为 Error 实例（见 client.ts 的 unwrap），可安全读 message
-                              const msg = err instanceof Error ? err.message : String(err);
-                              message.error('刷新执行器状态失败: ' + msg);
-                            }
-                          }}
-                        />
-                      );
-                    })()}
-                    <Button
-                      size="small"
                       type="primary"
-                      ghost
-                      icon={<PlayCircleOutlined />}
-                      loading={isTesting}
-                      onClick={async () => {
-                        setTestingExecutor(record.name);
-                        try {
-                          const result = await db.testExecutor(record.name);
-                          setTestModalData({ name: record.name, result });
-                          setTestModalVisible(true);
-                        } catch (err: any) {
-                          message.error('测试失败: ' + (err?.message || String(err)));
-                        } finally {
-                          setTestingExecutor(null);
-                        }
-                      }}
+                      icon={<SearchOutlined />}
+                      loading={admin.batchDetecting}
+                      onClick={() => { void admin.batchDetect(); }}
                     >
-                      测试
+                      批量检测
                     </Button>
-                  </Space>
-                );
-              },
-            },
-          ]}
-        />
+                  </div>
 
-        {/* 运行配置区域 */}
-        <Card
-          size="small"
-          title={<><PlayCircleOutlined style={{ marginRight: 6 }} />运行配置</>}
-          style={{ marginTop: 16 }}
-        >
-          <Form form={configForm} layout="inline">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 24, flexWrap: 'wrap' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontSize: 13, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>最大并发数</span>
-                <Form.Item name="max_concurrent_todos">
-                  <InputNumber
-                    size="small"
-                    min={1}
-                    max={20}
-                    style={{ width: 70 }}
+                  <Table
+                    rowKey="name"
+                    dataSource={admin.executors}
+                    pagination={false}
+                    size="middle"
+                    locale={{ emptyText: <Empty description="暂无执行器" image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
+                    columns={[
+                      {
+                        title: '状态',
+                        dataIndex: 'enabled',
+                        key: 'enabled',
+                        align: 'center',
+                        render: (enabled: boolean, record: ExecutorConfig) => (
+                          // enabled 开关属 onChange 型保存（非 blur），直接调 saveExecutorField。
+                          <Switch
+                            size="small"
+                            checked={enabled}
+                            loading={saver.savingExecutor === record.name}
+                            onChange={(checked) => {
+                              void saver.saveExecutorField(record.name, { enabled: checked });
+                            }}
+                          />
+                        ),
+                      },
+                      {
+                        title: '执行器',
+                        dataIndex: 'display_name',
+                        key: 'display_name',
+                        render: (name: string, record: ExecutorConfig) => (
+                          <span style={{ fontWeight: 500, opacity: record.enabled ? 1 : 0.5, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                            {name}
+                            {record.is_default && (
+                              <Tooltip title="默认执行器">
+                                <StarFilled style={{ color: '#faad14', fontSize: 12 }} />
+                              </Tooltip>
+                            )}
+                          </span>
+                        ),
+                      },
+                      {
+                        title: '二进制路径',
+                        dataIndex: 'path',
+                        key: 'path',
+                        render: (path: string, record: ExecutorConfig) => {
+                          // Input 型行内保存：inlineFieldSave 封装 blur/Enter 双触发 + 未改不存；
+                          // 改路径后顺手清检测状态（旧结果随路径失效）。
+                          const save = saver.inlineFieldSave(record.name, path, async (newPath) => {
+                            const updated = await saver.saveExecutorField(record.name, { path: newPath });
+                            if (updated) admin.clearDetectResult(record.name);
+                          });
+                          return (
+                            <Input
+                              size="small"
+                              placeholder="二进制路径或命令名"
+                              defaultValue={path}
+                              onBlur={save.onBlur}
+                              onPressEnter={save.onPressEnter}
+                            />
+                          );
+                        },
+                      },
+                      {
+                        title: 'Session 目录',
+                        dataIndex: 'session_dir',
+                        key: 'session_dir',
+                        render: (sessionDir: string, record: ExecutorConfig) => {
+                          const save = saver.inlineFieldSave(record.name, sessionDir, async (newDir) => {
+                            await saver.saveExecutorField(record.name, { session_dir: newDir });
+                          });
+                          return (
+                            <Input
+                              size="small"
+                              placeholder="如 ~/.claude"
+                              defaultValue={sessionDir}
+                              onBlur={save.onBlur}
+                              onPressEnter={save.onPressEnter}
+                            />
+                          );
+                        },
+                      },
+                      {
+                        // 默认模型：执行器级默认，所有未单独指定模型的 todo 用该执行器时默认传此模型。
+                        // 留空 = 不传 --model，由执行器配置文件决定（向后兼容）。
+                        title: '默认模型',
+                        dataIndex: 'default_model',
+                        key: 'default_model',
+                        render: (defaultModel: string | null | undefined, record: ExecutorConfig) => {
+                          // 已知能列模型的执行器（需和后端 list_models match 分支保持一致）。
+                          if (!record.supports_models) {
+                            const save = saver.inlineFieldSave(
+                              record.name,
+                              defaultModel ?? '',
+                              async (newModel) => {
+                                await saver.saveExecutorField(record.name, { default_model: newModel });
+                              },
+                            );
+                            return (
+                              <Input
+                                size="small"
+                                placeholder="留空用执行器自带配置"
+                                defaultValue={defaultModel ?? ''}
+                                onBlur={save.onBlur}
+                                onPressEnter={save.onPressEnter}
+                              />
+                            );
+                          }
+                          // supports_models：Select 下拉，按 provider 分组展示后端列出的模型。
+                          const models = admin.executorModels[record.name] || [];
+                          const groups: Record<string, { label: string; value: string }[]> = {};
+                          models.forEach((full) => {
+                            const slash = full.indexOf('/');
+                            const provider = slash > 0 ? full.slice(0, slash) : '其他';
+                            const mn = slash > 0 ? full.slice(slash + 1) : full;
+                            if (!groups[provider]) groups[provider] = [];
+                            groups[provider].push({ label: mn, value: full });
+                          });
+                          return (
+                            <Select
+                              size="small"
+                              value={defaultModel || undefined}
+                              placeholder="留空用执行器自带配置"
+                              allowClear
+                              showSearch
+                              notFoundContent={
+                                admin.modelsLoading[record.name]
+                                  ? '加载中，请稍后...'
+                                  : models.length === 0
+                                    ? '暂无可选模型'
+                                    : undefined
+                              }
+                              onDropdownVisibleChange={(open) => admin.handleModelsDropdown(record.name, open)}
+                              filterOption={(input: string, option?: { label: string; value: string }) =>
+                                (option?.label ?? '').toLowerCase().includes(input.toLowerCase())}
+                              onChange={(v: unknown) => {
+                                const newModel = (v as string)?.trim() || '';
+                                // 未改动不保存（避免清空即触发无谓请求）。
+                                if (newModel === (defaultModel ?? '')) return;
+                                void saver.saveExecutorField(record.name, { default_model: newModel });
+                              }}
+                              style={{ width: '100%' }}
+                            >
+                              {Object.entries(groups).map(([provider, items]) => (
+                                <Select.OptGroup key={provider} label={provider}>
+                                  {items.map((item) => (
+                                    <Select.Option key={item.value} value={item.value}>{item.label}</Select.Option>
+                                  ))}
+                                </Select.OptGroup>
+                              ))}
+                            </Select>
+                          );
+                        },
+                      },
+                      {
+                        title: '检测状态',
+                        key: 'detect_status',
+                        align: 'center',
+                        render: (_: unknown, record: ExecutorConfig) => {
+                          const detectResult = admin.detectResults[record.name];
+                          if (!detectResult) {
+                            return <span style={{ color: 'var(--color-text-tertiary)', fontSize: 12 }}>未检测</span>;
+                          }
+                          return (
+                            <Tooltip title={detectResult.resolved || '未找到'}>
+                              {detectResult.found ? (
+                                <span style={{ color: '#52c41a', fontSize: 12, fontWeight: 500 }}>
+                                  ✓ 可用
+                                </span>
+                              ) : (
+                                <span style={{ color: '#ff4d4f', fontSize: 12, fontWeight: 500 }}>
+                                  ✗ 不可用
+                                </span>
+                              )}
+                            </Tooltip>
+                          );
+                        },
+                      },
+                      {
+                        title: '操作',
+                        key: 'action',
+                        width: 240,
+                        render: (_: unknown, record: ExecutorConfig) => {
+                          const detectResult = admin.detectResults[record.name];
+                          const isDetecting = admin.detectingExecutor === record.name;
+                          const isTesting = admin.testingExecutor === record.name;
+                          const isSettingDefault = admin.settingDefaultExecutor === record.name;
+                          return (
+                            <Space size={4}>
+                              <Tooltip title={record.is_default ? '当前为默认执行器' : '设为默认执行器'}>
+                                <Button
+                                  size="small"
+                                  type={record.is_default ? 'primary' : 'default'}
+                                  icon={record.is_default ? <StarFilled /> : <StarOutlined />}
+                                  loading={isSettingDefault}
+                                  disabled={record.is_default}
+                                  onClick={() => { void admin.setAsDefault(record); }}
+                                >
+                                  {record.is_default ? '默认' : '设为默认'}
+                                </Button>
+                              </Tooltip>
+                              <Button
+                                size="small"
+                                icon={<SearchOutlined />}
+                                loading={isDetecting}
+                                onClick={() => { void admin.detectExecutorByName(record); }}
+                              >
+                                检测
+                              </Button>
+                              {!detectResult?.found && (
+                                <Button
+                                  size="small"
+                                  icon={<BugOutlined />}
+                                  onClick={() => { void admin.repairByName(record); }}
+                                >
+                                  修复
+                                </Button>
+                              )}
+                              {detectResult && !detectResult.found && (() => {
+                                // 把 getExecutorInstallPrompt 结果存为临时变量，避免条件判断和 prompt prop 重复调用
+                                const installPrompt = getExecutorInstallPrompt(record.name);
+                                return installPrompt && (
+                                  <InstallExecutorButton
+                                    executorName={record.name}
+                                    displayName={record.display_name}
+                                    prompt={installPrompt.prompt}
+                                    buttonSize="small"
+                                    showLabel={true}
+                                    // 安装完成后：重新检测 → 若找到则修复路径 + 启用 → 刷新前端状态
+                                    //（detect+repair+updateExecutor 三步兜底链已收口到 refreshAfterInstall）。
+                                    onInstalled={() => { void admin.refreshAfterInstall(record); }}
+                                  />
+                                );
+                              })()}
+                              <Button
+                                size="small"
+                                type="primary"
+                                ghost
+                                icon={<PlayCircleOutlined />}
+                                loading={isTesting}
+                                onClick={() => { void admin.testExecutorByName(record); }}
+                              >
+                                测试
+                              </Button>
+                            </Space>
+                          );
+                        },
+                      },
+                    ]}
                   />
-                </Form.Item>
-                <Tooltip title="同时运行的最大 Todo 数量，超出将排队等待">
-                  <InfoCircleOutlined style={{ color: 'var(--color-text-quaternary)', fontSize: 12 }} />
-                </Tooltip>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontSize: 13, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>执行超时</span>
-                <Switch
-                  size="small"
-                  checked={executionTimeoutEnabled}
-                  checkedChildren="开启"
-                  unCheckedChildren="关闭"
-                  onChange={handleExecutionTimeoutToggle}
-                />
-                {/*
-                  超时控件脱离 Form.Item 托管，改为纯受控：
-                  展示用分钟（executionTimeoutMinutes）、存储用秒（execution_timeout_secs），
-                  单位不同不能共用一个字段值。此前给 Form.Item 带 name 后，antd 会用字段值
-                  （秒，如 300）覆盖 InputNumber 的 value，导致控件显示原始秒数而非分钟（应显示 5）。
-                  现在 value 取分钟、onChange 换算成秒写回 state；保存时由 handleSaveConfig
-                  从 state 注入 execution_timeout_secs，保存体仍然完整。
-                */}
-                <InputNumber
-                  size="small"
-                  min={1}
-                  max={MAX_EXECUTION_TIMEOUT_MINUTES}
-                  style={{ width: 80 }}
-                  disabled={!executionTimeoutEnabled}
-                  value={executionTimeoutMinutes}
-                  onChange={(v) => {
-                    if (v) {
-                      const nextSecs = v * 60;
-                      setExecutionTimeoutSecs(nextSecs);
-                      lastEnabledExecutionTimeoutSecsRef.current = nextSecs;
-                    }
-                  }}
-                />
-                <span style={{ fontSize: 13, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>分钟</span>
-                <Tooltip title={`单个执行任务的最大时长（1 ~ ${MAX_EXECUTION_TIMEOUT_MINUTES} 分钟，上限 7 天）；关闭后不再因超时自动终止`}>
-                  <InfoCircleOutlined style={{ color: 'var(--color-text-quaternary)', fontSize: 12 }} />
-                </Tooltip>
-              </div>
-              <Button
-                size="small"
-                type="primary"
-                icon={<SaveOutlined />}
-                loading={configSaving}
-                onClick={handleSaveConfig}
-              >
-                保存
-              </Button>
-            </div>
-          </Form>
-        </Card>
 
-        <Card
-          size="small"
-          title={<><ClockCircleOutlined style={{ marginRight: 6 }} />AI 使用统计</>}
-          style={{ marginTop: 16 }}
-          extra={
-            <Switch
-              checked={usageStatsEnabled}
-              onChange={async (checked) => {
-                setUsageStatsEnabled(checked);
-                try {
-                  setUsageStatsSaving(true);
-                  await db.updateUsageStatsSettings(checked, usageStatsCron);
-                  message.success('AI 使用统计配置已更新');
-                } catch (err: any) {
-                  message.error('保存失败: ' + (err?.message || String(err)));
-                } finally {
-                  setUsageStatsSaving(false);
-                }
-              }}
-              loading={usageStatsLoading}
-            />
-          }
-        >
-          {usageStatsEnabled && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
-                自动收集本机执行器的 Token 使用量，每日归档到数据库
-              </Typography.Paragraph>
-              <CronPresetSelect value={usageStatsCron} onChange={(val: string) => setUsageStatsCron(val)} />
-              <Cron
-                value={cronTo5(usageStatsCron)}
-                setValue={(val: string) => { setUsageStatsCron(cronTo6(val)); }}
-                locale={CRON_ZH_LOCALE}
-                defaultPeriod="day"
-                humanizeLabels
-                allowClear={false}
-              />
-              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                <Button size="small" type="primary" onClick={handleSaveUsageStats} loading={usageStatsSaving}>
-                  保存
-                </Button>
-              </div>
-            </div>
-          )}
-        </Card>
-            {/* 执行器检测/修复结果 Modal */}
-            <Modal
-              title={testModalData ? `测试结果 - ${executors.find(e => e.name === testModalData.name)?.display_name || testModalData.name}` : '测试结果'}
-              open={testModalVisible}
-              onCancel={() => setTestModalVisible(false)}
-              footer={<Button onClick={() => setTestModalVisible(false)}>关闭</Button>}
-              width={500}
-            >
-              {testModalData && (
-                <div>
-                  <p>
-                    状态：{testModalData.result.test_passed
-                      ? <span style={{ color: '#52c41a', fontWeight: 600 }}>通过</span>
-                      : <span style={{ color: '#ff4d4f', fontWeight: 600 }}>失败</span>
+                  {/* 运行配置 / AI 使用统计两块全局配置已拆为独立卡片子组件，各自挂载即加载。 */}
+                  <RunConfigCard />
+                  <UsageStatsCard />
+
+                  {/* 执行器测试结果 Modal */}
+                  <Modal
+                    title={
+                      admin.testModalData
+                        ? `测试结果 - ${admin.executors.find((e) => e.name === admin.testModalData?.name)?.display_name || admin.testModalData?.name}`
+                        : '测试结果'
                     }
-                  </p>
-                  {testModalData.result.error && (
-                    <p style={{ color: '#ff4d4f' }}>错误：{testModalData.result.error}</p>
-                  )}
-                  {testModalData.result.output && (
-                    <div>
-                      <Paragraph type="secondary">输出：</Paragraph>
-                      <pre style={{
-                        background: 'var(--color-bg-container)',
-                        color: 'var(--color-text-secondary)',
-                        padding: 12,
-                        borderRadius: 6,
-                        fontSize: 12,
-                        maxHeight: 300,
-                        overflow: 'auto',
-                        whiteSpace: 'pre-wrap',
-                        margin: 0,
-                      }}>
-                        {testModalData.result.output}
-                      </pre>
-                    </div>
-                  )}
+                    open={admin.testModalVisible}
+                    onCancel={admin.closeTestModal}
+                    footer={<Button onClick={admin.closeTestModal}>关闭</Button>}
+                    width={500}
+                  >
+                    {admin.testModalData && (
+                      <div>
+                        <p>
+                          状态：{admin.testModalData.result.test_passed
+                            ? <span style={{ color: '#52c41a', fontWeight: 600 }}>通过</span>
+                            : <span style={{ color: '#ff4d4f', fontWeight: 600 }}>失败</span>
+                          }
+                        </p>
+                        {admin.testModalData.result.error && (
+                          <p style={{ color: '#ff4d4f' }}>错误：{admin.testModalData.result.error}</p>
+                        )}
+                        {admin.testModalData.result.output && (
+                          <div>
+                            <Paragraph type="secondary">输出：</Paragraph>
+                            <pre style={{
+                              background: 'var(--color-bg-container)',
+                              color: 'var(--color-text-secondary)',
+                              padding: 12,
+                              borderRadius: 6,
+                              fontSize: 12,
+                              maxHeight: 300,
+                              overflow: 'auto',
+                              whiteSpace: 'pre-wrap',
+                              margin: 0,
+                            }}>
+                              {admin.testModalData.result.output}
+                            </pre>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </Modal>
                 </div>
-              )}
-            </Modal>
-              </div>
-            </Spin>
-          ),
-        },
-        {
-          key: 'api-key',
-          label: 'API Key',
-          children: (
-            <ProfilesPanel />
-          ),
-        },
-        {
-          key: 'running',
-          label: '正在运行',
-          children: (
-            <div style={{ padding: '8px 0' }}>
-              <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Button
-                  danger
+              </Spin>
+            ),
+          },
+          {
+            key: 'api-key',
+            label: 'API Key',
+            children: (
+              <ProfilesPanel />
+            ),
+          },
+          {
+            key: 'running',
+            label: '正在运行',
+            children: (
+              <div style={{ padding: '8px 0' }}>
+                <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Button
+                    danger
+                    size="small"
+                    icon={<StopOutlined />}
+                    disabled={running.selectedRecordIds.length === 0}
+                    loading={running.stoppingRecords}
+                    onClick={() => { void running.handleBatchStop(); }}
+                  >
+                    批量停止 ({running.selectedRecordIds.length})
+                  </Button>
+                  <Button
+                    size="small"
+                    icon={<ReloadOutlined />}
+                    onClick={() => { void running.loadRunningRecords(); }}
+                  >
+                    刷新
+                  </Button>
+                  <span style={{ color: 'var(--color-text-secondary)', fontSize: 12 }}>
+                    共 {running.runningRecords.length} 个运行中任务
+                  </span>
+                </div>
+                <Table
                   size="small"
-                  icon={<StopOutlined />}
-                  disabled={selectedRecordIds.length === 0}
-                  loading={stoppingRecords}
-                  onClick={handleBatchStop}
-                >
-                  批量停止 ({selectedRecordIds.length})
-                </Button>
-                <Button
-                  size="small"
-                  icon={<ReloadOutlined />}
-                  onClick={loadRunningRecords}
-                >
-                  刷新
-                </Button>
-                <span style={{ color: 'var(--color-text-secondary)', fontSize: 12 }}>
-                  共 {runningRecords.length} 个运行中任务
-                </span>
+                  rowKey="id"
+                  dataSource={running.runningRecords}
+                  rowSelection={{
+                    selectedRowKeys: running.selectedRecordIds,
+                    onChange: (keys) => running.setSelectedRecordIds(keys as number[]),
+                  }}
+                  pagination={false}
+                  columns={[
+                    {
+                      title: 'Todo',
+                      key: 'todo_title',
+                      ellipsis: true,
+                      render: (_: unknown, record: ExecutionRecord) => {
+                        const todo = running.recordTodos.find((t) => t.id === record.todo_id);
+                        return todo ? todo.title : `#${record.todo_id}`;
+                      },
+                    },
+                    {
+                      title: '执行器',
+                      dataIndex: 'executor',
+                      key: 'executor',
+                      width: 110,
+                      render: (v: string | null) => {
+                        return running.executorDisplayNames[v || ''] || v || '-';
+                      },
+                    },
+                    {
+                      title: '触发方式',
+                      dataIndex: 'trigger_type',
+                      key: 'trigger_type',
+                      width: 100,
+                      render: (v: string) => {
+                        const map: Record<string, string> = { manual: '手动', slash_command: '斜杠命令', default_response: '默认响应', scheduler: '定时' };
+                        return map[v] || v;
+                      },
+                    },
+                    {
+                      title: '开始时间',
+                      dataIndex: 'started_at',
+                      key: 'started_at',
+                      width: 170,
+                      render: (v: string) => v ? new Date(v).toLocaleString() : '-',
+                    },
+                    {
+                      title: '操作',
+                      key: 'action',
+                      width: 80,
+                      render: (_: unknown, record: ExecutionRecord) => (
+                        <Popconfirm title="确认停止此任务？" onConfirm={() => { void running.stopRecord(record.id); }}>
+                          <Button type="text" size="small" icon={<StopOutlined />} />
+                        </Popconfirm>
+                      ),
+                    },
+                  ]}
+                  locale={{ emptyText: <Empty description="暂无运行中任务" image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
+                />
               </div>
-              <Table
-                size="small"
-                rowKey="id"
-                dataSource={runningRecords}
-                rowSelection={{
-                  selectedRowKeys: selectedRecordIds,
-                  onChange: (keys) => setSelectedRecordIds(keys as number[]),
-                }}
-                pagination={false}
-                columns={[
-                  {
-                    title: 'Todo',
-                    key: 'todo_title',
-                    ellipsis: true,
-                    render: (_: unknown, record: ExecutionRecord) => {
-                      const todo = recordTodos.find(t => t.id === record.todo_id);
-                      return todo ? todo.title : `#${record.todo_id}`;
-                    },
-                  },
-                  {
-                    title: '执行器',
-                    dataIndex: 'executor',
-                    key: 'executor',
-                    width: 110,
-                    render: (v: string | null) => {
-                      return executorDisplayNames[v || ''] || v || '-';
-                    },
-                  },
-                  {
-                    title: '触发方式',
-                    dataIndex: 'trigger_type',
-                    key: 'trigger_type',
-                    width: 100,
-                    render: (v: string) => {
-                      const map: Record<string, string> = { manual: '手动', slash_command: '斜杠命令', default_response: '默认响应', scheduler: '定时' };
-                      return map[v] || v;
-                    },
-                  },
-                  {
-                    title: '开始时间',
-                    dataIndex: 'started_at',
-                    key: 'started_at',
-                    width: 170,
-                    render: (v: string) => v ? new Date(v).toLocaleString() : '-',
-                  },
-                  {
-                    title: '操作',
-                    key: 'action',
-                    width: 80,
-                    render: (_: unknown, record: ExecutionRecord) => (
-                      <Popconfirm title="确认停止此任务？" onConfirm={async () => {
-                        try {
-                          await db.forceFailExecution(state.selectedWorkspace ?? 0, record.id);
-                          message.success('已停止');
-                          loadRunningRecords();
-                        } catch (err) { message.error(`停止失败: ${err instanceof Error ? err.message : String(err)}`); }
-                      }}>
-                        <Button type="text" size="small" icon={<StopOutlined />} />
-                      </Popconfirm>
-                    ),
-                  },
-                ]}
-                locale={{ emptyText: <Empty description="暂无运行中任务" image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
-              />
-            </div>
-          ),
-        },
-        {
-          key: 'sessions',
-          label: '会话',
-          children: (
-            <SessionManager embedded />
-          ),
-        },
-      ]}
+            ),
+          },
+          {
+            key: 'sessions',
+            label: '会话',
+            children: (
+              <SessionManager embedded />
+            ),
+          },
+        ]}
       />
     </PageCard>
   );
