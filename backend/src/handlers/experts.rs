@@ -19,7 +19,7 @@ use crate::expert::{
 };
 use crate::expert::loader::resolve_within;
 
-/// `GET /api/experts`：获取所有专家列表
+/// `GET /api/v1/experts`：获取所有专家列表
 ///
 /// 返回所有已加载的专家元数据，按分类分组。前端可用于专家选择面板。
 pub async fn get_experts(
@@ -29,7 +29,7 @@ pub async fn get_experts(
     Ok(ApiResponse::ok(experts))
 }
 
-/// `GET /api/experts/:name`：获取单个专家详情
+/// `GET /api/v1/experts/:name`：获取单个专家详情
 ///
 /// 返回指定名称的专家完整元数据。
 pub async fn get_expert(
@@ -43,7 +43,7 @@ pub async fn get_expert(
     Ok(ApiResponse::ok(expert))
 }
 
-/// `GET /api/experts/:name/plugin-json`：获取专家的原始 plugin.json 内容
+/// `GET /api/v1/experts/:name/plugin-json`：获取专家的原始 plugin.json 内容
 ///
 /// 返回 plugin.json 文件的原始文本内容，用于前端编辑。
 pub async fn get_expert_plugin_json(
@@ -61,7 +61,7 @@ pub async fn get_expert_plugin_json(
     Ok(ApiResponse::ok(content))
 }
 
-/// `GET /api/experts/:name/agent-md`：获取专家的 Agent MD 内容
+/// `GET /api/v1/experts/:name/agent-md`：获取专家的 Agent MD 内容
 ///
 /// 根据专家类型自动定位：
 /// - 单个专家：使用 agent_name 字段定位
@@ -92,7 +92,7 @@ pub async fn get_expert_agent_md(
     Ok(ApiResponse::ok(md_content))
 }
 
-/// `GET /api/experts/:name/skills`：获取专家关联的所有 Skill 元数据
+/// `GET /api/v1/experts/:name/skills`：获取专家关联的所有 Skill 元数据
 ///
 /// 返回专家绑定的技能列表，用于前端展示可用技能。
 pub async fn get_expert_skills(
@@ -108,7 +108,7 @@ pub async fn get_expert_skills(
     Ok(ApiResponse::ok(skills))
 }
 
-/// `GET /api/experts/:name/avatar`：获取专家头像
+/// `GET /api/v1/experts/:name/avatar`：获取专家头像
 ///
 /// 根据专家的 avatar_path 字段定位头像文件并返回。
 /// 如果头像不存在，返回 404。
@@ -150,7 +150,7 @@ pub async fn get_expert_avatar(
     ))
 }
 
-/// `DELETE /api/experts/:name`：删除专家
+/// `DELETE /api/v1/experts/:name`：删除专家
 ///
 /// 删除指定专家：
 /// 1. 从内存索引中移除专家及其所有关联数据（agent_files、skills 等）
@@ -206,7 +206,7 @@ fn validate_agent_name(name: &str) -> Result<(), AppError> {
     Ok(())
 }
 
-/// `PUT /api/experts/:name`：更新专家
+/// `PUT /api/v1/experts/:name`：更新专家
 ///
 /// 更新指定专家的 plugin.json 和 agent.md 内容。
 /// 专家名称不可修改，如需改名请删除后重新创建。
@@ -270,7 +270,7 @@ pub async fn update_expert(
     }
 }
 
-/// `GET /api/experts/:name/members/:member_id/avatar`：获取团队成员头像
+/// `GET /api/v1/experts/:name/members/:member_id/avatar`：获取团队成员头像
 ///
 /// 团队成员的头像路径存储在成员的 avatar_path 字段中（相对专家定义目录）。
 /// 通过 expert_name 定位专家，再在 members 中按 member_id 查找对应成员，
@@ -332,7 +332,7 @@ fn infer_image_mime(path: &Path) -> &'static str {
     }
 }
 
-/// `POST /api/experts/create`：创建新专家
+/// `POST /api/v1/experts`：创建新专家（REST 集合路径；旧 `POST /api/experts/create` 已随路由收口移除，不再注册）
 ///
 /// 根据传入的 plugin_json 和 agent_md 内容创建新专家。
 /// 流程：
@@ -434,7 +434,7 @@ pub async fn create_expert(
     }
 }
 
-/// `POST /api/experts/reload`：重新加载所有专家定义
+/// `POST /api/v1/experts/reload`：重新加载所有专家定义
 ///
 /// 清空现有索引，重新扫描 ~/.ntd/experts/ 目录加载专家定义。
 /// 返回加载结果（成功数量和错误列表）。
@@ -515,7 +515,7 @@ pub struct WorkbuddyImportResult {
 
 // ── 导出 API ──────────────────────────────────────────────────────────
 
-/// `GET /api/experts/:name/export`：导出专家为 zip 文件
+/// `GET /api/v1/experts/:name/export`：导出专家为 zip 文件
 ///
 /// 将指定专家的整个目录打包为 zip 文件下载。
 /// 流式传输，不一次性加载整个 zip 到内存。
@@ -618,7 +618,7 @@ fn add_dir_to_zip<W: std::io::Write + std::io::Seek>(
 
 // ── 导入 API ──────────────────────────────────────────────────────────
 
-/// `POST /api/experts/import`：从 zip 文件导入专家
+/// `POST /api/v1/experts/import`：从 zip 文件导入专家
 ///
 /// 接收 multipart/form-data 上传的 zip 文件，解压并导入为新专家。
 /// 如果专家已存在则返回错误，不覆盖。
@@ -900,7 +900,7 @@ fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
 
 // ── 从目录导入 API ──────────────────────────────────────────────────
 
-/// `POST /api/experts/import-from-directory`：从本地目录导入专家
+/// `POST /api/v1/experts/import-from-directory`：从本地目录导入专家
 ///
 /// 接收 JSON body 指定的绝对路径，校验后复制到专家目录。
 /// 如果专家已存在则返回错误，不覆盖。
@@ -989,41 +989,10 @@ fn import_expert_from_dir(
     })
 }
 
-/// 专家 API 路由定义
-pub fn expert_routes() -> axum::Router<AppState> {
-    use axum::routing::{delete, get, post, put};
-
-    Router::new()
-        .route("/api/experts", get(get_experts))
-        .route("/api/experts/create", post(create_expert))
-        .route("/api/experts/{name}", get(get_expert))
-        .route("/api/experts/{name}", put(update_expert))
-        .route("/api/experts/{name}/plugin-json", get(get_expert_plugin_json))
-        .route("/api/experts/{name}/agent-md", get(get_expert_agent_md))
-        .route("/api/experts/{name}/skills", get(get_expert_skills))
-        .route("/api/experts/{name}/avatar", get(get_expert_avatar))
-        .route(
-            "/api/experts/{name}/members/{member_id}/avatar",
-            get(get_expert_member_avatar),
-        )
-        .route("/api/experts/{name}/export", get(export_expert))
-        .route("/api/experts/{name}", delete(delete_expert))
-        .route("/api/experts/reload", post(reload_experts))
-        .route("/api/experts/import", post(import_expert))
-        .route(
-            "/api/experts/import-from-directory",
-            post(import_expert_from_directory),
-        )
-        .route(
-            "/api/experts/import-from-workbuddy",
-            post(import_from_workbuddy),
-        )
-}
-
-/// V1 专家 API 路由定义（API 重构过渡期）
+/// V1 专家 API 路由定义
 ///
-/// 与 `expert_routes()` 共存，路由前缀改为 /api/v1/experts，全路径注册。
-/// 新旧路由在顶层通过不同的 Router merge 组装，此处不走嵌套前缀。
+/// 全路径注册版本化路由（前缀 /api/v1/experts），遵循 REST 集合语义。
+/// 旧 `/api/experts/*` 路由已随 api-routing-redesign 移除，不再注册。
 pub fn v1_routes() -> axum::Router<AppState> {
     use axum::routing::{get, post};
 
@@ -1073,7 +1042,7 @@ pub fn v1_routes() -> axum::Router<AppState> {
 const WORKBUDDY_EXPERTS_RELATIVE_PATH: &str =
     ".workbuddy/plugins/marketplaces/experts/plugins";
 
-/// `POST /api/experts/import-from-workbuddy`：从 WorkBuddy 目录批量导入专家
+/// `POST /api/v1/experts/import-from-workbuddy`：从 WorkBuddy 目录批量导入专家
 ///
 /// 扫描 WorkBuddy 默认目录下的所有专家子目录，逐个导入到 NTD 专家目录。
 /// 已存在的专家会被跳过，不会覆盖。

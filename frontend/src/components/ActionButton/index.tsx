@@ -114,6 +114,9 @@ export function ActionButton({
     lastGeneratedRef.current = generated;
     setParamValues(params);
     setSelectedExecutor(getLastExecutor(executor));
+    // 每次打开都把工作空间重置为调用方指定的值（未指定则清空），
+    // 保证执行用「当前」工作空间，而非上次打开遗留的选择。
+    setSelectedWorkspaceId(workspaceId ?? undefined);
     setOpen(true);
   };
 

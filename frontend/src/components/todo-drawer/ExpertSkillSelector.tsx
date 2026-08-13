@@ -1,7 +1,7 @@
 // ─── 专家技能选择器 ──────────────────────────────────────────
 //
 // 在 TodoDrawer 中选中专家后，展示该专家关联的技能列表。
-// 数据来源：后端 /api/experts/:name/skills 接口，返回 SkillMetadata[]。
+// 数据来源：后端 /api/v1/experts/:name/skills 接口，返回 SkillMetadata[]。
 // 与执行器版的 SkillSelector 不同，这里聚焦"专家绑定了哪些技能"，
 // 由组件内部自行管理加载状态与折叠状态，父组件只需传入 expertName。
 //

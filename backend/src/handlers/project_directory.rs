@@ -94,14 +94,6 @@ pub async fn delete_project_directory(
     Ok(ApiResponse::ok(()))
 }
 
-pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/api/project-directories", get(list_project_directories))
-        .route("/api/project-directories", post(create_project_directory))
-        .route("/api/project-directories/{id}", put(update_project_directory))
-        .route("/api/project-directories/{id}", delete(delete_project_directory))
-}
-
 /// API v1 路由：项目目录相关端点。
 ///
 /// 将 /api 前缀替换为 /api/v1，参数模式与旧路由保持一致。

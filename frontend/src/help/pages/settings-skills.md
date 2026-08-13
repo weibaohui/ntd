@@ -16,8 +16,8 @@ flowchart LR
   SkillsPanel -->|"activeView=version-update"| SkillVersionUpdate["SkillVersionUpdate"]
   SkillsOverview -->|"db.getSkillsList"| API1["GET /api/v1/skills"]
   SkillsOverview -->|"db.syncSkill"| API2["POST /api/v1/skills/sync"]
-  SkillMarketplace -->|"bundledApi.getSkills"| API3["GET /api/bundled/skills"]
-  SkillMarketplace -->|"bundledApi.installSkill"| API4["POST /api/bundled/skills/install"]
+  SkillMarketplace -->|"bundledApi.getSkills"| API3["GET /api/v1/bundled/skills"]
+  SkillMarketplace -->|"bundledApi.installSkill"| API4["POST /api/v1/bundled/skills/install"]
   SkillVersionUpdate -->|"db.getSkillVersionUpdates"| API5["GET /api/v1/skills/version-update"]
   SkillVersionUpdate -->|"db.getSkillsComparison"| API6["GET /api/v1/skills/compare"]
   SkillVersionUpdate -->|"db.syncSkill"| API2

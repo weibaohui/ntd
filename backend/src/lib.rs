@@ -42,6 +42,11 @@ pub mod expert;
 ///
 /// 提供从远程 Git 仓库同步内置资源（专家、模板、Skills）的能力。
 pub mod git_sync;
+/// 专家贡献模块
+///
+/// 提供把本地专家提交回官方 GitCode 仓库的能力
+/// （用户填写 PAT + ActionButton 提示词驱动提交 PR）。
+pub mod contribution;
 
 use rust_embed::RustEmbed;
 

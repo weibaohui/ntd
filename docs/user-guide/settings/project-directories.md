@@ -95,11 +95,11 @@ Todo还有一个 `worktree_enabled`字段：
 
 ## 6.相关 API
 
-`project_directory::routes()`挂载在 `/api/project-directories` 下，标准 CRUD：
+`project_directory::v1_routes()`挂载在 `/api/v1/project-directories` 下，标准 CRUD：
 
 | Method | Path |用途 |
 |--------|------|------|
-| GET | `/api/project-directories` |列出全部 |
-| POST | `/api/project-directories` |新增（body `{path, name}`，`name`必填） |
-| PUT | `/api/project-directories/{id}` |修改（body `{name}`） |
-| DELETE | `/api/project-directories/{id}` |删除 |
+| GET | `/api/v1/project-directories` |列出全部 |
+| POST | `/api/v1/project-directories` |新增（body `{path, name}`，`name`必填） |
+| PUT | `/api/v1/project-directories/{id}` |修改（body `{name}`） |
+| DELETE | `/api/v1/project-directories/{id}` |删除 |

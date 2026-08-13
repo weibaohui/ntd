@@ -56,7 +56,7 @@ impl Subdir {
 
 /// Skills 市场元数据缓存（启动时扫描一次，后续直接读内存）
 ///
-/// 每次请求 `/api/bundled/skills` 都重新扫描磁盘会导致 10-20 秒延迟，
+/// 每次请求 `/api/v1/bundled/skills` 都重新扫描磁盘会导致 10-20 秒延迟，
 /// 用户体验很差。缓存后在内存中直接返回，延迟降到毫秒级。
 ///
 /// 缓存在以下时机失效/刷新：
@@ -323,7 +323,7 @@ pub(crate) async fn run_bundled_sync(
 
 /// 手动触发同步
 ///
-/// POST /api/bundled/sync
+/// POST /api/v1/bundled/sync
 pub async fn sync_bundled(
     State(state): State<AppState>,
     Json(req): Json<SyncRequest>,
@@ -349,7 +349,7 @@ pub async fn sync_bundled(
 
 /// 获取同步状态
 ///
-/// GET /api/bundled/status?subdir=experts
+/// GET /api/v1/bundled/status?subdir=experts
 pub async fn get_bundled_status(
     State(state): State<AppState>,
     Query(query): Query<StatusQuery>,
@@ -786,7 +786,7 @@ async fn reload_experts_from_bundled(state: &AppState) -> Result<(), String> {
 
 /// 获取当前配置
 ///
-/// GET /api/bundled/config
+/// GET /api/v1/bundled/config
 pub async fn get_bundled_config(
     State(state): State<AppState>,
 ) -> Result<ApiResponse<BundledSourceConfig>, AppError> {
@@ -796,7 +796,7 @@ pub async fn get_bundled_config(
 
 /// 更新配置
 ///
-/// PUT /api/bundled/config
+/// PUT /api/v1/bundled/config
 #[derive(Debug, Deserialize)]
 pub struct UpdateConfigRequest {
     /// 远程仓库地址
@@ -847,28 +847,10 @@ async fn update_last_sync_time(state: &AppState) {
     }).save();
 }
 
-/// 路由定义
-pub fn bundled_routes() -> Router<AppState> {
-    Router::new()
-        .route("/api/bundled/sync", axum::routing::post(sync_bundled))
-        .route("/api/bundled/status", axum::routing::get(get_bundled_status))
-        .route("/api/bundled/config", axum::routing::get(get_bundled_config))
-        .route("/api/bundled/config", axum::routing::put(update_bundled_config))
-        // 技能市场 API
-        .route("/api/bundled/skills", axum::routing::get(list_bundled_skills))
-        // 来源分页：与技能分页职责分离，按「来源」本身切片，
-        // 来源网格据此渲染，避免按技能切片后派生来源导致每页来源数量稀少
-        .route("/api/bundled/skill-sources", axum::routing::get(list_bundled_skill_sources))
-        .route("/api/bundled/skills/{name}/content", axum::routing::get(get_bundled_skill_content))
-        // 读单文件内容：与 content 同命名空间，让市场页文件浏览器能预览 SKILL.md 以外的文件
-        .route("/api/bundled/skills/{name}/file", axum::routing::get(get_bundled_skill_file))
-        .route("/api/bundled/skills/install", axum::routing::post(install_bundled_skill))
-}
-
-/// V1 路由定义：内置资源同步相关 API（API 重构过渡期）
+/// V1 路由定义：内置资源同步相关 API
 ///
-/// 与 `bundled_routes()` 共存，路由前缀改为 /api/v1/bundled，全路径注册。
-/// 新旧路由在顶层通过不同的 Router merge 组装，此处不走嵌套前缀。
+/// 全路径注册版本化路由（前缀 /api/v1/bundled），遵循 REST 集合语义。
+/// 旧 `/api/bundled/*` 路由已随 api-routing-redesign 移除，不再注册。
 pub fn v1_routes() -> Router<AppState> {
     Router::new()
         // 手动触发 git 同步（post /api/v1/bundled/sync）
@@ -1073,7 +1055,7 @@ fn default_page_size() -> u32 {
     20
 }
 
-/// GET /api/bundled/skills - 列出技能市场中的所有技能
+/// GET /api/v1/bundled/skills - 列出技能市场中的所有技能
 ///
 /// 优先从内存缓存返回（毫秒级），缓存未初始化时触发异步预热并等待结果。
 /// 支持嵌套目录结构（如 awesome-skills-zh/lark-doc/SKILL.md）。
@@ -1266,9 +1248,9 @@ pub struct ListSkillSourcesQuery {
     pub keyword: Option<String>,
 }
 
-/// GET /api/bundled/skill-sources - 列出技能来源（分页）
+/// GET /api/v1/bundled/skill-sources - 列出技能来源（分页）
 ///
-/// 与 `/api/bundled/skills` 职责分离：
+/// 与 `/api/v1/bundled/skills` 职责分离：
 /// - `/skills` 按「技能」切片，用于「全部技能」模式
 /// - `/skill-sources` 按「来源」切片，用于「按来源浏览」来源网格
 ///
@@ -1552,7 +1534,7 @@ fn count_files_and_size(dir: &std::path::Path) -> (u32, u64) {
     (count, size)
 }
 
-/// GET /api/bundled/skills/:name/content - 获取技能的 SKILL.md 内容和文件列表
+/// GET /api/v1/bundled/skills/:name/content - 获取技能的 SKILL.md 内容和文件列表
 ///
 /// 读取 bundled/skills/{name}/SKILL.md 的文本内容，
 /// 并列出目录下所有文件，用于前端详情 Drawer 展示。
@@ -1607,7 +1589,7 @@ pub struct BundledSkillFileQuery {
     pub path: String,
 }
 
-/// GET /api/bundled/skills/{name}/file - 读取 bundled 技能内某个文件的内容
+/// GET /api/v1/bundled/skills/{name}/file - 读取 bundled 技能内某个文件的内容
 ///
 /// 市场页文件浏览器预览非 SKILL.md 文件时调用。磁盘 IO 下放到 `read_bundled_skill_file`
 /// 并整体塞进 `spawn_blocking`，避免 read_to_string 阻塞 tokio reactor worker。
@@ -1769,7 +1751,7 @@ fn collect_files_list(base_dir: &std::path::Path, current_dir: &std::path::Path)
     files
 }
 
-/// POST /api/bundled/skills/install - 安装技能到执行器
+/// POST /api/v1/bundled/skills/install - 安装技能到执行器
 ///
 /// 将 bundled/skills/{skill_name} 目录复制到目标执行器的 skills 目录。
 /// 如果目标已存在同名技能，返回冲突提示（不自动覆盖）。

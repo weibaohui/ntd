@@ -985,7 +985,7 @@ function formatStars(n: number): string {
 // ─────────────────────────────────────────────────────────────────────────────
 // 文件浏览：复用 SkillFileBrowserModal。
 // bundled 的 content 接口返回 SKILL.md 文本 + 全量文件元信息（path+size）；
-// 单文件内容由 GET /api/bundled/skills/{name}/file 按需读取，
+// 单文件内容由 GET /api/v1/bundled/skills/{name}/file 按需读取，
 // 所以 loadContent 对 SKILL.md 走缓存，其他文件调 getSkillFileContent。
 // ─────────────────────────────────────────────────────────────────────────────
 function toSkillFileInfos(files: BundledSkillFile[]): SkillFileInfo[] {

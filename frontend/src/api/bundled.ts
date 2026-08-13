@@ -1,5 +1,5 @@
 // 内置资源同步 API
-// 对应后端 /api/bundled/* 接口
+// 对应后端 /api/v1/bundled/* 接口
 // 统一管理专家、事项模板、Skills 的远程仓库同步
 
 import { api, unwrap } from '@/utils/database/client';
@@ -323,7 +323,7 @@ export const bundledApi = {
     // 后端返回 {code, data, message} 包裹，必须用 unwrap 取出 data，
     // 否则调用方拿到的会是整个 axios response，字段访问全部失效。
     // 同步策略已固定为「以远程为准」，不再由前端传参。
-    return unwrap(await api.post('/api/bundled/sync', {
+    return unwrap(await api.post('/api/v1/bundled/sync', {
       subdir: params.subdir || 'all',
     }));
   },
@@ -332,21 +332,21 @@ export const bundledApi = {
    * 查询同步状态
    */
   async getStatus(subdir: Subdir = 'all'): Promise<BundledStatus> {
-    return unwrap(await api.get('/api/bundled/status', { params: { subdir } }));
+    return unwrap(await api.get('/api/v1/bundled/status', { params: { subdir } }));
   },
 
   /**
    * 获取配置
    */
   async getConfig(): Promise<BundledConfig> {
-    return unwrap(await api.get('/api/bundled/config'));
+    return unwrap(await api.get('/api/v1/bundled/config'));
   },
 
   /**
    * 更新配置
    */
   async updateConfig(config: Partial<BundledConfig>): Promise<BundledConfig> {
-    return unwrap(await api.put('/api/bundled/config', config));
+    return unwrap(await api.put('/api/v1/bundled/config', config));
   },
 
   // ---------------------------------------------------------------------------
@@ -371,7 +371,7 @@ export const bundledApi = {
     keyword?: string;
   }): Promise<BundledSkillsResponse> {
     // axios 会自动忽略 undefined 字段，所以前端只下发「显式传了」的过滤参数
-    return unwrap(await api.get('/api/bundled/skills', { params }));
+    return unwrap(await api.get('/api/v1/bundled/skills', { params }));
   },
 
   /**
@@ -389,7 +389,7 @@ export const bundledApi = {
     /** 来源关键字筛选：不区分大小写匹配 name / display_name / description */
     keyword?: string;
   }): Promise<BundledSkillSourcesResponse> {
-    return unwrap(await api.get('/api/bundled/skill-sources', { params }));
+    return unwrap(await api.get('/api/v1/bundled/skill-sources', { params }));
   },
 
   /**
@@ -397,7 +397,7 @@ export const bundledApi = {
    * 用于详情 Drawer 展示
    */
   async getSkillContent(skillName: string): Promise<BundledSkillContentResponse> {
-    return unwrap(await api.get(`/api/bundled/skills/${encodeURIComponent(skillName)}/content`));
+    return unwrap(await api.get(`/api/v1/bundled/skills/${encodeURIComponent(skillName)}/content`));
   },
 
   /**
@@ -406,7 +406,7 @@ export const bundledApi = {
    */
   async getSkillFileContent(skillName: string, path: string): Promise<{ path: string; content: string }> {
     // path 作为 query 参数透传，axios 会自动 encode；skillName 含 `/` 需手动 encode 进路径段
-    return unwrap(await api.get(`/api/bundled/skills/${encodeURIComponent(skillName)}/file`, {
+    return unwrap(await api.get(`/api/v1/bundled/skills/${encodeURIComponent(skillName)}/file`, {
       params: { path },
     }));
   },
@@ -416,7 +416,7 @@ export const bundledApi = {
    * 将 bundled/skills/{skill_name} 复制到目标执行器的 skills 目录
    */
   async installSkill(skillName: string, executor: string): Promise<InstallSkillResponse> {
-    return unwrap(await api.post('/api/bundled/skills/install', {
+    return unwrap(await api.post('/api/v1/bundled/skills/install', {
       skill_name: skillName,
       executor,
     }));

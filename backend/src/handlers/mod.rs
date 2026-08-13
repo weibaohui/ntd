@@ -160,6 +160,7 @@ pub mod action;
 pub mod blackboard;
 pub mod experts;
 pub mod bundled;
+pub mod contribution;
 pub mod process;
 pub mod tasks;
 pub mod task_posts;
@@ -393,8 +394,7 @@ pub async fn create_app(
     Router::new()
         .merge(mount_v1_domain_routes())
         // project_directory::v1_routes() 已包含在 action::v1_routes() 中，
-        // 不再单独 merge，避免路由重复注册。旧版本 project_directory::routes()
-        // 在 mount_domain_routes() 中保留供过渡期使用。
+        // 不再单独 merge，避免路由重复注册。
         .layer(DefaultBodyLimit::max(10 * 1024 * 1024))
         .layer(CompressionLayer::new())
         .layer(cors_layer())
@@ -431,6 +431,8 @@ fn mount_v1_domain_routes() -> Router<AppState> {
         .merge(tasks::task_routes())
         // 任务讨论区（论坛跟帖 + @专家/@执行器 触发执行后回帖，需求 060）
         .merge(task_posts::task_post_routes())
+        // 专家贡献（PAT 配置 + ActionButton 提示词驱动提交 PR）
+        .merge(contribution::contribution_routes())
         // v1 版本化 API 由 action::v1_routes() 统一聚合
         .merge(action::v1_routes())
 }
