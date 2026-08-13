@@ -185,9 +185,13 @@ async fn get_valid_token() -> Result<GitCodeToken, AppError> {
 }
 
 /// 拼 OAuth 回调地址：本机 + 当前端口。
+///
+/// 用 `127.0.0.1` 而非 `localhost`：与 GitCode OAuth 应用注册的 redirect_uri
+/// 保持一致（GitCode 对 localhost 形式校验不通过）；路径 `/api/v1/gitcode/oauth/callback`
+/// 也与注册值逐字符对齐，否则 authorize 阶段会报「回调地址错误」。
 fn build_redirect_uri(state: &AppState) -> String {
     let port = state.config_snapshot(|c| c.port);
-    format!("http://localhost:{port}/api/v1/contribution/oauth/callback")
+    format!("http://127.0.0.1:{port}/api/v1/gitcode/oauth/callback")
 }
 
 /// 构造 OAuth 失败提示页（HTML）。
@@ -214,7 +218,7 @@ pub fn contribution_routes() -> Router<AppState> {
     Router::new()
         .route("/api/v1/contribution/auth/status", get(auth_status))
         .route("/api/v1/contribution/oauth/url", get(oauth_url))
-        .route("/api/v1/contribution/oauth/callback", get(oauth_callback))
+        .route("/api/v1/gitcode/oauth/callback", get(oauth_callback))
         .route(
             "/api/v1/contribution/experts/{name}/preview",
             post(preview),
