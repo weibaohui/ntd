@@ -55,7 +55,7 @@ describe('useRunningRecords', () => {
     vi.clearAllMocks();
   });
 
-  it('loadRunningRecords：拉记录 + 按 todo_id 集反查 brief 标题', async () => {
+  it('test_loadRunningRecords_拉记录并按todo_id集反查brief标题', async () => {
     const records = [makeRecord({ id: 1, todo_id: 10 }), makeRecord({ id: 2, todo_id: 11 })];
     vi.mocked(db.getRunningExecutionRecords).mockResolvedValue(records);
     vi.mocked(db.getTodoBriefs).mockResolvedValue([
@@ -74,7 +74,7 @@ describe('useRunningRecords', () => {
     expect(result.current.recordTodos).toHaveLength(2);
   });
 
-  it('loadRunningRecords：无记录时清空 recordTodos（去重 todo_id 为空集）', async () => {
+  it('test_loadRunningRecords_无记录时清空recordTodos且不拉brief', async () => {
     vi.mocked(db.getRunningExecutionRecords).mockResolvedValue([]);
     const { result } = renderHook(() => useRunningRecords([]));
 
@@ -86,7 +86,7 @@ describe('useRunningRecords', () => {
     expect(db.getTodoBriefs).not.toHaveBeenCalled();
   });
 
-  it('handleBatchStop：对每个勾选 id 调 forceFail，清选 + 重拉 + 计数提示', async () => {
+  it('test_handleBatchStop_对勾选id调forceFail清选重拉并计数提示', async () => {
     vi.mocked(db.getRunningExecutionRecords).mockResolvedValue([]);
     vi.mocked(db.forceFailExecution).mockResolvedValue(undefined);
     const { result } = renderHook(() => useRunningRecords([]));
@@ -112,7 +112,7 @@ describe('useRunningRecords', () => {
     expect(db.getRunningExecutionRecords).toHaveBeenCalled();
   });
 
-  it('handleBatchStop：未勾选时直接返回，不调 forceFail', async () => {
+  it('test_handleBatchStop_未勾选时直接返回不调forceFail', async () => {
     vi.mocked(db.forceFailExecution).mockResolvedValue(undefined);
     const { result } = renderHook(() => useRunningRecords([]));
 
@@ -122,7 +122,7 @@ describe('useRunningRecords', () => {
     expect(db.forceFailExecution).not.toHaveBeenCalled();
   });
 
-  it('executorDisplayNames：由 executors 派生 name→display_name 映射', async () => {
+  it('test_executorDisplayNames_由executors派生name到display_name映射', async () => {
     vi.mocked(db.getRunningExecutionRecords).mockResolvedValue([]);
     const { result, rerender } = renderHook(({ executors }) => useRunningRecords(executors), {
       initialProps: { executors: [] as ExecutorConfig[] },

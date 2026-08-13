@@ -41,7 +41,7 @@ describe('useExecutorFieldSaver', () => {
     vi.clearAllMocks();
   });
 
-  it('saveExecutorField：成功 → 回写列表 + 返回更新值 + 清 saving', async () => {
+  it('test_saveExecutorField_成功回写列表返回更新值并清saving', async () => {
     const replaceExecutor = vi.fn();
     const updated = makeExecutor({ path: '/new' });
     vi.mocked(db.updateExecutor).mockResolvedValue(updated);
@@ -61,7 +61,7 @@ describe('useExecutorFieldSaver', () => {
     expect(mockMessage.error).not.toHaveBeenCalled();
   });
 
-  it('saveExecutorField：失败 → message.error + 返回 null + 仍清 saving', async () => {
+  it('test_saveExecutorField_失败message.error返回null仍清saving', async () => {
     const replaceExecutor = vi.fn();
     vi.mocked(db.updateExecutor).mockRejectedValue(new Error('boom'));
     const { result } = renderHook(() => useExecutorFieldSaver(replaceExecutor));
@@ -79,7 +79,7 @@ describe('useExecutorFieldSaver', () => {
     expect(result.current.savingExecutor).toBeNull();
   });
 
-  it('inlineFieldSave.onBlur：值未改（去空格后等于当前值）→ 不调 onSave', async () => {
+  it('test_inlineFieldSave_onBlur值未改去空格后相等不调onSave', async () => {
     const replaceExecutor = vi.fn();
     const onSave = vi.fn().mockResolvedValue(undefined);
     const { result } = renderHook(() => useExecutorFieldSaver(replaceExecutor));
@@ -93,7 +93,7 @@ describe('useExecutorFieldSaver', () => {
     expect(onSave).not.toHaveBeenCalled();
   });
 
-  it('inlineFieldSave.onBlur：值改动 → 以去空格后的新值调 onSave', async () => {
+  it('test_inlineFieldSave_onBlur值改动以去空格新值调onSave', async () => {
     const replaceExecutor = vi.fn();
     const onSave = vi.fn().mockResolvedValue(undefined);
     const { result } = renderHook(() => useExecutorFieldSaver(replaceExecutor));
@@ -106,7 +106,7 @@ describe('useExecutorFieldSaver', () => {
     expect(onSave).toHaveBeenCalledWith('/new');
   });
 
-  it('inlineFieldSave.onPressEnter：触发 target.blur()', () => {
+  it('test_inlineFieldSave_onPressEnter触发target.blur', () => {
     const replaceExecutor = vi.fn();
     const blur = vi.fn();
     const { result } = renderHook(() => useExecutorFieldSaver(replaceExecutor));
@@ -119,7 +119,7 @@ describe('useExecutorFieldSaver', () => {
     expect(blur).toHaveBeenCalled();
   });
 
-  it('inlineFieldSave.saving：保存进行中为 true，空闲为 false', async () => {
+  it('test_inlineFieldSave_saving保存进行中true空闲false', async () => {
     const replaceExecutor = vi.fn();
     // 让 updateExecutor 挂起，便于在 in-flight 时断言 saving。
     let resolveUpdate: (v: ExecutorConfig) => void = () => undefined;

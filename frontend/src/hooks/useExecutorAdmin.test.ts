@@ -58,7 +58,7 @@ describe('useExecutorAdmin', () => {
     vi.mocked(db.getExecutors).mockResolvedValue([]);
   });
 
-  it('loadExecutors：加载列表并切换 loading', async () => {
+  it('test_loadExecutors_加载列表并切换loading', async () => {
     const list = [makeExecutor({ name: 'a' }), makeExecutor({ name: 'b', id: 2 })];
     vi.mocked(db.getExecutors).mockResolvedValue(list);
     const { result } = renderHook(() => useExecutorAdmin());
@@ -68,7 +68,7 @@ describe('useExecutorAdmin', () => {
     expect(result.current.executorsLoading).toBe(false);
   });
 
-  it('replaceExecutor：按 name 替换对应项，未命中 name 不变', async () => {
+  it('test_replaceExecutor_按name替换命中项未命中name不变', async () => {
     vi.mocked(db.getExecutors).mockResolvedValue([makeExecutor({ name: 'a', path: 'old' })]);
     const { result } = renderHook(() => useExecutorAdmin());
     await waitFor(() => expect(result.current.executors).toHaveLength(1));
@@ -85,7 +85,7 @@ describe('useExecutorAdmin', () => {
     expect(result.current.executors).toHaveLength(1);
   });
 
-  it('batchDetect：找到但未启用→启用；未找到但已启用→禁用；计数仅含可用项', async () => {
+  it('test_batchDetect_按检测结果翻转enabled并仅计可用项', async () => {
     // a：找到但禁用 → 应启用；b：未找到但启用 → 应禁用；c：找到且已启用 → 不改。
     vi.mocked(db.getExecutors).mockResolvedValue([
       makeExecutor({ name: 'a', id: 1, enabled: false }),
@@ -122,7 +122,7 @@ describe('useExecutorAdmin', () => {
     expect(result.current.detectResults.c.found).toBe(true);
   });
 
-  it('detectExecutorByName：落检测结果（found/resolved）', async () => {
+  it('test_detectExecutorByName_落检测结果found与resolved', async () => {
     vi.mocked(db.getExecutors).mockResolvedValue([makeExecutor({ name: 'a' })]);
     vi.mocked(db.detectExecutor).mockResolvedValue({ binary_found: true, path_resolved: '/p/a' });
     const { result } = renderHook(() => useExecutorAdmin());
@@ -135,7 +135,7 @@ describe('useExecutorAdmin', () => {
     expect(result.current.detectingExecutor).toBeNull();
   });
 
-  it('clearDetectResult：仅清除指定 name 的检测结果', async () => {
+  it('test_clearDetectResult_仅清除指定name的检测结果', async () => {
     vi.mocked(db.detectExecutor).mockResolvedValue({ binary_found: true, path_resolved: '/x' });
     const { result } = renderHook(() => useExecutorAdmin());
 
@@ -153,7 +153,7 @@ describe('useExecutorAdmin', () => {
     expect(result.current.detectResults.b).toBeDefined();
   });
 
-  it('setAsDefault：把新默认置 true、其余置 false（全表重算）', async () => {
+  it('test_setAsDefault_新默认置true其余置false全表重算', async () => {
     // 初始默认是 a，要把 b 设为默认：a→false、b→true。
     vi.mocked(db.getExecutors).mockResolvedValue([
       makeExecutor({ name: 'a', is_default: true }),
@@ -173,7 +173,7 @@ describe('useExecutorAdmin', () => {
     expect(result.current.settingDefaultExecutor).toBeNull();
   });
 
-  it('setAsDefault：已是默认时直接 return（双保险，不调后端）', async () => {
+  it('test_setAsDefault_已是默认时直接return不调后端', async () => {
     vi.mocked(db.setDefaultExecutor).mockResolvedValue(makeExecutor({ name: 'a' }));
     const { result } = renderHook(() => useExecutorAdmin());
     await act(async () => {
@@ -182,7 +182,7 @@ describe('useExecutorAdmin', () => {
     expect(db.setDefaultExecutor).not.toHaveBeenCalled();
   });
 
-  it('handleModelsDropdown：展开时拉取模型并缓存；收起时不拉取；重复展开不重复请求', async () => {
+  it('test_handleModelsDropdown_展开拉取并缓存收起与重复展开不重请求', async () => {
     vi.mocked(db.getExecutorModels).mockResolvedValue(['openai/gpt-4', 'anthropic/claude']);
     const { result } = renderHook(() => useExecutorAdmin());
 
