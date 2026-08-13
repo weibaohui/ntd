@@ -109,6 +109,87 @@ impl std::fmt::Display for LoopStepStatus {
     }
 }
 
+/// `loop_phase_executions.status` 取值族（5 态）。
+/// 环节（phase）执行状态；区别于 step（`LoopStepStatus`）与 gate（`LoopGateStatus`）。
+/// 当前生产写入侧只写 running/success/failed，pending/skipped 为覆盖列可能值而定义（同 D3 phantom 值思路）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LoopPhaseExecutionStatus {
+    Pending,
+    Running,
+    Success,
+    Failed,
+    Skipped,
+}
+
+impl LoopPhaseExecutionStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Running => "running",
+            Self::Success => "success",
+            Self::Failed => "failed",
+            Self::Skipped => "skipped",
+        }
+    }
+
+    /// DB 读取侧解析：未知值回退 None（调用方按场景兜底），不写死默认态。
+    pub fn from_db(s: &str) -> Option<Self> {
+        Some(match s {
+            "pending" => Self::Pending,
+            "running" => Self::Running,
+            "success" => Self::Success,
+            "failed" => Self::Failed,
+            "skipped" => Self::Skipped,
+            _ => return None,
+        })
+    }
+}
+
+impl std::fmt::Display for LoopPhaseExecutionStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+/// `loop_step_execution_gates.status` 取值族（3 态）。
+/// 门禁结果：`Passed`（通过）≠ phase/step 的 `Success`，二者字面与语义均不同，不可合并——
+/// 合并会让「gate 误置 success」这种语义错误通过编译。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LoopGateStatus {
+    Pending,
+    Passed,
+    Failed,
+}
+
+impl LoopGateStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Passed => "passed",
+            Self::Failed => "failed",
+        }
+    }
+
+    /// DB 读取侧解析：未知值回退 None。
+    /// 注意 success 不属于 gate 族（gate 用 passed）——解析为 None 防止两族混淆。
+    pub fn from_db(s: &str) -> Option<Self> {
+        Some(match s {
+            "pending" => Self::Pending,
+            "passed" => Self::Passed,
+            "failed" => Self::Failed,
+            _ => return None,
+        })
+    }
+}
+
+impl std::fmt::Display for LoopGateStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
 /// Loop 列表行(左栏一行)。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoopListItem {
@@ -641,6 +722,42 @@ mod loop_dto_tests {
         assert_eq!(LoopStepStatus::from_db("skipped"), None);
     }
 
+    /// LoopPhaseExecutionStatus 枚举族契约（5 态）——as_str/from_db 往返恒等 + 全集锁定。
+    #[test]
+    fn test_loop_phase_execution_status_roundtrip_and_full_set() {
+        let all = [
+            (LoopPhaseExecutionStatus::Pending, "pending"),
+            (LoopPhaseExecutionStatus::Running, "running"),
+            (LoopPhaseExecutionStatus::Success, "success"),
+            (LoopPhaseExecutionStatus::Failed, "failed"),
+            (LoopPhaseExecutionStatus::Skipped, "skipped"),
+        ];
+        for (variant, db_str) in all {
+            assert_eq!(variant.as_str(), db_str);
+            assert_eq!(LoopPhaseExecutionStatus::from_db(db_str), Some(variant));
+        }
+        // 未知值返回 None
+        assert_eq!(LoopPhaseExecutionStatus::from_db("unknown_x"), None);
+        assert_eq!(LoopPhaseExecutionStatus::from_db(""), None);
+    }
+
+    /// LoopGateStatus 枚举族契约（3 态）；passed 独有，区别于 success。
+    #[test]
+    fn test_loop_gate_status_roundtrip_and_full_set() {
+        let all = [
+            (LoopGateStatus::Pending, "pending"),
+            (LoopGateStatus::Passed, "passed"),
+            (LoopGateStatus::Failed, "failed"),
+        ];
+        for (variant, db_str) in all {
+            assert_eq!(variant.as_str(), db_str);
+            assert_eq!(LoopGateStatus::from_db(db_str), Some(variant));
+        }
+        // success 不属于 gate 族（gate 用 passed）——解析为 None 防止两族混淆
+        assert_eq!(LoopGateStatus::from_db("success"), None);
+        assert_eq!(LoopGateStatus::from_db(""), None);
+    }
+
     /// serde 兼容层：枚举序列化形态与存量 DB/前端 JSON 的 snake_case 字面量一致
     #[test]
     fn test_status_enum_serde_snake_case_compatible() {
@@ -654,5 +771,16 @@ mod loop_dto_tests {
         );
         let back: LoopExecutionStatus = serde_json::from_str(r#""partial""#).unwrap();
         assert_eq!(back, LoopExecutionStatus::Partial);
+        // D5/D6 的独有值同样走 snake_case——skipped/passed 必须与 DB/前端字面一致
+        assert_eq!(
+            serde_json::to_string(&LoopPhaseExecutionStatus::Skipped).unwrap(),
+            r#""skipped""#
+        );
+        assert_eq!(
+            serde_json::to_string(&LoopGateStatus::Passed).unwrap(),
+            r#""passed""#
+        );
+        let gate_back: LoopGateStatus = serde_json::from_str(r#""passed""#).unwrap();
+        assert_eq!(gate_back, LoopGateStatus::Passed);
     }
 }
