@@ -22,8 +22,8 @@
  *   └──────────────────────────┘
  */
 
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Button, Skeleton, message, Modal, Form, InputNumber, Space, Progress, Input, Tabs, Menu, Drawer, Switch } from 'antd';
+import { useState, useCallback, useMemo } from 'react';
+import { Button, Skeleton, message, Modal, Space, Progress, Menu, Drawer } from 'antd';
 import { ReloadOutlined, SettingOutlined, UnorderedListOutlined, MenuOutlined, DeleteOutlined } from '@ant-design/icons';
 import { PageCard } from '@/components/common/PageCard';
 import { TfiBlackboard } from 'react-icons/tfi';
@@ -32,41 +32,14 @@ import { LazyXMarkdown } from '@/components/common/LazyXMarkdown';
 import { useTheme } from '@/hooks/useTheme';
 import { useViewState } from '@/hooks/useViewState';
 import { useIsMobile } from '@/hooks/useIsMobile';
-import type { BlackboardDebounceStatus } from '@/hooks/useExecutionEvents';
-import { updateBlackboardConfig, getBlackboard, deleteWikiFile } from '@/utils/database/blackboard';
+import { getBlackboard, deleteWikiFile } from '@/utils/database/blackboard';
 import { normalizeBlackboardMarkdown } from '@/utils/markdown';
 import { ProposalButton } from '@/components/blackboard-proposal/ProposalButton';
-
-/** 黑板 API 返回的配置形状（与后端 BlackboardResponse 对应，不含内容） */
-interface BlackboardData {
-  id: number;
-  workspace_id: number;
-  updated_at: string | null;
-  /** 黑板更新防抖周期（秒）*/
-  blackboard_debounce_secs: number;
-  /** 黑板更新防抖条数阈值 */
-  blackboard_debounce_count: number;
-  /** Wiki 更新提示词模板（单阶段） */
-  wiki_prompt: string;
-  /** Wiki 对话使用的执行器名称，空/undefined 表示使用默认值 claudecode */
-  wiki_chat_executor?: string | null;
-  /** Wiki 执行超时（秒），控制 Wiki 任务与 Wiki 对话的最长存活时间 */
-  wiki_timeout_secs: number;
-  /** 黑板功能总开关 */
-  enabled: boolean;
-}
-
-/** Wiki 文件列表项（对应后端 WikiFileItem） */
-interface WikiFileItem {
-  slug: string;
-  file_type: 'index' | 'topic' | 'log' | string;
-}
-
-/** Wiki 文件内容（对应后端 WikiFileContent） */
-interface WikiFileContent {
-  slug: string;
-  content: string;
-}
+// 096-W4-4：类型/API/hook 已抽离至 blackboard/ 子目录与 hooks/ 目录
+import type { WikiFileContent, WikiFileItem } from '@/components/blackboard/types';
+import { BlackboardSettingsModal } from '@/components/blackboard/BlackboardSettingsModal';
+import { useBlackboardWiki } from '@/hooks/useBlackboardWiki';
+import { useBlackboardDebounceStatus } from '@/hooks/useBlackboardDebounceStatus';
 
 /** ntd://todo/{id} 协议的前缀，用于解析 LLM 注入的内部链接 */
 const NTD_TODO_PROTOCOL_PREFIX = 'ntd://todo/';
@@ -76,42 +49,6 @@ const URL_WORKSPACE_PARAM = 'workspace';
 
 /** 默认工作空间 ID（首屏兜底，避免 URL 未带参时无 workspace） */
 const DEFAULT_WORKSPACE_ID = 1;
-
-/**
- * Wiki 提示词默认值（单阶段）：与后端 `build_wiki_prompt()` 内置模板保持一致。
- *
- * ⚠️ 注意：此为前端副本，后端 `backend/src/services/blackboard.rs` 的
- * `build_wiki_prompt()` 函数中也有一份，修改时需同步更新两处。
- * 用于在 UI 上展示默认提示词内容，以及"恢复默认"时回填。
- */
-const DEFAULT_WIKI_PROMPT = `你是一个工作空间黑板维护者。你的任务是分析新的执行记录，更新 Wiki 页面。
-
-你拥有以下工具，可以直接在执行过程中调用：
-- \`ls ~/.ntd/workspace/{{workspace_id}}/wiki/topics/\`：列出现有主题页面
-- \`cat ~/.ntd/workspace/{{workspace_id}}/wiki/topics/<slug>.md\`：读取页面内容
-- \`ntd todo execution get <id>\`：获取指定执行记录的完整结论（result 字段）
-
-待分析的执行记录 ID 列表：
-{{pending_record_ids}}
-
-请按以下步骤操作：
-1. 列出现有主题页面，了解当前 Wiki 结构
-2. 逐个调用 \`ntd todo execution get <id>\` 获取每条执行记录的结论
-3. 分析每条结论涉及哪些主题领域
-4. 对于新主题：创建 \`~/.ntd/workspace/{{workspace_id}}/wiki/topics/<slug>.md\`
-5. 对于已有主题：编辑文件，追加/更新结论（保持已有内容）
-6. 每个页面结构：
-   - # 标题（中文）
-   - ## 已确认
-   - ## 新发现
-   - ## 待解决问题
-   - ## 矛盾/风险
-   - ## 下一步建议
-7. 每条结论标注来源，使用 \`ntd todo execution get <record_id>\` 返回结果中的 \`todo_id\` 和 \`id\` 字段，
-   生成 app 内链接：(来源: [record_{record_id}](/#/todos/{todo_id}/posts/{record_id}))
-
-完成后输出简短确认即可，无需输出 YAML/JSON。`;
-
 
 /** Markdown 链接组件 props 形状（XMarkdown ComponentProps 简化版） */
 interface MarkdownLinkProps extends React.AnchorHTMLAttributes<HTMLAnchorElement> {
@@ -236,45 +173,6 @@ function useEffectiveWorkspaceId(propWorkspaceId: number | null | undefined): nu
   }, [propWorkspaceId]);
 }
 
-/** 拉取黑板内容的纯函数，便于测试与复用。
- *  原生 fetch 不经 axios 拦截器，手动写 v1 路径。 */
-async function fetchBlackboardData(workspaceId: number): Promise<BlackboardData> {
-  const res = await fetch(`/api/v1/workspaces/${workspaceId}/blackboard`);
-  if (!res.ok) {
-    throw new Error(`HTTP ${res.status}`);
-  }
-  const json = (await res.json()) as { data?: BlackboardData };
-  if (!json.data) {
-    throw new Error('Empty response body');
-  }
-  return json.data;
-}
-
-/** 拉取单个 Wiki 文件内容（原生 fetch，手动写 v1 路径） */
-async function fetchWikiFileContent(workspaceId: number, slug: string): Promise<WikiFileContent> {
-  const res = await fetch(`/api/v1/workspaces/${workspaceId}/wiki/files/${encodeURIComponent(slug)}`);
-  if (!res.ok) {
-    throw new Error(`HTTP ${res.status}`);
-  }
-  const json = (await res.json()) as { data?: WikiFileContent };
-  if (!json.data) {
-    throw new Error('Empty response body');
-  }
-  return json.data;
-}
-
-/** 拉取 Wiki 文件列表（原生 fetch，手动写 v1 路径） */
-async function fetchWikiFiles(workspaceId: number): Promise<WikiFileItem[]> {
-  const res = await fetch(`/api/v1/workspaces/${workspaceId}/wiki/files`);
-  if (!res.ok) {
-    throw new Error(`HTTP ${res.status}`);
-  }
-  const json = (await res.json()) as { data?: WikiFileItem[] };
-  return json.data ?? [];
-}
-
-
-
 export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?: number | null }) {
   // 主题：决定黑板容器背景与文字色
   const { themeMode } = useTheme();
@@ -283,198 +181,21 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
   const workspaceId = useEffectiveWorkspaceId(propWorkspaceId);
   // 移动端检测
   const isMobile = useIsMobile();
-  // 用于同步 URL
-  const { replaceUrl, blackboardFile } = useViewState();
+  // 用于同步 URL（handleSelectSlug 切页时写回）
+  const { replaceUrl } = useViewState();
 
-  // Wiki 化数据状态
-  const [files, setFiles] = useState<WikiFileItem[]>([]);
-  const [currentFile, setCurrentFile] = useState<WikiFileContent | null>(null);
-  const [currentSlug, setCurrentSlug] = useState<string>('');
-  const [filesLoading, setFilesLoading] = useState(true);
-  const [fileLoading, setFileLoading] = useState(false);
-  // 旧版数据（配置用）
-  const [configData, setConfigData] = useStateBlackboardData();
+  // Wiki 数据族 + 竞态防护 + 配置加载已收口至 useBlackboardWiki（096-W4-4）；
+  // 含 files/currentFile/currentSlug/loading 族、workspace 切换清空重拉、URL 同步。
+  const {
+    files, currentFile, currentSlug, filesLoading, fileLoading,
+    configData, setConfigData, setCurrentSlug, fetchFiles, refresh,
+  } = useBlackboardWiki(workspaceId);
 
-  // 防切换竞态：ref 始终持有「最新一次渲染」的 workspaceId / currentSlug。
-  // fetch 回调在 await 前捕获闭包里的旧 key，resolve 后与 ref 比较——
-  // 不一致说明期间已切换工作空间/文件，晚到的响应直接丢弃，避免覆盖新工作空间的数据。
-  // 与 useLoopExecutions/useExecutionHistory 的 cancelledRef 思路一致（latest-wins）。
-  const latestWorkspaceIdRef = useRef(workspaceId);
-  latestWorkspaceIdRef.current = workspaceId;
-  const latestSlugRef = useRef(currentSlug);
-  latestSlugRef.current = currentSlug;
-  // 设置弹窗状态
+  // 设置弹窗仅保留开关（表单 state 与保存逻辑下沉到 BlackboardSettingsModal）
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsSaving, setSettingsSaving] = useState(false);
-  const [debounceSecs, setDebounceSecs] = useState<number | null>(600);
-  const [debounceCount, setDebounceCount] = useState<number | null>(10);
-  const [wikiPrompt, setWikiPrompt] = useState<string>('');
-  // Wiki 执行超时（秒）：与后端 DEFAULT_WIKI_TIMEOUT_SECS=300 一致，清空时回退默认
-  const [wikiTimeoutSecs, setWikiTimeoutSecs] = useState<number | null>(300);
-  const [bbEnabled, setBbEnabled] = useState<boolean>(true);
-  const [activeTab, setActiveTab] = useState<'debounce' | 'prompt'>('debounce');
+  const handleOpenSettings = useCallback(() => setSettingsOpen(true), []);
   // 移动端目录 Drawer 开关状态
   const [menuDrawerOpen, setMenuDrawerOpen] = useState(false);
-
-  /**
-   * 打开设置弹窗：从已加载的黑板数据中读取 per-workspace 配置。
-   * 配置现在由 GET /api/workspaces/{workspaceId}/blackboard 接口随内容一并返回，
-   * 不再需要单独调用 db.getConfig()（getConfig 是全局配置，与黑板配置无关）。
-   */
-  const handleOpenSettings = useCallback(() => {
-    if (configData) {
-      setDebounceSecs(configData.blackboard_debounce_secs ?? 600);
-      setDebounceCount(configData.blackboard_debounce_count ?? 10);
-      setWikiPrompt(configData.wiki_prompt ?? '');
-      setWikiTimeoutSecs(configData.wiki_timeout_secs ?? 300);
-      setBbEnabled(configData.enabled ?? true);
-    } else {
-      setDebounceSecs(600);
-      setDebounceCount(10);
-      setWikiPrompt('');
-      setWikiTimeoutSecs(300);
-      setBbEnabled(true);
-    }
-    setActiveTab('debounce');
-    setSettingsOpen(true);
-  }, [configData]);
-
-  // 保存设置
-  const handleSaveSettings = useCallback(async () => {
-    setSettingsSaving(true);
-    try {
-      await updateBlackboardConfig(workspaceId, {
-        // 用户清空输入时 null → 用默认值，避免后端意外覆盖
-        blackboard_debounce_secs: debounceSecs ?? 600,
-        blackboard_debounce_count: debounceCount ?? 10,
-        wiki_prompt: wikiPrompt,
-        wiki_timeout_secs: wikiTimeoutSecs ?? 300,
-        enabled: bbEnabled,
-      });
-      // 保存成功后同步更新 data，避免下次打开弹窗读到旧值
-      if (configData) {
-        setConfigData({
-          ...configData,
-          blackboard_debounce_secs: debounceSecs ?? 600,
-          blackboard_debounce_count: debounceCount ?? 10,
-          wiki_prompt: wikiPrompt,
-          wiki_timeout_secs: wikiTimeoutSecs ?? 300,
-          enabled: bbEnabled,
-        });
-      }
-      message.success('设置已保存');
-      setSettingsOpen(false);
-    } catch (err) {
-      message.error('保存失败: ' + (err instanceof Error ? err.message : String(err)));
-    } finally {
-      setSettingsSaving(false);
-    }
-  }, [workspaceId, debounceSecs, debounceCount, wikiPrompt, wikiTimeoutSecs, bbEnabled, configData]);
-
-  // 恢复默认提示词：把 wikiPrompt 设为内置默认值。
-  // 区别于"留空"的语义——留空表示后端使用内置默认；填入默认值表示用户显式采用内置模板。
-  const handleRestorePrompt = useCallback(() => {
-    setWikiPrompt(DEFAULT_WIKI_PROMPT);
-  }, []);
-
-  // 拉取页面列表
-  const fetchFiles = useCallback(async () => {
-    // 捕获本次请求所属的工作空间，resolve 后与最新值比较，防止切换后旧响应覆盖新数据
-    const ws = workspaceId;
-    try {
-      setFilesLoading(true);
-      const list = await fetchWikiFiles(ws);
-      if (latestWorkspaceIdRef.current !== ws) return; // 已切换到别的工作空间，丢弃
-      setFiles(list);
-      // 计算默认 slug：优先 topic，其次 log，都没有则空
-      const defaultSlug = list.find(f => f.file_type === 'topic')?.slug
-        ?? list.find(f => f.file_type === 'log')?.slug
-        ?? '';
-      // 用函数式更新读取最新 currentSlug，避免将其放入依赖数组而每次切页重拉列表
-      setCurrentSlug(prev => (list.some(p => p.slug === prev) ? prev : defaultSlug));
-    } catch (err) {
-      if (latestWorkspaceIdRef.current !== ws) return; // 切换后的错误也不弹窗
-      console.error('获取页面列表失败:', err);
-      message.error('获取页面列表失败');
-    } finally {
-      // 仅当仍是本次请求的工作空间时才动 loading，避免把新工作空间的 loading 提前置 false
-      if (latestWorkspaceIdRef.current === ws) setFilesLoading(false);
-    }
-  }, [workspaceId]);
-
-  // 拉取当前页面详情
-  const fetchCurrentFile = useCallback(async () => {
-    // 捕获本次请求所属的工作空间 + slug，resolve 后与最新值比较，防切换竞态
-    const ws = workspaceId;
-    const slug = currentSlug;
-    // 空 slug 不发起请求：初始态或切换工作空间清空后，slug 为空字符串，
-    // 此时请求会得到 404 或意外数据，应直接跳过。
-    if (!slug) {
-      setFileLoading(false);
-      return;
-    }
-    try {
-      setFileLoading(true);
-      const file = await fetchWikiFileContent(ws, slug);
-      if (latestWorkspaceIdRef.current !== ws || latestSlugRef.current !== slug) return;
-      setCurrentFile(file);
-    } catch (err) {
-      if (latestWorkspaceIdRef.current !== ws || latestSlugRef.current !== slug) return;
-      console.error('获取页面详情失败:', err);
-      setCurrentFile(null);
-    } finally {
-      if (latestWorkspaceIdRef.current === ws && latestSlugRef.current === slug) setFileLoading(false);
-    }
-  }, [workspaceId, currentSlug]);
-
-  // 拉取配置（旧版接口，只用于设置弹窗）
-  const fetchConfig = useCallback(async () => {
-    const ws = workspaceId;
-    try {
-      const fetched = await fetchBlackboardData(ws);
-      if (latestWorkspaceIdRef.current !== ws) return; // 已切换，丢弃旧响应
-      setConfigData(fetched);
-    } catch (err) {
-      if (latestWorkspaceIdRef.current !== ws) return;
-      console.error('获取黑板配置失败:', err);
-    }
-  }, [workspaceId, setConfigData]);
-
-  // workspace 切换时先清空隔离数据，避免加载失败或加载窗口期暴露上一工作空间内容
-  // 注意：不设 currentSlug = ''，否则 Menu 收到 selectedKeys={['']} 会崩溃
-  //（Ant Design Menu.js:40 prefixCls → Cannot read properties of null）。
-  // files 已清空 → Menu 不渲染（files.length === 0 显示"暂无页面"），
-  // fetchFiles 异步完成后会自动设回有效 slug。
-  useEffect(() => {
-    setFiles([]);
-    setCurrentFile(null);
-    setConfigData(null);
-  }, [workspaceId]);
-
-  // 副作用：workspaceId 变化时重拉
-  useEffect(() => {
-    fetchFiles();
-    fetchConfig();
-  }, [fetchFiles, fetchConfig]);
-
-  // URL 中的 blackboardFile 变化时，同步到 currentSlug（支持浏览器前进后退）
-  useEffect(() => {
-    if (blackboardFile) {
-      setCurrentSlug(blackboardFile);
-    }
-  }, [blackboardFile]);
-
-  // 副作用：currentSlug 变化时重拉页面详情
-  // 守卫已在 fetchCurrentFile 内部处理空 slug 场景
-  useEffect(() => {
-    fetchCurrentFile();
-  }, [fetchCurrentFile]);
-
-  // 刷新：重新拉取列表和当前页面
-  const handleRefresh = useCallback(() => {
-    fetchFiles();
-    fetchCurrentFile();
-  }, [fetchFiles, fetchCurrentFile]);
 
   // 移动端选择目录后关闭 Drawer，同时同步 URL
   const handleSelectSlug = useCallback((slug: string) => {
@@ -497,13 +218,13 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
           <MobileHeaderExtra
             onMenuClick={() => setMenuDrawerOpen(true)}
             onOpenSettings={handleOpenSettings}
-            onRefresh={handleRefresh}
+            onRefresh={refresh}
           />
         ) : (
           <DesktopHeaderExtra
             workspaceId={workspaceId}
             onOpenSettings={handleOpenSettings}
-            onRefresh={handleRefresh}
+            onRefresh={refresh}
           />
         )
       }
@@ -525,153 +246,19 @@ export function BlackboardPage({ workspaceId: propWorkspaceId }: { workspaceId?:
         onTopicDeleted={fetchFiles}
       />
 
-      {/* 黑板设置弹窗：Tab1 防抖设置，Tab2 提示词设置 */}
-      <Modal
-        title="黑板设置"
+      {/* 黑板设置弹窗：整组下沉至 BlackboardSettingsModal（096-W4-4） */}
+      <BlackboardSettingsModal
         open={settingsOpen}
-        onOk={handleSaveSettings}
-        onCancel={() => setSettingsOpen(false)}
-        okText="保存"
-        confirmLoading={settingsSaving}
-        destroyOnHidden
-        width={isMobile ? '90%' : 640}
-      >
-        <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ fontSize: 14, fontWeight: 500 }}>启用黑板</span>
-          <Switch checked={bbEnabled} onChange={setBbEnabled} />
-        </div>
-        <Tabs
-          activeKey={activeTab}
-          onChange={(key) => setActiveTab(key as 'debounce' | 'prompt')}
-          items={[
-            {
-              key: 'debounce',
-              label: '防抖设置',
-              children: (
-                <DebounceSettingsTab
-                  debounceSecs={debounceSecs}
-                  setDebounceSecs={setDebounceSecs}
-                  debounceCount={debounceCount}
-                  setDebounceCount={setDebounceCount}
-                  wikiTimeoutSecs={wikiTimeoutSecs}
-                  setWikiTimeoutSecs={setWikiTimeoutSecs}
-                />
-              ),
-            },
-            {
-              key: 'prompt',
-              label: '提示词设置',
-              children: (
-                <PromptSettingsTab
-                  wikiPrompt={wikiPrompt}
-                  setWikiPrompt={setWikiPrompt}
-                  onRestorePrompt={handleRestorePrompt}
-                />
-              ),
-            },
-          ]}
-        />
-      </Modal>
+        onClose={() => setSettingsOpen(false)}
+        workspaceId={workspaceId}
+        configData={configData}
+        onSaved={setConfigData}
+        isMobile={isMobile}
+      />
     </PageCard>
   );
 }
 
-// ─── 设置弹窗子组件（避免 Tabs children 深层嵌套）─────────────────
-
-interface DebounceSettingsTabProps {
-  debounceSecs: number | null;
-  setDebounceSecs: (v: number | null) => void;
-  debounceCount: number | null;
-  setDebounceCount: (v: number | null) => void;
-  /** Wiki 执行超时（秒） */
-  wikiTimeoutSecs: number | null;
-  setWikiTimeoutSecs: (v: number | null) => void;
-}
-
-/** 防抖设置 Tab：防抖周期 + 触发条数 + Wiki 执行超时，受父组件状态控制 */
-function DebounceSettingsTab({ debounceSecs, setDebounceSecs, debounceCount, setDebounceCount, wikiTimeoutSecs, setWikiTimeoutSecs }: DebounceSettingsTabProps) {
-  return (
-    <Form layout="vertical" style={{ marginTop: 16 }}>
-      <Form.Item label="防抖周期">
-        <InputNumber
-          value={debounceSecs}
-          // 用户清空输入时 value=null，不立即回填默认值，只透传 null 给 state；
-          // 保存时由 handleSaveSettings 用 ?? 兜底，避免删值瞬间被 600 覆盖
-          onChange={(v) => setDebounceSecs(v)}
-          min={10}
-          max={3600}
-          addonAfter="秒"
-          style={{ width: 200 }}
-        />
-      </Form.Item>
-      <Form.Item label="触发条数">
-        <InputNumber
-          value={debounceCount}
-          onChange={(v) => setDebounceCount(v)}
-          min={1}
-          max={100}
-          addonAfter="条"
-          style={{ width: 200 }}
-        />
-      </Form.Item>
-      <Form.Item
-        label="Wiki 执行超时"
-        // 后端会把输入值钳制到 [60, 3600]，这里同步展示边界提示；
-        // 默认 300 秒（5 分钟），慢模型可调大避免被强制超时
-        extra="Wiki 自动维护与 Wiki 对话的最长执行时长（后端会自动钳制到 60–3600 秒），默认 300 秒"
-      >
-        <InputNumber
-          value={wikiTimeoutSecs}
-          onChange={(v) => setWikiTimeoutSecs(v)}
-          min={60}
-          max={3600}
-          addonAfter="秒"
-          style={{ width: 200 }}
-        />
-      </Form.Item>
-      <Form.Item extra="达到条数阈值或周期到期时，统一处理 pending 的 todo，减少频繁的 LLM 调用" />
-    </Form>
-  );
-}
-
-interface PromptSettingsTabProps {
-  wikiPrompt: string;
-  setWikiPrompt: (v: string) => void;
-  onRestorePrompt: () => void;
-}
-
-/** 提示词设置 Tab：单阶段 Wiki 提示词 */
-function PromptSettingsTab({
-  wikiPrompt, setWikiPrompt,
-  onRestorePrompt,
-}: PromptSettingsTabProps) {
-  return (
-    <div style={{ marginTop: 16 }}>
-      <div style={{ marginBottom: 20 }}>
-        <Space style={{ marginBottom: 8 }}>
-          <Button onClick={onRestorePrompt}>恢复默认</Button>
-          <span style={{ color: '#888', fontSize: 12 }}>
-            Wiki 提示词（单阶段：分析记录 + 直接编辑文件）
-          </span>
-        </Space>
-        <Input.TextArea
-          value={wikiPrompt}
-          onChange={(e) => setWikiPrompt(e.target.value)}
-          rows={16}
-          placeholder="留空使用内置默认，如需自定义请直接在此输入"
-        />
-      </div>
-    </div>
-  );
-}
-
-/**
- * useState 黑板数据的轻封装：未来若加缓存/打点只改这里。
- * 单独抽 hook 是为了让上层组件更可测。
- */
-function useStateBlackboardData() {
-  return useState<BlackboardData | null>(null);
-}
 
 // ─── 桌面端 Header Extra（进度条 + 操作按钮 + 队列弹窗）─────────────────
 
@@ -798,17 +385,8 @@ interface MobileDebounceIndicatorProps {
  * - 无状态：不渲染
  */
 function MobileDebounceIndicator({ workspaceId }: MobileDebounceIndicatorProps) {
-  const [status, setStatus] = useState<BlackboardDebounceStatus | null>(null);
-
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const s = (e as CustomEvent<BlackboardDebounceStatus>).detail;
-      if (s.workspace_id !== workspaceId) return;
-      setStatus(s);
-    };
-    window.addEventListener('blackboardDebounceStatus', handler);
-    return () => window.removeEventListener('blackboardDebounceStatus', handler);
-  }, [workspaceId]);
+  // 防抖状态订阅已收口至 useBlackboardDebounceStatus（096-W4-4，两组件共用单份）
+  const status = useBlackboardDebounceStatus(workspaceId);
 
   if (!status) return null;
 
@@ -849,18 +427,9 @@ interface BlackboardDebounceBarProps {
  * - 点击整体弹出详情，同时显示时间和条数数据
  */
 function BlackboardDebounceBar({ workspaceId }: BlackboardDebounceBarProps) {
-  const [status, setStatus] = useState<BlackboardDebounceStatus | null>(null);
+  // 防抖状态订阅已收口至 useBlackboardDebounceStatus（096-W4-4）
+  const status = useBlackboardDebounceStatus(workspaceId);
   const [showDetail, setShowDetail] = useState(false);
-
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const s = (e as CustomEvent<BlackboardDebounceStatus>).detail;
-      if (s.workspace_id !== workspaceId) return;
-      setStatus(s);
-    };
-    window.addEventListener('blackboardDebounceStatus', handler);
-    return () => window.removeEventListener('blackboardDebounceStatus', handler);
-  }, [workspaceId]);
 
   if (!status) return null;
 

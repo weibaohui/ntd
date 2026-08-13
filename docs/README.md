@@ -121,7 +121,7 @@ AI 在执行某个功能时（编号 X），必须按以下顺序读取文档：
 | 025-M2 | 工艺管理-M2-实现总结.md | process-management-m2-summary.md |
 | 025-M3 | 工艺管理-M3-需求.md | process-management-m3-requirements.md |
 
-### docs/decisions/（4 份）
+### docs/decisions/（5 份）
 
 | 编号 | 文件 | 原名 |
 |------|------|------|
@@ -129,6 +129,7 @@ AI 在执行某个功能时（编号 X），必须按以下顺序读取文档：
 | ADR-002 | 优化建议-决策.md | OPTIMIZATION_RECOMMENDATIONS.md |
 | ADR-003 | 代码质量审计-决策.md | code-quality-audit-2026-07.md |
 | ADR-004 | 死代码扫描-决策.md | dead-code-scan.md |
+| ADR-005 | 重构与设计模式改进-决策.md | refactor-design-improvements-2026-08.md |
 
 ### docs/bugs/（2 个缺陷）
 

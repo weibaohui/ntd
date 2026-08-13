@@ -1149,6 +1149,328 @@ fn emit_direct_stream(
 }
 
 // ============================================================================
+// handle_default_response_executor 的阶段拆分（ADR-005 / H2）
+// ============================================================================
+//
+// 这组 async 函数把原 280 行编排体（命中 CLAUDE.md「多 return 路径 + 副作用混杂」
+// 红线）拆成 7 个职责单一的阶段。每个失败分支自行发飞书提示后返回 Err(None)，
+// 编排体用 ? 向上传播——副作用与返回的耦合被收敛进单一阶段内部（线性错误处理），
+// 编排体本身回归成一段 stepdown 叙事。行为与原实现逐分支一致，签名零改动。
+
+/// 阶段①：解析直连执行器要使用的工作空间目录。
+///
+/// 三种失败（未传 workspace_id / 工作空间不存在 / DB 读失败）都已自行发飞书提示，
+/// 返回 Err(None) 让编排体直接 bail。
+async fn resolve_executor_workspace(
+    db: &Arc<Database>,
+    workspace_id: Option<i64>,
+    executor_type: &str,
+    send_msg: &(dyn Fn(String) + Sync),
+) -> Result<String, Option<String>> {
+    // workspace_id 缺失：用户未绑定工作空间，提示去 /help 绑定而非报「不存在」
+    let Some(wid) = workspace_id else {
+        tracing::warn!("[debounce] no workspace_id for executor default response");
+        send_msg(executor_error_message(executor_type, "未配置工作空间"));
+        return Err(None);
+    };
+    match db.get_project_directory_by_id(wid).await {
+        Ok(Some(pd)) => Ok(pd.path),
+        Ok(None) => {
+            // wid>0 但查不到：悬空 id（工作空间被删），引导重新切换
+            tracing::warn!("[debounce] workspace {} not found", wid);
+            send_msg(workspace_missing_message(executor_type, wid));
+            Err(None)
+        }
+        Err(e) => {
+            // DB 层失败：原样透传原因，让用户区分「读取失败」与「未配置」
+            tracing::error!("[debounce] failed to get workspace {}: {}", wid, e);
+            send_msg(executor_error_message(
+                executor_type,
+                &format!("读取工作空间失败：{}", e),
+            ));
+            Err(None)
+        }
+    }
+}
+
+/// 阶段②：把执行器类型名解析成已注册的执行器实例。
+///
+/// 类型未知 / 未注册时自行发飞书提示并返回 Err(None)。
+/// 只返回执行器实例——ExecutorType 枚举在编排体后续不再使用。
+async fn resolve_executor_instance(
+    registry: &Arc<crate::adapters::ExecutorRegistry>,
+    executor_type: &str,
+    send_msg: &(dyn Fn(String) + Sync),
+) -> Result<Arc<dyn crate::adapters::CodeExecutor>, Option<String>> {
+    // 类型名 → 枚举：用户配置的 executor 字符串可能是任意值，未知时提示具体类型名
+    let exec_type = match parse_executor_type(executor_type) {
+        Some(t) => t,
+        None => {
+            tracing::warn!("[debounce] unknown executor type: {}", executor_type);
+            send_msg(executor_error_message(
+                executor_type,
+                &format!("未知执行器类型：{}", executor_type),
+            ));
+            return Err(None);
+        }
+    };
+    // 枚举 → 实例：注册表里没有说明该执行器未配置，提示去注册
+    match registry.get(exec_type).await {
+        Some(e) => Ok(e),
+        None => {
+            tracing::warn!("[debounce] executor {} not found", executor_type);
+            send_msg(executor_error_message(executor_type, "执行器未注册"));
+            Err(None)
+        }
+    }
+}
+
+/// 阶段③：确定本次执行使用的 session_id。
+///
+/// 优先用调用方传入的 resume_session_id（绑定 todo 场景）；否则从 DB 读 workspace
+/// 已保存的 session（私聊多轮对话 resume）。DB 读失败只记日志不致命——降级为新会话。
+async fn resolve_executor_session(
+    db: &Arc<Database>,
+    workspace_id: Option<i64>,
+    executor_type: &str,
+    resume_session_id: Option<String>,
+) -> Option<String> {
+    // 调用方显式传入的优先：绑定 todo 等「指明要 resume 某 session」的场景
+    if let Some(sid) = resume_session_id {
+        return Some(sid);
+    }
+    // 否则查 workspace 级别的保存 session；4 个分支全部非致命，最坏降级为 None（新会话）
+    let wid = workspace_id?;
+    match db.get_executor_session(wid, executor_type).await {
+        // 用 Some(&sid) 复刻原实现的日志格式（原日志打印 session_id = Some(sid)）
+        Ok(Some(Some(sid))) => {
+            tracing::info!(
+                "[debounce] resumed executor session for {}: {:?}",
+                executor_type,
+                Some(&sid)
+            );
+            Some(sid)
+        }
+        Ok(Some(None)) => {
+            tracing::debug!("[debounce] no saved session for executor {}", executor_type);
+            None
+        }
+        Ok(None) => {
+            tracing::debug!("[debounce] workspace not found for session lookup");
+            None
+        }
+        Err(e) => {
+            tracing::warn!("[debounce] failed to get executor session: {}", e);
+            None
+        }
+    }
+}
+
+/// 阶段④：构建执行器命令（带 session_id）并 spawn 子进程。
+///
+/// spawn 失败（程序不存在 / 无权限等）自行发飞书提示并返回 Err(None)。
+async fn spawn_executor_child(
+    executor: &Arc<dyn crate::adapters::CodeExecutor>,
+    workspace_path: &str,
+    message: &str,
+    session_id: Option<&str>,
+    executor_type: &str,
+    send_msg: &(dyn Fn(String) + Sync),
+) -> Result<tokio::process::Child, Option<String>> {
+    // is_resume 由是否有 session_id 推导：有 session 则让执行器续上下文而非新开会话
+    let is_resume = session_id.is_some();
+    let command_args = executor.command_args_with_session(message, session_id, is_resume);
+    let program = executor.executable_path();
+    tracing::info!(
+        "[debounce] spawning: {} {:?} (cwd={:?})",
+        program,
+        command_args,
+        workspace_path
+    );
+    // 三个 stdio 全 piped：stdout/stderr 由我们读取，stdin 在编排体里 take()后 drop 关闭
+    let mut cmd = tokio::process::Command::new(program);
+    cmd.args(&command_args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .stdin(std::process::Stdio::piped())
+        .current_dir(workspace_path);
+    match cmd.spawn() {
+        Ok(c) => Ok(c),
+        Err(e) => {
+            tracing::error!("[debounce] failed to spawn executor {}: {}", executor_type, e);
+            send_msg(executor_error_message(
+                executor_type,
+                &format!("启动进程失败：{}", e),
+            ));
+            Err(None)
+        }
+    }
+}
+
+/// 阶段⑤：查 push_level，仅当配置为 "all" 时返回私聊直推目标。
+///
+/// 在发送端判断（而非 FeishuPushService 端），避免流式读取每条日志都查一次 DB。
+/// 查询失败 / 未配置都降级为不直推（None）——过程消息不直推不影响结果消息推送。
+async fn resolve_direct_output(
+    db: &Arc<Database>,
+    bot_id: i64,
+    receive_id: String,
+    receive_id_type: &str,
+) -> Option<DirectOutputInfo> {
+    // 默认 result_only：未配置 push target 时只推最终结果，不打扰过程
+    let push_level = match db.get_feishu_push_target(bot_id).await {
+        Ok(Some(target)) => target.push_level,
+        Ok(None) => "result_only".to_string(),
+        Err(e) => {
+            tracing::warn!("[debounce] failed to get push_level for bot {}: {}", bot_id, e);
+            "result_only".to_string()
+        }
+    };
+    // 仅 "all" 直推过程消息；其他级别过程消息只落库不进私聊
+    if push_level == "all" {
+        Some(DirectOutputInfo {
+            bot_id,
+            receive_id,
+            receive_id_type: receive_id_type.to_string(),
+        })
+    } else {
+        None
+    }
+}
+
+/// 阶段⑥：读 config 超时，带超时地等子进程退出（超时则 kill 回收）。
+///
+/// 超时 / wait 失败自行发飞书提示并返回 Err(None)；成功返回退出状态。
+async fn await_executor_exit(
+    child: tokio::process::Child,
+    config: &Arc<std::sync::RwLock<crate::config::Config>>,
+    executor_type: &str,
+    send_msg: &(dyn Fn(String) + Sync),
+) -> Result<std::process::ExitStatus, Option<String>> {
+    // 与 todo pipeline 共用全局超时旋钮 execution_timeout_secs；0 表示不限制（→ None）
+    let timeout_secs = {
+        #[allow(clippy::expect_used)]
+        // 中毒=有线程 panic，继续无意义；与全仓 RwLock 处置约定一致
+        let cfg = config
+            .read()
+            .expect("config RwLock poisoned in handle_default_response_executor");
+        cfg.execution_timeout_secs
+    };
+    let timeout = direct_executor_timeout(timeout_secs);
+    match wait_child_with_timeout(child, timeout).await {
+        Ok(s) => {
+            tracing::info!(
+                "[debounce] executor {} finished, exit_code={:?}",
+                executor_type,
+                s.code()
+            );
+            Ok(s)
+        }
+        Err(ExecutorRunError::Timeout { secs }) => {
+            tracing::error!("[debounce] executor {} timed out after {}s", executor_type, secs);
+            send_msg(executor_error_message(executor_type, &format!("执行超时（{}s）", secs)));
+            Err(None)
+        }
+        Err(ExecutorRunError::WaitFailed(msg)) => {
+            tracing::error!(
+                "[debounce] failed to wait for executor {}: {}",
+                executor_type,
+                msg
+            );
+            send_msg(executor_error_message(
+                executor_type,
+                &format!("等待进程失败：{}", msg),
+            ));
+            Err(None)
+        }
+    }
+}
+
+/// 阶段⑦的输出打包：避免 stream / stderr / result_text 三个值在调用链里裸传递。
+struct ExecutorOutput {
+    /// 流式解析结果：logs 用于提取结果 + session，raw_stdout 用于诊断兜底
+    stream: StdoutStreamResult,
+    /// 子进程 stderr 全文：非零退出时拼进错误消息
+    stderr: String,
+    /// 从 logs 提取的最终结果文本（执行器产出的结论）
+    result_text: Option<String>,
+}
+
+/// 阶段⑦：join 流式读取、读 stderr、计算最终结果文本。
+///
+/// 纯收集，无致命分支：stream_task panic 时降级为空结果，stderr 读取失败只丢 stderr。
+async fn collect_executor_output(
+    stream_task: JoinHandle<StdoutStreamResult>,
+    stderr_handle: Option<tokio::process::ChildStderr>,
+    executor_type: &str,
+) -> ExecutorOutput {
+    // join 流式读取：task panic 时按空结果处理（与原 unwrap_or 一致）
+    let stream = stream_task.await.unwrap_or(StdoutStreamResult {
+        logs: Vec::new(),
+        raw_stdout: String::new(),
+    });
+    // 读 stderr：read_to_end 失败只丢 stderr 内容，不影响主流程结果
+    let stderr = match stderr_handle {
+        Some(mut reader) => {
+            let mut buf = Vec::new();
+            let _ = reader.read_to_end(&mut buf).await;
+            String::from_utf8_lossy(&buf).to_string()
+        }
+        None => String::new(),
+    };
+    // stderr 非空才打日志：按 char 截 2000，避免按字节切片切断多字节中文
+    if !stderr.is_empty() {
+        let stderr_preview: String = stderr.chars().take(2000).collect();
+        tracing::info!("[debounce] executor {} stderr:\n{}", executor_type, stderr_preview);
+    }
+    // stdout 预览：同样按 char 截 2000，与 stderr 预览同语义
+    let stdout_preview: String = stream.raw_stdout.chars().take(2000).collect();
+    tracing::info!("[debounce] executor {} stdout:\n{}", executor_type, stdout_preview);
+    // 从日志提取最终结果（与 todo 执行路径一致）
+    let result_text = crate::executor_service::completion::get_final_result_from_logs(&stream.logs);
+    ExecutorOutput {
+        stream,
+        stderr,
+        result_text,
+    }
+}
+
+/// 阶段⑧：执行成功时从日志提取 session_id 并持久化到 DB（实现多轮对话 resume）。
+///
+/// best-effort：提取不到 / 保存失败都只记日志——session 持久化不影响主流程结果。
+/// 调用方仅在 status.success() 时调用。
+async fn persist_executor_session(
+    db: &Arc<Database>,
+    executor: &Arc<dyn crate::adapters::CodeExecutor>,
+    logs: &[ParsedLogEntry],
+    workspace_id: Option<i64>,
+    executor_type: &str,
+) {
+    // 没有 workspace_id 无法持久化（session 绑定在 workspace 维度）
+    let Some(wid) = workspace_id else {
+        return;
+    };
+    // session 提取逻辑收口在 session_util（096-W1-PR3），与 wiki chat 通路共用一份实现
+    let Some(new_session_id) =
+        crate::executor_service::session_util::extract_session_from_logs(executor, logs)
+    else {
+        return;
+    };
+    tracing::info!(
+        "[debounce] extracted session_id={} for executor={}, saving to DB",
+        new_session_id,
+        executor_type
+    );
+    // 保存失败只 warn：下次私聊会重新开 session，体验退化为非 resume，不阻塞主流程
+    if let Err(e) = db
+        .set_executor_session(wid, executor_type, Some(new_session_id))
+        .await
+    {
+        tracing::warn!("[debounce] 保存 executor session 失败: {:?}", e);
+    }
+}
+
+// ============================================================================
 // 默认响应处理器：处理 loop 和 executor 类型的默认响应
 // ============================================================================
 
@@ -1255,74 +1577,15 @@ impl MessageDebounce {
             });
         };
 
-        // 获取工作空间路径
-        let workspace_path = if let Some(wid) = workspace_id {
-            match db.get_project_directory_by_id(wid).await {
-                Ok(Some(pd)) => pd.path,
-                Ok(None) => {
-                    tracing::warn!("[debounce] workspace {} not found", wid);
-                    // wid=0 是未绑定哨兵、wid>0 是悬空 id，统一走友好提示（引导 /help 绑定/切换），
-                    // 不再报「工作空间 0 不存在」这种无法行动的误导性文案
-                    send_msg(workspace_missing_message(executor_type, wid));
-                    return Err(None);
-                }
-                Err(e) => {
-                    tracing::error!("[debounce] failed to get workspace {}: {}", wid, e);
-                    send_msg(executor_error_message(executor_type, &format!("读取工作空间失败：{}", e)));
-                    return Err(None);
-                }
-            }
-        } else {
-            tracing::warn!("[debounce] no workspace_id for executor default response");
-            send_msg(executor_error_message(executor_type, "未配置工作空间"));
-            return Err(None);
-        };
-
-        // 获取执行器
-        let exec_type = match parse_executor_type(executor_type) {
-            Some(t) => t,
-            None => {
-                tracing::warn!("[debounce] unknown executor type: {}", executor_type);
-                send_msg(executor_error_message(executor_type, &format!("未知执行器类型：{}", executor_type)));
-                return Err(None);
-            }
-        };
-        let executor = match executor_registry.get(exec_type).await {
-            Some(e) => e,
-            None => {
-                tracing::warn!("[debounce] executor {} not found", executor_type);
-                send_msg(executor_error_message(executor_type, "执行器未注册"));
-                return Err(None);
-            }
-        };
-
-        // 确定本次使用的 session_id：
-        // 1. 优先使用调用方传入的 resume_session_id（如绑定 todo 场景）
-        // 2. 否则从 workspace 的 executor_sessions 中读取（私聊多轮对话场景）
-        let mut session_id = resume_session_id.clone();
-        if session_id.is_none() {
-            if let Some(wid) = workspace_id {
-                match db.get_executor_session(wid, executor_type).await {
-                    Ok(Some(Some(sid))) => {
-                        session_id = Some(sid);
-                        tracing::info!(
-                            "[debounce] resumed executor session for {}: {:?}",
-                            executor_type,
-                            session_id
-                        );
-                    }
-                    Ok(Some(None)) => {
-                        tracing::debug!("[debounce] no saved session for executor {}", executor_type);
-                    }
-                    Ok(None) => {
-                        tracing::debug!("[debounce] workspace not found for session lookup");
-                    }
-                    Err(e) => {
-                        tracing::warn!("[debounce] failed to get executor session: {}", e);
-                    }
-                }
-            }
-        }
+        // ①②③ 解析运行上下文：workspace 路径 / 执行器实例 / session_id。
+        // 任一失败 helper 已发飞书提示并返回 Err(None)，这里用 ? 直接 bail。
+        let workspace_path =
+            resolve_executor_workspace(db, workspace_id, executor_type, &send_msg).await?;
+        let executor =
+            resolve_executor_instance(executor_registry, executor_type, &send_msg).await?;
+        let session_id =
+            resolve_executor_session(db, workspace_id, executor_type, resume_session_id.clone())
+                .await;
 
         tracing::info!(
             "[debounce] executor {} direct response in workspace {:?}, message len={}, session={:?}",
@@ -1332,173 +1595,84 @@ impl MessageDebounce {
             session_id.as_deref().map(|s| s.chars().take(20).collect::<String>())
         );
 
-        // 构建执行器命令（带 session_id，支持 resume 多轮对话）
-        let is_resume = session_id.is_some();
-        let command_args = executor.command_args_with_session(message, session_id.as_deref(), is_resume);
-        let program = executor.executable_path();
-        tracing::info!(
-            "[debounce] spawning: {} {:?} (cwd={:?})",
-            program, command_args, workspace_path
-        );
-        let mut cmd = tokio::process::Command::new(program);
-        cmd.args(&command_args)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .stdin(std::process::Stdio::piped())
-            .current_dir(&workspace_path);
+        // ④ 构建执行器命令（带 session_id）并 spawn 子进程
+        let mut child = spawn_executor_child(
+            &executor,
+            &workspace_path,
+            message,
+            session_id.as_deref(),
+            executor_type,
+            &send_msg,
+        )
+        .await?;
 
-        let mut child = match cmd.spawn() {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::error!("[debounce] failed to spawn executor {}: {}", executor_type, e);
-                send_msg(executor_error_message(executor_type, &format!("启动进程失败：{}", e)));
-                return Err(None);
-            }
-        };
-
-        // 提取 stdout 句柄用于流式读取：与 todo 执行路径一致，逐行解析并通过
-        // EventPipeline 发送 ExecEvent::Output 事件，让 FeishuPushService 按 push_level 推送。
+        // ⑤ 提取 stdout/stderr 句柄、生成 task_id、发"开始处理"、关 stdin、查直推目标、
+        // spawn 流式读取。这段留体内：stream_task 的 tokio::spawn move 了 stdout_handle /
+        // tx / executor / task_id 多个本地值，抽出要么造巨参 helper、要么引入中间 struct，
+        // 收益不抵成本（YAGNI）。
         let stdout_handle = child.stdout.take();
-        // 提取 stderr 句柄：非零退出时把 stderr 内容带进错误消息
         let stderr_handle = child.stderr.take();
-
-        // 为流式 Output 事件生成 task_id（提前生成，供 streaming reader 和返回值共用）
+        // task_id 提前生成：流式读取任务和最终返回值共用同一个 id
         let task_id = format!("executor-{}-{}", executor_type, uuid::Uuid::new_v4());
-
-        // spawn 成功立即发"开始处理"标志，让飞书侧知道请求已被接收并在跑
+        // spawn 成功立即回执"开始处理"，让飞书侧知道请求已被接收并在跑
         send_msg(executor_start_message(executor_type, message));
-
-        // stdin 处理：take() 并 drop 关闭 stdin，避免 CLI 进程挂起等待 EOF。
-        // 注意：这里不写 stdin payload——debounce 流式路径不是 worktree 场景，
-        // pi 的 "y" 应答只在切换 worktree 目录时才有意义，乱写会污染 stdin。
+        // take() 并 drop 关闭 stdin，避免 CLI 进程挂起等待 EOF。不写 stdin payload：
+        // debounce 流式路径不是 worktree 场景，pi 的 "y" 应答只在切 worktree 目录时才有意义。
         if child.stdin.take().is_some() {
             tracing::debug!("[debounce] stdin 已关闭");
         }
-
-        // 启动流式读取任务：并发读取 stdout 并通过 EventPipeline 发送 Output 事件。
-        // 复用 log_capture 的 pipeline 创建和解析逻辑，确保与 todo 执行产生完全相同格式的事件。
-        // FeishuPushService 按 push_level 配置推送（"all" 时推送过程事件到飞书）。
-        let tx_for_stream = tx.clone();
-        let executor_for_stream = executor.clone();
-        let tid_for_stream = task_id.clone();
-        // 一对一私聊场景：先查一次 push_level，仅当配置为 "all" 时才发送过程消息。
-        // 在发送端判断而非 FeishuPushService 端判断，避免每条日志都查一次 DB。
-        let push_level = match db.get_feishu_push_target(bot_id).await {
-            Ok(Some(target)) => target.push_level,
-            Ok(None) => "result_only".to_string(),
-            Err(e) => {
-                tracing::warn!("[debounce] failed to get push_level for bot {}: {}", bot_id, e);
-                "result_only".to_string()
+        let direct_output_info =
+            resolve_direct_output(db, bot_id, receive_id.clone(), receive_id_type).await;
+        // 并发读 stdout：复用 log_capture 的 pipeline 解析，产生与 todo 执行同格式的事件，
+        // FeishuPushService 按 push_level 推送（"all" 时推送过程事件到飞书）
+        let stream_task = tokio::spawn({
+            let tx = tx.clone();
+            let executor = executor.clone();
+            let tid = task_id.clone();
+            async move {
+                stream_executor_stdout(
+                    stdout_handle,
+                    &executor,
+                    &tx,
+                    &tid,
+                    workspace_id,
+                    direct_output_info,
+                )
+                .await
             }
-        };
-        let direct_output_info = if push_level == "all" {
-            Some(DirectOutputInfo {
-                bot_id,
-                receive_id: receive_id.clone(),
-                receive_id_type: receive_id_type.to_string(),
-            })
-        } else {
-            None
-        };
-        let stream_task = tokio::spawn(async move {
-            stream_executor_stdout(
-                stdout_handle, &executor_for_stream, &tx_for_stream, &tid_for_stream,
-                workspace_id, direct_output_info,
-            ).await
         });
 
-        // 带超时地等待子进程退出（stdout 已被流式读取，此处只管 wait + timeout + kill）
-        let timeout_secs = {
-            #[allow(clippy::expect_used)]
-            let cfg = config
-                .read()
-                .expect("config RwLock poisoned in handle_default_response_executor");
-            cfg.execution_timeout_secs
-        };
-        let timeout = direct_executor_timeout(timeout_secs);
-        let status = match wait_child_with_timeout(child, timeout).await {
-            Ok(s) => {
-                tracing::info!("[debounce] executor {} finished, exit_code={:?}", executor_type, s.code());
-                s
-            }
-            Err(ExecutorRunError::Timeout { secs }) => {
-                tracing::error!("[debounce] executor {} timed out after {}s", executor_type, secs);
-                send_msg(executor_error_message(executor_type, &format!("执行超时（{}s）", secs)));
-                return Err(None);
-            }
-            Err(ExecutorRunError::WaitFailed(msg)) => {
-                tracing::error!("[debounce] failed to wait for executor {}: {}", executor_type, msg);
-                send_msg(executor_error_message(executor_type, &format!("等待进程失败：{}", msg)));
-                return Err(None);
-            }
-        };
+        // ⑥ 带超时地等子进程退出（超时则 kill 回收，避免孤儿进程）
+        let status = await_executor_exit(child, config, executor_type, &send_msg).await?;
 
-        // 等待流式读取任务完成，收集解析结果和原始 stdout
-        let stream_result = stream_task.await.unwrap_or(StdoutStreamResult {
-            logs: Vec::new(),
-            raw_stdout: String::new(),
-        });
+        // ⑦ join 流式读取 + 读 stderr + 提取最终结果
+        let output = collect_executor_output(stream_task, stderr_handle, executor_type).await;
 
-        // 读取 stderr：非零退出时用于诊断失败原因
-        let stderr_text = match stderr_handle {
-            Some(mut reader) => {
-                let mut buf = Vec::new();
-                let _ = reader.read_to_end(&mut buf).await;
-                String::from_utf8_lossy(&buf).to_string()
-            }
-            None => String::new(),
-        };
-        if !stderr_text.is_empty() {
-            // 按 char 截断日志预览，避免按字节切片切断多字节中文导致 panic
-            let stderr_preview: String = stderr_text.chars().take(2000).collect();
-            tracing::info!(
-                "[debounce] executor {} stderr:\n{}",
-                executor_type,
-                stderr_preview
-            );
-        }
-
-        // 从流式解析收集的日志中提取最终结果（与 todo 执行路径一致）
-        // 按 char 截断日志预览，避免按字节切片切断多字节中文导致 panic
-        let stdout_preview: String = stream_result.raw_stdout.chars().take(2000).collect();
-        tracing::info!(
-            "[debounce] executor {} stdout:\n{}",
-            executor_type,
-            stdout_preview
-        );
-        let result_text = crate::executor_service::completion::get_final_result_from_logs(&stream_result.logs);
-
-        // 构建结束消息：成功有解析结果就用结果；无结果但退出 0 且有 stdout 就用 stdout 兜底；
-        // 非 0 退出走错误通道带退出码+输出片段
+        // 构建结束消息：当前仅记日志——最后一条 assistant 消息已是结论，发飞书会重复。
+        // 按 char 截 200 预览，避免按字节切片切断多字节中文。
         let content = build_executor_end_content(
-            executor_type, &status, result_text, &stream_result.raw_stdout, &stderr_text,
+            executor_type,
+            &status,
+            output.result_text,
+            &output.stream.raw_stdout,
+            &output.stderr,
         );
-
         tracing::info!(
             "[debounce] executor {} result_text={:?}",
             executor_type,
             content.chars().take(200).collect::<String>()
         );
-        // 注释掉发送给飞书：最后一条 assistant 消息已经是结论，FeiShu 推送会导致重复
-        // send_msg(content);
 
-        // 执行成功时从日志中提取 session_id 并持久化到数据库，
-        // 下次私聊时可直接 resume 该 session，实现多轮对话上下文保持。
+        // ⑧ 成功时持久化 session（best-effort，失败只 warn）
         if status.success() {
-            if let Some(wid) = workspace_id {
-                // session 提取逻辑已收口到 executor_service::session_util（096-W1-PR3），
-                // 与 wiki chat 通路共用一份公共实现
-                if let Some(new_session_id) = crate::executor_service::session_util::extract_session_from_logs(&executor, &stream_result.logs) {
-                    tracing::info!(
-                        "[debounce] extracted session_id={} for executor={}, saving to DB",
-                        new_session_id,
-                        executor_type
-                    );
-                    if let Err(e) = db.set_executor_session(wid, executor_type, Some(new_session_id)).await {
-                        tracing::warn!("[debounce] 保存 executor session 失败: {:?}", e);
-                    }
-                }
-            }
+            persist_executor_session(
+                db,
+                &executor,
+                &output.stream.logs,
+                workspace_id,
+                executor_type,
+            )
+            .await;
         }
 
         Ok(crate::executor_service::ExecutionResult {

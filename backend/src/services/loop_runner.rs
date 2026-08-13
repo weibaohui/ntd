@@ -23,6 +23,8 @@ use crate::adapters::ExecutorRegistry;
 use crate::db::Database;
 use crate::executor_service::{run_todo_execution_with_params, RunTodoExecutionRequest};
 use crate::models::ExecutionStatus;
+// 096-W4-3：loop 域状态枚举族（裸串收敛的单一词汇表，DB 仍走 String 协议）
+use crate::models::{LoopExecutionStatus, LoopStepStatus};
 use crate::task_manager::TaskManager;
 use crate::db::entity::{loop_steps};
 
@@ -68,16 +70,20 @@ pub struct LoopRunner {
 /// 审批 handler（评分制 / 布尔制）已各自算出终态，统一信任 status，
 /// 避免用评分二次推导在 rating=0、min_rating=0 时把"拒绝"误判为通过（NTD-004）。
 fn approved_step_passed(status: &str) -> bool {
-    status == "success"
+    // 096-W4-3：枚举判定——未知值解析为 None 判 false，与原 `== "success"` 语义等价
+    LoopStepStatus::from_db(status) == Some(LoopStepStatus::Success)
 }
 
 /// loop 执行终态 → 关联任务（tasks.status）状态映射（纯函数）。
 /// success/partial 都算任务成功；failed 与两类上限终止都算失败；
 /// 其余（running 等非终态）归为 running，与任务列表的展示语义一致。
 fn task_status_for_loop_status(status: &str) -> &'static str {
-    match status {
-        "success" | "partial" => "success",
-        "failed" | "capped_step" | "capped_token" => "failed",
+    // 096-W4-3：判定族改枚举匹配（未知值与 running/paused 同落 _ 分支，与原语义一致）
+    match LoopExecutionStatus::from_db(status) {
+        Some(LoopExecutionStatus::Success) | Some(LoopExecutionStatus::Partial) => "success",
+        Some(LoopExecutionStatus::Failed)
+        | Some(LoopExecutionStatus::CappedStep)
+        | Some(LoopExecutionStatus::CappedToken) => "failed",
         _ => "running",
     }
 }
@@ -322,7 +328,7 @@ impl LoopRunner {
                     };
                     (le.status, le.total_steps, le.completed_steps, le.failed_steps, duration)
                 }
-                None => ("failed".to_string(), 0, 0, 0, 0),
+                None => (LoopExecutionStatus::Failed.to_string(), 0, 0, 0, 0),
             };
 
             // 获取累计 Token 消耗（从所有 step executions 的 execution_record_id 查询）
@@ -384,7 +390,7 @@ impl LoopRunner {
                         .db
                         .finish_loop_execution(
                             loop_execution_id,
-                            "failed",
+                            LoopExecutionStatus::Failed.as_str(),
                             0,
                             0,
                             Some(&e),
@@ -396,7 +402,7 @@ impl LoopRunner {
                     // 触发异常处理 Todo（传入 0 作为步数/Token 统计；error_detail 带上 run 失败的原始错误）
                     let err_msg = e.to_string();
                     let _ = this2_for_err
-                        .trigger_abnormal_handler(loop_id, loop_execution_id, "failed", 0, 0, &err_msg)
+                        .trigger_abnormal_handler(loop_id, loop_execution_id, LoopExecutionStatus::Failed.as_str(), 0, 0, &err_msg)
                         .await;
                     // 发送 WebSocket 事件，触发前端刷新执行历史列表。
                     // 没有这步的话，前端 LoopExecutionsPanel 收不到事件通知，
@@ -406,7 +412,7 @@ impl LoopRunner {
                         .send(crate::executor_service::ExecEvent::ReviewStatusChanged {
                             record_id: 0,
                             todo_id: 0,
-                            review_status: "failed".to_string(),
+                            review_status: ExecutionStatus::Failed.to_string(),
                         });
                     // 失败路径：有绑定对话时直接回复，否则广播 LoopFinished 事件
                     if let Some(ref receive_id) = feishu_receive_id {
@@ -424,7 +430,7 @@ impl LoopRunner {
                             loop_execution_id,
                             loop_id,
                             loop_title: loop_title.clone(),
-                            status: "failed".to_string(),
+                            status: LoopExecutionStatus::Failed.to_string(),
                             total_steps,
                             completed_steps,
                             failed_steps,
@@ -517,7 +523,7 @@ impl LoopRunner {
                 // 终态化所有 running phase（BUG-004）：无论是否走 run_inner 的 finish 路径，
                 // 兜底把 phase 从 running 终态化。
                 let le = self.ctx.db.get_loop_execution(loop_execution_id).await;
-                let final_status = le.ok().flatten().map(|l| l.status).unwrap_or_else(|| "failed".to_string());
+                let final_status = le.ok().flatten().map(|l| l.status).unwrap_or_else(|| LoopExecutionStatus::Failed.to_string());
                 let _ = self.ctx.db.finalize_phase_executions(loop_execution_id, &final_status).await;
                 self.sync_task_status(loop_execution_id).await;
                 self.broadcast_loop_finished(loop_id, loop_execution_id).await;
@@ -534,17 +540,17 @@ impl LoopRunner {
                 let _ = self
                     .ctx
                     .db
-                    .finish_loop_execution(loop_execution_id, "failed", 0, 0, Some(&e))
+                    .finish_loop_execution(loop_execution_id, LoopExecutionStatus::Failed.as_str(), 0, 0, Some(&e))
                     .await;
                 let _ = self
-                    .trigger_abnormal_handler(loop_id, loop_execution_id, "failed", 0, 0, &e)
+                    .trigger_abnormal_handler(loop_id, loop_execution_id, LoopExecutionStatus::Failed.as_str(), 0, 0, &e)
                     .await;
                 // 终态化之后再同步：此时读到的是 failed，任务状态才能落对。
                 self.sync_task_status(loop_execution_id).await;
                 let _ = self.tx.send(crate::executor_service::ExecEvent::ReviewStatusChanged {
                     record_id: 0,
                     todo_id: 0,
-                    review_status: "failed".to_string(),
+                    review_status: ExecutionStatus::Failed.to_string(),
                 });
                 self.broadcast_loop_finished(loop_id, loop_execution_id).await;
             }
@@ -566,7 +572,7 @@ impl LoopRunner {
                 return;
             }
         };
-        if loop_exec.status != "running" {
+        if loop_exec.status != LoopExecutionStatus::Running.as_str() {
             warn!("resume: loop_execution #{} status is {}, not running", loop_execution_id, loop_exec.status);
             return;
         }
@@ -583,7 +589,7 @@ impl LoopRunner {
         // 找 approval_status = "approved" 且原来状态是 pending_approval 的（已审批）
         let approved_se = step_execs.iter().find(|se| {
             se.approval_status.as_deref() == Some("approved") &&
-            (se.status == "success" || se.status == "failed")
+            (se.status == LoopStepStatus::Success.as_str() || se.status == LoopStepStatus::Failed.as_str())
         });
 
         let approved = match approved_se {
@@ -626,8 +632,8 @@ impl LoopRunner {
         let gate_passed = approved_step_passed(&approved.status);
 
         // 6. 更新计数器（从已有 step_executions 推算）
-        let completed = step_execs.iter().filter(|se| se.status == "success").count() as i32;
-        let failed = step_execs.iter().filter(|se| se.status == "failed").count() as i32;
+        let completed = step_execs.iter().filter(|se| se.status == LoopStepStatus::Success.as_str()).count() as i32;
+        let failed = step_execs.iter().filter(|se| se.status == LoopStepStatus::Failed.as_str()).count() as i32;
         // 总额外步数 = 当前 sequence_index（最大序号即累计执行步数）
         let _total_executed = step_execs.iter().map(|se| se.sequence_index).max().unwrap_or(0);
         // 更新 loop_execution 中的计数器
@@ -662,11 +668,12 @@ impl LoopRunner {
             });
         } else {
             // 没有下一步（end/break），结束 loop execution
-            let final_status = if completed > 0 { "success" } else { "failed" };
+            let final_status = if completed > 0 { LoopExecutionStatus::Success.as_str() } else { LoopExecutionStatus::Failed.as_str() };
             let _ = self.ctx.db.finish_loop_execution(
                 loop_execution_id, final_status, completed, failed, None,
             ).await;
             // 终态化所有 running phase（BUG-004）：与 run_inner 路径一致。
+            // final_status 此分支为 &str（670 行 as_str() 产出），直接传参不再取引用
             let _ = self.ctx.db.finalize_phase_executions(loop_execution_id, final_status).await;
             info!("resume: loop_execution #{} ended with status {}", loop_execution_id, final_status);
             // 就地终态化同样要完成收尾：同步任务状态 + 广播 LoopFinished（NTD-005）。
@@ -775,7 +782,7 @@ impl LoopRunner {
         if all_steps.is_empty() {
             self.ctx
                 .db
-                .finish_loop_execution(loop_execution_id, "success", 0, 0, None)
+                .finish_loop_execution(loop_execution_id, LoopExecutionStatus::Success.as_str(), 0, 0, None)
                 .await
                 .map_err(|e| e.to_string())?;
             return Ok(None);
@@ -813,7 +820,7 @@ impl LoopRunner {
             // 全新执行：设置 loop execution 状态
             self.ctx
                 .db
-                .finish_loop_execution(loop_execution_id, "running", 0, 0, None)
+                .finish_loop_execution(loop_execution_id, LoopExecutionStatus::Running.as_str(), 0, 0, None)
                 .await
                 .map_err(|e| e.to_string())?;
             self.clear_finished_at(loop_execution_id).await?;
@@ -824,15 +831,15 @@ impl LoopRunner {
         // 恢复模式：从已有 step_executions 推算状态计数器
         let execs = self.ctx.db.list_loop_step_executions(loop_execution_id).await
             .unwrap_or_default();
-        state.completed = execs.iter().filter(|se| se.status == "success").count() as i32;
-        state.failed = execs.iter().filter(|se| se.status == "failed").count() as i32;
+        state.completed = execs.iter().filter(|se| se.status == LoopStepStatus::Success.as_str()).count() as i32;
+        state.failed = execs.iter().filter(|se| se.status == LoopStepStatus::Failed.as_str()).count() as i32;
         let max_seq = execs.iter().map(|se| se.sequence_index).max().unwrap_or(0);
         // quirk 沿袭：恢复模式 total_executed 与 sequence_counter 同取 max sequence_index
         state.total_executed = max_seq;
         state.sequence_counter = max_seq;
         // 找最后完成的 step 用于模板变量
         let last_success = execs.iter()
-            .filter(|se| se.status == "success" || se.status == "pending_approval")
+            .filter(|se| se.status == LoopStepStatus::Success.as_str() || se.status == LoopStepStatus::PendingApproval.as_str())
             .max_by_key(|se| se.sequence_index);
         state.last_conclusion = last_success.and_then(|se| se.conclusion.clone());
         state.last_step_name = last_success.and_then(|se| {
@@ -853,36 +860,37 @@ impl LoopRunner {
         total_executed: i32,
         total_tokens_used: i64,
     ) -> Result<LoopRunOutcome, String> {
+        // 096-W4-3：终态三值收敛为枚举（写入/判定处 as_str()）
         let final_status = if failed == 0 {
-            "success"
+            LoopExecutionStatus::Success
         } else if completed == 0 {
-            "failed"
+            LoopExecutionStatus::Failed
         } else {
-            "partial"
+            LoopExecutionStatus::Partial
         };
         self.ctx
             .db
-            .finish_loop_execution(loop_execution_id, final_status, completed, failed, None)
+            .finish_loop_execution(loop_execution_id, final_status.as_str(), completed, failed, None)
             .await
             .map_err(|e| e.to_string())?;
 
         // 终态化所有 running phase（BUG-004）：loop success 后 phase 不应停留在 running。
         self.ctx
             .db
-            .finalize_phase_executions(loop_execution_id, final_status)
+            .finalize_phase_executions(loop_execution_id, final_status.as_str())
             .await
             .map_err(|e| e.to_string())?;
 
         // 对异常状态触发异常处理 Todo（主循环结束态无具体错误信息，error_detail 传空串）
-        if final_status == "failed" || final_status == "partial" {
+        if matches!(final_status, LoopExecutionStatus::Failed | LoopExecutionStatus::Partial) {
             let _ = self
-                .trigger_abnormal_handler(loop_id, loop_execution_id, final_status, total_executed, total_tokens_used, "")
+                .trigger_abnormal_handler(loop_id, loop_execution_id, final_status.as_str(), total_executed, total_tokens_used, "")
                 .await;
         }
 
         info!(
             "loop #{} run done: status={} completed={} failed={} total_executed={}",
-            loop_id, final_status, completed, failed, total_executed
+            loop_id, final_status.as_str(), completed, failed, total_executed
         );
         Ok(LoopRunOutcome::Finished)
     }
@@ -945,12 +953,12 @@ impl LoopRunner {
             info!("loop #{} capped: total_executed={} >= max={}", run.loop_id, st.total_executed, run.max_executions);
             self.ctx
                 .db
-                .finish_loop_execution(run.loop_execution_id, "capped_step", st.completed, st.failed, None)
+                .finish_loop_execution(run.loop_execution_id, LoopExecutionStatus::CappedStep.as_str(), st.completed, st.failed, None)
                 .await
                 .map_err(|e| e.to_string())?;
             // 触发异常处理 Todo
             let _ = self
-                .trigger_abnormal_handler(run.loop_id, run.loop_execution_id, "capped_step", st.total_executed, st.total_tokens_used, "已达最大执行步数上限")
+                .trigger_abnormal_handler(run.loop_id, run.loop_execution_id, LoopExecutionStatus::CappedStep.as_str(), st.total_executed, st.total_tokens_used, "已达最大执行步数上限")
                 .await;
             return Ok(Some(LoopRunOutcome::Finished));
         }
@@ -961,12 +969,12 @@ impl LoopRunner {
             );
             self.ctx
                 .db
-                .finish_loop_execution(run.loop_execution_id, "capped_token", st.completed, st.failed, None)
+                .finish_loop_execution(run.loop_execution_id, LoopExecutionStatus::CappedToken.as_str(), st.completed, st.failed, None)
                 .await
                 .map_err(|e| e.to_string())?;
             // 触发异常处理 Todo
             let _ = self
-                .trigger_abnormal_handler(run.loop_id, run.loop_execution_id, "capped_token", st.total_executed, st.total_tokens_used, "已达最大 Token 上限")
+                .trigger_abnormal_handler(run.loop_id, run.loop_execution_id, LoopExecutionStatus::CappedToken.as_str(), st.total_executed, st.total_tokens_used, "已达最大 Token 上限")
                 .await;
             return Ok(Some(LoopRunOutcome::Finished));
         }
@@ -1037,11 +1045,11 @@ impl LoopRunner {
             crate::services::process::gate_evaluator::has_human_approval_gate(&step.gate_config);
         let initial_status = if is_human_approval_step {
             match self.ctx.db.get_todo(step.todo_id).await {
-                Ok(Some(t)) if t.status == crate::models::TodoStatus::Completed => "pending_approval",
-                _ => "running",
+                Ok(Some(t)) if t.status == crate::models::TodoStatus::Completed => LoopStepStatus::PendingApproval.as_str(),
+                _ => LoopStepStatus::Running.as_str(),
             }
         } else {
-            "running"
+            LoopStepStatus::Running.as_str()
         };
         tracing::info!(
             "loop_exec {}: step #{} human_approval={} todo_id={} initial_status={}",
@@ -1099,7 +1107,7 @@ impl LoopRunner {
                 warn!("loop_runner: step #{} start failed: {}", step.id, e);
                 self.ctx
                     .db
-                    .finish_step_execution(prep.step_exec.id, "failed", None, Some(&e), None, None)
+                    .finish_step_execution(prep.step_exec.id, LoopStepStatus::Failed.as_str(), None, Some(&e), None, None)
                     .await
                     .map_err(|e| e.to_string())?;
                 self.ctx
@@ -1119,7 +1127,7 @@ impl LoopRunner {
             Ok(s) => s,
             Err(e) => {
                 warn!("loop_runner: step #{} wait failed: {}", step.id, e);
-                "failed".to_string()
+                LoopStepStatus::Failed.to_string()
             }
         };
         Ok(Some((record_id, step_status)))
@@ -1208,7 +1216,7 @@ impl LoopRunner {
         }
 
         // 发送状态更新事件。
-        let final_status = if gate_passed { "success" } else { "failed" };
+        let final_status = if gate_passed { LoopStepStatus::Success.as_str() } else { LoopStepStatus::Failed.as_str() };
         let _ = self.tx.send(crate::executor_service::ExecEvent::ReviewStatusChanged {
             record_id,
             todo_id: 0,
@@ -1241,9 +1249,9 @@ impl LoopRunner {
         // phase_driver 的 human_approval 门禁处理（4g 分支已 return）。此处对未走
         // 门禁路径的步骤，直接按执行状态判定通过与否，不再做评分。
         let (gate_passed, step_rating, error_msg): (bool, Option<i32>, Option<String>) =
-            (step_status == "success", None, None);
+            (step_status == LoopStepStatus::Success.as_str(), None, None);
 
-        let final_step_status = if gate_passed { "success" } else { "failed" };
+        let final_step_status = if gate_passed { LoopStepStatus::Success.as_str() } else { LoopStepStatus::Failed.as_str() };
 
         // 4i. 提取结论
         let conclusion = self.extract_conclusion(record_id).await;
@@ -1641,9 +1649,9 @@ impl LoopRunner {
         // 2. 检查当前状态是否在触发条件内
         let trigger_on: Vec<String> = serde_json::from_str(&loop_.abnormal_handler_trigger_on)
             .unwrap_or_else(|_| vec![
-                "capped_step".to_string(),
-                "capped_token".to_string(),
-                "failed".to_string(),
+                LoopExecutionStatus::CappedStep.to_string(),
+                LoopExecutionStatus::CappedToken.to_string(),
+                LoopExecutionStatus::Failed.to_string(),
             ]);
         if !trigger_on.contains(&abnormal_status.to_string()) {
             info!(

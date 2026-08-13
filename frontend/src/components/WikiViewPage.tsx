@@ -14,24 +14,8 @@ import { PageCard } from '@/components/common/PageCard';
 import { useViewState } from '@/hooks/useViewState';
 import { TfiBlackboard } from 'react-icons/tfi';
 
-/** Wiki 文件内容 */
-interface WikiFileContent {
-  slug: string;
-  content: string;
-}
-
-/** 拉取单个 Wiki 文件内容（原生 fetch，手动写 v1 路径） */
-async function fetchWikiFileContent(workspaceId: number, slug: string): Promise<WikiFileContent> {
-  const res = await fetch(`/api/v1/workspaces/${workspaceId}/wiki/files/${encodeURIComponent(slug)}`);
-  if (!res.ok) {
-    throw new Error(`HTTP ${res.status}`);
-  }
-  const json = (await res.json()) as { data?: WikiFileContent };
-  if (!json.data) {
-    throw new Error('Empty response body');
-  }
-  return json.data;
-}
+// 096-W4-4：类型与拉取函数统一引用黑板域共享层（原本地定义为逐字重复）
+import { fetchWikiFileContent } from '@/components/blackboard/api';
 
 export function WikiViewPage() {
   const { themeMode } = useTheme();

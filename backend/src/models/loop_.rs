@@ -14,6 +14,101 @@ use crate::db::entity::{
 };
 use crate::db::loop_::{LoopFullView, LoopListRow};
 
+// ─── 096-W4-3：loop 域状态枚举族（状态裸串收敛的单一词汇表）──
+// DB 层保持 String 协议（不动 SeaORM 实体），判定/写入点统一经 as_str()/from_str 进出。
+// serde snake_case 与存量存储/前端 JSON 形态兼容。
+
+/// `loop_executions.status` 取值族（7 态）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LoopExecutionStatus {
+    Running,
+    Success,
+    Failed,
+    /// 部分成功（有失败步骤但有完成步骤）
+    Partial,
+    /// 暂停等待（如人工审批 pending_approval 挂起）
+    Paused,
+    /// 步数上限终止
+    CappedStep,
+    /// Token 上限终止
+    CappedToken,
+}
+
+impl LoopExecutionStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::Success => "success",
+            Self::Failed => "failed",
+            Self::Partial => "partial",
+            Self::Paused => "paused",
+            Self::CappedStep => "capped_step",
+            Self::CappedToken => "capped_token",
+        }
+    }
+
+    /// DB 读取侧解析：未知值回退 None（调用方按场景决定兜底），不写死默认态。
+    pub fn from_db(s: &str) -> Option<Self> {
+        Some(match s {
+            "running" => Self::Running,
+            "success" => Self::Success,
+            "failed" => Self::Failed,
+            "partial" => Self::Partial,
+            "paused" => Self::Paused,
+            "capped_step" => Self::CappedStep,
+            "capped_token" => Self::CappedToken,
+            _ => return None,
+        })
+    }
+}
+
+impl std::fmt::Display for LoopExecutionStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+/// `loop_step_executions.status` 取值族（4 态）。
+/// 注意区别于 approval_status 字段（pending/... 是其取值，不在此族）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LoopStepStatus {
+    Running,
+    Success,
+    Failed,
+    /// 人工审批挂起（gate_config 含 human_approval 且 todo 已完成的初始态）
+    PendingApproval,
+}
+
+impl LoopStepStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::Success => "success",
+            Self::Failed => "failed",
+            Self::PendingApproval => "pending_approval",
+        }
+    }
+
+    /// DB 读取侧解析：未知值回退 None。
+    pub fn from_db(s: &str) -> Option<Self> {
+        Some(match s {
+            "running" => Self::Running,
+            "success" => Self::Success,
+            "failed" => Self::Failed,
+            "pending_approval" => Self::PendingApproval,
+            _ => return None,
+        })
+    }
+}
+
+impl std::fmt::Display for LoopStepStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
 /// Loop 列表行(左栏一行)。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoopListItem {
@@ -504,5 +599,60 @@ mod loop_dto_tests {
         let dto = LoopDto::from(minimal_loop_model()).with_process_template(None);
         assert!(dto.process_template_name.is_none());
         assert!(dto.process_template_display_name.is_none());
+    }
+
+    /// 096-W4-3：LoopExecutionStatus 枚举族契约——as_str/from_db 往返恒等 +
+    /// 取值全集锁定（新增状态必须同步枚举，删除状态属破坏性变更需评审）。
+    #[test]
+    fn test_loop_execution_status_roundtrip_and_full_set() {
+        let all = [
+            (LoopExecutionStatus::Running, "running"),
+            (LoopExecutionStatus::Success, "success"),
+            (LoopExecutionStatus::Failed, "failed"),
+            (LoopExecutionStatus::Partial, "partial"),
+            (LoopExecutionStatus::Paused, "paused"),
+            (LoopExecutionStatus::CappedStep, "capped_step"),
+            (LoopExecutionStatus::CappedToken, "capped_token"),
+        ];
+        for (variant, db_str) in all {
+            assert_eq!(variant.as_str(), db_str, "as_str 与 DB 字面量必须一致");
+            assert_eq!(LoopExecutionStatus::from_db(db_str), Some(variant), "from_db 必须能解析全部枚举值");
+        }
+        // 未知值返回 None（由调用方按场景兜底，不写死默认态）
+        assert_eq!(LoopExecutionStatus::from_db("unknown_x"), None);
+        assert_eq!(LoopExecutionStatus::from_db(""), None);
+    }
+
+    /// LoopStepStatus 枚举族契约（4 态）；approval_status 字段的 pending 等值不在此族。
+    #[test]
+    fn test_loop_step_status_roundtrip_and_full_set() {
+        let all = [
+            (LoopStepStatus::Running, "running"),
+            (LoopStepStatus::Success, "success"),
+            (LoopStepStatus::Failed, "failed"),
+            (LoopStepStatus::PendingApproval, "pending_approval"),
+        ];
+        for (variant, db_str) in all {
+            assert_eq!(variant.as_str(), db_str);
+            assert_eq!(LoopStepStatus::from_db(db_str), Some(variant));
+        }
+        // approval_status 域的 pending 不属于 status 族——解析为 None 防止两族混淆
+        assert_eq!(LoopStepStatus::from_db("pending"), None);
+        assert_eq!(LoopStepStatus::from_db("skipped"), None);
+    }
+
+    /// serde 兼容层：枚举序列化形态与存量 DB/前端 JSON 的 snake_case 字面量一致
+    #[test]
+    fn test_status_enum_serde_snake_case_compatible() {
+        assert_eq!(
+            serde_json::to_string(&LoopExecutionStatus::CappedStep).unwrap(),
+            r#""capped_step""#
+        );
+        assert_eq!(
+            serde_json::to_string(&LoopStepStatus::PendingApproval).unwrap(),
+            r#""pending_approval""#
+        );
+        let back: LoopExecutionStatus = serde_json::from_str(r#""partial""#).unwrap();
+        assert_eq!(back, LoopExecutionStatus::Partial);
     }
 }
