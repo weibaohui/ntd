@@ -8,9 +8,9 @@
  * 交互逻辑与「总览」一致：
  * - 点击技能卡片 → Drawer 详情 → 安装 → 选择执行器
  */
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
-  Card, Tag, Input, Empty, Spin, App,
+  Card, Tag, Input, Empty, Spin,
   Drawer, Descriptions, Button, Space, Modal, Checkbox, Row, Col,
   Alert, Typography, Dropdown, Divider, Pagination,
 } from 'antd';
@@ -21,7 +21,7 @@ import {
   LinkOutlined, DownOutlined,
 } from '@ant-design/icons';
 import XMarkdown from '@ant-design/x-markdown';
-import { bundledApi, type BundledSkillMeta, type BundledSkillFile, type SkillSourceMeta, type SkillSourceWithCount } from '@/api/bundled';
+import { bundledApi, type BundledSkillMeta, type BundledSkillFile, type SkillSourceMeta, } from '@/api/bundled';
 import type { ExecutorSkills } from '@/types';
 import { EXECUTORS } from '@/types';
 import { formatSize, formatTime } from './helpers';
@@ -29,6 +29,9 @@ import * as db from '@/utils/database';
 import type { SkillFileInfo } from '@/utils/database/skills';
 import { SkillFileBrowserModal } from './SkillFileBrowserModal';
 import { useIsMobile } from '@/hooks/useIsMobile';
+import { useSkillCatalog, ALL_SKILLS_PAGE_SIZE } from '@/hooks/useSkillCatalog';
+import { useSkillDetail } from '@/hooks/useSkillDetail';
+import { useSkillInstall } from '@/hooks/useSkillInstall';
 import './SkillMarketplace.css';
 
 const { Text, Paragraph } = Typography;
@@ -36,7 +39,6 @@ const { Text, Paragraph } = Typography;
 // ─────────────────────────────────────────────────────────────────────────────
 // 视图模式
 // ─────────────────────────────────────────────────────────────────────────────
-type ViewMode = 'browse-sources' | 'all-skills';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 来源卡片（用于来源浏览视图和下拉筛选）
@@ -325,162 +327,41 @@ function MarketSkillCard({ skill, installedExecutors, onClick }: {
 // 主组件
 // ─────────────────────────────────────────────────────────────────────────────
 export function SkillMarketplace() {
-  const { message } = App.useApp();
   // 主题色统一走 CSS 变量（var(--color-*)），组件不再判断 isDark；
   // App.css 的 [data-theme="dark"] 会自动切换浅/深色变量取值。
 
   // ── 数据状态 ──
   // 移动端判定：来源筛选下拉在窄屏改成单列、宽度贴齐视口（见 dropdownContent）。
   const isMobile = useIsMobile();
-  const [skills, setSkills] = useState<BundledSkillMeta[]>([]);
-  const [sources, setSources] = useState<Record<string, SkillSourceMeta>>({});
-  const [loading, setLoading] = useState(false);
 
-  // ── 分页状态 ──
-  // 两种视图模式都走后端分页，绝不返回全量数据。
-  // 每种模式独立维护 page，避免切换模式时带着旧页码翻到空页。
-  // 默认 30 条/页，和桌面卡片网格双列布局下的可读性比较平衡。
-  const ALL_SKILLS_PAGE_SIZE = 30;
-  // browse-sources 模式下「来源网格」的页码（按来源翻页）
-  const [browseSourcesPage, setBrowseSourcesPage] = useState(1);
-  // browse-sources 模式下「进入某个来源后的技能列表」页码（按技能翻页）
-  const [browseSkillsPage, setBrowseSkillsPage] = useState(1);
-  // all-skills 模式的页码
-  const [allPage, setAllPage] = useState(1);
-  // total 是「过滤后」的技能数（后端先按 source/keyword 过滤再分页），
-  // 前端据此渲染 Pagination 组件，而不是直接看当前页的 skills.length。
-  const [total, setTotal] = useState(0);
-  // 来源分页响应：来源网格专用，与技能分页彻底分离
-  const [sourcesList, setSourcesList] = useState<SkillSourceWithCount[]>([]);
-  const [sourcesTotal, setSourcesTotal] = useState(0);
+  // 目录数据族（列表/分页/视图/筛选 + 视图切换联动编排）已收口至 useSkillCatalog（096-W4-4）
+  const {
+    skills, sources, loading, total, sourcesList, sourcesTotal,
+    viewMode, activeSource, searchText, filterSource,
+    browseSourcesPage, browseSkillsPage, allPage,
+    setSearchText, setFilterSource,
+    setBrowseSourcesPage, setBrowseSkillsPage, setAllPage,
+    switchToSourceBrowse, switchToAllSkills, enterSource, backToSourceGrid,
+  } = useSkillCatalog();
 
-  // ── 视图状态 ──
-  const [viewMode, setViewMode] = useState<ViewMode>('browse-sources');
-  const [activeSource, setActiveSource] = useState<string | null>(null);
+  // 详情 Drawer 族（含竞态守卫）已收口至 useSkillDetail
+  const {
+    selectedSkill, drawerOpen, content, files, contentLoading,
+    openDetail: handleCardClick, closeDetail,
+  } = useSkillDetail();
 
-  // ── 筛选状态 ──
-  const [searchText, setSearchText] = useState('');
-  const [filterSource, setFilterSource] = useState<string>('all');
-
-  // ── 详情 Drawer 状态 ──
-  const [selectedSkill, setSelectedSkill] = useState<BundledSkillMeta | null>(null);
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [content, setContent] = useState('');
-  const [files, setFiles] = useState<BundledSkillFile[]>([]);
-  const [contentLoading, setContentLoading] = useState(false);
-
-  // 详情请求竞态守卫：每次点击自增并记下本次序号；晚返回的旧请求若发现序号已变就丢弃结果，
-  // 避免快速连点 A→B 时 A 的内容把 B 的详情覆盖掉（旧请求的 finally 也不会误关 B 的 loading）。
-  const detailReqIdRef = useRef(0);
-
-  // 列表请求竞态守卫（loadSkills / loadSources 共用）：
-  // 翻页 / 切视图 / 改搜索词时旧请求可能晚于新请求返回，
-  // 用序号识别「最新」请求，过期的 setState 全部静默丢弃；
-  // setLoading(false) 也仅由最新请求触发，避免中途失败的旧请求
-  // 把 loading 提前关掉造成 spinner 闪烁。
-  const reqGenRef = useRef(0);
-
-  // ── 安装 Modal 状态 ──
-  const [installModalOpen, setInstallModalOpen] = useState(false);
-  const [targetExecutors, setTargetExecutors] = useState<string[]>([]);
-  const [installing, setInstalling] = useState(false);
+  // 安装 Modal 族已收口至 useSkillInstall
+  const {
+    installModalOpen, targetExecutors, installing,
+    setTargetExecutors, openInstall: handleOpenInstall, closeInstall, install,
+  } = useSkillInstall();
+  const handleInstall = () => install(selectedSkill, loadInstalled);
 
   // ── 文件浏览 Modal 状态 ──
   const [fileBrowserOpen, setFileBrowserOpen] = useState(false);
 
   // ── 已安装技能数据 ──
   const [installedData, setInstalledData] = useState<ExecutorSkills[]>([]);
-
-  /**
-   * 加载市场技能列表
-   *
-   * 设计取舍（强制分页）：
-   * - 两种视图模式都走后端分页，绝不返回全量数据，避免一次把上千张
-   *   技能卡片塞进 DOM 把首屏渲染拖垮。
-   * - 来源网格按「来源」独立翻页（loadSources），与技能分页职责分离。
-   * - total 是「过滤后」的技能数，前端 Pagination 据此渲染页码。
-   *
-   * 竞态保护：快速翻页 / 切换视图时，旧的请求可能晚于新请求返回，
-   * 若直接 setState 会用旧数据覆盖新数据。这里用 reqGenRef 给每次请求
-   * 打序号，仅最新请求的结果（成功 / 失败）能落到 state，
-   * 过期请求静默丢弃；setLoading(false) 也只由最新请求触发，
-   * 避免「A 失败先把 loading 关掉，但 B 还在路上」的闪烁。
-   */
-  const loadSkills = useCallback(async () => {
-    // 抢占本次序号：先 ++ 再读，这样即使同步重入也能保证唯一且递增
-    const myGen = ++reqGenRef.current;
-    // 进入 loading 状态要早于 await，否则用户在「点完到转圈」之间会有几十毫秒空窗
-    setLoading(true);
-    try {
-      // 当前视图模式对应的页码：切换模式时各自独立的 page 互不干扰
-      const currentPage = viewMode === 'all-skills' ? allPage : browseSkillsPage;
-      // 过滤参数下沉到后端：
-      // - 全部技能模式把 filterSource / searchText 作为 source / keyword 传给后端
-      // - 按来源浏览模式下「进入某个来源」用 activeSource，来源网格则不带 source
-      // 后端先过滤再分页，total 就是过滤后的计数，前端 Pagination 据此渲染。
-      const source = viewMode === 'all-skills'
-        ? (filterSource === 'all' ? undefined : filterSource)
-        : (activeSource ?? undefined);
-      // keyword 必须 trim：用户粘贴的 "Claude " 和 "Claude" 应当等价，否则搜索结果莫名其妙地变少
-      const keyword = searchText.trim() || undefined;
-      const res = await bundledApi.getSkills({
-        page: currentPage,
-        page_size: ALL_SKILLS_PAGE_SIZE,
-        source,
-        keyword,
-      });
-      // 过期请求：在我之后又发起了新请求，新数据才是用户当前想看的，旧结果直接丢弃
-      if (myGen !== reqGenRef.current) return;
-      // 三个 setter 顺序固定为「列表 → 分类 → 总数」，方便阅读；
-      // 不打 batch 是因为这些都是原始 useState，独立更新没有性能问题
-      setSkills(res.skills);
-      setSources(res.sources);
-      setTotal(res.total);
-    } catch (e: any) {
-      // 过期请求的错误信息也不展示：用户看到的是「上一次」的错误，已经不准确
-      if (myGen !== reqGenRef.current) return;
-      message.error('加载技能列表失败: ' + (e?.message || e));
-    } finally {
-      // 仅最新请求负责关 loading，否则中途失败的过期请求会把 loading 提前关掉
-      if (myGen === reqGenRef.current) setLoading(false);
-    }
-  }, [message, viewMode, allPage, browseSkillsPage, filterSource, activeSource, searchText, ALL_SKILLS_PAGE_SIZE]);
-
-  /**
-   * 加载来源分页列表
-   *
-   * 来源网格专用：按「来源」本身翻页，与技能分页彻底分离。
-   * 来源网格的每个 SourceCard 显示 skill_count（过滤前计数），
-   * sourcesTotal 是过滤后的来源总数，前端 Pagination 据此渲染。
-   *
-   * 竞态保护同 loadSkills：复用 reqGenRef，唯一序号、过期丢弃。
-   */
-  const loadSources = useCallback(async () => {
-    // 与 loadSkills 共用 reqGenRef：保证两类请求的「最新」语义统一，
-    // 即用户在「全部技能」模式和「来源网格」模式之间快速切换时，
-    // 也只有最新一次请求的结果能落到 state
-    const myGen = ++reqGenRef.current;
-    setLoading(true);
-    try {
-      const keyword = searchText.trim() || undefined;
-      const res = await bundledApi.getSkillSources({
-        page: browseSourcesPage,
-        page_size: ALL_SKILLS_PAGE_SIZE,
-        keyword,
-      });
-      // 过期请求直接丢弃，不写 sourcesList / sourcesTotal
-      if (myGen !== reqGenRef.current) return;
-      // 来源网格只更新这两个 state；skills / sources / total 不会被本次调用影响，
-      // 避免「来源网格数据」误覆盖「技能列表」数据
-      setSourcesList(res.sources);
-      setSourcesTotal(res.total);
-    } catch (e: any) {
-      if (myGen !== reqGenRef.current) return;
-      message.error('加载来源列表失败: ' + (e?.message || e));
-    } finally {
-      if (myGen === reqGenRef.current) setLoading(false);
-    }
-  }, [message, browseSourcesPage, searchText, ALL_SKILLS_PAGE_SIZE]);
 
   /**
    * 加载已安装技能
@@ -494,19 +375,10 @@ export function SkillMarketplace() {
     }
   }, []);
 
+  // 已安装列表随目录加载联动刷新（原实现挂在目录 useEffect 尾部）
   useEffect(() => {
-    // 来源网格走 loadSources（按来源翻页），其余技能列表场景走 loadSkills
-    if (viewMode === 'browse-sources' && !activeSource) {
-      loadSources();
-    } else {
-      loadSkills();
-    }
     loadInstalled();
-  }, [viewMode, activeSource, loadSkills, loadSources, loadInstalled]);
-
-  // 过滤已下沉到后端（loadSkills 下发 source / keyword）：
-  // 后端先过滤再分页，返回的 skills 就是当前页的过滤后切片，
-  // 这里直接用 skills，不再做本地二次过滤，避免与后端切片叠加导致分页错位。
+  }, [viewMode, activeSource, loadInstalled]);
 
   // ── 判断已安装 ──
   const getInstalledExecutors = (skill: BundledSkillMeta): string[] => {
@@ -518,89 +390,6 @@ export function SkillMarketplace() {
       }
     });
     return result;
-  };
-
-  // ── 点击技能卡片 ──
-  const handleCardClick = async (skill: BundledSkillMeta) => {
-    // 先占坑：立即清空旧内容并打开 Drawer，让用户感到响应即时；
-    // 真正的内容等异步返回、且确认仍是最新请求后才写入。
-    const reqId = ++detailReqIdRef.current;
-    setSelectedSkill(skill);
-    setDrawerOpen(true);
-    setContent('');
-    setFiles([]);
-    setContentLoading(true);
-    try {
-      const res = await bundledApi.getSkillContent(skill.name);
-      // 序号已变 → 等待期间用户又点了别的技能，丢弃这次过期结果，不覆盖新选中技能。
-      if (reqId !== detailReqIdRef.current) return;
-      setContent(res.content);
-      setFiles(res.files);
-    } catch {
-      if (reqId !== detailReqIdRef.current) return;
-      setContent('加载内容失败');
-    } finally {
-      // 只关「最新那次」请求的 loading；过期请求的 loading 由接管它的新请求自己管理。
-      if (reqId === detailReqIdRef.current) setContentLoading(false);
-    }
-  };
-
-  // ── 安装 ──
-  const handleOpenInstall = () => {
-    setTargetExecutors([]);
-    setInstallModalOpen(true);
-  };
-
-  const handleInstall = async () => {
-    if (!selectedSkill || targetExecutors.length === 0) return;
-    setInstalling(true);
-    const shortName = selectedSkill.short_name;
-    const results: string[] = [];
-    for (const executor of targetExecutors) {
-      try {
-        await bundledApi.installSkill(selectedSkill.name, executor);
-        results.push(`${executor}: 成功`);
-      } catch (e: any) {
-        results.push(`${executor}: 失败 (${e?.message || e})`);
-      }
-    }
-    setInstalling(false);
-    setInstallModalOpen(false);
-    const successCount = results.filter(r => r.includes('成功')).length;
-    if (successCount === targetExecutors.length) {
-      message.success(`${shortName} 已安装到 ${successCount} 个执行器`);
-    } else {
-      message.warning(`安装完成: ${successCount}/${targetExecutors.length} 成功`);
-    }
-    loadInstalled();
-  };
-
-  // ── 切换视图 ──
-  const switchToSourceBrowse = () => {
-    setViewMode('browse-sources');
-    setActiveSource(null);
-    setSearchText('');
-    // 切回来源浏览时重置页码，避免带着「全部技能」模式的 page 状态回来
-    setBrowseSourcesPage(1);
-    setBrowseSkillsPage(1);
-  };
-
-  const switchToAllSkills = () => {
-    setViewMode('all-skills');
-    setActiveSource(null);
-    setFilterSource('all');
-    setSearchText('');
-    // 进入「全部技能」分页模式，始终从第 1 页开始
-    setAllPage(1);
-  };
-
-  const enterSource = (sourceKey: string) => {
-    // 进入新来源时强制把页码重置回第 1 页：
-    // 不同来源的技能数差异很大（旧来源可能翻到第 10 页，新来源总共只有 2 页），
-    // 若不重置，用户会卡在「当前页超出新来源总页数 → 显示空白 + Pagination 翻不动」的鬼畜状态。
-    setActiveSource(sourceKey);
-    setBrowseSkillsPage(1);
-    setSearchText('');
   };
 
   // ── 下拉筛选内容 ──
@@ -741,14 +530,7 @@ export function SkillMarketplace() {
       {viewMode === 'browse-sources' && activeSource && (
         <Button
           icon={<ArrowLeftOutlined />}
-          onClick={() => {
-            // 返回来源列表时把两个分页状态都重置：
-            // - browseSkillsPage 是「某来源内的技能列表」页码，回到来源网格后这个状态不再有意义
-            // - browseSourcesPage 也重置，避免「来源网格 page=3」和「点回刚看的来源 page=1」语义错乱
-            setActiveSource(null);
-            setBrowseSkillsPage(1);
-            setBrowseSourcesPage(1);
-          }}
+          onClick={() => backToSourceGrid()}
         >
           返回来源列表
         </Button>
@@ -999,7 +781,7 @@ export function SkillMarketplace() {
         }
         placement="right"
         width={640}
-        onClose={() => setDrawerOpen(false)}
+        onClose={closeDetail}
         open={drawerOpen}
       >
         {contentLoading ? (
@@ -1118,7 +900,7 @@ export function SkillMarketplace() {
           </Space>
         }
         open={installModalOpen}
-        onCancel={() => setInstallModalOpen(false)}
+        onCancel={closeInstall}
         onOk={handleInstall}
         okText={`安装到 ${targetExecutors.length} 个执行器`}
         okButtonProps={{ disabled: targetExecutors.length === 0 }}
