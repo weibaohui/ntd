@@ -24,7 +24,7 @@ use crate::db::Database;
 use crate::executor_service::{run_todo_execution_with_params, RunTodoExecutionRequest};
 use crate::models::ExecutionStatus;
 // 096-W4-3：loop 域状态枚举族（裸串收敛的单一词汇表，DB 仍走 String 协议）
-use crate::models::{LoopExecutionStatus, LoopStepStatus};
+use crate::models::{LoopExecutionStatus, LoopPhaseExecutionStatus, LoopStepStatus};
 use crate::task_manager::TaskManager;
 use crate::db::entity::{loop_steps};
 
@@ -523,8 +523,15 @@ impl LoopRunner {
                 // 终态化所有 running phase（BUG-004）：无论是否走 run_inner 的 finish 路径，
                 // 兜底把 phase 从 running 终态化。
                 let le = self.ctx.db.get_loop_execution(loop_execution_id).await;
-                let final_status = le.ok().flatten().map(|l| l.status).unwrap_or_else(|| LoopExecutionStatus::Failed.to_string());
-                let _ = self.ctx.db.finalize_phase_executions(loop_execution_id, &final_status).await;
+                let loop_status = le.ok().flatten().map(|l| l.status).unwrap_or_else(|| LoopExecutionStatus::Failed.to_string());
+                // loop 终态 → phase 终态（D5 收口）：loop success 才让 phase success，其余归 failed，
+                // 与 finalize_phase 内部二值归一语义一致；调用方负责 D3→D5 映射。
+                let phase_status = if loop_status == LoopExecutionStatus::Success.as_str() {
+                    LoopPhaseExecutionStatus::Success
+                } else {
+                    LoopPhaseExecutionStatus::Failed
+                };
+                let _ = self.ctx.db.finalize_phase_executions(loop_execution_id, phase_status).await;
                 self.sync_task_status(loop_execution_id).await;
                 self.broadcast_loop_finished(loop_id, loop_execution_id).await;
             }
@@ -673,8 +680,14 @@ impl LoopRunner {
                 loop_execution_id, final_status, completed, failed, None,
             ).await;
             // 终态化所有 running phase（BUG-004）：与 run_inner 路径一致。
-            // final_status 此分支为 &str（670 行 as_str() 产出），直接传参不再取引用
-            let _ = self.ctx.db.finalize_phase_executions(loop_execution_id, final_status).await;
+            // loop 终态 → phase 终态（D5 收口）：success→success，否则 failed。
+            // final_status 仍是 &str 喂 finish_loop_execution（D3 列），phase 单独按 D5 枚举传。
+            let phase_status = if completed > 0 {
+                LoopPhaseExecutionStatus::Success
+            } else {
+                LoopPhaseExecutionStatus::Failed
+            };
+            let _ = self.ctx.db.finalize_phase_executions(loop_execution_id, phase_status).await;
             info!("resume: loop_execution #{} ended with status {}", loop_execution_id, final_status);
             // 就地终态化同样要完成收尾：同步任务状态 + 广播 LoopFinished（NTD-005）。
             self.sync_task_status(loop_execution_id).await;
@@ -875,9 +888,14 @@ impl LoopRunner {
             .map_err(|e| e.to_string())?;
 
         // 终态化所有 running phase（BUG-004）：loop success 后 phase 不应停留在 running。
+        // loop 终态 → phase 终态（D5 收口）：仅 Success 让 phase success，其余（Failed/Partial/capped）归 failed。
+        let phase_status = match final_status {
+            LoopExecutionStatus::Success => LoopPhaseExecutionStatus::Success,
+            _ => LoopPhaseExecutionStatus::Failed,
+        };
         self.ctx
             .db
-            .finalize_phase_executions(loop_execution_id, final_status.as_str())
+            .finalize_phase_executions(loop_execution_id, phase_status)
             .await
             .map_err(|e| e.to_string())?;
 

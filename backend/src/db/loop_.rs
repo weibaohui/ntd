@@ -1070,13 +1070,14 @@ impl Database {
     pub async fn finalize_phase_executions(
         &self,
         loop_execution_id: i64,
-        status: &str,
+        status: crate::models::LoopPhaseExecutionStatus,
     ) -> Result<(), sea_orm::DbErr> {
         use sea_orm::{ConnectionTrait, Statement};
-        let phase_status = if status == "success" {
-            "success"
-        } else {
-            "failed"
+        // 收尾语义：仅 success 让 phase 成功，其余（failed/partial/capped 等，由调用方按 loop
+        // 终态映射后传入）一律归 failed——保留原 `if status=="success"` 的二值归一，逐字节不变。
+        let phase_status = match status {
+            crate::models::LoopPhaseExecutionStatus::Success => "success",
+            _ => "failed",
         };
         let sql = format!(
             "UPDATE loop_phase_executions SET status = '{}', finished_at = ?1 \
@@ -3011,7 +3012,7 @@ mod loop_phase_finalization_tests {
         let db = fresh_db().await;
         let (exec_id, _phase_id) = seed_running_phase(&db).await;
 
-        db.finalize_phase_executions(exec_id, "success")
+        db.finalize_phase_executions(exec_id, crate::models::LoopPhaseExecutionStatus::Success)
             .await
             .expect("finalize");
 
@@ -3034,7 +3035,7 @@ mod loop_phase_finalization_tests {
         let db = fresh_db().await;
         let (exec_id, _phase_id) = seed_running_phase(&db).await;
 
-        db.finalize_phase_executions(exec_id, "failed")
+        db.finalize_phase_executions(exec_id, crate::models::LoopPhaseExecutionStatus::Failed)
             .await
             .expect("finalize");
 
