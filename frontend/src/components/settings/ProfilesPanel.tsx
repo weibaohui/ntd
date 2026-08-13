@@ -8,34 +8,21 @@ import { PlusOutlined, SwapOutlined, DeleteOutlined, EditOutlined, DatabaseOutli
 import { PageCard } from '@/components/common/PageCard';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { useTheme } from '@/hooks/useTheme';
+import {
+  listProviders,
+  getSupportedExecutors,
+  getProvider,
+  createProvider,
+  updateProvider,
+  deleteProvider,
+  exportProviders,
+  importProviders,
+  previewProviderToExecutors,
+  applyProviderToExecutors,
+} from '@/utils/database/providers';
+import type { ProviderDetail, ProviderModel, ApplyResult, PreviewEntry, ExecutorConfigDef } from '@/types/provider';
 
 const { Text, Paragraph } = Typography;
-
-const PROVIDERS_API = '/api/v1/providers';
-
-// ============================================================================
-// Types
-// ============================================================================
-
-interface ProviderModel {
-  name: string;
-  display_name?: string;
-  supports_1m_context?: boolean;
-}
-
-interface ProviderDetail {
-  name: string;
-  display_name: string;
-  api_key: string;
-  base_url: string;
-  protocol: 'openai' | 'anthropic';
-  models: ProviderModel[];
-}
-
-interface ApplyResult {
-  applied: string[];
-  errors: string[];
-}
 
 // ============================================================================
 // Component
@@ -59,9 +46,9 @@ export function ProfilesPanel() {
   const [executorModels, setExecutorModels] = useState<Record<string, string>>({});
   const [applying, setApplying] = useState(false);
   const [applyResult, setApplyResult] = useState<ApplyResult | null>(null);
-  const [previewEntries, setPreviewEntries] = useState<{ executor: string; model: string; path: string; content: string }[]>([]);
+  const [previewEntries, setPreviewEntries] = useState<PreviewEntry[]>([]);
   const [previewLoading, setPreviewLoading] = useState(false);
-  const [executorDefs, setExecutorDefs] = useState<{ name: string; display_name: string; config_path: string; has_generator: boolean }[]>([]);
+  const [executorDefs, setExecutorDefs] = useState<ExecutorConfigDef[]>([]);
   const [modelList, setModelList] = useState<ProviderModel[]>([]);
   // 导入弹窗
   const [importModalVisible, setImportModalVisible] = useState(false);
@@ -73,29 +60,20 @@ export function ProfilesPanel() {
   const isDark = themeMode === 'dark';
   const [form] = Form.useForm();
 
+  // 加载：先并行取 provider 摘要列表 + 执行器定义，再对每个摘要并发拉完整详情。
+  // 后端 list 只回 summary（无 api_key/models），需逐个 getProvider 才能打码展示 Key、渲染模型 Tag。
+  // 单个 detail 失败降级为 null 再 filter 掉，避免一个坏数据拖垮整个列表。
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [provRes, execRes] = await Promise.all([
-        fetch(PROVIDERS_API),
-        fetch(`${PROVIDERS_API}/supported-executors`),
-      ]);
-      const provJson = await provRes.json();
-      const execJson = await execRes.json();
-      const list: any[] = provJson.data || [];
-      setExecutorDefs(execJson.data || []);
+      const [summaries, execDefs] = await Promise.all([listProviders(), getSupportedExecutors()]);
+      setExecutorDefs(execDefs);
       const details = await Promise.all(
-        list.map(async (s) => {
-          try {
-            const dr = await fetch(`${PROVIDERS_API}/${encodeURIComponent(s.name)}`);
-            const dj = await dr.json();
-            return dj.data;
-          } catch { return null; }
-        })
+        summaries.map((s) => getProvider(s.name).catch(() => null)),
       );
-      setProviders(details.filter(Boolean));
-    } catch (err: any) {
-      message.error('加载失败: ' + (err?.message || String(err)));
+      setProviders(details.filter((d): d is ProviderDetail => d !== null));
+    } catch (err) {
+      message.error('加载失败: ' + (err instanceof Error ? err.message : String(err)));
     } finally {
       setLoading(false);
     }
@@ -111,78 +89,69 @@ export function ProfilesPanel() {
     setCreateVisible(true);
   }, [form]);
 
-  // 打开编辑
+  // 打开编辑：先拉详情回填表单。失败则提示并直接返回（不打开空弹窗）。
+  // Facade 已把原 !r.ok 与网络异常一并 reject 进 catch，故提示文案沿用原 catch 的
+  // 「加载失败」前缀，而非原 !r.ok 的「获取详情失败」（设计 §6 文案不变）。
   const openEdit = useCallback(async (name: string) => {
     setEditingName(name);
     form.resetFields();
     setModelList([]);
     try {
-      const r = await fetch(`${PROVIDERS_API}/${encodeURIComponent(name)}`);
-      if (!r.ok) { message.error('获取详情失败'); return; }
-      const j = await r.json();
-      const d = j.data;
-      if (d) {
-        form.setFieldsValue({
-          name: d.name,
-          display_name: d.display_name,
-          api_key: d.api_key,
-          base_url: d.base_url,
-          protocol: d.protocol,
-        });
-        setModelList(d.models || []);
-      }
-    } catch (err: any) {
-      message.error('加载失败: ' + (err?.message || String(err)));
+      const d = await getProvider(name);
+      form.setFieldsValue({
+        name: d.name,
+        display_name: d.display_name,
+        api_key: d.api_key,
+        base_url: d.base_url,
+        protocol: d.protocol,
+      });
+      setModelList(d.models || []);
+    } catch (err) {
+      message.error('加载失败: ' + (err instanceof Error ? err.message : String(err)));
+      return;
     }
     setEditVisible(true);
   }, [form]);
 
-  // 保存
+  // 保存：新建走 POST、编辑走 PUT。body 形状两者一致（编辑时 name 由 URL 路径参数指定）。
+  // validateFields 的校验失败带 errorFields，属用户输入问题，静默返回不报错；其余异常才提示。
   const handleSave = useCallback(async () => {
     try {
       const v = await form.validateFields();
-      const models = modelList.filter((m: any) => m.name?.trim());
+      const models = modelList.filter((m: ProviderModel) => m.name?.trim());
       const body = { ...v, models, protocol: v.protocol || 'openai' };
       if (editingName) {
-        await fetch(`${PROVIDERS_API}/${encodeURIComponent(editingName)}`, {
-          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-        });
+        await updateProvider(editingName, body);
         message.success('已更新');
       } else {
-        await fetch(PROVIDERS_API, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-        });
+        await createProvider(body);
         message.success('已创建');
       }
       setCreateVisible(false);
       setEditVisible(false);
       load();
-    } catch (err: any) {
-      if (err?.errorFields) return;
-      message.error('操作失败: ' + (err?.message || String(err)));
+    } catch (err) {
+      // antd 表单校验失败对象带 errorFields，属用户输入问题，静默返回不弹错。
+      if (err && typeof err === 'object' && 'errorFields' in err) return;
+      message.error('操作失败: ' + (err instanceof Error ? err.message : String(err)));
     }
   }, [form, editingName, modelList, load]);
 
   // 删除
   const handleDelete = useCallback(async (name: string) => {
     try {
-      await fetch(`${PROVIDERS_API}/${encodeURIComponent(name)}`, { method: 'DELETE' });
+      await deleteProvider(name);
       message.success('已删除');
       load();
-    } catch (err: any) {
-      message.error('删除失败: ' + (err?.message || String(err)));
+    } catch (err) {
+      message.error('删除失败: ' + (err instanceof Error ? err.message : String(err)));
     }
   }, [load]);
 
-  // 导出：调后端 export 接口，触发文件下载
+  // 导出：拿 YAML 文本后用 <a download> 触发浏览器下载（文件名按日期，纯前端逻辑，与 API 无关）。
   const handleExport = useCallback(async () => {
     try {
-      const r = await fetch(`${PROVIDERS_API}/export`, { method: 'GET' });
-      if (!r.ok) {
-        message.error('导出失败: HTTP ' + r.status);
-        return;
-      }
-      const yaml = await r.text();
+      const yaml = await exportProviders();
       const filename = `ntd-providers-${new Date().toISOString().slice(0, 10)}.yaml`;
       const blob = new Blob([yaml], { type: 'text/yaml;charset=utf-8' });
       const url = URL.createObjectURL(blob);
@@ -194,8 +163,8 @@ export function ProfilesPanel() {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
       message.success(`已导出 ${filename}`);
-    } catch (err: any) {
-      message.error('导出失败: ' + (err?.message || String(err)));
+    } catch (err) {
+      message.error('导出失败: ' + (err instanceof Error ? err.message : String(err)));
     }
   }, []);
 
@@ -223,17 +192,8 @@ export function ProfilesPanel() {
   const doImport = useCallback(async () => {
     setImporting(true);
     try {
-      const r = await fetch(`${PROVIDERS_API}/import`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ yaml: importText, strategy: importStrategy }),
-      });
-      const j = await r.json();
-      if (j.code !== 0) {
-        message.error('导入失败: ' + (j.message || '未知错误'));
-        return;
-      }
-      const { imported = [], errors = [] } = j.data || {};
+      // 业务级错误（如 YAML 解析失败）经 unwrap 转成 reject 落到 catch；这里只处理成功路径。
+      const { imported = [], errors = [] } = await importProviders(importText, importStrategy);
       if (errors.length > 0) {
         message.warning(`导入完成，${imported.length} 个成功，${errors.length} 个错误`);
       } else {
@@ -243,8 +203,8 @@ export function ProfilesPanel() {
       setImportText('');
       setImportFileName('');
       load();
-    } catch (err: any) {
-      message.error('导入失败: ' + (err?.message || String(err)));
+    } catch (err) {
+      message.error('导入失败: ' + (err instanceof Error ? err.message : String(err)));
     } finally {
       setImporting(false);
     }
@@ -278,16 +238,10 @@ export function ProfilesPanel() {
     if (!applyProvider || selectedExecutors.length === 0) return;
     setPreviewLoading(true);
     try {
-      const r = await fetch(`${PROVIDERS_API}/${encodeURIComponent(applyProvider.name)}/preview`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ executor_models: executorModels }),
-      });
-      const j = await r.json();
-      setPreviewEntries(j.data || []);
+      setPreviewEntries(await previewProviderToExecutors(applyProvider.name, executorModels));
       setApplyStep(APPLY_STEP_PREVIEW);
-    } catch (err: any) {
-      message.error('获取预览失败: ' + (err?.message || String(err)));
+    } catch (err) {
+      message.error('获取预览失败: ' + (err instanceof Error ? err.message : String(err)));
     } finally {
       setPreviewLoading(false);
     }
@@ -298,15 +252,9 @@ export function ProfilesPanel() {
     if (!applyProvider || Object.keys(executorModels).length === 0) return;
     setApplying(true);
     try {
-      const r = await fetch(`${PROVIDERS_API}/${encodeURIComponent(applyProvider.name)}/apply`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ executor_models: executorModels }),
-      });
-      const j = await r.json();
-      setApplyResult(j.data);
-    } catch (err: any) {
-      message.error('应用失败: ' + (err?.message || String(err)));
+      setApplyResult(await applyProviderToExecutors(applyProvider.name, executorModels));
+    } catch (err) {
+      message.error('应用失败: ' + (err instanceof Error ? err.message : String(err)));
     } finally {
       setApplying(false);
     }
@@ -314,7 +262,7 @@ export function ProfilesPanel() {
 
   // 模型列表操作
   const addModel = () => setModelList(prev => [...prev, { name: '', display_name: '' }]);
-  const updateModel = (idx: number, field: string, value: any) =>
+  const updateModel = (idx: number, field: string, value: string | boolean) =>
     setModelList(prev => prev.map((m, i) => i === idx ? { ...m, [field]: value } : m));
   const removeModel = (idx: number) => setModelList(prev => prev.filter((_, i) => i !== idx));
 
@@ -363,7 +311,7 @@ export function ProfilesPanel() {
               <Input size="small" placeholder="显示名称（可选）" value={m.display_name || ''}
                 onChange={e => updateModel(i, 'display_name', e.target.value)}
                 style={{ flex: 1, minWidth: 100 }} />
-              <Checkbox checked={!!(m as any).supports_1m_context}
+              <Checkbox checked={!!m.supports_1m_context}
                 onChange={e => updateModel(i, 'supports_1m_context', e.target.checked)}>
                 <Text type="secondary" style={{ fontSize: 12 }}>1M</Text>
               </Checkbox>
