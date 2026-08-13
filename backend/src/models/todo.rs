@@ -601,6 +601,37 @@ pub struct TodoBackup {
     pub model: Option<String>,
 }
 
+impl TodoBackup {
+    /// 备份导入（merge_backup 新建分支）的 ActiveModel 转换单点（096-W4-1）。
+    ///
+    /// 与 `db::todo::todo_backup_from_model`（导出侧）构成同一字段映射的两个方向，
+    /// 加备份字段时两处必须同步——集中在相邻代码块以降低漏改概率。
+    /// `resolved` 为调用方解析出的 (workspace_id, workspace_path) 成对值；时间戳由调用方给。
+    pub fn into_active_model(
+        &self,
+        resolved: (i64, Option<String>),
+        now: String,
+    ) -> crate::db::entity::todos::ActiveModel {
+        use sea_orm::ActiveValue;
+        crate::db::entity::todos::ActiveModel {
+            title: ActiveValue::Set(self.title.clone()),
+            prompt: ActiveValue::Set(Some(self.prompt.clone())),
+            status: ActiveValue::Set(Some(self.status.to_string())),
+            executor: ActiveValue::Set(self.executor.clone()),
+            scheduler_enabled: ActiveValue::Set(Some(self.scheduler_enabled)),
+            scheduler_config: ActiveValue::Set(self.scheduler_config.clone()),
+            workspace_path: ActiveValue::Set(resolved.1),
+            workspace_id: ActiveValue::Set(Some(resolved.0)),
+            created_at: ActiveValue::Set(Some(now.clone())),
+            updated_at: ActiveValue::Set(Some(now)),
+            action_type: ActiveValue::Set(self.action_type.clone()),
+            action_key: ActiveValue::Set(self.action_key.clone()),
+            model: ActiveValue::Set(self.model.clone()),
+            ..Default::default()
+        }
+    }
+}
+
 /// 伪ID类型前缀
 const PSEUDO_ID_PREFIXES: &[&str] = &["loop", "todo", "step", "trigger", "template", "tag"];
 
