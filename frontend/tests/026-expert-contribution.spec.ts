@@ -60,6 +60,10 @@ test('提示词模板：不含 username / 绝对路径标签，且使用 ~ 家�
   // 注意这里出现「展开为绝对路径」是「展开 ~」的指令，不是暴露绝对路径，属预期。
   expect(prompt).toContain('~ 表示当前用户家目录');
   expect(prompt).toContain('展开为绝对路径');
+  // 上传路径必须落在仓库 experts/<专家名>/ 下（与 bundled 同步源结构一致），
+  // 不能写到仓库根目录；前缀固定为 contents/experts/{{expert_name}}/。
+  expect(prompt).toContain('contents/experts/{{expert_name}}/');
+  expect(prompt).toContain('不能写到仓库根目录');
 });
 
 // 以下两个用例依赖「PAT 已配置」态：用 beforeAll 统一写入桩 PAT、afterAll 兜底恢复。
@@ -112,6 +116,8 @@ test.describe('PAT 已配置态（桩 PAT）', () => {
     // PAT 位置与 JSON 结构描述应保持（只提 pat 字段）。
     expect(promptText).toContain('~/.ntd/contribution_pat.json');
     expect(promptText).toContain('{"pat":"..."}');
+    // 上传路径带仓库前缀 experts/<专家名>/（渲染后占位符已替换），落位与同步源一致。
+    expect(promptText).toContain('contents/experts/');
   });
 
   test('设置-第三方授权：GitCode PAT 表单按配置态区分——已配置时输入禁用、仅留清空', async ({ page }) => {
