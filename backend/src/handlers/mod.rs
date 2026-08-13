@@ -431,7 +431,7 @@ fn mount_v1_domain_routes() -> Router<AppState> {
         .merge(tasks::task_routes())
         // 任务讨论区（论坛跟帖 + @专家/@执行器 触发执行后回帖，需求 060）
         .merge(task_posts::task_post_routes())
-        // 专家贡献（OAuth 登录 + 预览 + 提交为 Issue）
+        // 专家贡献（PAT 配置 + ActionButton 提示词驱动提交 PR）
         .merge(contribution::contribution_routes())
         // v1 版本化 API 由 action::v1_routes() 统一聚合
         .merge(action::v1_routes())

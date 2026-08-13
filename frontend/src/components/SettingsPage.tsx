@@ -9,6 +9,7 @@ import {
   InfoCircleOutlined,
   CloudOutlined,
   DesktopOutlined,
+  SafetyCertificateOutlined,
 } from '@ant-design/icons';
 import { PageCard } from '@/components/common/PageCard';
 // 093：本组件只消费 todo 域状态，用细粒度 useTodos 替代合并版 useApp，
@@ -24,6 +25,7 @@ import { TemplatesPanel } from './settings/TemplatesPanel';
 import { AboutPanel } from './settings/AboutPanel';
 import { CloudSyncPanel } from './settings/CloudSyncPanel';
 import { InterfaceDisplayPanel } from './settings/InterfaceDisplayPanel';
+import { THIRD_PARTY_SETTINGS_TAB, ThirdPartyPanel } from './settings/ThirdPartyPanel';
 
 import { DEFAULT_EXECUTION_TIMEOUT_SECS } from '@/constants';
 
@@ -112,7 +114,7 @@ export function SettingsPage() {
   // 1. 系统设置、界面显示、标签管理 → 基础配置优先
   // 2. 事项模板 → 项目相关
   // 3. 备份与恢复 → 数据安全
-  // 4. 云端同步 → 外部集成
+  // 4. 云端同步、第三方授权 → 外部集成
   // 5. 关于 → 信息页末位
   //
   // 执行器管理、会话管理、工作空间、Skills 管理、运行管理已独立为左侧导航菜单项，
@@ -154,6 +156,11 @@ export function SettingsPage() {
       key: 'cloudSync',
       label: <span><CloudOutlined style={{ marginRight: 6 }} />云端同步</span>,
       children: <CloudSyncPanel />,
+    },
+    {
+      key: THIRD_PARTY_SETTINGS_TAB,
+      label: <span><SafetyCertificateOutlined style={{ marginRight: 6 }} />第三方授权</span>,
+      children: <ThirdPartyPanel />,
     },
     {
       key: 'about',

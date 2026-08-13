@@ -1,69 +1,31 @@
-// 专家贡献 API：OAuth 登录态、预览、提交 Issue。
+// 专家贡献 API：PAT 配置（保存/查询/清除）。
 // 对应后端 /api/v1/contribution/* 接口。
+// 提交动作由 ActionButton + 提示词驱动，不经过后端接口。
 
 import { api, unwrap } from './client';
 
-/** 贡献功能登录态 */
+/** 贡献功能配置态 */
 export interface ContributionAuthStatus {
-  /** 功能是否启用（后端凭据是否已注入） */
-  enabled: boolean;
-  /** 是否已登录（本地已存在 token） */
-  logged_in: boolean;
-}
-
-/** 贡献 Issue 草稿（预览用） */
-export interface ContributionIssueDraft {
-  /** Issue 标题 */
-  title: string;
-  /** Issue Markdown 正文 */
-  body: string;
-  /** 已打包的文件相对路径清单 */
-  files: string[];
-}
-
-/** 提交 PR 结果 */
-export interface ContributionPrResult {
-  /** PR 编号 */
-  pr_number: string;
-  /** PR 网页链接 */
-  pr_url: string;
-  /** PR 标题 */
-  title: string;
+  /** 是否已配置 PAT */
+  configured: boolean;
 }
 
 /**
- * 查询登录态与功能开关。
+ * 查询 PAT 配置态。
  */
 export async function getContributionAuthStatus(): Promise<ContributionAuthStatus> {
   return unwrap(await api.get('/api/v1/contribution/auth/status'));
 }
 
 /**
- * 获取 GitCode OAuth 授权跳转 URL。
+ * 保存并验证 GitCode PAT（后端调 /user 验证有效性，不存 username）。
  */
-export async function getContributionOAuthUrl(): Promise<{ url: string }> {
-  return unwrap(await api.get('/api/v1/contribution/oauth/url'));
+export async function saveContributionPat(pat: string): Promise<void> {
+  await api.post('/api/v1/contribution/pat', { pat });
 }
 
 /**
- * 组装某专家的贡献 PR 草稿（不提交），供预览框展示。
- */
-export async function previewExpertIssue(name: string): Promise<ContributionIssueDraft> {
-  return unwrap(await api.post(`/api/v1/contribution/experts/${encodeURIComponent(name)}/preview`));
-}
-
-/**
- * 提交某专家的贡献 PR。
- */
-export async function submitExpertPr(
-  name: string,
-  data: { title: string; body: string },
-): Promise<ContributionPrResult> {
-  return unwrap(await api.post(`/api/v1/contribution/experts/${encodeURIComponent(name)}/submit`, data));
-}
-
-/**
- * 清除本地登录态（退出 GitCode 登录）。
+ * 清除本地 PAT（退出 GitCode 配置）。
  */
 export async function logoutContribution(): Promise<void> {
   await api.post('/api/v1/contribution/logout');

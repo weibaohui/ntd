@@ -4,14 +4,6 @@
 export PATH := $(HOME)/.cargo/bin:$(PATH)
 CARGO_ENV := . $(HOME)/.cargo/env &&
 
-# 编译期 GitCode OAuth 凭据：从用户 shell rc 文件提取 export 行并加载。
-# make 的 recipe 用 /bin/sh 执行，不会自动加载 zshrc/bashrc；而 zshrc 含 zsh 专有
-# 语法无法直接 source，故用 grep 只提取需要的两行，避免引入 .env 文件。
-# 提取结果去掉 `export` 关键字，得到 `NAME=value NAME=value` 列表，作为 cargo 命令前
-# 的环境变量前缀（不能用 `export` 语句，否则 shell 会把后面的 NTD_MODE/RUST_* 等参数
-# 也当变量名，报 `export: --: not a valid identifier`）。
-GITCODE_OAUTH_ENV := $(shell grep -h '^export NTD_GITCODE_CLIENT' $(HOME)/.zshrc $(HOME)/.bashrc 2>/dev/null | sed 's/^export //')
-
 # Setup: install all dependencies for frontend and backend
 setup:
 	@echo "=== Setting up ntd ==="
@@ -50,7 +42,7 @@ install:  build
 # Build frontend and embed into Rust binary
 build:
 	cd frontend && npm run build
-	cd backend && $(CARGO_ENV) $(GITCODE_OAUTH_ENV) cargo build --release
+	cd backend && $(CARGO_ENV) cargo build --release
 
 # Clean all build artifacts
 clean:
@@ -86,7 +78,7 @@ dev: stop
 	@echo "[1/2] Building frontend..."
 	cd frontend && npm run build
 	@echo "[2/2] Building & running backend..."
-	cd backend && $(CARGO_ENV) $(GITCODE_OAUTH_ENV) NTD_MODE=dev RUST_BACKTRACE=1 RUST_LOG=info cargo run -- server start 2>&1 | tee ../backend.dev.log &
+	cd backend && $(CARGO_ENV) NTD_MODE=dev RUST_BACKTRACE=1 RUST_LOG=info cargo run -- server start 2>&1 | tee ../backend.dev.log &
 	@mkdir -p $$HOME/.ntd && echo $$! > $$HOME/.ntd/dev.pid
 	@echo "==========================================="
 	@echo "  Dev mode: http://localhost:18088"

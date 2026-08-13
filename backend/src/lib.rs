@@ -44,8 +44,8 @@ pub mod expert;
 pub mod git_sync;
 /// 专家贡献模块
 ///
-/// 提供把本地专家以 Issue 形式提交回官方 GitCode 仓库的能力
-/// （OAuth 登录 + 预览 + 创建 Issue）。
+/// 提供把本地专家提交回官方 GitCode 仓库的能力
+/// （用户填写 PAT + ActionButton 提示词驱动提交 PR）。
 pub mod contribution;
 
 use rust_embed::RustEmbed;
