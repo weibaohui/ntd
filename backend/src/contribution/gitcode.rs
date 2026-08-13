@@ -4,13 +4,13 @@ use serde::Deserialize;
 
 use super::{now_unix, GitCodeToken};
 
-/// 编译期注入的 OAuth `client_id`：未设置环境变量 `NTD_CONTRIB_CLIENT_ID` 时为 `None`。
+/// 编译期注入的 OAuth `client_id`：未设置环境变量 `NTD_GITCODE_CLIENT_ID` 时为 `None`。
 ///
 /// 使用 `option_env!` 而非 `env!`：凭据缺失时编译通过、功能降级禁用，
 /// 不会因为没配置凭据而编译失败。
-pub const CLIENT_ID: Option<&str> = option_env!("NTD_CONTRIB_CLIENT_ID");
+pub const CLIENT_ID: Option<&str> = option_env!("NTD_GITCODE_CLIENT_ID");
 /// 编译期注入的 OAuth `client_secret`：同上，未设置为 `None`。
-pub const CLIENT_SECRET: Option<&str> = option_env!("NTD_CONTRIB_CLIENT_SECRET");
+pub const CLIENT_SECRET: Option<&str> = option_env!("NTD_GITCODE_CLIENT_SECRET");
 
 /// GitCode OAuth 授权端点（平台固定地址，不属于用户配置）。
 const AUTHORIZE_URL: &str = "https://gitcode.com/oauth/authorize";
@@ -23,9 +23,20 @@ const CONTRIBUTION_LABEL: &str = "expert-contribution";
 /// 创建 Issue 时申请的 OAuth 权限范围：仅 issue，遵循最小权限。
 const ISSUE_SCOPE: &str = "all_issue";
 
-/// 贡献功能是否启用：`client_id` 与 `client_secret` 均已注入。
+/// 贡献功能是否启用：`client_id` 与 `client_secret` 均已注入且非空。
+///
+/// 判空原因：CI 在 pull_request 事件下 `secrets` 会展开为空字符串，
+/// 此时 `option_env!` 读到 `Some("")` 而非 `None`；若不判空会误判 enabled=true。
 pub fn contribution_enabled() -> bool {
-    CLIENT_ID.is_some() && CLIENT_SECRET.is_some()
+    credential_present(CLIENT_ID) && credential_present(CLIENT_SECRET)
+}
+
+/// 判断单个凭据是否有效注入（`Some` 且非空）。
+///
+/// 抽成纯函数便于单测：`option_env!` 的结果在编译期固化，无法在测试里改变，
+/// 但判空逻辑本身可独立验证。
+fn credential_present(value: Option<&str>) -> bool {
+    matches!(value, Some(v) if !v.is_empty())
 }
 
 /// 从 bundled 仓库 `url` 解析 `(owner, repo)`。
@@ -261,5 +272,12 @@ mod tests {
         assert!(url.contains("response_type=code"));
         assert!(url.contains("scope=all_issue"));
         assert!(url.contains("state=s123"));
+    }
+
+    #[test]
+    fn credential_present_requires_some_and_non_empty() {
+        assert!(credential_present(Some("x")));
+        assert!(!credential_present(Some("")));
+        assert!(!credential_present(None));
     }
 }
