@@ -81,6 +81,7 @@ export function SkillTemplatesTab({ refreshTick }: { refreshTick?: number }) {
           panelTitle={`分享技能 ${record.short_name}`}
           panelDescription="AI 将读取本机 PAT，把该技能目录提交为 PR 到官方仓库（可编辑下方 Prompt）"
           size="small"
+          iconOnly
         />
       ),
     },

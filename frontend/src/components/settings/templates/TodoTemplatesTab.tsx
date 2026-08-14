@@ -15,6 +15,7 @@ import {
   Spin,
   Table,
   Tag,
+  Tooltip,
   Form,
   Select,
   message as antMessage,
@@ -126,15 +127,17 @@ export function TodoTemplatesTab() {
                 render: (_, record: TodoTemplate) => (
                   <Space>
                     {!record.is_system && (
-                      <Button
-                        type="text"
-                        size="small"
-                        icon={<EditOutlined />}
-                        onClick={() => {
-                          setEditing(record);
-                          setModalOpen(true);
-                        }}
-                      />
+                      <Tooltip title="编辑">
+                        <Button
+                          type="text"
+                          size="small"
+                          icon={<EditOutlined />}
+                          onClick={() => {
+                            setEditing(record);
+                            setModalOpen(true);
+                          }}
+                        />
+                      </Tooltip>
                     )}
                     {/* 分享仅对用户创建的事项模板开放（is_system=false，可修改才可分享）；
                         点击时先由后端把 DB 模板导出为 YAML 文件（onPrepare），
@@ -163,25 +166,30 @@ export function TodoTemplatesTab() {
                           };
                         }}
                         size="small"
+                        iconOnly
                       />
                     )}
-                    <Button
-                      type="text"
-                      size="small"
-                      icon={<CopyOutlined />}
-                      onClick={() => handleCopy(record.id)}
-                    />
+                    <Tooltip title="复制">
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<CopyOutlined />}
+                        onClick={() => handleCopy(record.id)}
+                      />
+                    </Tooltip>
                     {!record.is_system && (
                       <Popconfirm
                         title="确定删除此模板？"
                         onConfirm={() => handleDelete(record.id)}
                       >
-                        <Button
-                          type="text"
-                          size="small"
-                          danger
-                          icon={<DeleteOutlined />}
-                        />
+                        <Tooltip title="删除">
+                          <Button
+                            type="text"
+                            size="small"
+                            danger
+                            icon={<DeleteOutlined />}
+                          />
+                        </Tooltip>
                       </Popconfirm>
                     )}
                   </Space>

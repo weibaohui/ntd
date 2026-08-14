@@ -14,6 +14,7 @@ import {
   Spin,
   Table,
   Tag,
+  Tooltip,
   Form,
   Input,
   message as antMessage,
@@ -135,24 +136,30 @@ export function ExpertsTemplatesTab() {
                 width: 240,
                 render: (_, record: ExpertMetadata) => (
                   <Space>
-                    <Button
-                      type="text"
-                      size="small"
-                      icon={<EyeOutlined />}
-                      onClick={() => handleOpenDetail(record)}
-                    />
-                    <Button
-                      type="text"
-                      size="small"
-                      icon={<EditOutlined />}
-                      onClick={() => handleOpenEdit(record)}
-                    />
-                    <ContributeButton expert={record} size="small" />
+                    <Tooltip title="查看详情">
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<EyeOutlined />}
+                        onClick={() => handleOpenDetail(record)}
+                      />
+                    </Tooltip>
+                    <Tooltip title="编辑">
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<EditOutlined />}
+                        onClick={() => handleOpenEdit(record)}
+                      />
+                    </Tooltip>
+                    <ContributeButton expert={record} size="small" iconOnly />
                     <Popconfirm
                       title="确定删除此专家？"
                       onConfirm={() => handleDelete(record.name)}
                     >
-                      <Button type="text" size="small" icon={<DeleteOutlined />} />
+                      <Tooltip title="删除">
+                        <Button type="text" size="small" icon={<DeleteOutlined />} />
+                      </Tooltip>
                     </Popconfirm>
                   </Space>
                 ),

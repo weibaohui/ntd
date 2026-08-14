@@ -23,9 +23,12 @@ import { CONTRIBUTE_ACTION_TYPE, buildContributePrompt } from './contributePromp
 export function ContributeButton({
   expert,
   size = 'middle',
+  iconOnly = false,
 }: {
   expert: ExpertMetadata;
   size?: 'small' | 'middle';
+  /** 仅图标模式（模板管理表格行内用）；详情 Modal 等场景保持文字 */
+  iconOnly?: boolean;
 }) {
   // 来源守卫：非用户来源直接不渲染（本封装无 Hooks，可安全提前 return）。
   if (expert.source !== 'user') return null;
@@ -43,6 +46,7 @@ export function ContributeButton({
       panelTitle={`分享专家 ${expert.name}`}
       panelDescription="AI 将读取本机 PAT，把该专家打包为 PR 提交到官方仓库（可编辑下方 Prompt）"
       size={size}
+      iconOnly={iconOnly}
     />
   );
 }

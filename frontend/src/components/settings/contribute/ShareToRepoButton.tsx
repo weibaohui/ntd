@@ -39,6 +39,7 @@ export function ShareToRepoButton({
   panelDescription,
   onPrepare,
   size = 'middle',
+  iconOnly = false,
 }: {
   /** ActionButton action_type（按资源区分：expert/process/todo/skill_contribute） */
   actionType: string;
@@ -55,6 +56,8 @@ export function ShareToRepoButton({
   /** 可选：点击分享后先执行的准备动作（如事项模板导出 YAML），返回的键值会合并进 params */
   onPrepare?: () => Promise<Record<string, string> | undefined>;
   size?: 'small' | 'middle';
+  /** 仅图标模式（表格行内用，与其它操作按钮统一为 icon）；默认带「分享」文字（详情页等场景） */
+  iconOnly?: boolean;
 }) {
   const { message } = App.useApp();
   const { Text, Paragraph } = Typography;
@@ -131,7 +134,8 @@ export function ShareToRepoButton({
           </Space>
         )}
       >
-        分享
+        {/* iconOnly 时按钮纯图标（表格行内统一风格），文字模式保留「分享」便于详情页语义明确 */}
+        {iconOnly ? null : '分享'}
       </ActionButton>
     );
   }
@@ -147,7 +151,8 @@ export function ShareToRepoButton({
         loading={checking}
         style={{ color: 'var(--color-text-secondary)' }}
       >
-        分享
+        {/* iconOnly 时按钮纯图标，文字模式保留「分享」 */}
+        {iconOnly ? null : '分享'}
       </Button>
     </Tooltip>
   );

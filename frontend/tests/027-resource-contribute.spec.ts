@@ -45,24 +45,24 @@ test.describe('资源分享入口（route mock PAT 已配置）', () => {
     // 用户行（标题匹配）应有「分享」按钮。
     // 用 tr.ant-table-row 排除 antd 的隐藏测量行（height 0），只定位真实数据行。
     const userRow = todoTab.locator('tbody tr.ant-table-row').filter({ hasText: testTitle });
-    await expect(userRow.getByRole('button', { name: '分享' })).toBeVisible({ timeout: 10000 });
+    await expect(userRow.getByRole('button', { name: 'share' })).toBeVisible({ timeout: 10000 });
 
     // 系统模板行（含「系统」Tag）不应有「分享」按钮。
     const systemRow = todoTab.locator('tbody tr.ant-table-row').filter({ has: todoTab.getByText('系统', { exact: true }) }).first();
-    await expect(systemRow.getByRole('button', { name: '分享' })).toHaveCount(0);
+    await expect(systemRow.getByRole('button', { name: 'share' })).toHaveCount(0);
 
     // 点「分享」：先触发 onPrepare（后端导出 YAML），再查 PAT 配置态（桩 PAT → configured），
     // 组件从普通「分享」按钮切换到 ActionButton 分支。先注册响应等待再点击，避免竞态。
     const exportResp = page.waitForResponse((r) => r.url().includes('/todo-templates/') && r.url().includes('/export'));
     const statusResp = page.waitForResponse((r) => r.url().includes('/contribution/auth/status'));
-    await userRow.getByRole('button', { name: '分享' }).click();
+    await userRow.getByRole('button', { name: 'share' }).click();
     await exportResp;
     await statusResp;
     // 等 React 完成分支切换渲染后再点第二次。
     await page.waitForTimeout(300);
 
     // 第二次点击 ActionButton 的「分享」：打开提交 Drawer。
-    await userRow.getByRole('button', { name: '分享' }).click();
+    await userRow.getByRole('button', { name: 'share' }).click();
 
     // Drawer 中 prompt 编辑区是 textarea，断言提示词包含导出文件路径与 todos/ 远端路径。
     const promptBox = page.locator('.ant-drawer textarea');
@@ -94,8 +94,8 @@ test.describe('资源分享入口（route mock PAT 已配置）', () => {
     // 因此第一行应有分享、最后一行（系统）无分享。
     // 用 tr.ant-table-row 排除 antd 隐藏测量行，first/last 才是真实数据行。
     const rows = processTab.locator('tbody tr.ant-table-row');
-    await expect(rows.first().getByRole('button', { name: '分享' })).toBeVisible({ timeout: 10000 });
-    await expect(rows.last().getByRole('button', { name: '分享' })).toHaveCount(0);
+    await expect(rows.first().getByRole('button', { name: 'share' })).toBeVisible({ timeout: 10000 });
+    await expect(rows.last().getByRole('button', { name: 'share' })).toHaveCount(0);
   });
 
   test('技能：全量可分享，每行都有分享按钮', async ({ page }) => {
@@ -108,6 +108,6 @@ test.describe('资源分享入口（route mock PAT 已配置）', () => {
     // 技能不做来源守卫：表格第一行即应有分享按钮（数据加载后）。
     // 用 tr.ant-table-row 排除 antd 隐藏测量行（height 0，无按钮）。
     const firstRow = skillTab.locator('tbody tr.ant-table-row').first();
-    await expect(firstRow.getByRole('button', { name: '分享' })).toBeVisible({ timeout: 15000 });
+    await expect(firstRow.getByRole('button', { name: 'share' })).toBeVisible({ timeout: 15000 });
   });
 });

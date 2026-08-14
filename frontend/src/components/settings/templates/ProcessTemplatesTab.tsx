@@ -100,14 +100,14 @@ export function ProcessTemplatesTab({ refreshTick }: { refreshTick?: number }) {
       width: 220,
       render: (_: any, record: ProcessTemplate) => (
         <Space>
-          <Button
-            type="text"
-            size="small"
-            icon={<EyeOutlined />}
-            onClick={() => handleView(record)}
-          >
-            查看
-          </Button>
+          <Tooltip title="查看工艺详情">
+            <Button
+              type="text"
+              size="small"
+              icon={<EyeOutlined />}
+              onClick={() => handleView(record)}
+            />
+          </Tooltip>
           {record.is_system && (
             <Tooltip title="把系统工艺复制到 ~/.ntd/processes/，之后的修改不会被同步覆盖">
               <Button
@@ -116,9 +116,7 @@ export function ProcessTemplatesTab({ refreshTick }: { refreshTick?: number }) {
                 icon={<CopyOutlined />}
                 loading={copying === record.guid}
                 onClick={() => handleCopyToUser(record)}
-              >
-                复制到用户层
-              </Button>
+              />
             </Tooltip>
           )}
           {/* 分享仅对用户工艺开放（is_system=false，位于 ~/.ntd/processes/，可修改才可分享）；
@@ -138,6 +136,7 @@ export function ProcessTemplatesTab({ refreshTick }: { refreshTick?: number }) {
               panelTitle={`分享工艺 ${record.display_name || record.name}`}
               panelDescription="AI 将读取本机 PAT，把该工艺 YAML 提交为 PR 到官方仓库（可编辑下方 Prompt）"
               size="small"
+              iconOnly
             />
           )}
         </Space>
