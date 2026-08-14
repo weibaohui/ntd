@@ -467,6 +467,22 @@ fn collect_skills_recursive(base_dir: &std::path::Path, current_dir: &std::path:
 /// 把核心路径/扫描逻辑抽出来，原 `discover_skills_for_executor` 变为薄包装，
 /// 这样只读 skill 来源（如 `agents`）也能复用同一份发现逻辑。
 ///
+/// 把绝对路径转成 ~ 相对路径（家目录前缀替换为 ~）。
+///
+/// 用途：skills_dir 会进入前端分享提示词（resource_dir），
+/// 保留绝对路径会暴露家目录下的用户名；~ 相对路径让 AI 执行时自行展开。
+fn home_relative(path: &std::path::Path) -> String {
+    let abs = path.to_string_lossy().to_string();
+    // 仅在路径确实位于家目录下时替换；否则原样返回（理论上不会发生）
+    match dirs::home_dir() {
+        Some(home) => match path.strip_prefix(&home) {
+            Ok(rel) => format!("~/{rel}", rel = rel.display()),
+            Err(_) => abs,
+        },
+        None => abs,
+    }
+}
+
 /// 行为：
 /// - 输入：executor 名字（如 `"claudecode"` / `"agents"`）+ UI 显示标签
 /// - 输出：该来源的 ExecutorSkills（路径、是否存在、扫描到的 skills）
@@ -490,8 +506,8 @@ fn discover_skills_for(name: &str, label: &str) -> ExecutorSkills {
         }
     };
 
-    // 提前 to_string 一次避免后续多次系统调用
-    let dir_str = skills_dir.to_string_lossy().to_string();
+    // 提前转 ~ 相对路径一次（避免后续多次系统调用；同时供前端分享提示词引用，不暴露用户名）
+    let dir_str = home_relative(&skills_dir);
     // exists 检查是必要的：collect_skills_recursive 不会自己返回 0，
     // 它对不存在的目录静默返回空 vec，前端就看不出"目录被删了" vs "目录没 skill"
     let exists = skills_dir.exists();
@@ -1612,5 +1628,22 @@ mod tests {
         let base = Path::new("/skills");
         let result = resolve_skill_path_for_read(base, "foo/../../../etc/passwd");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_home_relative_replaces_home_prefix() {
+        // 家目录前缀应替换为 ~（分享提示词用，不暴露用户名）
+        let home = dirs::home_dir().expect("home 目录应存在");
+        let under_home = home.join(".claude").join("skills");
+        let rel = home_relative(&under_home);
+        assert!(rel.starts_with("~/"), "应转成 ~ 相对: {}", rel);
+        assert!(!rel.contains("/Users/"), "不应暴露绝对路径前缀: {}", rel);
+    }
+
+    #[test]
+    fn test_home_relative_outside_home_returns_absolute() {
+        // 不在家目录下的路径原样返回（理论上不会发生，但保持语义正确）
+        let rel = home_relative(std::path::Path::new("/tmp/ntd-skills"));
+        assert_eq!(rel, "/tmp/ntd-skills");
     }
 }
