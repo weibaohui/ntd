@@ -11,38 +11,6 @@
 import { test, expect } from '@playwright/test';
 // 直接导入纯函数模板做内容断言：不依赖页面渲染，改动提示词即可在此处回归。
 import { buildContributePrompt } from '../src/components/settings/experts/contributePrompt';
-// PAT 配置态由本地 ~/.ntd/contribution_pat.json 是否存在决定；为了让「已配置」断言
-// 在任意机器（含 CI）上确定成立，下面两个用例用 beforeAll/afterAll 临时写一个桩 PAT
-// 并在结束后恢复原状，避免污染用户真实凭据。
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-import * as os from 'node:os';
-
-/** 桩 PAT：PatCredential 只解析 pat 字段，任意非空字符串即可让 configured=true。 */
-const STUB_PAT_PATH = path.join(os.homedir(), '.ntd', 'contribution_pat.json');
-/** 原文件的备份路径：存在即代表测试前已有真实 PAT，afterAll 要原样还原。 */
-const STUB_PAT_BACKUP = `${STUB_PAT_PATH}.playwright-bak`;
-
-/** 写入桩 PAT 使 auth/status 返回 configured=true；先备份既有文件以免覆盖用户真实凭据。 */
-function installStubPat(): void {
-  if (fs.existsSync(STUB_PAT_PATH)) {
-    fs.copyFileSync(STUB_PAT_PATH, STUB_PAT_BACKUP);
-  }
-  fs.mkdirSync(path.dirname(STUB_PAT_PATH), { recursive: true });
-  fs.writeFileSync(STUB_PAT_PATH, JSON.stringify({ pat: 'playwright-stub-pat' }), {
-    mode: 0o600,
-  });
-}
-
-/** 恢复测试前的状态：有备份则还原原文件，无备份则删除桩文件回到未配置态。 */
-function restorePat(): void {
-  if (fs.existsSync(STUB_PAT_BACKUP)) {
-    fs.copyFileSync(STUB_PAT_BACKUP, STUB_PAT_PATH);
-    fs.rmSync(STUB_PAT_BACKUP);
-  } else if (fs.existsSync(STUB_PAT_PATH)) {
-    fs.rmSync(STUB_PAT_PATH);
-  }
-}
 
 test('提示词模板：不含 username / 绝对路径标签，且使用 ~ 家目录相对路径', () => {
   const prompt = buildContributePrompt();
@@ -80,11 +48,19 @@ test('系统专家详情 Modal 不出现「分享」按钮（分享仅限用户�
   await expect(page.getByRole('button', { name: '分享' })).toHaveCount(0);
 });
 
-// 以下两个用例依赖「PAT 已配置」态：用 beforeAll 统一写入桩 PAT、afterAll 兜底恢复。
-// 注意：若进程被强杀（SIGKILL）afterAll 不会执行，会残留桩 PAT；正常 CI 退出不受影响。
-test.describe('PAT 已配置态（桩 PAT）', () => {
-  test.beforeAll(() => installStubPat());
-  test.afterAll(() => restorePat());
+// 以下两个用例依赖「PAT 已配置」态：用 page.route 拦截 auth/status 返回 configured:true。
+// 不再写真实 ~/.ntd/contribution_pat.json——避免污染用户真实凭据，
+// 也避免与 027 等其它 spec 并行运行时互相覆盖/还原 PAT 文件的竞态。
+test.describe('PAT 已配置态（route mock）', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.route('**/api/v1/contribution/auth/status', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ code: 0, data: { configured: true } }),
+      }),
+    );
+  });
 
   test('专家详情 Modal 分享 → Drawer 渲染的提示词用 ~/.ntd 家目录相对路径，无 username / 绝对路径', async ({ page }) => {
     // 进入专家页。
@@ -103,7 +79,7 @@ test.describe('PAT 已配置态（桩 PAT）', () => {
     const shareButton = page.getByRole('button', { name: '分享' });
     await shareButton.waitFor({ state: 'visible', timeout: 5000 });
 
-    // 第一次点击：查询 PAT 配置态。桩 PAT 已让 configured=true，
+    // 第一次点击：查询 PAT 配置态（route mock 返回 configured=true），
     // 组件会从普通「分享」按钮切换到 ActionButton 分支。
     // 先注册响应等待再点击，避免响应先到导致竞态。
     const statusResp = page.waitForResponse((r) =>
@@ -147,7 +123,7 @@ test.describe('PAT 已配置态（桩 PAT）', () => {
     const patInput = page.locator('.ant-form-item input[type="password"]');
     await patInput.waitFor({ state: 'visible', timeout: 8000 });
 
-    // 桩 PAT 已让 configured=true → 状态展示「已配置」。
+    // route mock 的 configured=true → 状态展示「已配置」。
     await expect(page.getByText('已配置')).toBeVisible({ timeout: 8000 });
 
     // 有值（已配置）时：输入框禁用、占位符提示「已配置」、保存按钮不出现、只留清空。

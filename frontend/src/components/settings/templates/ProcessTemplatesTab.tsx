@@ -171,8 +171,9 @@ export function ProcessTemplatesTab({ refreshTick }: { refreshTick?: number }) {
             </Tooltip>
           )}
           {/* 分享仅对用户工艺开放（is_system=false，位于 ~/.ntd/processes/，可修改才可分享）；
-              远端路径按分类放 processes/{category}/ 子目录，无分类则放根下。 */}
-          {!record.is_system && (
+              远端路径按分类放 processes/{category}/ 子目录，无分类则放根下。
+              source_path 为空（异常/旧数据）时不渲染分享——空路径会给 AI 执行器，无法定位文件。 */}
+          {!record.is_system && record.source_path && (
             <ShareToRepoButton
               actionType="process_contribute"
               actionKey={record.guid}

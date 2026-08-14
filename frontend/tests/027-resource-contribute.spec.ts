@@ -8,39 +8,19 @@
 // 本用例只验证入口渲染与提示词内容，不触发执行。
 
 import { test, expect } from '@playwright/test';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-import * as os from 'node:os';
 
-/** 桩 PAT：与 026 用例同款，任意非空字符串即可让 configured=true */
-const STUB_PAT_PATH = path.join(os.homedir(), '.ntd', 'contribution_pat.json');
-/** 原文件的备份路径：存在即代表测试前已有真实 PAT，afterAll 要原样还原 */
-const STUB_PAT_BACKUP = `${STUB_PAT_PATH}.playwright-027-bak`;
-
-/** 写入桩 PAT 使 auth/status 返回 configured=true；先备份既有文件以免覆盖用户真实凭据。 */
-function installStubPat(): void {
-  if (fs.existsSync(STUB_PAT_PATH)) {
-    fs.copyFileSync(STUB_PAT_PATH, STUB_PAT_BACKUP);
-  }
-  fs.mkdirSync(path.dirname(STUB_PAT_PATH), { recursive: true });
-  fs.writeFileSync(STUB_PAT_PATH, JSON.stringify({ pat: 'playwright-027-stub' }), {
-    mode: 0o600,
+test.describe('资源分享入口（route mock PAT 已配置）', () => {
+  // 用 page.route 拦截 auth/status 返回 configured:true：不写真实 PAT 文件，
+  // 避免污染用户凭据，也避免与 026 等 spec 并行时互相覆盖同一文件的竞态。
+  test.beforeEach(async ({ page }) => {
+    await page.route('**/api/v1/contribution/auth/status', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ code: 0, data: { configured: true } }),
+      }),
+    );
   });
-}
-
-/** 恢复测试前的状态：有备份则还原原文件，无备份则删除桩文件回到未配置态。 */
-function restorePat(): void {
-  if (fs.existsSync(STUB_PAT_BACKUP)) {
-    fs.copyFileSync(STUB_PAT_BACKUP, STUB_PAT_PATH);
-    fs.rmSync(STUB_PAT_BACKUP);
-  } else if (fs.existsSync(STUB_PAT_PATH)) {
-    fs.rmSync(STUB_PAT_PATH);
-  }
-}
-
-test.describe('资源分享入口（桩 PAT）', () => {
-  test.beforeAll(() => installStubPat());
-  test.afterAll(() => restorePat());
 
   test('事项模板：用户行有分享、系统行无分享；分享提示词含导出文件与 todos/ 远端路径', async ({ page }) => {
     // 进入设置-模板管理（模板管理 Tab 在设置页内）。
