@@ -63,6 +63,13 @@ B（wiki chat）两处真平行（~286 行同构骨架）收敛进新建的
 - **补测**：`test_session_error_to_feishu_四分支错误文案映射` 锁定错误文案逐字一致
   承诺；`test_spawn_and_stream_双流分流捕获不串流` 改名消除歧义。
 
+**CodeRabbit 评审修复（第二轮）**：① `WaitFailed`/`StdoutReadFailed` 两条错误路径
+返回前先 kill 回收子进程（child 未开 kill_on_drop，直接 drop 会留孤儿进程）；② stderr
+EOF/读失败后禁用对应 select! 分支——`next_line()` 在 EOF 后持续立即返回 `Ok(None)`，
+不禁用会在 stdout 未结束时空转占满 CPU（B 原实现即有此 bug，随骨架收敛一并修掉）；
+③ 非零退出文案的退出码不再以 Rust 调试格式（`Some(1)`）示人，被信号终止时给
+「未知（进程被信号终止）」可读文案，测试断言同步更新。
+
 ## 验证
 
 - `cargo clippy --all-targets -- -D warnings` 零告警；`cargo test` 全量 28 套件

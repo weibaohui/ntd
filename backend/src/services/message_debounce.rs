@@ -824,15 +824,21 @@ fn build_executor_end_content(
         // 进程退出 0：统一发简洁结束标志，过程内容已实时推送，不再重复输出
         format!("✅ {} 处理完成", executor_type)
     } else {
+        // 退出码不能 {:?} 给用户看（会渲染成 Rust 调试格式 Some(1)）：
+        // 被信号杀死时 code() 为 None，给可读文案（评审修复）
+        let code_text = match exit_code {
+            Some(code) => code.to_string(),
+            None => "未知（进程被信号终止）".to_string(),
+        };
         // 非零退出：用 stderr 展示错误信息（执行器错误信息通常走 stderr），
         // stderr 为空则只报退出码。
         let diagnostic = stderr.chars().take(STDERR_PREVIEW_CHAR_LIMIT).collect::<String>();
         if diagnostic.trim().is_empty() {
-            executor_error_message(executor_type, &format!("退出码 {:?}", exit_code))
+            executor_error_message(executor_type, &format!("退出码 {}", code_text))
         } else {
             executor_error_message(
                 executor_type,
-                &format!("退出码 {:?}\n{}", exit_code, diagnostic),
+                &format!("退出码 {}\n{}", code_text, diagnostic),
             )
         }
     }
@@ -1775,7 +1781,7 @@ async fn run_executor_with_timeout(
         // 关键断言：这一行不 panic 即说明按 char 截断生效
         let content = build_executor_end_content("pi", false, Some(1), None, "", &chinese);
         assert!(
-            content.starts_with("❌ pi 执行失败：退出码 Some(1)"),
+            content.starts_with("❌ pi 执行失败：退出码 1"),
             "should start with error prefix, got: {}",
             content
         );

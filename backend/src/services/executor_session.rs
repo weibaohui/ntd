@@ -175,6 +175,9 @@ where
     // 排空模式（评审修复）：计时器到点时若进程其实已退出、只是管道还在排空，
     // 不误判超时（A 原实现的超时只包 child.wait()，不存在排空误判）。
     let mut drain_mode = false;
+    // stderr EOF/读失败后禁用该分支（评审修复）：next_line() 在 EOF 后持续立即
+    // 返回 Ok(None)，不禁用会让 select! 在 stdout 未结束时空转占满 CPU
+    let mut stderr_done = false;
 
     loop {
         tokio::select! {
@@ -204,7 +207,15 @@ where
                     // stdout 读完了：等子进程退出并打包返回（stderr 可能仍有未消费缓冲，
                     // 与 B 原实现一致——拿到多少算多少，不为凑齐 stderr 阻塞返回）
                     Ok(None) => {
-                        let status = child.wait().await.map_err(|e| SessionError::WaitFailed(e.to_string()))?;
+                        // wait 失败也要 kill 回收：child 未开 kill_on_drop，直接 drop
+                        // 会让执行器进程变孤儿继续跑（评审修复）
+                        let status = match child.wait().await {
+                            Ok(s) => s,
+                            Err(e) => {
+                                let _ = child.kill().await;
+                                return Err(SessionError::WaitFailed(e.to_string()));
+                            }
+                        };
                         let raw_stderr = raw_stderr_lines.join("\n");
                         let raw_stdout = raw_stdout_lines.join("\n");
                         tracing::info!(
@@ -220,22 +231,29 @@ where
                         return Ok(SessionOutcome { raw_stdout, raw_stderr, success, exit_code });
                     }
                     Err(e) => {
+                        // stdout 读失败即放弃本次执行：先 kill 回收，再上抛（评审修复，
+                        // 与超时分支同姿势——不留孤儿进程）
+                        let _ = child.kill().await;
                         let stderr = raw_stderr_lines.join("\n");
                         return Err(SessionError::StdoutReadFailed { source: e, stderr });
                     }
                 }
             }
-            // 读取下一行 stderr：只收集不回调（stderr 是诊断通道，无通路语义）
-            line_result = stderr_reader.next_line() => {
+            // 读取下一行 stderr：只收集不回调（stderr 是诊断通道，无通路语义）；
+            // EOF/读失败后经 stderr_done 禁用本分支，防忙循环
+            line_result = stderr_reader.next_line(), if !stderr_done => {
                 match line_result {
                     Ok(Some(line)) => {
                         raw_stderr_lines.push(line);
                     }
-                    // stderr EOF：继续等 stdout 主流
-                    Ok(None) => {}
-                    // stderr 读失败不致命：丢掉 stderr 诊断信息，主流继续（B 原语义）
+                    // stderr EOF：关闭本分支，继续等 stdout 主流
+                    Ok(None) => {
+                        stderr_done = true;
+                    }
+                    // stderr 读失败不致命：关闭本分支，丢掉诊断信息，主流继续（B 原语义）
                     Err(e) => {
                         tracing::warn!("[session] stderr read error: tag={}, error={}", log_tag, e);
+                        stderr_done = true;
                     }
                 }
             }
