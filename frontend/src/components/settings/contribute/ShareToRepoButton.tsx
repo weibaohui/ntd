@@ -109,6 +109,9 @@ export function ShareToRepoButton({
         icon={<ShareAltOutlined />}
         buttonType="text"
         buttonSize={size}
+        // iconOnly 时隐藏按钮文字：ActionButton 在 children 为空时兜底显示「优化标题」（历史默认文案），
+        // 分享场景必须用 showLabel=false 关掉，否则表格里的分享图标会变成「优化标题」文字按钮。
+        showLabel={!iconOnly}
         workspaceId={state.selectedWorkspace ?? undefined}
         panelTitle={panelTitle}
         panelDescription={panelDescription}
