@@ -23,7 +23,9 @@ use std::process::Command;
 use super::common::{ntd_binary_path, ntd_dir};
 use super::DaemonAction;
 
-const LAUNCHD_LABEL: &str = "com.nothing-todo.ntd";
+// launchd 标签统一为 com.ntd.ntd：早期版本用过 com.nothing-todo.ntd（工作目录名残留），
+// 存量已安装服务需卸载旧标签后再安装（uninstall --force 可清理旧 plist）。
+const LAUNCHD_LABEL: &str = "com.ntd.ntd";
 
 // handle 是 daemon 子命令的统一入口，根据 Action 分发到具体处理函数。
 // install 和 start 返回 Result，失败时打印错误并退出（CLI 语义：非零退出码）；

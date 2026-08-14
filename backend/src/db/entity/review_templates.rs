@@ -24,7 +24,7 @@ pub struct Model {
     pub name: String,
     pub description: Option<String>,
     pub prompt: String,
-    /// 所属工作空间 ID（project_directories.id）。None = 全局模板。
+    /// 所属工作空间 ID（workspaces.id）。None = 全局模板。
     pub workspace_id: Option<i64>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,

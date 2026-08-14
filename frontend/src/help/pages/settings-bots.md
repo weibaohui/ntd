@@ -12,7 +12,7 @@
 flowchart LR
   User["用户"] --> Page["AssistantManagementPage.tsx"]
   Page -->|"loadData<br>Promise.all"| API1["db.getAgentBots<br>GET /api/v1/agent-bots"]
-  Page -->|"loadData<br>Promise.all"| API2["db.getProjectDirectories<br>GET /api/v1/project-directories"]
+  Page -->|"loadData<br>Promise.all"| API2["db.getWorkspaces<br>GET /api/v1/workspaces"]
   Page -->|"handleStartBind"| BindFlow["feishuInit→feishuBegin→feishuPollSSE"]
   BindFlow -->|"POST"| API3["POST /api/v1/agent-bots/feishu/init"]
   BindFlow -->|"POST"| API4["POST /api/v1/agent-bots/feishu/begin"]

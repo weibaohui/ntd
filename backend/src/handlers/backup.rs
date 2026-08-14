@@ -232,7 +232,7 @@ pub async fn merge_backup(
 
     // 如果指定了目标工作空间，验证其存在性
     if let Some(ws_id) = req.workspace_id {
-        if state.db.get_project_directory_by_id(ws_id).await?.is_none() {
+        if state.db.get_workspace_by_id(ws_id).await?.is_none() {
             return Err(AppError::BadRequest(format!("Workspace {} not found", ws_id)));
         }
     }

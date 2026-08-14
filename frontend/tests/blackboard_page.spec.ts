@@ -192,7 +192,7 @@ test('切换 workspace 后页面重新拉取并渲染新内容（修复 useState
   // workspace 来自全局 app 状态，需通过左上角 WorkspaceSwitcher 切换。
   // 先用 API 找一个 id≠1 的工作空间名（mock 对 ws≠1 返回 WS2 内容 todo_77），
   // 避免盲取 nth(1)——固定 ws1 后该项恰好是 ws1 自己，切换无效。
-  const dirsResp = await page.request.get(`${BACKEND_URL}/api/v1/project-directories`);
+  const dirsResp = await page.request.get(`${BACKEND_URL}/api/v1/workspaces`);
   const dirs: Array<{ id: number; name: string }> = (await dirsResp.json()).data || [];
   const target = dirs.find((d) => d.id !== 1);
   test.skip(!target, 'dev 库不足 2 个工作空间，跳过 workspace 切换验证');

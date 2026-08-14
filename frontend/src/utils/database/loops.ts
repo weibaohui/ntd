@@ -2,7 +2,7 @@
 //
 // 后端 v1 路由（backend/src/handlers/loop_.rs 的 v1_routes）嵌套在
 // /api/v1/workspaces/{ws}/loops 下，workspaceId 必须在 URL 路径段中显式传入。
-// 所有函数的第一个参数都是 workspaceId（即 project_directories.id）。
+// 所有函数的第一个参数都是 workspaceId（即 workspaces.id）。
 //
 // 需求 044（环路瘦身）：create/update/trigger/触发器 CRUD/环节 CRUD/duplicate/
 // export/import/旧评分审批等 API 已随后端下线，本文件只保留只读查询与

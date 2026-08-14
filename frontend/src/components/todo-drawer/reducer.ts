@@ -26,7 +26,7 @@ export interface TodoFormState {
   expertName: string | null;
   /** 任务级执行模型（覆盖执行器默认）。null = 用执行器默认模型。 */
   model: string | null;
-  /** 工作空间 ID（project_directories.id）。组件间统一以 id 传递，path 仅后端 cwd 内部使用。 */
+  /** 工作空间 ID（workspaces.id）。组件间统一以 id 传递，path 仅后端 cwd 内部使用。 */
   workspaceId: number | null;
   /** 是否启用 Webhook 触发 */
   webhookEnabled: boolean;

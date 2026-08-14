@@ -25,7 +25,7 @@ interface InstallGitButtonProps {
  *
  * 不指定 executor：让用户在 Drawer 里挑一个本机已装的执行器（Claude Code 等）来跑安装命令；
  * 能打开本应用就必然已配置至少一个执行器，因此不存在「没有执行器可装 git」的死结。
- * worktree 也不构成障碍：install_git 这条 action todo 一般不在已启用 worktree 的项目目录下执行；
+ * worktree 也不构成障碍：install_git 这条 action todo 一般不在已启用 worktree 的工作空间下执行；
  * 即便命中，create_worktree 失败也会优雅降级回原 workspace（见 executor_service/worktree.rs 的 fallback）。
  */
 export function InstallGitButton({

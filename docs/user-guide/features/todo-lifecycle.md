@@ -47,7 +47,7 @@ ntd 的核心实体就是 Todo。本文档覆盖 Todo 的**创建、状态机、
 | `prompt` | ✅ | 完整指令 |
 | `executor` | ✅ | 默认 claudecode |
 | `tags` |  | 多个 |
-| `workspace` |  | 工作目录（项目目录白名单） |
+| `workspace` |  | 工作目录（工作空间白名单） |
 | `worktree_enabled` |  | 是否开 git worktree |
 | `scheduler_enabled` |  | 是否启用定时 |
 | `scheduler_config` |  | Cron 表达式（如 `0 0 9 * * 1`） |

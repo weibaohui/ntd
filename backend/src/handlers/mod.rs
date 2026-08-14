@@ -148,7 +148,7 @@ pub mod agent_bot;
 pub mod executor_config;
 mod feishu_history;
 mod session;
-pub mod project_directory;
+pub mod workspace;
 pub(crate) mod todo_template;
 pub(crate) mod review_template;
 pub mod custom_template;
@@ -393,7 +393,7 @@ pub async fn create_app(
 
     Router::new()
         .merge(mount_v1_domain_routes())
-        // project_directory::v1_routes() 已包含在 action::v1_routes() 中，
+        // workspace::v1_routes() 已包含在 action::v1_routes() 中，
         // 不再单独 merge，避免路由重复注册。
         .layer(DefaultBodyLimit::max(10 * 1024 * 1024))
         .layer(CompressionLayer::new())
@@ -415,7 +415,7 @@ pub async fn create_app(
 /// - 全局 agent-bot 管理嵌套在 `/api/v1/agent-bots` 下
 /// - 所有全局资源路由（config/backup/skills/session/usage-stats/feishu/review-templates/
 ///   todo-templates/custom-templates/quick-buttons/bundled/webhook/experts/
-///   project-directories 等）已合并，路径带 `/api/v1/` 前缀
+///   workspaces 等）已合并，路径带 `/api/v1/` 前缀
 /// - 云端同步（cloud sync）和 action 执行端点也已包含
 ///
 /// 非版本化路由（root/static/events）保持原样不嵌套。

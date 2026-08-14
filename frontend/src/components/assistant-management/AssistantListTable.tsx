@@ -1,10 +1,10 @@
 import { Table, Button, Tag, Space, Popconfirm } from 'antd';
 import { SettingOutlined, PoweroffOutlined, DeleteOutlined } from '@ant-design/icons';
-import type { AgentBot, ProjectDirectory } from '@/utils/database';
+import type { AgentBot, Workspace } from '@/utils/database';
 
 interface AssistantListTableProps {
   bots: AgentBot[];
-  workspaces: ProjectDirectory[];
+  workspaces: Workspace[];
   onOpenConfig: (bot: AgentBot) => void;
   onToggleEnabled: (bot: AgentBot) => void;
   onDelete: (bot: AgentBot) => void;

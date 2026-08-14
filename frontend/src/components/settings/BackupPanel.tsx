@@ -8,7 +8,7 @@ import { DatabaseBackupTab } from './backup/DatabaseBackupTab';
 import { ImportExportModals, BackupDataYaml, ImportItem } from './backup/ImportExportModals';
 import { useBackupDomain } from './useBackupDomain';
 import { backupTimestamp, downloadBlob, downloadByUrl } from '@/utils/download';
-import type { ProjectDirectory } from '@/utils/database/todos';
+import type { Workspace } from '@/utils/database/todos';
 
 // 备份子 tab 的合法 key——每个子 tab 对应 URL 里的一个 sub 参数，支持深链直达
 // 044：环路备份已随导入导出能力下线（工艺迁移/分享由 YAML 文件承担）
@@ -89,7 +89,7 @@ export function BackupPanel() {
   const [wizardTags, setWizardTags] = useState<{ name: string; color: string }[]>([]);
   const [selectedRowKeys, setSelectedRowKeys] = useState<number[]>([]);
   // 导入目标工作空间列表（父组件加载一次，下发给每行 WorkspaceSwitcher 复用）
-  const [workspaces, setWorkspaces] = useState<ProjectDirectory[]>([]);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   // 逐行工作空间选择：ImportItem.key → workspaceId（null=未匹配/待指定）
   const [rowWorkspaceMap, setRowWorkspaceMap] = useState<Record<number, number | null>>({});
   // 当前库已有 todo：用于按「目标工作空间 + 标题 + prompt」动态判同名（对齐后端 merge_backup 判重口径）
@@ -101,9 +101,9 @@ export function BackupPanel() {
   const [sourceWorkspaceInfo, setSourceWorkspaceInfo] = useState<{ id: number; path: string } | null>(null);
 
   // 加载工作空间列表（不再选全局默认——逐行按各自原 id 匹配）
-  const loadWorkspaces = async (): Promise<ProjectDirectory[]> => {
+  const loadWorkspaces = async (): Promise<Workspace[]> => {
     try {
-      const ws = await db.getProjectDirectories();
+      const ws = await db.getWorkspaces();
       setWorkspaces(ws);
       return ws;
     } catch (e) {
@@ -120,7 +120,7 @@ export function BackupPanel() {
   // 按 wizardItems + 当前工作空间列表，初始化每行默认：原 id 命中→原 id，否则 null（未匹配）
   const buildDefaultRowWorkspace = (
     items: ImportItem[],
-    ws: ProjectDirectory[],
+    ws: Workspace[],
   ): Record<number, number | null> => {
     const map: Record<number, number | null> = {};
     for (const it of items) {
@@ -191,7 +191,7 @@ export function BackupPanel() {
       }
       const yamlText = await response.text();
       const blob = new Blob([yamlText], { type: 'application/x-yaml' });
-      downloadBlob(blob, `aietodo-backup-${backupTimestamp()}.yaml`);
+      downloadBlob(blob, `ntd-backup-${backupTimestamp()}.yaml`);
       message.success('备份导出成功');
     } catch (err: any) {
       message.error(err?.message || '导出失败');

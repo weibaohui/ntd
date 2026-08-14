@@ -245,22 +245,22 @@ export async function exportTodoTemplateYaml(id: number): Promise<string> {
   return (res as { path: string }).path;
 }
 
-// Project Directory APIs
+// Workspace APIs
 
-export interface ProjectDirectory {
+export interface Workspace {
   id: number;
   path: string;
   name: string | null;
   created_at: string;
   updated_at: string;
-  // issue #643: 项目目录级 git worktree 开关。
+  // issue #643: 工作空间级 git worktree 开关。
   // 后端从 v2 schema migration 开始携带这两个字段；旧库会是 false（migration 默认值）。
   git_worktree_enabled?: boolean;
   auto_cleanup?: boolean;
 }
 
-export async function getProjectDirectories(): Promise<ProjectDirectory[]> {
-  return unwrap(await api.get('/api/v1/project-directories'));
+export async function getWorkspaces(): Promise<Workspace[]> {
+  return unwrap(await api.get('/api/v1/workspaces'));
 }
 
 /** GET /api/v1/workspaces/{ws}/scheduler/todos:列出指定空间下启用 cron 调度的 todo(含下次触发时间)。 */
@@ -268,21 +268,21 @@ export async function getSchedulerTodos(workspaceId: number): Promise<Todo[]> {
   return unwrap(await api.get(`/api/v1/workspaces/${workspaceId}/scheduler/todos`));
 }
 
-// 创建项目目录：后端要求 name 必填，调用方需保证传入非空字符串。
-// 返回完整 ProjectDirectory 对象（含 id），供调用方更新本地状态。
+// 创建工作空间：后端要求 name 必填，调用方需保证传入非空字符串。
+// 返回完整 Workspace 对象（含 id），供调用方更新本地状态。
 // issue #643 修复：create 接口在后端并不消费 gitWorktreeEnabled / autoCleanup 字段，
 // 发送它们只会让前端误以为「新建时就能决定策略」，实际上策略需要在 update 时设置。
-// 这里彻底删除 options 参数与对应 body 字段，调用方需要时改走 updateProjectDirectory。
-export async function createProjectDirectory(
+// 这里彻底删除 options 参数与对应 body 字段，调用方需要时改走 updateWorkspace。
+export async function createWorkspace(
   path: string,
   name: string,
-): Promise<ProjectDirectory> {
-  return unwrap(await api.post('/api/v1/project-directories', { path, name }));
+): Promise<Workspace> {
+  return unwrap(await api.post('/api/v1/workspaces', { path, name }));
 }
 
-// 更新项目目录。`name` 必填；worktree 开关可选（不传=保持现状）。
+// 更新工作空间。`name` 必填；worktree 开关可选（不传=保持现状）。
 // 后端在 handler 区分 `None`/`Some` 两种语义，前端用 hasOwnProperty 表达"我故意没传"。
-export async function updateProjectDirectory(
+export async function updateWorkspace(
   id: number,
   name: string,
   options?: { gitWorktreeEnabled?: boolean; autoCleanup?: boolean },
@@ -294,11 +294,11 @@ export async function updateProjectDirectory(
   if (options?.autoCleanup !== undefined) {
     body.auto_cleanup = options.autoCleanup;
   }
-  await api.put(`/api/v1/project-directories/${id}`, body);
+  await api.put(`/api/v1/workspaces/${id}`, body);
 }
 
-export async function deleteProjectDirectory(id: number): Promise<void> {
-  await api.delete(`/api/v1/project-directories/${id}`);
+export async function deleteWorkspace(id: number): Promise<void> {
+  await api.delete(`/api/v1/workspaces/${id}`);
 }
 
 // Scheduler APIs — /{id}/scheduler 嵌套在 workspace todos 下

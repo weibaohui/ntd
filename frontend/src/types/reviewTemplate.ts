@@ -13,7 +13,7 @@ export interface ReviewTemplate {
   name: string;
   description: string | null;
   prompt: string;
-  /** 所属工作空间 ID（project_directories.id）。null=全局模板。 */
+  /** 所属工作空间 ID（workspaces.id）。null=全局模板。 */
   workspace_id: number | null;
   created_at: string | null;
   updated_at: string | null;
@@ -24,7 +24,7 @@ export interface CreateReviewTemplateRequest {
   name: string;
   description?: string | null;
   prompt: string;
-  /** 所属工作空间 ID（project_directories.id）。不传=全局模板。 */
+  /** 所属工作空间 ID（workspaces.id）。不传=全局模板。 */
   workspace_id?: number | null;
 }
 

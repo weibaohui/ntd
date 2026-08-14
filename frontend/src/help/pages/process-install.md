@@ -15,7 +15,7 @@ flowchart LR
   DI --"installProcess(guid, workspaceId)"--> API["POST /api/bundled/processes/{guid}/install"]
   API --> H["install_process handler"]
   H --"get_process_template_by_guid"--> DB1[(process_templates 表)]
-  H --"get_project_directory_by_id"--> DB2[(project_directories 表)]
+  H --"get_workspace_by_id"--> DB2[(workspaces 表)]
   H --"read_definition(source_path)"--> FS["磁盘读 YAML 正文"]
   H --> SVC["install_process_template service"]
   SVC --"create loop / phases / steps / todos"--> DB3[(loops/loop_phases/loop_steps/todos 表)]

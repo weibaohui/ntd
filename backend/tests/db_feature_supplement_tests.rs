@@ -1,13 +1,13 @@
 //! 后端功能清单的补充测试用例
 //!
 //! 背景（issue #439）：基于 `docs/frontend-features.md` 与 `backend/src/db/` 现有方法，
-//! 补齐此前未覆盖的 db 层功能：模板、项目目录、Webhook、执行器配置、同步记录。
+//! 补齐此前未覆盖的 db 层功能：模板、工作空间、Webhook、执行器配置、同步记录。
 //!
 //! 选用 in-memory SQLite + 与 `db/mod.rs` 已有测试一致的 setup，避免污染开发/生产数据库。
 //!
 //! 段落总览：
 //! - 模板（Template）：CRUD、按分类查询、远程订阅/再同步、系统 vs 自定义区分。
-//! - 项目目录（ProjectDirectory）：CRUD、唯一约束下的并发幂等。
+//! - 工作空间（Workspace）：CRUD、唯一约束下的并发幂等。
 //! - Webhook：CRUD、批量查询、关联 todo 命中、按时间清理记录。
 //! - 执行器配置（ExecutorConfig）：启用过滤、按名查询、部分字段更新、种子幂等。
 //! - 同步记录（SyncRecord）：创建、列表分页、计数、清空。
@@ -331,18 +331,18 @@ async fn test_template_delete_all_custom_only() {
 }
 
 // =====================================================================
-// 项目目录相关测试
+// 工作空间相关测试
 // =====================================================================
 
 #[tokio::test]
-async fn test_project_directory_create_and_get_by_id() {
+async fn test_workspace_create_and_get_by_id() {
     // 正常路径：创建后立即按 id 读出，path/name 时间戳均存在。
     let db = setup_db().await;
     let id = db
-        .create_project_directory("/tmp/proj-a", Some("项目A"), false, false)
+        .create_workspace("/tmp/proj-a", Some("项目A"), false, false)
         .await
         .unwrap();
-    let dir = db.get_project_directory_by_id(id).await.unwrap().unwrap();
+    let dir = db.get_workspace_by_id(id).await.unwrap().unwrap();
     assert_eq!(dir.path, "/tmp/proj-a");
     assert_eq!(dir.name.as_deref(), Some("项目A"));
     assert!(dir.created_at.is_some());
@@ -350,37 +350,37 @@ async fn test_project_directory_create_and_get_by_id() {
 }
 
 #[tokio::test]
-async fn test_project_directory_get_by_path() {
+async fn test_workspace_get_by_path() {
     // 同一 path 只能查到自己这一条；不同 path 互不影响。
     let db = setup_db().await;
-    db.create_project_directory("/tmp/proj-b", Some("B"), false, false)
+    db.create_workspace("/tmp/proj-b", Some("B"), false, false)
         .await
         .unwrap();
-    db.create_project_directory("/tmp/proj-c", Some("C"), false, false)
+    db.create_workspace("/tmp/proj-c", Some("C"), false, false)
         .await
         .unwrap();
     let b = db
-        .get_project_directory_by_path("/tmp/proj-b")
+        .get_workspace_by_path("/tmp/proj-b")
         .await
         .unwrap()
         .unwrap();
     assert_eq!(b.name.as_deref(), Some("B"));
     assert!(db
-        .get_project_directory_by_path("/tmp/不存在")
+        .get_workspace_by_path("/tmp/不存在")
         .await
         .unwrap()
         .is_none());
 }
 
 #[tokio::test]
-async fn test_project_directory_unique_constraint() {
+async fn test_workspace_unique_constraint() {
     // path 上有 UNIQUE 约束：重复插入必须报错（外层 get_or_create 依赖该错误来重试）。
     let db = setup_db().await;
-    db.create_project_directory("/tmp/dup", Some("first"), false, false)
+    db.create_workspace("/tmp/dup", Some("first"), false, false)
         .await
         .unwrap();
     let err = db
-        .create_project_directory("/tmp/dup", Some("second"), false, false)
+        .create_workspace("/tmp/dup", Some("second"), false, false)
         .await
         .expect_err("重复 path 应触发唯一约束错误");
     let s = format!("{:?}", err);
@@ -391,15 +391,15 @@ async fn test_project_directory_unique_constraint() {
 }
 
 #[tokio::test]
-async fn test_project_directory_get_or_create_idempotent() {
+async fn test_workspace_get_or_create_idempotent() {
     // 第一次调用：新建；第二次：复用，name 字段保持首次插入的值。
     let db = setup_db().await;
     let d1 = db
-        .get_or_create_project_directory("/tmp/goc-1", Some("goc-name"))
+        .get_or_create_workspace("/tmp/goc-1", Some("goc-name"))
         .await
         .unwrap();
     let d2 = db
-        .get_or_create_project_directory("/tmp/goc-1", None)
+        .get_or_create_workspace("/tmp/goc-1", None)
         .await
         .unwrap();
     assert_eq!(d1.id, d2.id, "幂等：同一 path 必须返回同一 id");
@@ -413,18 +413,18 @@ async fn test_project_directory_get_or_create_idempotent() {
 }
 
 #[tokio::test]
-async fn test_project_directory_get_or_create_renames_on_mismatch() {
+async fn test_workspace_get_or_create_renames_on_mismatch() {
     // 当 path 已存在但 name 不同时，get_or_create 应自动把 name 同步为新值
     let db = setup_db().await;
     let d1 = db
-        .get_or_create_project_directory("/tmp/rename-test", Some("Original Name"))
+        .get_or_create_workspace("/tmp/rename-test", Some("Original Name"))
         .await
         .unwrap();
     assert_eq!(d1.name.as_deref(), Some("Original Name"));
 
     // 再次传入不同 name，应触发 rename
     let d2 = db
-        .get_or_create_project_directory("/tmp/rename-test", Some("New Name"))
+        .get_or_create_workspace("/tmp/rename-test", Some("New Name"))
         .await
         .unwrap();
     assert_eq!(d1.id, d2.id, "id 不应变化");
@@ -432,7 +432,7 @@ async fn test_project_directory_get_or_create_renames_on_mismatch() {
 
     // 传入相同 name，不应触发 UPDATE（保持原值）
     let d3 = db
-        .get_or_create_project_directory("/tmp/rename-test", Some("New Name"))
+        .get_or_create_workspace("/tmp/rename-test", Some("New Name"))
         .await
         .unwrap();
     assert_eq!(d3.id, d2.id);
@@ -440,55 +440,55 @@ async fn test_project_directory_get_or_create_renames_on_mismatch() {
 }
 
 #[tokio::test]
-async fn test_project_directory_update_name() {
+async fn test_workspace_update_name() {
     // 仅更新 name，并刷新 updated_at；path 保持不变。
     let db = setup_db().await;
     let id = db
-        .create_project_directory("/tmp/upd", Some("old"), false, false)
+        .create_workspace("/tmp/upd", Some("old"), false, false)
         .await
         .unwrap();
-    let before = db.get_project_directory_by_id(id).await.unwrap().unwrap();
+    let before = db.get_workspace_by_id(id).await.unwrap().unwrap();
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    db.update_project_directory(id, Some("new"), None, None)
+    db.update_workspace(id, Some("new"), None, None)
         .await
         .unwrap();
-    let after = db.get_project_directory_by_id(id).await.unwrap().unwrap();
+    let after = db.get_workspace_by_id(id).await.unwrap().unwrap();
     assert_eq!(after.name.as_deref(), Some("new"));
     assert_eq!(after.path, before.path);
     assert_ne!(after.updated_at, before.updated_at);
 }
 
 #[tokio::test]
-async fn test_project_directory_delete_removes_row() {
+async fn test_workspace_delete_removes_row() {
     // 删除后通过 by-id 与 by-path 都不应再查到。
     let db = setup_db().await;
     let id = db
-        .create_project_directory("/tmp/del", Some("x"), false, false)
+        .create_workspace("/tmp/del", Some("x"), false, false)
         .await
         .unwrap();
-    db.delete_project_directory(id).await.unwrap();
-    assert!(db.get_project_directory_by_id(id).await.unwrap().is_none());
+    db.delete_workspace(id).await.unwrap();
+    assert!(db.get_workspace_by_id(id).await.unwrap().is_none());
     assert!(db
-        .get_project_directory_by_path("/tmp/del")
+        .get_workspace_by_path("/tmp/del")
         .await
         .unwrap()
         .is_none());
 }
 
 #[tokio::test]
-async fn test_project_directory_list_orders_by_path() {
+async fn test_workspace_list_orders_by_path() {
     // 列表按 path 升序，方便前端做字典序展示。
     let db = setup_db().await;
-    db.create_project_directory("/tmp/zzz", None, false, false)
+    db.create_workspace("/tmp/zzz", None, false, false)
         .await
         .unwrap();
-    db.create_project_directory("/tmp/aaa", None, false, false)
+    db.create_workspace("/tmp/aaa", None, false, false)
         .await
         .unwrap();
-    db.create_project_directory("/tmp/mmm", None, false, false)
+    db.create_workspace("/tmp/mmm", None, false, false)
         .await
         .unwrap();
-    let list = db.get_project_directories().await.unwrap();
+    let list = db.get_workspaces().await.unwrap();
     let paths: Vec<&str> = list.iter().map(|d| d.path.as_str()).collect();
     // 迁移脚本会 seed 默认工作空间 /tmp，加上我们创建的 3 个，共 4 个
     assert!(paths.contains(&"/tmp/aaa"));
@@ -878,7 +878,7 @@ async fn test_batch_update_todos_scheduler_pause() {
 
     // 创建工作空间（todo 的 workspace_id 依赖）
     let dir = db
-        .get_or_create_project_directory("/tmp/scheduler-test", Some("测试空间"))
+        .get_or_create_workspace("/tmp/scheduler-test", Some("测试空间"))
         .await
         .unwrap();
 
@@ -925,7 +925,7 @@ async fn test_batch_update_todos_scheduler_resume() {
     let db = setup_db().await;
 
     let dir = db
-        .get_or_create_project_directory("/tmp/scheduler-resume", Some("恢复空间"))
+        .get_or_create_workspace("/tmp/scheduler-resume", Some("恢复空间"))
         .await
         .unwrap();
 
@@ -974,7 +974,7 @@ async fn test_batch_update_todos_scheduler_multiple() {
     let db = setup_db().await;
 
     let dir = db
-        .get_or_create_project_directory("/tmp/batch-multi", Some("批量测试"))
+        .get_or_create_workspace("/tmp/batch-multi", Some("批量测试"))
         .await
         .unwrap();
 
@@ -1033,11 +1033,11 @@ async fn test_merge_backup_target_workspace_overrides_backup_value() {
     // 备份里 workspace_id=A，导入时指定目标 workspace=B，最终 todo 应落在 B。
     let db = setup_db().await;
     let dir_a = db
-        .create_project_directory("/tmp/ws-a", Some("A"), false, false)
+        .create_workspace("/tmp/ws-a", Some("A"), false, false)
         .await
         .unwrap();
     let dir_b = db
-        .create_project_directory("/tmp/ws-b", Some("B"), false, false)
+        .create_workspace("/tmp/ws-b", Some("B"), false, false)
         .await
         .unwrap();
 
@@ -1065,7 +1065,7 @@ async fn test_merge_backup_none_target_falls_back_to_backup_workspace() {
     // 未指定目标工作空间时，沿用备份中的 workspace_id，保持「导出再导入回原处」语义。
     let db = setup_db().await;
     let dir_a = db
-        .create_project_directory("/tmp/ws-a", Some("A"), false, false)
+        .create_workspace("/tmp/ws-a", Some("A"), false, false)
         .await
         .unwrap();
 
@@ -1090,11 +1090,11 @@ async fn test_merge_backup_does_not_hijack_cross_workspace_same_title() {
     // 不应覆盖 A 的 todo，也不应把 A 的 todo 迁移到 B。A 的 workspace_id 必须保持不变。
     let db = setup_db().await;
     let dir_a = db
-        .create_project_directory("/tmp/ws-a", Some("A"), false, false)
+        .create_workspace("/tmp/ws-a", Some("A"), false, false)
         .await
         .unwrap();
     let dir_b = db
-        .create_project_directory("/tmp/ws-b", Some("B"), false, false)
+        .create_workspace("/tmp/ws-b", Some("B"), false, false)
         .await
         .unwrap();
 
@@ -1125,7 +1125,7 @@ async fn test_merge_backup_drops_dangling_backup_workspace_id() {
 
     // 故意用一个当前库不存在的 workspace_id（只创建 A，备份里却写一个不存在的 id）
     let dir_a = db
-        .create_project_directory("/tmp/ws-a", Some("A"), false, false)
+        .create_workspace("/tmp/ws-a", Some("A"), false, false)
         .await
         .unwrap();
     let dangling_id = dir_a + 999;
@@ -1168,7 +1168,7 @@ async fn test_get_recent_execution_records_for_chat_unbound_returns_empty() {
 #[tokio::test]
 async fn test_get_recent_execution_records_for_chat_bound_no_records_returns_empty() {
     let db = setup_db().await;
-    // in-memory DB 默认不开外键约束，project_dir_id/todo_id 可伪造，
+    // in-memory DB 默认不开外键约束，workspace_id/todo_id 可伪造，
     // 这里只验证「有 binding 但无记录」的短路行为，不关心项目/todo 的真实性。
     db.create_feishu_project_binding(1, "oc_bound_chat", "p2p", 999, 42)
         .await
@@ -1189,7 +1189,7 @@ async fn test_get_execution_records_by_workspace_joins_todos() {
 
     // 工作空间 1：创建 2 个 todo 各一条记录（共 2 条）
     let ws1 = db
-        .create_project_directory("/tmp/ws1", Some("WS-1"), false, false)
+        .create_workspace("/tmp/ws1", Some("WS-1"), false, false)
         .await
         .unwrap();
     let t1_id = db
@@ -1222,7 +1222,7 @@ async fn test_get_execution_records_by_workspace_joins_todos() {
 
     // 工作空间 2：创建 1 个 todo + 1 条记录（与 ws1 完全隔离）
     let ws2 = db
-        .create_project_directory("/tmp/ws2", Some("WS-2"), false, false)
+        .create_workspace("/tmp/ws2", Some("WS-2"), false, false)
         .await
         .unwrap();
     let t3_id = db

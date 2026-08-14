@@ -246,7 +246,7 @@ impl Database {
     /// 批量更新环路工作空间（移动到其他工作空间）。
     /// 连带移动步骤关联的所有 todo 到同一目标工作空间。
     ///
-    /// 入参是 `project_directories.id`（唯一键）；handler 负责把 id 解析为 path 后传进来，
+    /// 入参是 `workspaces.id`（唯一键）；handler 负责把 id 解析为 path 后传进来，
     /// DAO 仅按 (workspace_id, workspace_path) 双写以保证 cwd 字段与筛选字段同步。
     pub async fn batch_update_loops_workspace(
         &self,
@@ -302,7 +302,7 @@ impl Database {
     /// 批量复制环路到目标工作空间。
     /// 连带复制步骤关联的 todo 到目标工作空间，并让复制后的 steps 指向新 todo。
     ///
-    /// 入参是 `project_directories.id` + `workspace_path`：handler 已经把 id 解析为 path 传进来，
+    /// 入参是 `workspaces.id` + `workspace_path`：handler 已经把 id 解析为 path 传进来，
     /// DAO 仅做写入；拆分参数是为了让 SQL 一次完成 id + path 双写，避免再次回查。
     pub async fn batch_copy_loops_to_workspace(
         &self,

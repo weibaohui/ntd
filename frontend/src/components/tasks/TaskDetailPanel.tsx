@@ -8,7 +8,7 @@
 import { useState } from 'react';
 import { Tabs, Spin, Empty, Badge, Modal, Input } from 'antd';
 import { useTaskDetail } from '@/hooks/useTaskDetail';
-import { useProjectDirectories } from '@/utils/workspaceDisplay';
+import { useWorkspaces } from '@/utils/workspaceDisplay';
 import { useViewState } from '@/hooks/useViewState';
 import { visibleTaskTabs, resolveTaskActiveTab } from './helpers';
 import { DetailHeader } from './TaskDetailHeader';
@@ -46,7 +46,7 @@ export function TaskDetailPanel({
   // 同样声明在 early return 之前，保证 loading 提前 return 时 hooks 顺序稳定。
   const [reqModalOpen, setReqModalOpen] = useState(false);
   const [newRequirement, setNewRequirement] = useState('');
-  const { dirs: projectDirs } = useProjectDirectories();
+  const { dirs: workspaces } = useWorkspaces();
   // URL ?tab= 驱动 Tabs 选中态（对齐 Settings 页模式）：帖子页返回任务-讨论 tab 时
   // 返回 URL 带 ?tab=discussion，此处解析出 activeTab 落到对应 Tab；非法值回退「概览」。
   // 切 tab 用 replaceUrl：只更新 URL 不压 history，避免浏览器后退逐个回退 tab 而非离开页面。
@@ -69,7 +69,7 @@ export function TaskDetailPanel({
       children: (
         <OverviewTab
           task={task} template={template}
-          loopDetail={t.loopDetail} projectDirs={projectDirs}
+          loopDetail={t.loopDetail} workspaces={workspaces}
         />
       ),
     },

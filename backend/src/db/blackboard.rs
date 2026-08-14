@@ -520,9 +520,9 @@ mod tests {
     use super::*;
     use crate::db::Database;
 
-    /// 创建一个测试用工作空间（project_directories），返回其 id。
+    /// 创建一个测试用工作空间（workspaces），返回其 id。
     async fn create_test_workspace(db: &Database) -> i64 {
-        db.create_project_directory("/tmp/test-blackboard-workspace", None, false, false)
+        db.create_workspace("/tmp/test-blackboard-workspace", None, false, false)
             .await
             .expect("create workspace must succeed")
     }

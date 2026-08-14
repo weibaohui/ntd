@@ -89,7 +89,7 @@ test.describe('需求 022：工作空间 Prompt API 全链路', () => {
       '',
       '- 产物目录：编译输出放在 `./target/release`',
       '- 认证：访问内部 GitLab 用 token `glpat-xxxxxxxxxxxx`',
-      '- 项目根：/Users/weibh/projects/rust/nothing-todo',
+      '- 项目根：/Users/weibh/projects/demo-app',
       '- 提交规范：使用 Conventional Commits，禁止 --no-verify',
       '',
       '### 禁止行为',

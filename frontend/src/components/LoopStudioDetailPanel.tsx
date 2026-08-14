@@ -22,7 +22,7 @@ import {
 import * as dbLoops from '@/utils/database/loops';
 import type { LoopDetail } from '@/types/loop';
 import { TraceBreadcrumb } from '@/components/common/TraceBreadcrumb';
-import { getWorkspaceDisplayName, useProjectDirectories } from '@/utils/workspaceDisplay';
+import { getWorkspaceDisplayName, useWorkspaces } from '@/utils/workspaceDisplay';
 import { LoopStepsPanel } from './LoopStudioStepsPanel';
 import { LoopExecutionsPanel } from './loop-studio/executions';
 // 删除按钮抽到 LoopDetailActions，与 LoopDetailPage 的 extra 区共用。
@@ -67,7 +67,7 @@ export function LoopDetailPanel({
   const [detail, setDetail] = useState<LoopDetail | null>(null);
   const [loading, setLoading] = useState(true);
   // 工作空间目录（低基数集合，详情展示时把 path 转成 name 用）
-  const { dirs: projectDirs } = useProjectDirectories();
+  const { dirs: workspaces } = useWorkspaces();
 
   // 执行记录总数，由 LoopExecutionsPanel 通过回调更新
   const [executionTotal, setExecutionTotal] = useState(0);
@@ -200,8 +200,8 @@ export function LoopDetailPanel({
           } />
           <DetailField label="关联工作空间" value={
             detail.workspace_id != null ? (() => {
-              const displayName = getWorkspaceDisplayName(projectDirs, detail.workspace_id);
-              const dir = projectDirs.find(d => d.id === detail.workspace_id);
+              const displayName = getWorkspaceDisplayName(workspaces, detail.workspace_id);
+              const dir = workspaces.find(d => d.id === detail.workspace_id);
               return dir ? (
                 <div>
                   <div style={{ fontWeight: 500 }}>{displayName}</div>

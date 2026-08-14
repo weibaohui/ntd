@@ -10,7 +10,7 @@ import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
 import * as dbReviewTemplates from '@/utils/database/reviewTemplates';
 import { DefaultReviewPromptButton } from '@/components/common/DefaultReviewPromptButton';
 import type { ReviewTemplate } from '@/types/reviewTemplate';
-import { getProjectDirectories } from '@/utils/database/todos';
+import { getWorkspaces } from '@/utils/database/todos';
 
 interface FormValues {
   name: string;
@@ -40,7 +40,7 @@ export function ReviewTemplatesPanel({ workspaceId }: ReviewTemplatesPanelProps)
 
   /** 加载全量工作空间列表作为过滤选项 */
   const loadWorkspaceOptions = () => {
-    getProjectDirectories()
+    getWorkspaces()
       .then((dirs) => {
         setWorkspaceIdOptions(dirs.map(d => ({ label: d.name ?? '', value: d.id })));
       })

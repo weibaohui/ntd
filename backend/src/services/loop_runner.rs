@@ -2287,9 +2287,9 @@ mod tests {
         (runner, db)
     }
 
-    /// 辅助：快速创建一个 workspace（project_directory），返回其 id。
+    /// 辅助：快速创建一个 workspace（workspace），返回其 id。
     async fn create_workspace(db: &crate::db::Database, id_suffix: i64) -> i64 {
-        db.create_project_directory(
+        db.create_workspace(
             &format!("/tmp/test-workspace-{}", id_suffix),
             Some(&format!("test-ws-{}", id_suffix)),
             false,

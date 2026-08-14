@@ -427,7 +427,7 @@ pub async fn batch_move_loops_workspace_v1(
     workspace_guard::verify_loops_belong_to_ws(&state.db, &req.ids, ws_id).await?;
     let dir = state
         .db
-        .get_project_directory_by_id(req.workspace_id)
+        .get_workspace_by_id(req.workspace_id)
         .await?
         .ok_or_else(|| AppError::BadRequest(format!("工作空间 {} 不存在", req.workspace_id)))?;
     let rows_affected = state
@@ -452,7 +452,7 @@ pub async fn batch_copy_loops_workspace_v1(
     workspace_guard::verify_loops_belong_to_ws(&state.db, &req.ids, ws_id).await?;
     let dir = state
         .db
-        .get_project_directory_by_id(req.workspace_id)
+        .get_workspace_by_id(req.workspace_id)
         .await?
         .ok_or_else(|| AppError::BadRequest(format!("工作空间 {} 不存在", req.workspace_id)))?;
     let created_ids = state

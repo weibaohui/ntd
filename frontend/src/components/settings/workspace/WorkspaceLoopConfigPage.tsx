@@ -1,10 +1,10 @@
 import { SettingOutlined } from '@ant-design/icons';
 import { PageCard } from '@/components/common/PageCard';
-import type { ProjectDirectory } from '@/utils/database';
+import type { Workspace } from '@/utils/database';
 import { ReviewTemplatesPanel } from '../ReviewTemplatesPanel';
 
 interface WorkspaceLoopConfigPageProps {
-  workspace: ProjectDirectory;
+  workspace: Workspace;
   onBack: () => void;
 }
 

@@ -46,7 +46,7 @@ export type LeftRailKey =
   | 'dashboard'
   | 'blackboard'
   | 'settings'
-  | 'settings_projectDirectories'
+  | 'settings_workspaces'
   | 'settings_sessions'
   | 'settings_skills'
   | 'settings_executors'
@@ -70,7 +70,7 @@ interface LeftRailProps {
   variant?: LeftRailVariant;
   collapsed?: boolean;
   onToggleCollapsed?: () => void;
-  /** 当前选中的工作空间 ID（project_directories.id，唯一键）。null 表示未选。 */
+  /** 当前选中的工作空间 ID（workspaces.id，唯一键）。null 表示未选。 */
   workspace?: number | null;
   onWorkspaceChange?: (workspaceId: number | null) => void;
   themeMode: 'light' | 'dark';
@@ -133,7 +133,7 @@ export function LeftRail({
         { key: 'settings_experts', label: '专家', icon: <TeamOutlined />, ariaLabel: '专家' },
         { key: 'settings_executors', label: '执行器', icon: <CodeOutlined />, ariaLabel: '执行器' },
         { key: 'settings_bots', label: '智能助手', icon: <RobotOutlined />, ariaLabel: '智能助手' },
-        { key: 'settings_projectDirectories', label: '工作空间', icon: <FolderOutlined />, ariaLabel: '工作空间' },
+        { key: 'settings_workspaces', label: '工作空间', icon: <FolderOutlined />, ariaLabel: '工作空间' },
         { key: 'settings', label: '更多设置', icon: <SettingOutlined />, ariaLabel: '更多设置' },
       ] satisfies LeftRailItem[],
     },
@@ -200,7 +200,7 @@ export function LeftRail({
           <WorkspaceSwitcher
             value={workspace ?? null}
             onChange={(next) => onWorkspaceChange?.(next)}
-            onManage={() => onSelect('settings_projectDirectories')}
+            onManage={() => onSelect('settings_workspaces')}
             showAddOption={true}
             mode="full"
           />
@@ -213,7 +213,7 @@ export function LeftRail({
         <WorkspaceSwitcher
           value={workspace ?? null}
           onChange={(next) => onWorkspaceChange?.(next)}
-          onManage={() => onSelect('settings_projectDirectories')}
+          onManage={() => onSelect('settings_workspaces')}
           showAddOption={true}
           mode="compact"
         />

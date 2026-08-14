@@ -27,7 +27,7 @@ ntd 后端 API 参考手册。所有业务接口前缀为 `/api/v1/`：workspace
 ### 11. 飞书集成
 ### 12. 飞书历史
 ### 13. 会话管理
-### 14. 项目目录
+### 14. 工作空间
 ### 15. Todo 模板
 ### 16. 评审模板
 ### 17. Loop Studio
@@ -1220,18 +1220,18 @@ DELETE /api/v1/sessions/{id}
 
 ---
 
-## 14. 项目目录
+## 14. 工作空间
 
-### 列出项目目录
+### 列出工作空间
 ```
-GET /api/v1/project-directories
+GET /api/v1/workspaces
 ```
 
 ---
 
-### 创建项目目录
+### 创建工作空间
 ```
-POST /api/v1/project-directories
+POST /api/v1/workspaces
 ```
 
 **请求体：**
@@ -1244,9 +1244,9 @@ POST /api/v1/project-directories
 
 ---
 
-### 更新项目目录
+### 更新工作空间
 ```
-PUT /api/v1/project-directories/{id}
+PUT /api/v1/workspaces/{id}
 ```
 
 **请求体：**
@@ -1258,9 +1258,9 @@ PUT /api/v1/project-directories/{id}
 
 ---
 
-### 删除项目目录
+### 删除工作空间
 ```
-DELETE /api/v1/project-directories/{id}
+DELETE /api/v1/workspaces/{id}
 ```
 
 ---

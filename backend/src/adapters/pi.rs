@@ -429,7 +429,7 @@ mod tests {
     #[test]
     fn test_extract_session_id() {
         let executor = PiExecutor::new("pi".to_string());
-        let line = r#"{"type":"session","version":3,"id":"019eb655-b65a-750d-b774-9bfad4b0c51b","timestamp":"2026-06-11T10:58:51.098Z","cwd":"/Users/mac/projects/rust/nothing-todo"}"#;
+        let line = r#"{"type":"session","version":3,"id":"019eb655-b65a-750d-b774-9bfad4b0c51b","timestamp":"2026-06-11T10:58:51.098Z","cwd":"/Users/mac/projects/rust/demo-app"}"#;
         let sid = executor.extract_session_id(line);
         assert_eq!(sid, Some("019eb655-b65a-750d-b774-9bfad4b0c51b".to_string()));
     }

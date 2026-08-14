@@ -61,7 +61,7 @@ pub struct ProcessLoopItem {
     pub name: String,
     pub description: String,
     pub status: String,
-    /// 实例环路所属工作空间 ID（project_directories.id），前端标注用。
+    /// 实例环路所属工作空间 ID（workspaces.id），前端标注用。
     pub workspace_id: Option<i64>,
     /// 实例化时的工艺版本快照（loops 表已有列，随列表透出便于审计追溯）。
     pub process_template_version: Option<String>,
@@ -191,7 +191,7 @@ pub async fn install_process(
 
     let workspace = state
         .db
-        .get_project_directory_by_id(req.workspace_id)
+        .get_workspace_by_id(req.workspace_id)
         .await?
         .ok_or_else(|| {
             AppError::BadRequest(format!("工作空间 {} 不存在", req.workspace_id))
@@ -271,7 +271,7 @@ pub async fn upgrade_process_loop(
     })?;
     let workspace = state
         .db
-        .get_project_directory_by_id(ws_id)
+        .get_workspace_by_id(ws_id)
         .await?
         .ok_or_else(|| {
             AppError::BadRequest(format!("工作空间 {} 不存在", ws_id))

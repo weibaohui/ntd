@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
-import { getProjectDirectories } from '@/utils/database/todos';
-import type { ProjectDirectory } from '@/types';
+import { getWorkspaces } from '@/utils/database/todos';
+import type { Workspace } from '@/types';
 
 /**
  * 工作空间相关展示/查询工具。
  *
  * 三种语义必须分清，混用就会出现"展示给用户的是路径而不是名称"这类 bug：
- *   - `id`     : project_directories.id（数字，后端 API / 组件间 props 唯一键）
- *   - `path`   : project_directories.path（路径字符串，仅用于 cwd/worktree，后端内部消费）
- *   - `name`   : project_directories.name（人类可读名称，UI 展示用这个）
+ *   - `id`     : workspaces.id（数字，后端 API / 组件间 props 唯一键）
+ *   - `path`   : workspaces.path（路径字符串，仅用于 cwd/worktree，后端内部消费）
+ *   - `name`   : workspaces.name（人类可读名称，UI 展示用这个）
  *
  * 约定（破坏式更新）：
  * - 组件之间 props 全部传 `id`；path 不再作 props 主键，避免重复传递与不一致。
@@ -22,7 +22,7 @@ import type { ProjectDirectory } from '@/types';
  * 注意：不要把返回结果当作 id 用 —— 这里只用于展示。
  */
 export function getWorkspaceDisplayName(
-  dirs: ProjectDirectory[] | null | undefined,
+  dirs: Workspace[] | null | undefined,
   id: number | null | undefined,
 ): string {
   if (id == null) return '';
@@ -32,29 +32,29 @@ export function getWorkspaceDisplayName(
 }
 
 /**
- * Hook：组件挂载时一次性加载 project_directories，返回 `{ dirs, byId }`。
+ * Hook：组件挂载时一次性加载 workspaces，返回 `{ dirs, byId }`。
  *
  * - `dirs`：完整列表，传给 `getWorkspaceDisplayName` / `getWorkspacePathById` 用。
- * - `byId`：id → ProjectDirectory 的 Map，热路径上 O(1) 查找，避免每个候选 todo 都做 O(n) find。
+ * - `byId`：id → Workspace 的 Map，热路径上 O(1) 查找，避免每个候选 todo 都做 O(n) find。
  *
- * project_directories 是低基数集合（手动维护），一次性全量加载比按需拉更简单也更稳。
+ * workspaces 是低基数集合（手动维护），一次性全量加载比按需拉更简单也更稳。
  */
-export function useProjectDirectories(): {
-  dirs: ProjectDirectory[];
-  byId: Map<number, ProjectDirectory>;
+export function useWorkspaces(): {
+  dirs: Workspace[];
+  byId: Map<number, Workspace>;
   loading: boolean;
 } {
-  const [dirs, setDirs] = useState<ProjectDirectory[]>([]);
+  const [dirs, setDirs] = useState<Workspace[]>([]);
   const [loading, setLoading] = useState(false);
   const load = useCallback(() => {
     setLoading(true);
-    getProjectDirectories()
+    getWorkspaces()
       .then(setDirs)
       .catch(() => setDirs([]))
       .finally(() => setLoading(false));
   }, []);
   useEffect(() => { load(); }, [load]);
-  const byId = new Map<number, ProjectDirectory>();
+  const byId = new Map<number, Workspace>();
   for (const d of dirs) byId.set(d.id, d);
   return { dirs, byId, loading };
 }

@@ -11,7 +11,7 @@ mod unique_constraint_tests {
 
     #[test]
     fn test_is_unique_constraint_error_with_unique_constraint() {
-        let err = sea_orm::DbErr::Query(sea_orm::RuntimeErr::Internal("UNIQUE constraint failed: project_directories.path".to_string()));
+        let err = sea_orm::DbErr::Query(sea_orm::RuntimeErr::Internal("UNIQUE constraint failed: workspaces.path".to_string()));
         assert!(is_unique_constraint_error(&err));
     }
 

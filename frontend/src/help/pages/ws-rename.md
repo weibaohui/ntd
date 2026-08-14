@@ -9,26 +9,26 @@
 flowchart LR
   User["更多→编辑"] --> setEditingDir["setEditingDirId + setEditingDirName"]
   User["输入名称"] --> setEditingDirName["setEditingDirName"]
-  User["点击保存"] --> handleUpdate["handleUpdateProjectDirectoryName(id)"]
-  handleUpdate -->|"db.updateProjectDirectory(id, name)"| API["PUT /api/v1/project-directories/{id}"]
-  API --> setProjectDirectories["setProjectDirectories map name"]
+  User["点击保存"] --> handleUpdate["handleUpdateWorkspaceName(id)"]
+  handleUpdate -->|"db.updateWorkspace(id, name)"| API["PUT /api/v1/workspaces/{id}"]
+  API --> setWorkspaces["setWorkspaces map name"]
 ```
 
 ## 谑用关系链路图
 
 ```mermaid
 flowchart TD
-  Panel["ProjectDirectoriesPanel.tsx<br>ProjectDirectoriesPanel()"] --> editingDirIdState["useState editingDirId"]
+  Panel["WorkspacesPanel.tsx<br>WorkspacesPanel()"] --> editingDirIdState["useState editingDirId"]
   Panel --> editingDirNameState["useState editingDirName"]
   Panel --> Dropdown["更多 Dropdown onClick key=edit"]
   Dropdown --> setEditingDir["setEditingDirId(dir.id)<br>setEditingDirName(dir.name)"]
   Panel --> EditInput["Input value=editingDirName<br>onPressEnter=handleUpdate"]
   Panel --> SaveBtn["保存 Button<br>onClick=handleUpdate"]
   Panel --> CancelBtn["取消 Button<br>setEditingDirId(null)"]
-  SaveBtn --> handleUpdateProjectDirectoryName["handleUpdateProjectDirectoryName(id)"]
-  handleUpdateProjectDirectoryName --> trimCheck["name trim 非空"]
-  trimCheck --> db1["db.updateProjectDirectory(id, name)"]
-  db1 --> setProjectDirectories["setProjectDirectories map name"]
+  SaveBtn --> handleUpdateWorkspaceName["handleUpdateWorkspaceName(id)"]
+  handleUpdateWorkspaceName --> trimCheck["name trim 非空"]
+  trimCheck --> db1["db.updateWorkspace(id, name)"]
+  db1 --> setWorkspaces["setWorkspaces map name"]
   db1 --> resetEdit["setEditingDirId(null)<br>setEditingDirName('')"]
 ```
 
@@ -36,7 +36,7 @@ flowchart TD
 
 ```mermaid
 classDiagram
-  class ProjectDirectory {
+  class Workspace {
     id: number
     name: string|null
   }
@@ -55,7 +55,7 @@ stateDiagram-v2
 ```
 
 ## 开发指导
-- **前端入口**：`frontend/src/components/settings/ProjectDirectoriesPanel.tsx` 的 `handleUpdateProjectDirectoryName` 回调
-- **后端入口**：`backend/src/handlers/project_directory.rs` 处理 `PUT /api/v1/project-directories/{id}`，`name` 必填
-- **注意**：`updateProjectDirectory` 的 `name` 是必传字段，即使只想改 worktree 开关也需带上当前 `name`；后端 handler 区分 `None`/`Some` 语义，前端用 `hasOwnProperty` 表达「故意不传」
+- **前端入口**：`frontend/src/components/settings/WorkspacesPanel.tsx` 的 `handleUpdateWorkspaceName` 回调
+- **后端入口**：`backend/src/handlers/workspace.rs` 处理 `PUT /api/v1/workspaces/{id}`，`name` 必填
+- **注意**：`updateWorkspace` 的 `name` 是必传字段，即使只想改 worktree 开关也需带上当前 `name`；后端 handler 区分 `None`/`Some` 语义，前端用 `hasOwnProperty` 表达「故意不传」
 - **扩展**：如需编辑其他字段（如 `path`），后端 update handler 的 body 追加可选字段，前端编辑模式追加对应 Input

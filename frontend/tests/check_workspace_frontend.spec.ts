@@ -22,11 +22,11 @@ test.describe('Workspace Frontend Panels (阶段7-11)', () => {
 
     await page.waitForTimeout(500);
 
-    // 验证 ProjectDirectoriesPanel 正常渲染
+    // 验证 WorkspacesPanel 正常渲染
     // 应该能看到工作空间列表
-    const addButton = page.locator('button:has-text("添加项目目录")');
+    const addButton = page.locator('button:has-text("添加工作空间")');
     if (await addButton.isVisible({ timeout: 3000 }).catch(() => false)) {
-      console.log('ProjectDirectoriesPanel 渲染正常');
+      console.log('WorkspacesPanel 渲染正常');
     }
   });
 

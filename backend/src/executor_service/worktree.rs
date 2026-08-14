@@ -24,7 +24,7 @@ pub(crate) struct WorktreeContext {
     pub auto_cleanup: bool,
 }
 
-/// 根据 todo.workspace_path 或显式 workspace_path 找到对应的 project_directory，决定是否开 worktree。
+/// 根据 todo.workspace_path 或显式 workspace_path 找到对应的 workspace，决定是否开 worktree。
 ///
 /// 优先使用 todo.workspace_path；当 todo 为 None 时回退到 `explicit_workspace_path`（loop 场景）。
 ///
@@ -35,7 +35,7 @@ pub(crate) async fn resolve_worktree_context(
     todo: &Option<Todo>,
     explicit_workspace_path: Option<&str>,
 ) -> WorktreeContext {
-    // 没有 todo（被 hook 删除）/ 没有 workspace_path 关联项目目录——不启用 worktree
+    // 没有 todo（被 hook 删除）/ 没有 workspace_path 关联工作空间——不启用 worktree
     let t = todo.as_ref();
     let ws = t
         .and_then(|t| t.workspace_path.as_deref())
@@ -44,8 +44,8 @@ pub(crate) async fn resolve_worktree_context(
     let Some(ws) = ws else {
         return WorktreeContext::default();
     };
-    // 目录在 project_directories 表里没登记——同样不启用（避免给任意 workspace 路径做 worktree）
-    let Ok(Some(dir)) = db.get_project_directory_by_path(&ws).await else {
+    // 目录在 workspaces 表里没登记——同样不启用（避免给任意 workspace 路径做 worktree）
+    let Ok(Some(dir)) = db.get_workspace_by_path(&ws).await else {
         return WorktreeContext::default();
     };
     if !dir.git_worktree_enabled {

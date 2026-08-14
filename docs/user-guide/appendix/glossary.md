@@ -5,7 +5,7 @@
 | **Todo** | ntd 的核心实体。一个待办任务，可以被某个执行器跑起来 |
 | **执行器（Executor）** | 实际跑 Todo 的外部 CLI 工具（Claude Code / Codex / Hermes / Kimi 等） |
 | **Skill** | 预制的 prompt 模板，可以附加到 Todo 上。存在执行器各自的 skill 目录 |
-| **Workspace** | Todo 跑起来时的工作目录，必须在「项目目录」白名单内 |
+| **Workspace** | Todo 跑起来时的工作目录，必须在「工作空间」白名单内 |
 | **Worktree** | git worktree 模式，每个 Todo 一个独立分支 |
 | **Hook** | Todo 跑前/跑后触发的钩子（脚本 / 命令） |
 | **Webhook** | 外部 HTTP 触发器，路径带 todo_id |

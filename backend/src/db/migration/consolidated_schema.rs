@@ -37,7 +37,7 @@ pub const CONSOLIDATED_SCHEMA: &[&str] = &[
     wiki_timeout_secs INTEGER NOT NULL DEFAULT 300,
     updated_at TEXT,
     created_at TEXT, wiki_chat_sessions TEXT, enabled INTEGER NOT NULL DEFAULT 1,
-    FOREIGN KEY (workspace_id) REFERENCES project_directories(id) ON DELETE CASCADE
+    FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
 )"#,
     r#"CREATE TABLE execution_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -137,7 +137,7 @@ pub const CONSOLIDATED_SCHEMA: &[&str] = &[
             bot_id INTEGER NOT NULL,
             chat_id TEXT NOT NULL,
             chat_type TEXT NOT NULL,
-            project_dir_id INTEGER NOT NULL,
+            workspace_id INTEGER NOT NULL,
             todo_id INTEGER NOT NULL,
             session_id TEXT,
             latest_record_id INTEGER,
@@ -318,7 +318,7 @@ pub const CONSOLIDATED_SCHEMA: &[&str] = &[
                 created_at TEXT,
                 updated_at TEXT
             )"#,
-    r#"CREATE TABLE project_directories (
+    r#"CREATE TABLE workspaces (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             path TEXT NOT NULL UNIQUE,
             name TEXT,
@@ -555,7 +555,7 @@ pub const CONSOLIDATED_SCHEMA: &[&str] = &[
     r#"CREATE INDEX idx_process_templates_category ON process_templates(category)"#,
     r#"CREATE INDEX idx_process_templates_name ON process_templates(name)"#,
     r#"CREATE INDEX idx_process_templates_workspace ON process_templates(workspace_id)"#,
-    r#"CREATE INDEX idx_project_directories_path ON project_directories(path)"#,
+    r#"CREATE INDEX idx_workspaces_path ON workspaces(path)"#,
     r#"CREATE INDEX idx_skill_invocations_executor ON skill_invocations(executor)"#,
     r#"CREATE INDEX idx_skill_invocations_invoked_at ON skill_invocations(invoked_at)"#,
     r#"CREATE INDEX idx_skill_invocations_skill_name ON skill_invocations(skill_name)"#,

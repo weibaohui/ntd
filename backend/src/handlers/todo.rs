@@ -147,7 +147,7 @@ pub async fn create_todo(
     })?;
     let dir = state
         .db
-        .get_project_directory_by_id(todo_ws_id)
+        .get_workspace_by_id(todo_ws_id)
         .await?
         .ok_or_else(|| AppError::BadRequest(format!("工作空间 {} 不存在", todo_ws_id)))?;
     let id = state.db.create_todo_with_extras(
@@ -311,7 +311,7 @@ pub async fn update_todo(
     let new_workspace_path: Option<String> = if let Some(wid) = new_workspace_id {
         let dir = state
             .db
-            .get_project_directory_by_id(wid)
+            .get_workspace_by_id(wid)
             .await?
             .ok_or_else(|| AppError::BadRequest(format!("工作空间 {} 不存在", wid)))?;
         Some(dir.path)
@@ -553,7 +553,7 @@ pub async fn batch_move_todos_workspace(
     // handler 把 id 解析为 path 后下传 DAO；DAO 一次写入 workspace_id + workspace_path。
     let dir = state
         .db
-        .get_project_directory_by_id(req.workspace_id)
+        .get_workspace_by_id(req.workspace_id)
         .await?
         .ok_or_else(|| AppError::BadRequest(format!("工作空间 {} 不存在", req.workspace_id)))?;
     let rows_affected = state
@@ -581,7 +581,7 @@ pub async fn batch_copy_todos_workspace(
     workspace_guard::verify_todos_belong_to_ws(&state.db, &req.ids, ws_id).await?;
     let dir = state
         .db
-        .get_project_directory_by_id(req.workspace_id)
+        .get_workspace_by_id(req.workspace_id)
         .await?
         .ok_or_else(|| AppError::BadRequest(format!("工作空间 {} 不存在", req.workspace_id)))?;
     let created_ids = state
