@@ -50,5 +50,5 @@ stateDiagram-v2
 ## 开发指导
 - **前端入口**：`frontend/src/components/settings/ExpertsPanel.tsx` 的 `Tabs items` 数组，`individualExperts` / `teamExperts` useMemo 分区
 - **后端入口**：无后端调用，纯前端分区
-- **注意**：Tab label 附实时计数（`individualExperts.length`），搜索过滤后计数同步刷新；空列表时展示 `Empty` 占位
+- **注意**：Tab label 附实时计数（`individualExperts.length`），来源筛选（全部/我的/内置）与搜索过滤后计数同步刷新；空列表时展示 `Empty` 占位
 - **扩展**：新增专家类型分区时追加 `useMemo` 过滤并增加对应 Tab item

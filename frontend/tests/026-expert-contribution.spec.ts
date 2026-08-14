@@ -66,6 +66,20 @@ test('提示词模板：不含 username / 绝对路径标签，且使用 ~ 家�
   expect(prompt).toContain('不能写到仓库根目录');
 });
 
+test('系统专家详情 Modal 不出现「分享」按钮（分享仅限用户自定义专家）', async ({ page }) => {
+  // 进入专家页。
+  await page.goto('/#/experts');
+
+  // 点第一张「系统」来源的卡片（data-source="system"）——系统/模板专家不渲染分享入口。
+  const firstSystemCard = page.locator('div[role="button"][data-source="system"]').first();
+  await firstSystemCard.waitFor({ state: 'visible', timeout: 15000 });
+  await firstSystemCard.click();
+
+  // 详情 Modal 打开后，操作区不应出现「分享」按钮（系统专家只读、不可分享）。
+  await page.getByRole('dialog').waitFor({ state: 'visible', timeout: 5000 });
+  await expect(page.getByRole('button', { name: '分享' })).toHaveCount(0);
+});
+
 // 以下两个用例依赖「PAT 已配置」态：用 beforeAll 统一写入桩 PAT、afterAll 兜底恢复。
 // 注意：若进程被强杀（SIGKILL）afterAll 不会执行，会残留桩 PAT；正常 CI 退出不受影响。
 test.describe('PAT 已配置态（桩 PAT）', () => {
@@ -77,11 +91,13 @@ test.describe('PAT 已配置态（桩 PAT）', () => {
     await page.goto('/#/experts');
 
     // 专家卡片用 role="button" 渲染；等待至少一张卡片可见。
-    const firstCard = page.locator('div[role="button"]').first();
-    await firstCard.waitFor({ state: 'visible', timeout: 15000 });
+    // 分享只对用户自定义专家开放：系统/模板来源的卡片不渲染分享按钮，
+    // 必须点「用户」来源的卡片（卡片根节点带 data-source=user）才有分享入口。
+    const firstUserCard = page.locator('div[role="button"][data-source="user"]').first();
+    await firstUserCard.waitFor({ state: 'visible', timeout: 15000 });
 
-    // 点击第一张专家卡片，打开详情 Modal。
-    await firstCard.click();
+    // 点击第一张用户专家卡片，打开详情 Modal。
+    await firstUserCard.click();
 
     // 详情 Modal 的操作区应出现「分享」按钮。
     const shareButton = page.getByRole('button', { name: '分享' });

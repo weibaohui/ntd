@@ -4,7 +4,7 @@
 // 本文件只保留列表加载、搜索过滤、导入导出编排与详情 Modal 的状态管理。
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { App, Button, Dropdown, Empty, Input, Modal, Spin, Tabs, Tooltip } from 'antd';
+import { App, Button, Dropdown, Empty, Input, Modal, Segmented, Spin, Tabs, Tooltip } from 'antd';
 import type { MenuProps } from 'antd';
 import {
   TeamOutlined,
@@ -16,7 +16,10 @@ import {
 } from '@ant-design/icons';
 import { PageCard } from '@/components/common/PageCard';
 import * as db from '@/utils/database';
-import type { ExpertMetadata, SkillMetadata } from '@/types/expert';
+import type { ExpertMetadata, ExpertSource, SkillMetadata } from '@/types/expert';
+
+/** 来源筛选值：全部 / 我的（用户自定义，可分享）/ 内置（系统同步模板，只读）。 */
+type SourceFilter = 'all' | ExpertSource;
 import {
   getExpertDisplayName,
   getExpertDescription,
@@ -43,6 +46,10 @@ export function ExpertsPanel() {
   const [loading, setLoading] = useState(false);
   const [reloading, setReloading] = useState(false);
   const [searchText, setSearchText] = useState('');
+  // 来源筛选：'all' 全部 / 'user' 我的 / 'system' 内置。
+  // 与分享限制配套：让用户一眼过滤出自己创建的专家（可分享/可编辑），
+  // 以及从官方仓库同步来的系统模板（只读）。
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>('all');
   // 详情 Modal 相关状态
   const [selectedExpert, setSelectedExpert] = useState<ExpertMetadata | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
@@ -233,17 +240,21 @@ export function ExpertsPanel() {
     }
   }, [loadExperts, message]);
 
-  // 搜索过滤
+  // 搜索过滤：先按来源筛选（我的=user / 内置=system），再叠加关键词搜索，两者为 AND 关系。
+  // 来源筛选与关键词共用一份结果，保证「专家/团队」两个 Tab 的计数与卡片同步刷新。
   const filteredExperts = useMemo(() => {
-    if (!searchText.trim()) return experts;
+    const bySource = sourceFilter === 'all'
+      ? experts
+      : experts.filter((e) => e.source === sourceFilter);
+    if (!searchText.trim()) return bySource;
     const keyword = searchText.trim().toLowerCase();
-    return experts.filter(expert => {
+    return bySource.filter(expert => {
       const name = getExpertDisplayName(expert).toLowerCase();
       const profession = getExpertProfession(expert).toLowerCase();
       const description = getExpertDescription(expert).toLowerCase();
       return name.includes(keyword) || profession.includes(keyword) || description.includes(keyword);
     });
-  }, [experts, searchText]);
+  }, [experts, searchText, sourceFilter]);
 
   // 按类型分组并按名称排序（稳定排序，避免刷新时顺序跳动）
   const individualExperts = useMemo(() => {
@@ -320,6 +331,18 @@ export function ExpertsPanel() {
     >
       {/* 搜索栏 + AI 创建专家按钮 */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+        {/* 来源筛选：全部/我的/内置。与分享限制配套——「我的」即用户自定义专家（可分享），
+            「内置」即从官方仓库同步的系统专家（只读）。Segmented 与工艺页「我的/模板」风格一致。 */}
+        <Segmented
+          size="small"
+          value={sourceFilter}
+          onChange={(v) => setSourceFilter(v as SourceFilter)}
+          options={[
+            { label: '全部', value: 'all' },
+            { label: '我的', value: 'user' },
+            { label: '内置', value: 'system' },
+          ]}
+        />
         <Input
           allowClear
           size="small"

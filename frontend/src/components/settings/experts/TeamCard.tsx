@@ -18,6 +18,7 @@ import {
   getExpertAvatarUrl,
   getCategoryName,
 } from '@/types/expert';
+import { ExpertSourceTag } from './ExpertSourceTag';
 
 const { Text } = Typography;
 
@@ -43,6 +44,8 @@ export function TeamCard({ expert, onClick }: {
   return (
     <div
       role="button"
+      // data-source 供 Playwright 区分用户/系统来源的卡片（分享仅对用户专家开放）
+      data-source={expert.source}
       tabIndex={0}
       onClick={() => onClick(expert)}
       onKeyDown={(e) => {
@@ -119,6 +122,8 @@ export function TeamCard({ expert, onClick }: {
             <Tag color="orange" style={{ margin: 0, fontSize: 10, padding: '1px 6px' }}>
               团队
             </Tag>
+            {/* 来源标签：见 ExpertSourceTag（蓝=系统内置只读，绿=用户自定义可分享/可编辑） */}
+            <ExpertSourceTag source={expert.source} />
           </div>
           {profession && (
             <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 2 }}>

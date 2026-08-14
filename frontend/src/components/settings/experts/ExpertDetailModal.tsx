@@ -25,6 +25,7 @@ import {
   getCategoryName,
 } from '@/types/expert';
 import { ContributeButton } from './ContributeButton';
+import { ExpertSourceTag } from './ExpertSourceTag';
 
 const { Paragraph, Text } = Typography;
 
@@ -178,6 +179,9 @@ export function ExpertDetailModal({
                   <Tag color={isTeam ? 'orange' : 'blue'} style={{ fontSize: 11, margin: 0 }}>
                     {isTeam ? '专家团队' : '单个专家'}
                   </Tag>
+                  {/* 来源标签：系统（同步来的模板）只读、无分享入口；用户自定义可编辑可分享，
+                      这里展示来源能让分享按钮的缺失自解释。 */}
+                  <ExpertSourceTag source={expert.source} size="modal" />
                   <Tag style={{ fontSize: 11, background: 'var(--color-bg-tertiary)', margin: 0 }}>
                     v{expert.version}
                   </Tag>
