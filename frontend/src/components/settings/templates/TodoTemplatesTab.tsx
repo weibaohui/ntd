@@ -4,6 +4,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import {
+  Alert,
   App,
   Button,
   Empty,
@@ -80,6 +81,14 @@ export function TodoTemplatesTab() {
   return (
     // className 用于 Playwright 精确定位事项模板表格，避开嵌套 Tabs 中其它隐藏表格的干扰。
     <div className="todo-templates-tab">
+      {/* 系统/用户说明（与工艺 Tab 风格一致）：系统模板来自远程仓库同步，会被覆盖；
+          用户模板（自行创建或复制的）存本地数据库，不会被同步覆盖。 */}
+      <Alert
+        type="info"
+        showIcon
+        style={{ marginBottom: 16 }}
+        message="系统模板来自远程仓库，每次同步会被覆盖；用户模板（自行创建或复制的）不会被同步覆盖。"
+      />
       <Space style={{ marginBottom: 16 }} wrap>
         <Button
           type="primary"
@@ -109,37 +118,7 @@ export function TodoTemplatesTab() {
             pagination={false}
             scroll={{ x: 'max-content' }}
             columns={[
-              {
-                title: '标题',
-                dataIndex: 'title',
-                key: 'title',
-                render: (text: string, record: TodoTemplate) => (
-                  <Space>
-                    {text}
-                    {record.is_system ? <Tag color="blue">系统</Tag> : null}
-                  </Space>
-                ),
-              },
-              {
-                title: '分类',
-                dataIndex: 'category',
-                key: 'category',
-                width: 120,
-                render: (v: string) => v || '-',
-              },
-              {
-                title: 'Prompt',
-                dataIndex: 'prompt',
-                key: 'prompt',
-                ellipsis: true,
-                render: (v: string) => v ? v.substring(0, 60) + (v.length > 60 ? '...' : '') : '-',
-              },
-              {
-                title: '排序',
-                dataIndex: 'sort_order',
-                key: 'sort_order',
-                width: 80,
-              },
+              // 操作列置于第一列：与专家/工艺/Skill 各 Tab 保持一致，操作入口前置便于定位
               {
                 title: '操作',
                 key: 'actions',
@@ -207,6 +186,37 @@ export function TodoTemplatesTab() {
                     )}
                   </Space>
                 ),
+              },
+              {
+                title: '标题',
+                dataIndex: 'title',
+                key: 'title',
+                render: (text: string, record: TodoTemplate) => (
+                  <Space>
+                    {text}
+                    {record.is_system ? <Tag color="blue">系统</Tag> : null}
+                  </Space>
+                ),
+              },
+              {
+                title: '分类',
+                dataIndex: 'category',
+                key: 'category',
+                width: 120,
+                render: (v: string) => v || '-',
+              },
+              {
+                title: 'Prompt',
+                dataIndex: 'prompt',
+                key: 'prompt',
+                ellipsis: true,
+                render: (v: string) => v ? v.substring(0, 60) + (v.length > 60 ? '...' : '') : '-',
+              },
+              {
+                title: '排序',
+                dataIndex: 'sort_order',
+                key: 'sort_order',
+                width: 80,
               },
             ]}
           />

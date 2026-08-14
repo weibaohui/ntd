@@ -4,6 +4,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import {
+  Alert,
   App,
   Button,
   Empty,
@@ -58,6 +59,31 @@ export function SkillTemplatesTab({ refreshTick }: { refreshTick?: number }) {
   }, [loadSkills, refreshTick]);
 
   const columns = [
+    // 操作列置于第一列：与专家/事项/工艺各 Tab 保持一致，操作入口前置便于定位
+    {
+      title: '操作',
+      key: 'actions',
+      width: 100,
+      // 技能分享不区分来源（用户明确要求全量可分享）：所有行都渲染分享入口。
+      render: (_: unknown, record: BundledSkillMeta) => (
+        <ShareToRepoButton
+          actionType="skill_contribute"
+          actionKey={record.name}
+          params={{
+            resource_name: record.short_name,
+            version: record.version || '',
+            // bundled 技能目录天然是 ~ 相对路径（~/.ntd/bundled/skills/{source}/{skill}），
+            // 无需 toHomePath 转换；远端路径保持来源集合结构 skills/{source}/{skill}/
+            resource_dir: `~/.ntd/bundled/skills/${record.name}`,
+            remote_path: `skills/${record.name}/`,
+          }}
+          buildPrompt={buildSkillContributePrompt}
+          panelTitle={`分享技能 ${record.short_name}`}
+          panelDescription="AI 将读取本机 PAT，把该技能目录提交为 PR 到官方仓库（可编辑下方 Prompt）"
+          size="small"
+        />
+      ),
+    },
     {
       title: '名称',
       dataIndex: 'name',
@@ -102,34 +128,18 @@ export function SkillTemplatesTab({ refreshTick }: { refreshTick?: number }) {
       width: 100,
       render: (size: number) => formatSize(size),
     },
-    {
-      title: '操作',
-      key: 'actions',
-      width: 100,
-      // 技能分享不区分来源（用户明确要求全量可分享）：所有行都渲染分享入口。
-      render: (_: unknown, record: BundledSkillMeta) => (
-        <ShareToRepoButton
-          actionType="skill_contribute"
-          actionKey={record.name}
-          params={{
-            resource_name: record.short_name,
-            version: record.version || '',
-            // bundled 技能目录天然是 ~ 相对路径（~/.ntd/bundled/skills/{source}/{skill}），
-            // 无需 toHomePath 转换；远端路径保持来源集合结构 skills/{source}/{skill}/
-            resource_dir: `~/.ntd/bundled/skills/${record.name}`,
-            remote_path: `skills/${record.name}/`,
-          }}
-          buildPrompt={buildSkillContributePrompt}
-          panelTitle={`分享技能 ${record.short_name}`}
-          panelDescription="AI 将读取本机 PAT，把该技能目录提交为 PR 到官方仓库（可编辑下方 Prompt）"
-          size="small"
-        />
-      ),
-    },
   ];
 
   return (
     <div className="skill-templates-tab">
+      {/* 技能来源说明：技能全部来自远程仓库同步，同步后本地副本与远端一致；
+          分享不区分来源（全量可分享），提交的是当前同步到本地的技能目录。 */}
+      <Alert
+        type="info"
+        showIcon
+        style={{ marginBottom: 16 }}
+        message="技能列表来自远程仓库同步，每次同步会更新本地副本；所有技能均可分享到官方仓库（不区分来源）。"
+      />
       <Space style={{ marginBottom: 16 }}>
         <Button
           icon={<ReloadOutlined />}

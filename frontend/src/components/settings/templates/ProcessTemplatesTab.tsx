@@ -93,6 +93,56 @@ export function ProcessTemplatesTab({ refreshTick }: { refreshTick?: number }) {
   };
 
   const columns = [
+    // 操作列置于第一列：与专家/事项/Skill 各 Tab 保持一致，操作入口前置便于定位
+    {
+      title: '操作',
+      key: 'actions',
+      width: 220,
+      render: (_: any, record: ProcessTemplate) => (
+        <Space>
+          <Button
+            type="text"
+            size="small"
+            icon={<EyeOutlined />}
+            onClick={() => handleView(record)}
+          >
+            查看
+          </Button>
+          {record.is_system && (
+            <Tooltip title="把系统工艺复制到 ~/.ntd/processes/，之后的修改不会被同步覆盖">
+              <Button
+                type="text"
+                size="small"
+                icon={<CopyOutlined />}
+                loading={copying === record.guid}
+                onClick={() => handleCopyToUser(record)}
+              >
+                复制到用户层
+              </Button>
+            </Tooltip>
+          )}
+          {/* 分享仅对用户工艺开放（is_system=false，位于 ~/.ntd/processes/，可修改才可分享）；
+              远端路径按分类放 processes/{category}/ 子目录，无分类则放根下。
+              source_path 为空（异常/旧数据）时不渲染分享——空路径会给 AI 执行器，无法定位文件。 */}
+          {!record.is_system && record.source_path && (
+            <ShareToRepoButton
+              actionType="process_contribute"
+              actionKey={record.guid}
+              params={{
+                resource_name: record.name,
+                version: record.version,
+                resource_dir: toHomePath(record.source_path || ''),
+                remote_path: `processes/${record.category ? record.category + '/' : ''}${record.name}.yaml`,
+              }}
+              buildPrompt={buildProcessContributePrompt}
+              panelTitle={`分享工艺 ${record.display_name || record.name}`}
+              panelDescription="AI 将读取本机 PAT，把该工艺 YAML 提交为 PR 到官方仓库（可编辑下方 Prompt）"
+              size="small"
+            />
+          )}
+        </Space>
+      ),
+    },
     {
       title: '名称',
       dataIndex: 'name',
@@ -142,55 +192,6 @@ export function ProcessTemplatesTab({ refreshTick }: { refreshTick?: number }) {
       render: (isSystem: boolean) => isSystem
         ? <Tag color="blue">系统</Tag>
         : <Tag color="green">用户</Tag>,
-    },
-    {
-      title: '操作',
-      key: 'actions',
-      width: 220,
-      render: (_: any, record: ProcessTemplate) => (
-        <Space>
-          <Button
-            type="text"
-            size="small"
-            icon={<EyeOutlined />}
-            onClick={() => handleView(record)}
-          >
-            查看
-          </Button>
-          {record.is_system && (
-            <Tooltip title="把系统工艺复制到 ~/.ntd/processes/，之后的修改不会被同步覆盖">
-              <Button
-                type="text"
-                size="small"
-                icon={<CopyOutlined />}
-                loading={copying === record.guid}
-                onClick={() => handleCopyToUser(record)}
-              >
-                复制到用户层
-              </Button>
-            </Tooltip>
-          )}
-          {/* 分享仅对用户工艺开放（is_system=false，位于 ~/.ntd/processes/，可修改才可分享）；
-              远端路径按分类放 processes/{category}/ 子目录，无分类则放根下。
-              source_path 为空（异常/旧数据）时不渲染分享——空路径会给 AI 执行器，无法定位文件。 */}
-          {!record.is_system && record.source_path && (
-            <ShareToRepoButton
-              actionType="process_contribute"
-              actionKey={record.guid}
-              params={{
-                resource_name: record.name,
-                version: record.version,
-                resource_dir: toHomePath(record.source_path || ''),
-                remote_path: `processes/${record.category ? record.category + '/' : ''}${record.name}.yaml`,
-              }}
-              buildPrompt={buildProcessContributePrompt}
-              panelTitle={`分享工艺 ${record.display_name || record.name}`}
-              panelDescription="AI 将读取本机 PAT，把该工艺 YAML 提交为 PR 到官方仓库（可编辑下方 Prompt）"
-              size="small"
-            />
-          )}
-        </Space>
-      ),
     },
   ];
 
