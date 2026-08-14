@@ -178,6 +178,14 @@ export function ExpertDetailModal({
                   <Tag color={isTeam ? 'orange' : 'blue'} style={{ fontSize: 11, margin: 0 }}>
                     {isTeam ? '专家团队' : '单个专家'}
                   </Tag>
+                  {/* 来源标签：系统（同步来的模板）只读、无分享入口；用户自定义可编辑可分享，
+                      这里展示来源能让分享按钮的缺失自解释。 */}
+                  <Tag
+                    color={expert.source === 'system' ? 'blue' : 'green'}
+                    style={{ fontSize: 11, margin: 0 }}
+                  >
+                    {expert.source === 'system' ? '系统' : '用户'}
+                  </Tag>
                   <Tag style={{ fontSize: 11, background: 'var(--color-bg-tertiary)', margin: 0 }}>
                     v{expert.version}
                   </Tag>

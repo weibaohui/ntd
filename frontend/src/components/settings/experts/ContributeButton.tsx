@@ -50,6 +50,12 @@ export function ContributeButton({
   // 是否已确认 PAT 配置：true 时渲染 ActionButton 执行提交。
   const [configured, setConfigured] = useState(false);
 
+  // 分享只对用户自定义专家开放（source === 'user'）：
+  // 系统/模板来源（从官方仓库同步到 ~/.ntd/bundled/experts/）的专家是只读资源，
+  // 用户不能修改，也就不能把系统专家原样打包提 PR 回官方仓库——直接不渲染分享入口。
+  // 双入口（专家详情 Modal + 专家模板 Tab 行操作）复用本组件，此处守卫同时覆盖两处。
+  if (expert.source !== 'user') return null;
+
   // 点击分享：查 PAT 配置态，已配置切到 ActionButton，未配置引导去设置填写。
   const handleClick = async () => {
     setChecking(true);

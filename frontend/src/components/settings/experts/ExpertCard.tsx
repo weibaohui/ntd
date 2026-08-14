@@ -35,6 +35,8 @@ export function ExpertCard({ expert, onClick }: {
   return (
     <div
       role="button"
+      // data-source 供 Playwright 区分用户/系统来源的卡片（分享仅对用户专家开放）
+      data-source={expert.source}
       tabIndex={0}
       onClick={() => onClick(expert)}
       onKeyDown={(e) => {
@@ -110,6 +112,14 @@ export function ExpertCard({ expert, onClick }: {
             </Text>
             <Tag color="blue" style={{ margin: 0, fontSize: 10, padding: '1px 6px' }}>
               专家
+            </Tag>
+            {/* 来源标签：与模板管理 Tab 的「系统/用户」配色一致（蓝=系统内置，绿=用户自定义），
+                一眼区分哪些专家是自己的（可分享/可编辑）、哪些是同步来的模板（只读）。 */}
+            <Tag
+              color={expert.source === 'system' ? 'blue' : 'green'}
+              style={{ margin: 0, fontSize: 10, padding: '1px 6px' }}
+            >
+              {expert.source === 'system' ? '系统' : '用户'}
             </Tag>
           </div>
           {profession && (

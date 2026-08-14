@@ -43,6 +43,8 @@ export function TeamCard({ expert, onClick }: {
   return (
     <div
       role="button"
+      // data-source 供 Playwright 区分用户/系统来源的卡片（分享仅对用户专家开放）
+      data-source={expert.source}
       tabIndex={0}
       onClick={() => onClick(expert)}
       onKeyDown={(e) => {
@@ -118,6 +120,13 @@ export function TeamCard({ expert, onClick }: {
             </Text>
             <Tag color="orange" style={{ margin: 0, fontSize: 10, padding: '1px 6px' }}>
               团队
+            </Tag>
+            {/* 来源标签：蓝=系统内置（同步来的模板，只读），绿=用户自定义（可分享/可编辑） */}
+            <Tag
+              color={expert.source === 'system' ? 'blue' : 'green'}
+              style={{ margin: 0, fontSize: 10, padding: '1px 6px' }}
+            >
+              {expert.source === 'system' ? '系统' : '用户'}
             </Tag>
           </div>
           {profession && (
