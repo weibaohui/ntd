@@ -18,6 +18,8 @@ import {
 } from '@ant-design/icons';
 import { bundledApi, type BundledSkillMeta } from '@/api/bundled';
 import { formatSize } from '@/components/skills/helpers';
+import { ShareToRepoButton } from '@/components/settings/contribute/ShareToRepoButton';
+import { buildSkillContributePrompt } from '@/components/settings/contribute/contributePrompts';
 
 const { Text } = Typography;
 
@@ -99,6 +101,30 @@ export function SkillTemplatesTab({ refreshTick }: { refreshTick?: number }) {
       key: 'total_size',
       width: 100,
       render: (size: number) => formatSize(size),
+    },
+    {
+      title: '操作',
+      key: 'actions',
+      width: 100,
+      // 技能分享不区分来源（用户明确要求全量可分享）：所有行都渲染分享入口。
+      render: (_: unknown, record: BundledSkillMeta) => (
+        <ShareToRepoButton
+          actionType="skill_contribute"
+          actionKey={record.name}
+          params={{
+            resource_name: record.short_name,
+            version: record.version || '',
+            // bundled 技能目录天然是 ~ 相对路径（~/.ntd/bundled/skills/{source}/{skill}），
+            // 无需 toHomePath 转换；远端路径保持来源集合结构 skills/{source}/{skill}/
+            resource_dir: `~/.ntd/bundled/skills/${record.name}`,
+            remote_path: `skills/${record.name}/`,
+          }}
+          buildPrompt={buildSkillContributePrompt}
+          panelTitle={`分享技能 ${record.short_name}`}
+          panelDescription="AI 将读取本机 PAT，把该技能目录提交为 PR 到官方仓库（可编辑下方 Prompt）"
+          size="small"
+        />
+      ),
     },
   ];
 

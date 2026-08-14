@@ -27,6 +27,9 @@ import {
 } from '@ant-design/icons';
 import * as db from '@/utils/database';
 import type { TodoTemplate } from '@/types/todo';
+import { ShareToRepoButton } from '@/components/settings/contribute/ShareToRepoButton';
+import { buildTodoContributePrompt } from '@/components/settings/contribute/contributePrompts';
+import { exportTodoTemplateYaml } from '@/utils/database/todos';
 
 /**
  * 事项模板 Tab
@@ -152,6 +155,35 @@ export function TodoTemplatesTab() {
                           setEditing(record);
                           setModalOpen(true);
                         }}
+                      />
+                    )}
+                    {/* 分享仅对用户创建的事项模板开放（is_system=false，可修改才可分享）；
+                        点击时先由后端把 DB 模板导出为 YAML 文件（onPrepare），
+                        提示词里的 resource_dir/remote_path 由导出结果注入。 */}
+                    {!record.is_system && (
+                      <ShareToRepoButton
+                        actionType="todo_contribute"
+                        actionKey={`todo-${record.id}`}
+                        params={{
+                          resource_name: record.title,
+                          version: '',
+                          resource_dir: '',
+                          remote_path: `todos/${record.title}.yaml`,
+                        }}
+                        buildPrompt={buildTodoContributePrompt}
+                        panelTitle={`分享事项模板 ${record.title}`}
+                        panelDescription="AI 将读取本机 PAT，把该事项模板（后端已导出为 YAML）提交为 PR 到官方仓库（可编辑下方 Prompt）"
+                        onPrepare={async () => {
+                          // 导出返回 ~/.ntd/contribution-export/todos/{safe_title}.yaml，
+                          // 文件名取末段作为远端 todos/ 下的目标文件名（与导出保持一致）
+                          const path = await exportTodoTemplateYaml(record.id);
+                          const fileName = path.split('/').pop() || '';
+                          return {
+                            resource_dir: path,
+                            remote_path: `todos/${fileName}`,
+                          };
+                        }}
+                        size="small"
                       />
                     )}
                     <Button

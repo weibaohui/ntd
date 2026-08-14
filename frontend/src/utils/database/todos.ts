@@ -233,6 +233,18 @@ export async function copyTodoTemplate(id: number): Promise<TodoTemplate> {
   return unwrap(await api.post(`/api/v1/todo-templates/${id}/copy`, {}));
 }
 
+/**
+ * 导出事项模板为 YAML 文件（分享到官方仓库的前置步骤）。
+ *
+ * 模板存数据库、AI 执行器只能读文件，分享前必须先由后端落盘；
+ * 返回导出的 YAML 文件路径（~ 相对，如 ~/.ntd/contribution-export/todos/{title}.yaml），
+ * 供分享提示词引用。系统模板（is_system=true）后端会拒绝导出。
+ */
+export async function exportTodoTemplateYaml(id: number): Promise<string> {
+  const res = unwrap(await api.get(`/api/v1/todo-templates/${id}/export`));
+  return (res as { path: string }).path;
+}
+
 // Project Directory APIs
 
 export interface ProjectDirectory {

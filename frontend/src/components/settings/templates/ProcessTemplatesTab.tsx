@@ -22,6 +22,8 @@ import {
   EyeOutlined,
 } from '@ant-design/icons';
 import { bundledApi, type ProcessTemplate, type ProcessTemplateDetail } from '@/api/bundled';
+import { ShareToRepoButton, toHomePath } from '@/components/settings/contribute/ShareToRepoButton';
+import { buildProcessContributePrompt } from '@/components/settings/contribute/contributePrompts';
 
 const { Text, Paragraph } = Typography;
 
@@ -167,6 +169,24 @@ export function ProcessTemplatesTab({ refreshTick }: { refreshTick?: number }) {
                 复制到用户层
               </Button>
             </Tooltip>
+          )}
+          {/* 分享仅对用户工艺开放（is_system=false，位于 ~/.ntd/processes/，可修改才可分享）；
+              远端路径按分类放 processes/{category}/ 子目录，无分类则放根下。 */}
+          {!record.is_system && (
+            <ShareToRepoButton
+              actionType="process_contribute"
+              actionKey={record.guid}
+              params={{
+                resource_name: record.name,
+                version: record.version,
+                resource_dir: toHomePath(record.source_path || ''),
+                remote_path: `processes/${record.category ? record.category + '/' : ''}${record.name}.yaml`,
+              }}
+              buildPrompt={buildProcessContributePrompt}
+              panelTitle={`分享工艺 ${record.display_name || record.name}`}
+              panelDescription="AI 将读取本机 PAT，把该工艺 YAML 提交为 PR 到官方仓库（可编辑下方 Prompt）"
+              size="small"
+            />
           )}
         </Space>
       ),
