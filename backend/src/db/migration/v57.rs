@@ -111,6 +111,13 @@ mod tests {
             .await
             .expect(":memory: db must open");
 
+        // bootstrap 建的是最终 schema（表名 workspaces，V94 已改名）。
+        // V47/V57 是历史迁移，执行时表还叫 project_directories：先把表名还原成当时的名字，
+        // 模拟「老库升级」的真实场景（V94 只对存量库执行，测试单独跑 V47/V57 时不会经过它）。
+        db.exec("ALTER TABLE workspaces RENAME TO project_directories")
+            .await
+            .expect("rename workspaces -> project_directories must succeed");
+
         let v47 = crate::db::migration::v47_v53::V47ConsolidatedBlackboardFeatures;
         v47.up(&db).await.expect("V47 migration must succeed");
 

@@ -54,6 +54,13 @@ mod tests {
             .await
             .expect(":memory: db must open");
 
+        // bootstrap 建的是最终 schema（表名 workspaces，V94 已改名）。
+        // V61 是历史迁移，执行时表还叫 project_directories：把表名还原成当时的名字，
+        // 模拟「老库升级到 V61」的真实场景（V94 只对存量库执行，测试单独跑 V61 时不会经过它）。
+        db.exec("ALTER TABLE workspaces RENAME TO project_directories")
+            .await
+            .expect("rename workspaces -> project_directories must succeed");
+
         let migration = V61AddProjectDirectoriesExecutorSessions;
         migration.up(&db).await.expect("V61 migration must succeed");
 
