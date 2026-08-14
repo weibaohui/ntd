@@ -8,7 +8,10 @@ import {
   RightOutlined,
 } from '@ant-design/icons';
 import { CopyButton } from '@/components/CopyButton';
-import XMarkdown from '@ant-design/x-markdown';
+// 093：x-markdown 换懒加载封装。本组件经 TodoListPage → RunningBoard 静态进入
+// 首屏依赖图，静态 import 会把 1.1MB 的 vendor-md-editor chunk 拖回首屏 preload
+// （098「运行视图归事项」接链引入的回归）。
+import { LazyXMarkdown as XMarkdown } from '@/components/common/LazyXMarkdown';
 import { ExecutorBadge } from '@/components/ExecutorBadge';
 // 093：本组件只消费 todo 域状态，用细粒度 useTodos 替代合并版 useApp，
 // 执行态（进度/统计推送）变化不再触发本组件重渲染。
