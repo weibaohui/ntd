@@ -1,8 +1,8 @@
 use std::collections::{HashMap, VecDeque};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use dashmap::DashMap;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 
@@ -16,6 +16,9 @@ use crate::executor_service::{
 use crate::executor_service::ExecEvent;
 use crate::models::ParsedLogEntry;
 use crate::service_context::ServiceContext;
+use crate::services::executor_session::{
+    DirectExecutorSession, SessionError, SessionSpawnConfig,
+};
 use crate::task_manager::TaskManager;
 
 #[derive(Debug, Clone)]
@@ -740,20 +743,6 @@ pub fn merge_pending_messages(messages: &[PendingMessage]) -> String {
 // 用户侧表现为"发了消息毫无反馈"。这一组纯函数/小函数把可测的逻辑抽出来：
 // 三类反馈消息（开始/错误/空结束）的格式 + 带超时地运行子进程并在超时时 kill 回收。
 
-/// 把 config 里的 `execution_timeout_secs` 解析成直连执行器要用的超时。
-///
-/// 飞书直连执行器与 todo 执行路径共用同一把全局超时旋钮（`execution_timeout_secs`），
-/// 不再维护独立的写死阈值。`0` 在 todo pipeline 里表示「不限制」
-/// （`timeout_enabled = v > 0`），这里遵循同一语义：`0` → `None`，走无超时等待分支。
-/// 原因是 `tokio::time::timeout(Duration::from_secs(0), ..)` 会立刻返回 `Elapsed`，
-/// 若把 0 直接当超时传进去，所有直连调用会被瞬间判死。
-fn direct_executor_timeout(secs: u64) -> Option<std::time::Duration> {
-    if secs == 0 {
-        None
-    } else {
-        Some(std::time::Duration::from_secs(secs))
-    }
-}
 
 /// 开始执行时发回飞书的标志文本。
 ///
@@ -818,9 +807,12 @@ fn executor_empty_end_message(executor_type: &str) -> String {
 /// 把这段决策从 `handle_default_response_executor` 主体抽成纯函数，是为了能直接单测
 /// 非零退出 + 多字节中文 stdout 的截断行为——原来内联时 `&stdout[..1500]` 按字节切片，
 /// 落在中文中间会 panic，反而把"执行器非零退出"变成 debounce 任务崩溃。
+/// 096-W4-6 起入参从 `&ExitStatus` 改为 success + exit_code 两个标量：
+/// DirectExecutorSession 不透传 ExitStatus（B 通路用不到），A 通路只需退出位与退出码。
 fn build_executor_end_content(
     executor_type: &str,
-    status: &std::process::ExitStatus,
+    success: bool,
+    exit_code: Option<i32>,
     _result_text: Option<String>,
     _stdout: &str,
     stderr: &str,
@@ -828,173 +820,28 @@ fn build_executor_end_content(
     // 非零退出时 stderr 给用户的预览上限，按 char 计：与开始消息 preview 同语义，
     // 避免 `&str[..n]` 这种按字节切片切到多字节字符中间触发 panic。
     const STDERR_PREVIEW_CHAR_LIMIT: usize = 1500;
-    if status.success() {
+    if success {
         // 进程退出 0：统一发简洁结束标志，过程内容已实时推送，不再重复输出
         format!("✅ {} 处理完成", executor_type)
     } else {
+        // 退出码不能 {:?} 给用户看（会渲染成 Rust 调试格式 Some(1)）：
+        // 被信号杀死时 code() 为 None，给可读文案（评审修复）
+        let code_text = match exit_code {
+            Some(code) => code.to_string(),
+            None => "未知（进程被信号终止）".to_string(),
+        };
         // 非零退出：用 stderr 展示错误信息（执行器错误信息通常走 stderr），
         // stderr 为空则只报退出码。
         let diagnostic = stderr.chars().take(STDERR_PREVIEW_CHAR_LIMIT).collect::<String>();
         if diagnostic.trim().is_empty() {
-            executor_error_message(executor_type, &format!("退出码 {:?}", status.code()))
+            executor_error_message(executor_type, &format!("退出码 {}", code_text))
         } else {
             executor_error_message(
                 executor_type,
-                &format!("退出码 {:?}\n{}", status.code(), diagnostic),
+                &format!("退出码 {}\n{}", code_text, diagnostic),
             )
         }
     }
-}
-
-/// `run_executor_with_timeout` 的失败原因。
-///
-/// 区分"超时"和"wait 本身出错"是因为两者的用户提示不同：超时基本是 provider
-/// 挂起，wait 失败更可能是本地进程/系统层问题。调用方据此拼错误消息。
-#[derive(Debug)]
-enum ExecutorRunError {
-    /// 子进程在 `timeout` 内未退出，已被 kill 回收。
-    Timeout { secs: u64 },
-    /// `child.wait()` 本身返回了错误（例如系统层 IO 失败）。
-    WaitFailed(String),
-}
-
-/// 带超时地运行子进程：并发读取 stdout + `child.wait()` 与计时器竞赛。
-///
-/// 不用 `Child::wait_with_output`——它按值消费 `child`，超时分支就拿不到句柄
-/// 去 kill，pi 会变成孤儿进程继续占资源。这里改成先 `take()` 出 stdout
-/// 在独立 task 里 `read_to_end`，再用 `&mut child.wait()` 参与超时竞赛；
-/// 超时则 `start_kill`（发 SIGKILL）+ `wait` 回收僵尸，返回 `Timeout`。
-/// 成功则把 (退出状态, stdout 字节) 一起返回给上层解析。
-///
-/// `timeout` 为 `Some` 时按上述超时竞赛执行；为 `None` 时表示用户把
-/// `execution_timeout_secs` 设为 `0`（不限制），此时直接 `child.wait()` 等到进程退出，
-/// 不包 `tokio::time::timeout`、不 kill——语义与 todo pipeline 的
-/// `timeout_enabled = v > 0` 对齐。
-///
-/// 注意：生产代码已改用 `wait_child_with_timeout` + `stream_executor_stdout` 替代此函数，
-/// 保留此函数仅供测试覆盖超时/kill 行为。
-#[allow(dead_code)]
-async fn run_executor_with_timeout(
-    mut child: tokio::process::Child,
-    timeout: Option<std::time::Duration>,
-) -> Result<(std::process::ExitStatus, Vec<u8>), ExecutorRunError> {
-    // 先把 stdout 拿走，独立 task 里读完整缓冲。这样 wait 的计时竞赛只管
-    // 进程退出，不阻塞在 stdout 读取上；超时分支也还能 kill child。
-    let stdout_handle = child.stdout.take();
-    let stdout_task = stdout_handle.map(|mut reader| {
-        tokio::spawn(async move {
-            let mut buf = Vec::new();
-            // 读取失败时返回已收到的部分；调用方按字节解析，不因读错误整体失败
-            let _ = reader.read_to_end(&mut buf).await;
-            buf
-        })
-    });
-
-    // Some → 计时竞赛；None → 无超时等待。两条分支成功后都要 join stdout task。
-    // 错误分支用 `return Err(..)` 提前退出，故此处 `wait_outcome` 即 `ExitStatus`。
-    let wait_outcome = match timeout {
-        Some(t) => match tokio::time::timeout(t, child.wait()).await {
-            Ok(Ok(status)) => status,
-            // wait 本身出错：本地进程/系统层问题，带上错误信息让用户看得到
-            Ok(Err(e)) => return Err(ExecutorRunError::WaitFailed(e.to_string())),
-            Err(_) => {
-                // 超时：先 SIGKILL 再 wait 回收，避免 pi 孤儿进程；两步失败都不致命，用 _ 忽略
-                let _ = child.start_kill();
-                let _ = child.wait().await;
-                // 此处故意不 join stdout_task：kill 后子进程管道关闭，read_to_end 收到 EOF
-                // 自行结束，task 变 detached 但不会泄漏；超时路径本就不要输出，buf 随 task 丢弃。
-                return Err(ExecutorRunError::Timeout { secs: t.as_secs() });
-            }
-        },
-        None => match child.wait().await {
-            Ok(status) => status,
-            // wait 本身出错的情况与 Some 分支一致，复用同一个错误变体
-            Err(e) => return Err(ExecutorRunError::WaitFailed(e.to_string())),
-        },
-    };
-
-    // 进程已退出，join 读 stdout 的 task 拿完整输出；task 若 panic 则当无输出。
-    // 用 async block 而非闭包，才能在里面 await join handle。
-    let buf = match stdout_task {
-        Some(task) => task.await.unwrap_or_default(),
-        None => Vec::new(),
-    };
-    Ok((wait_outcome, buf))
-}
-
-/// 仅等待子进程退出（不读 stdout），超时则 kill 回收
-///
-/// 与 run_executor_with_timeout 的区别：不负责读取 stdout，因为 stdout 句柄
-/// 在调用前已被 take() 走用于流式读取。此函数只做 wait + timeout + kill。
-async fn wait_child_with_timeout(
-    mut child: tokio::process::Child,
-    timeout: Option<std::time::Duration>,
-) -> Result<std::process::ExitStatus, ExecutorRunError> {
-    match timeout {
-        // Some → 计时竞赛；None → 无超时等待
-        Some(t) => match tokio::time::timeout(t, child.wait()).await {
-            Ok(Ok(status)) => Ok(status),
-            Ok(Err(e)) => Err(ExecutorRunError::WaitFailed(e.to_string())),
-            Err(_) => {
-                // 超时：SIGKILL + wait 回收，避免孤儿进程
-                let _ = child.start_kill();
-                let _ = child.wait().await;
-                Err(ExecutorRunError::Timeout { secs: t.as_secs() })
-            }
-        },
-        None => match child.wait().await {
-            Ok(status) => Ok(status),
-            Err(e) => Err(ExecutorRunError::WaitFailed(e.to_string())),
-        },
-    }
-}
-
-/// 流式读取执行器 stdout 的结果
-///
-/// logs：解析后的日志条目，用于提取最终结果（get_final_result_from_logs）
-/// raw_stdout：原始 stdout 文本，用于错误诊断和兜底回复
-struct StdoutStreamResult {
-    logs: Vec<ParsedLogEntry>,
-    raw_stdout: String,
-}
-
-/// 流式读取执行器 stdout：逐行解析并发送 Output 事件
-///
-/// 复用 log_capture.rs 的 EventPipeline 创建和解析逻辑，确保 executor 直连执行
-/// 与 todo 执行产生完全相同格式的事件。发送的 ExecEvent::Output 会被
-/// FeishuPushService 按 push_level 推送到飞书（"all" 时推送过程事件）。
-///
-/// `direct_output_info` 为 Some 时，每条解析出的日志额外发一条
-/// DirectStreamMessage 直接推送给触发用户（一对一私聊场景），
-/// 这样即使 push target 未配置该用户，用户也能在聊天中看到执行过程。
-async fn stream_executor_stdout<R: tokio::io::AsyncRead + Unpin + Send>(
-    stdout_handle: Option<R>,
-    executor: &Arc<dyn crate::adapters::CodeExecutor>,
-    tx: &broadcast::Sender<ExecEvent>,
-    task_id: &str,
-    workspace_id: Option<i64>,
-    direct_output_info: Option<DirectOutputInfo>,
-) -> StdoutStreamResult {
-    let Some(stdout) = stdout_handle else {
-        return StdoutStreamResult { logs: Vec::new(), raw_stdout: String::new() };
-    };
-    // 复用 log_capture 的 pipeline 创建逻辑，确保与 todo 执行路径一致
-    let mut pipeline = log_capture::create_pipeline_for_executor(executor.as_ref())
-        .unwrap_or_else(|| EventPipeline::new(executor.executor_type().as_str()));
-    let mut reader = BufReader::new(stdout).lines();
-    let mut result = StdoutStreamResult { logs: Vec::new(), raw_stdout: String::new() };
-
-    while let Ok(Some(line)) = reader.next_line().await {
-        process_executor_stdout_line(
-            &line, &mut pipeline, executor, tx, task_id, workspace_id,
-            direct_output_info.as_ref(), &mut result,
-        );
-    }
-    finalize_pipeline_by_path(
-        &mut pipeline, tx, task_id, workspace_id,
-        direct_output_info.as_ref(), &mut result,
-    );
-    result
 }
 
 /// 一对一私聊场景下，过程消息直接推送的目标信息
@@ -1017,10 +864,9 @@ fn process_executor_stdout_line(
     task_id: &str,
     workspace_id: Option<i64>,
     direct_output: Option<&DirectOutputInfo>,
-    result: &mut StdoutStreamResult,
+    logs: &mut Vec<ParsedLogEntry>,
 ) {
-    result.raw_stdout.push_str(line);
-    result.raw_stdout.push('\n');
+    // 096-W4-6：raw_stdout 收集移交 DirectExecutorSession 骨架，这里只累积解析结果 logs。
     // 一对一私聊场景：手动解析，只发送 DirectStreamMessage，不调用 parse_and_broadcast（避免发送 Output 导致重复）
     if let Some(info) = direct_output {
         let parsed_list = parse_for_direct_stream(pipeline, line);
@@ -1028,13 +874,13 @@ fn process_executor_stdout_line(
             for entry in &parsed_list {
                 emit_direct_stream(tx, info, entry.clone());
             }
-            result.logs.extend(parsed_list);
+            logs.extend(parsed_list);
             return;
         }
         // 回退到 executor 自定义解析
         let Some(parsed) = executor.parse_output_line(line) else { return };
         emit_direct_stream(tx, info, parsed.clone());
-        result.logs.push(parsed);
+        logs.push(parsed);
         return;
     }
     // 非私聊场景：走标准流程，调用 parse_and_broadcast 发送 Output 事件
@@ -1043,7 +889,7 @@ fn process_executor_stdout_line(
         pipeline, line, tx, task_id, workspace_id, executor.as_ref(),
     );
     if !parsed_list.is_empty() {
-        result.logs.extend(parsed_list);
+        logs.extend(parsed_list);
         return;
     }
     // 回退到 executor 自定义解析（非 JSONL 格式的行）
@@ -1056,7 +902,7 @@ fn process_executor_stdout_line(
             workspace_id,
         },
     );
-    result.logs.push(parsed);
+    logs.push(parsed);
 }
 
 /// 手动解析 pipeline：只返回解析结果，不发送 Output 事件（由调用方决定发送方式）
@@ -1093,7 +939,7 @@ fn finalize_pipeline_by_path(
     task_id: &str,
     workspace_id: Option<i64>,
     direct_output: Option<&DirectOutputInfo>,
-    result: &mut StdoutStreamResult,
+    logs: &mut Vec<ParsedLogEntry>,
 ) {
     let len_before = pipeline.len();
     pipeline.finalize();
@@ -1108,7 +954,7 @@ fn finalize_pipeline_by_path(
                 | crate::execution_events::ExecutionEvent::Result { .. } => {
                     let parsed = crate::execution_events::DbLogEntry::from_event_to_parsed_log_entry(event);
                     emit_direct_stream(tx, info, parsed.clone());
-                    result.logs.push(parsed);
+                    logs.push(parsed);
                 }
                 _ => {}
             }
@@ -1116,7 +962,7 @@ fn finalize_pipeline_by_path(
         }
         // 非私聊场景：走标准流程，发送 Output 事件
         let parsed = log_capture::emit_broadcast_event(event, tx, task_id, workspace_id);
-        result.logs.push(parsed);
+        logs.push(parsed);
     }
 }
 
@@ -1156,6 +1002,50 @@ fn emit_direct_stream(
 // 红线）拆成 7 个职责单一的阶段。每个失败分支自行发飞书提示后返回 Err(None)，
 // 编排体用 ? 向上传播——副作用与返回的耦合被收敛进单一阶段内部（线性错误处理），
 // 编排体本身回归成一段 stepdown 叙事。行为与原实现逐分支一致，签名零改动。
+
+/// 读全局超时旋钮 execution_timeout_secs。
+///
+/// 飞书直连执行器与 todo 执行路径共用同一把旋钮；0 = 不限制（session 骨架内部
+/// 用极大 duration 表达「永不超时」，与 todo pipeline 的 `timeout_enabled = v > 0` 对齐）。
+fn read_execution_timeout_secs(config: &Arc<std::sync::RwLock<crate::config::Config>>) -> u64 {
+    // 锁中毒=有线程 panic 过，但配置值本身仍可读：恢复内部守卫降级读取，
+    // 不让一次无关 panic 击穿飞书默认响应链路（生产代码禁 expect，见禁止清单 #1）
+    config
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .execution_timeout_secs
+}
+
+/// 096-W4-6：session typed error → 飞书错误提示 + Err(None)（编排体保持线性 ? 上抛）。
+///
+/// Spawn/Timeout/WaitFailed 三个分支的文案与原 spawn_executor_child /
+/// await_executor_exit 逐字一致；StdoutReadFailed 是新增分支——原实现 stdout 读错误
+/// 只静默结束循环，doc 101 已声明的行为微变：上抛让用户可见，避免「看似跑完实则丢输出」。
+fn session_error_to_feishu(
+    e: SessionError,
+    executor_type: &str,
+    send_msg: &(dyn Fn(String) + Sync),
+) -> Option<String> {
+    match e {
+        SessionError::Spawn(err) => {
+            tracing::error!("[debounce] failed to spawn executor {}: {}", executor_type, err);
+            send_msg(executor_error_message(executor_type, &format!("启动进程失败：{}", err)));
+        }
+        SessionError::Timeout { secs, .. } => {
+            tracing::error!("[debounce] executor {} timed out after {}s", executor_type, secs);
+            send_msg(executor_error_message(executor_type, &format!("执行超时（{}s）", secs)));
+        }
+        SessionError::WaitFailed(msg) => {
+            tracing::error!("[debounce] failed to wait for executor {}: {}", executor_type, msg);
+            send_msg(executor_error_message(executor_type, &format!("等待进程失败：{}", msg)));
+        }
+        SessionError::StdoutReadFailed { source, .. } => {
+            tracing::error!("[debounce] failed to read executor {} stdout: {}", executor_type, source);
+            send_msg(executor_error_message(executor_type, &format!("读取进程输出失败：{}", source)));
+        }
+    }
+    None
+}
 
 /// 阶段①：解析直连执行器要使用的工作空间目录。
 ///
@@ -1266,46 +1156,6 @@ async fn resolve_executor_session(
     }
 }
 
-/// 阶段④：构建执行器命令（带 session_id）并 spawn 子进程。
-///
-/// spawn 失败（程序不存在 / 无权限等）自行发飞书提示并返回 Err(None)。
-async fn spawn_executor_child(
-    executor: &Arc<dyn crate::adapters::CodeExecutor>,
-    workspace_path: &str,
-    message: &str,
-    session_id: Option<&str>,
-    executor_type: &str,
-    send_msg: &(dyn Fn(String) + Sync),
-) -> Result<tokio::process::Child, Option<String>> {
-    // is_resume 由是否有 session_id 推导：有 session 则让执行器续上下文而非新开会话
-    let is_resume = session_id.is_some();
-    let command_args = executor.command_args_with_session(message, session_id, is_resume);
-    let program = executor.executable_path();
-    tracing::info!(
-        "[debounce] spawning: {} {:?} (cwd={:?})",
-        program,
-        command_args,
-        workspace_path
-    );
-    // 三个 stdio 全 piped：stdout/stderr 由我们读取，stdin 在编排体里 take()后 drop 关闭
-    let mut cmd = tokio::process::Command::new(program);
-    cmd.args(&command_args)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .stdin(std::process::Stdio::piped())
-        .current_dir(workspace_path);
-    match cmd.spawn() {
-        Ok(c) => Ok(c),
-        Err(e) => {
-            tracing::error!("[debounce] failed to spawn executor {}: {}", executor_type, e);
-            send_msg(executor_error_message(
-                executor_type,
-                &format!("启动进程失败：{}", e),
-            ));
-            Err(None)
-        }
-    }
-}
 
 /// 阶段⑤：查 push_level，仅当配置为 "all" 时返回私聊直推目标。
 ///
@@ -1338,102 +1188,8 @@ async fn resolve_direct_output(
     }
 }
 
-/// 阶段⑥：读 config 超时，带超时地等子进程退出（超时则 kill 回收）。
-///
-/// 超时 / wait 失败自行发飞书提示并返回 Err(None)；成功返回退出状态。
-async fn await_executor_exit(
-    child: tokio::process::Child,
-    config: &Arc<std::sync::RwLock<crate::config::Config>>,
-    executor_type: &str,
-    send_msg: &(dyn Fn(String) + Sync),
-) -> Result<std::process::ExitStatus, Option<String>> {
-    // 与 todo pipeline 共用全局超时旋钮 execution_timeout_secs；0 表示不限制（→ None）
-    let timeout_secs = {
-        #[allow(clippy::expect_used)]
-        // 中毒=有线程 panic，继续无意义；与全仓 RwLock 处置约定一致
-        let cfg = config
-            .read()
-            .expect("config RwLock poisoned in handle_default_response_executor");
-        cfg.execution_timeout_secs
-    };
-    let timeout = direct_executor_timeout(timeout_secs);
-    match wait_child_with_timeout(child, timeout).await {
-        Ok(s) => {
-            tracing::info!(
-                "[debounce] executor {} finished, exit_code={:?}",
-                executor_type,
-                s.code()
-            );
-            Ok(s)
-        }
-        Err(ExecutorRunError::Timeout { secs }) => {
-            tracing::error!("[debounce] executor {} timed out after {}s", executor_type, secs);
-            send_msg(executor_error_message(executor_type, &format!("执行超时（{}s）", secs)));
-            Err(None)
-        }
-        Err(ExecutorRunError::WaitFailed(msg)) => {
-            tracing::error!(
-                "[debounce] failed to wait for executor {}: {}",
-                executor_type,
-                msg
-            );
-            send_msg(executor_error_message(
-                executor_type,
-                &format!("等待进程失败：{}", msg),
-            ));
-            Err(None)
-        }
-    }
-}
 
-/// 阶段⑦的输出打包：避免 stream / stderr / result_text 三个值在调用链里裸传递。
-struct ExecutorOutput {
-    /// 流式解析结果：logs 用于提取结果 + session，raw_stdout 用于诊断兜底
-    stream: StdoutStreamResult,
-    /// 子进程 stderr 全文：非零退出时拼进错误消息
-    stderr: String,
-    /// 从 logs 提取的最终结果文本（执行器产出的结论）
-    result_text: Option<String>,
-}
 
-/// 阶段⑦：join 流式读取、读 stderr、计算最终结果文本。
-///
-/// 纯收集，无致命分支：stream_task panic 时降级为空结果，stderr 读取失败只丢 stderr。
-async fn collect_executor_output(
-    stream_task: JoinHandle<StdoutStreamResult>,
-    stderr_handle: Option<tokio::process::ChildStderr>,
-    executor_type: &str,
-) -> ExecutorOutput {
-    // join 流式读取：task panic 时按空结果处理（与原 unwrap_or 一致）
-    let stream = stream_task.await.unwrap_or(StdoutStreamResult {
-        logs: Vec::new(),
-        raw_stdout: String::new(),
-    });
-    // 读 stderr：read_to_end 失败只丢 stderr 内容，不影响主流程结果
-    let stderr = match stderr_handle {
-        Some(mut reader) => {
-            let mut buf = Vec::new();
-            let _ = reader.read_to_end(&mut buf).await;
-            String::from_utf8_lossy(&buf).to_string()
-        }
-        None => String::new(),
-    };
-    // stderr 非空才打日志：按 char 截 2000，避免按字节切片切断多字节中文
-    if !stderr.is_empty() {
-        let stderr_preview: String = stderr.chars().take(2000).collect();
-        tracing::info!("[debounce] executor {} stderr:\n{}", executor_type, stderr_preview);
-    }
-    // stdout 预览：同样按 char 截 2000，与 stderr 预览同语义
-    let stdout_preview: String = stream.raw_stdout.chars().take(2000).collect();
-    tracing::info!("[debounce] executor {} stdout:\n{}", executor_type, stdout_preview);
-    // 从日志提取最终结果（与 todo 执行路径一致）
-    let result_text = crate::executor_service::completion::get_final_result_from_logs(&stream.logs);
-    ExecutorOutput {
-        stream,
-        stderr,
-        result_text,
-    }
-}
 
 /// 阶段⑧：执行成功时从日志提取 session_id 并持久化到 DB（实现多轮对话 resume）。
 ///
@@ -1595,67 +1351,79 @@ impl MessageDebounce {
             session_id.as_deref().map(|s| s.chars().take(20).collect::<String>())
         );
 
-        // ④ 构建执行器命令（带 session_id）并 spawn 子进程
-        let mut child = spawn_executor_child(
-            &executor,
-            &workspace_path,
-            message,
-            session_id.as_deref(),
-            executor_type,
-            &send_msg,
-        )
-        .await?;
-
-        // ⑤ 提取 stdout/stderr 句柄、生成 task_id、发"开始处理"、关 stdin、查直推目标、
-        // spawn 流式读取。这段留体内：stream_task 的 tokio::spawn move 了 stdout_handle /
-        // tx / executor / task_id 多个本地值，抽出要么造巨参 helper、要么引入中间 struct，
-        // 收益不抵成本（YAGNI）。
-        let stdout_handle = child.stdout.take();
-        let stderr_handle = child.stderr.take();
-        // task_id 提前生成：流式读取任务和最终返回值共用同一个 id
+        // ④⑤⑥⑦ 进程生命周期收敛进 DirectExecutorSession（096-W4-6）：spawn → 关 stdin →
+        // 逐行解析推送 → 超时 kill → wait。飞书侧前置动作（task_id、开始回执、直推目标
+        // 解析）与逐行语义（EventPipeline 有状态解析 + 私聊直推分支）留在本通路闭包里。
+        let timeout_secs = read_execution_timeout_secs(config);
+        // task_id 提前生成：逐行事件和最终返回值共用同一个 id
         let task_id = format!("executor-{}-{}", executor_type, uuid::Uuid::new_v4());
-        // spawn 成功立即回执"开始处理"，让飞书侧知道请求已被接收并在跑
+        // spawn 前发"开始处理"回执（原实现 spawn 成功后才发；session 把 spawn 失败也收进
+        // 一次调用，回执提前到调用前——spawn 失败分支紧随其后发错误提示，用户不会误解为
+        // "已在处理"，时序差异仅在失败场景多收一条开始提示）
         send_msg(executor_start_message(executor_type, message));
-        // take() 并 drop 关闭 stdin，避免 CLI 进程挂起等待 EOF。不写 stdin payload：
-        // debounce 流式路径不是 worktree 场景，pi 的 "y" 应答只在切 worktree 目录时才有意义。
-        if child.stdin.take().is_some() {
-            tracing::debug!("[debounce] stdin 已关闭");
-        }
         let direct_output_info =
             resolve_direct_output(db, bot_id, receive_id.clone(), receive_id_type).await;
-        // 并发读 stdout：复用 log_capture 的 pipeline 解析，产生与 todo 执行同格式的事件，
-        // FeishuPushService 按 push_level 推送（"all" 时推送过程事件到飞书）
-        let stream_task = tokio::spawn({
-            let tx = tx.clone();
-            let executor = executor.clone();
-            let tid = task_id.clone();
-            async move {
-                stream_executor_stdout(
-                    stdout_handle,
+        // pipeline 在闭包外创建：闭包逐行借用它做有状态解析，产生与 todo 执行同格式的事件
+        let mut pipeline = log_capture::create_pipeline_for_executor(executor.as_ref())
+            .unwrap_or_else(|| EventPipeline::new(executor.executor_type().as_str()));
+        let mut logs: Vec<ParsedLogEntry> = Vec::new();
+        let outcome = DirectExecutorSession::spawn_and_stream(
+            SessionSpawnConfig {
+                executor: executor.clone(),
+                message: message.to_string(),
+                cwd: PathBuf::from(&workspace_path),
+                session_id: session_id.clone(),
+                timeout_secs,
+                // tracing 关联用 task_id：session 的 spawn/finish/timeout 日志能对回本通路
+                log_tag: task_id.clone(),
+            },
+            |line: &str| {
+                // 逐行语义：pipeline 解析 + Output/DirectStreamMessage 推送 + logs 累积
+                // （私聊直推 vs 标准广播的分支收敛在 process_executor_stdout_line 内）
+                process_executor_stdout_line(
+                    line,
+                    &mut pipeline,
                     &executor,
-                    &tx,
-                    &tid,
+                    tx,
+                    &task_id,
                     workspace_id,
-                    direct_output_info,
-                )
-                .await
-            }
-        });
+                    direct_output_info.as_ref(),
+                    &mut logs,
+                );
+            },
+        )
+        .await
+        // typed error → 本通路原有飞书提示文案（helper 内各分支自行 send_msg 后返回 None）
+        .map_err(|e| session_error_to_feishu(e, executor_type, &send_msg))?;
 
-        // ⑥ 带超时地等子进程退出（超时则 kill 回收，避免孤儿进程）
-        let status = await_executor_exit(child, config, executor_type, &send_msg).await?;
-
-        // ⑦ join 流式读取 + 读 stderr + 提取最终结果
-        let output = collect_executor_output(stream_task, stderr_handle, executor_type).await;
+        // ⑦' pipeline 收尾：flush SessionEnd 等残余事件（原 stream 任务内的后置步骤）
+        finalize_pipeline_by_path(
+            &mut pipeline,
+            tx,
+            &task_id,
+            workspace_id,
+            direct_output_info.as_ref(),
+            &mut logs,
+        );
+        // 从日志提取最终结果（与 todo 执行路径一致）
+        let result_text = crate::executor_service::completion::get_final_result_from_logs(&logs);
+        // stdout/stderr 预览：按 char 截 2000，避免按字节切片切断多字节中文
+        let stdout_preview: String = outcome.raw_stdout.chars().take(2000).collect();
+        tracing::info!("[debounce] executor {} stdout:\n{}", executor_type, stdout_preview);
+        if !outcome.raw_stderr.is_empty() {
+            let stderr_preview: String = outcome.raw_stderr.chars().take(2000).collect();
+            tracing::info!("[debounce] executor {} stderr:\n{}", executor_type, stderr_preview);
+        }
 
         // 构建结束消息：当前仅记日志——最后一条 assistant 消息已是结论，发飞书会重复。
         // 按 char 截 200 预览，避免按字节切片切断多字节中文。
         let content = build_executor_end_content(
             executor_type,
-            &status,
-            output.result_text,
-            &output.stream.raw_stdout,
-            &output.stderr,
+            outcome.success,
+            outcome.exit_code,
+            result_text,
+            &outcome.raw_stdout,
+            &outcome.raw_stderr,
         );
         tracing::info!(
             "[debounce] executor {} result_text={:?}",
@@ -1664,15 +1432,8 @@ impl MessageDebounce {
         );
 
         // ⑧ 成功时持久化 session（best-effort，失败只 warn）
-        if status.success() {
-            persist_executor_session(
-                db,
-                &executor,
-                &output.stream.logs,
-                workspace_id,
-                executor_type,
-            )
-            .await;
+        if outcome.success {
+            persist_executor_session(db, &executor, &logs, workspace_id, executor_type).await;
         }
 
         Ok(crate::executor_service::ExecutionResult {
@@ -1773,6 +1534,78 @@ mod merge_pending_messages_tests {
 mod executor_feedback_tests {
     use super::*;
 
+    use tokio::io::AsyncReadExt;
+#[derive(Debug)]
+#[allow(dead_code)]
+enum ExecutorRunError {
+    /// 子进程在 `timeout` 内未退出，已被 kill 回收。
+    Timeout { secs: u64 },
+    /// `child.wait()` 本身返回了错误（例如系统层 IO 失败）。
+    WaitFailed(String),
+}
+
+/// 带超时地运行子进程：并发读取 stdout + `child.wait()` 与计时器竞赛。
+///
+/// 不用 `Child::wait_with_output`——它按值消费 `child`，超时分支就拿不到句柄
+/// 去 kill，pi 会变成孤儿进程继续占资源。这里改成先 `take()` 出 stdout
+/// 在独立 task 里 `read_to_end`，再用 `&mut child.wait()` 参与超时竞赛；
+/// 超时则 `start_kill`（发 SIGKILL）+ `wait` 回收僵尸，返回 `Timeout`。
+/// 成功则把 (退出状态, stdout 字节) 一起返回给上层解析。
+///
+/// `timeout` 为 `Some` 时按上述超时竞赛执行；为 `None` 时表示用户把
+/// `execution_timeout_secs` 设为 `0`（不限制），此时直接 `child.wait()` 等到进程退出，
+/// 不包 `tokio::time::timeout`、不 kill——语义与 todo pipeline 的
+/// `timeout_enabled = v > 0` 对齐。
+///
+async fn run_executor_with_timeout(
+    mut child: tokio::process::Child,
+    timeout: Option<std::time::Duration>,
+) -> Result<(std::process::ExitStatus, Vec<u8>), ExecutorRunError> {
+    // 先把 stdout 拿走，独立 task 里读完整缓冲。这样 wait 的计时竞赛只管
+    // 进程退出，不阻塞在 stdout 读取上；超时分支也还能 kill child。
+    let stdout_handle = child.stdout.take();
+    let stdout_task = stdout_handle.map(|mut reader| {
+        tokio::spawn(async move {
+            let mut buf = Vec::new();
+            // 读取失败时返回已收到的部分；调用方按字节解析，不因读错误整体失败
+            let _ = reader.read_to_end(&mut buf).await;
+            buf
+        })
+    });
+
+    // Some → 计时竞赛；None → 无超时等待。两条分支成功后都要 join stdout task。
+    // 错误分支用 `return Err(..)` 提前退出，故此处 `wait_outcome` 即 `ExitStatus`。
+    let wait_outcome = match timeout {
+        Some(t) => match tokio::time::timeout(t, child.wait()).await {
+            Ok(Ok(status)) => status,
+            // wait 本身出错：本地进程/系统层问题，带上错误信息让用户看得到
+            Ok(Err(e)) => return Err(ExecutorRunError::WaitFailed(e.to_string())),
+            Err(_) => {
+                // 超时：先 SIGKILL 再 wait 回收，避免 pi 孤儿进程；两步失败都不致命，用 _ 忽略
+                let _ = child.start_kill();
+                let _ = child.wait().await;
+                // 此处故意不 join stdout_task：kill 后子进程管道关闭，read_to_end 收到 EOF
+                // 自行结束，task 变 detached 但不会泄漏；超时路径本就不要输出，buf 随 task 丢弃。
+                return Err(ExecutorRunError::Timeout { secs: t.as_secs() });
+            }
+        },
+        None => match child.wait().await {
+            Ok(status) => status,
+            // wait 本身出错的情况与 Some 分支一致，复用同一个错误变体
+            Err(e) => return Err(ExecutorRunError::WaitFailed(e.to_string())),
+        },
+    };
+
+    // 进程已退出，join 读 stdout 的 task 拿完整输出；task 若 panic 则当无输出。
+    // 用 async block 而非闭包，才能在里面 await join handle。
+    let buf = match stdout_task {
+        Some(task) => task.await.unwrap_or_default(),
+        None => Vec::new(),
+    };
+    Ok((wait_outcome, buf))
+}
+
+
     /// 短消息：开始标志应包含执行器名 + 原文 preview，前缀 ⏳ 与全仓 status_icon 约定一致。
     #[test]
     fn test_executor_start_message_basic() {
@@ -1796,6 +1629,39 @@ mod executor_feedback_tests {
     fn test_executor_error_message_format() {
         let msg = executor_error_message("pi", "执行超时（300s）");
         assert_eq!(msg, "❌ pi 执行失败：执行超时（300s）");
+    }
+
+    /// session typed error → 飞书错误文案映射（096-W4-6）：四个分支的前缀与原因透传
+    /// 必须与原 spawn_executor_child / await_executor_exit 的文案逐字一致——
+    /// 这是「typed error 各通路映射回原有文案」收敛承诺的回归锚点。
+    #[test]
+    fn test_session_error_to_feishu_四分支错误文案映射() {
+        let sent = std::sync::Mutex::new(Vec::<String>::new());
+        let send = |content: String| sent.lock().unwrap().push(content);
+        session_error_to_feishu(
+            SessionError::Spawn(std::io::Error::new(std::io::ErrorKind::NotFound, "no such file")),
+            "pi",
+            &send,
+        );
+        session_error_to_feishu(
+            SessionError::Timeout { secs: 300, stderr: String::new() },
+            "pi",
+            &send,
+        );
+        session_error_to_feishu(SessionError::WaitFailed("boom".to_string()), "pi", &send);
+        session_error_to_feishu(
+            SessionError::StdoutReadFailed {
+                source: std::io::Error::new(std::io::ErrorKind::BrokenPipe, "eof"),
+                stderr: String::new(),
+            },
+            "pi",
+            &send,
+        );
+        let sent = sent.into_inner().unwrap();
+        assert_eq!(sent[0], "❌ pi 执行失败：启动进程失败：no such file");
+        assert_eq!(sent[1], "❌ pi 执行失败：执行超时（300s）");
+        assert_eq!(sent[2], "❌ pi 执行失败：等待进程失败：boom");
+        assert_eq!(sent[3], "❌ pi 执行失败：读取进程输出失败：eof");
     }
 
     /// 工作空间缺失提示（wid=0 未绑定哨兵）：必须引导去绑定而非报「0 不存在」，
@@ -1881,50 +1747,27 @@ mod executor_feedback_tests {
         assert!(out.contains("hi"), "stdout should contain hi, got: {}", out);
     }
 
-    /// `0` 必须解析成 `None`：`tokio::time::timeout` 吃 0 秒会立刻 Elapsed，
-    /// 0 走 None 分支才能正确表达「不限制」语义。
-    #[test]
-    fn test_direct_executor_timeout_zero_is_none() {
-        assert!(direct_executor_timeout(0).is_none(), "0 must map to None (no timeout)");
-    }
-
-    /// 正值必须解析成 `Some(Duration)`，且秒数原样透传。
-    #[test]
-    fn test_direct_executor_timeout_positive_is_some() {
-        let d = direct_executor_timeout(3600).expect("positive secs must map to Some");
-        assert_eq!(d.as_secs(), 3600);
-    }
 
     /// 成功时有解析结果：统一返回简洁结束标志，result_text 已通过过程消息实时推送。
     #[test]
     fn test_build_executor_end_content_success_with_result_text() {
-        let status = std::process::Command::new("sh")
-            .args(["-c", "true"])
-            .status()
-            .expect("spawn sh true");
-        let content = build_executor_end_content("pi", &status, Some("最终答案".to_string()), "ignored stdout", "");
+        // 096-W4-6：status 改为 success + exit_code 标量，测试不再需要真起 sh 进程
+        let content =
+            build_executor_end_content("pi", true, Some(0), Some("最终答案".to_string()), "ignored stdout", "");
         assert_eq!(content, "✅ pi 处理完成");
     }
 
     /// 退出 0 + 有原始 stdout：统一返回简洁结束标志，stdout 已通过过程消息实时推送。
     #[test]
     fn test_build_executor_end_content_success_returns_marker() {
-        let status = std::process::Command::new("sh")
-            .args(["-c", "true"])
-            .status()
-            .expect("spawn sh true");
-        let content = build_executor_end_content("pi", &status, None, "hello world", "");
+        let content = build_executor_end_content("pi", true, Some(0), None, "hello world", "");
         assert_eq!(content, "✅ pi 处理完成");
     }
 
     /// 退出 0 + stdout 为空：统一返回简洁结束标志，与有输出时保持一致。
     #[test]
     fn test_build_executor_end_content_success_empty_returns_marker() {
-        let status = std::process::Command::new("sh")
-            .args(["-c", "true"])
-            .status()
-            .expect("spawn sh true");
-        let content = build_executor_end_content("pi", &status, None, "   \n  ", "");
+        let content = build_executor_end_content("pi", true, Some(0), None, "   \n  ", "");
         assert_eq!(content, "✅ pi 处理完成");
     }
 
@@ -1935,14 +1778,10 @@ mod executor_feedback_tests {
     fn test_build_executor_end_content_nonzero_chinese_no_panic() {
         // 1600 个全中文字符，确保命中截断分支
         let chinese = "执行出错".repeat(400);
-        let status = std::process::Command::new("sh")
-            .args(["-c", "exit 1"])
-            .status()
-            .expect("spawn sh exit 1");
         // 关键断言：这一行不 panic 即说明按 char 截断生效
-        let content = build_executor_end_content("pi", &status, None, "", &chinese);
+        let content = build_executor_end_content("pi", false, Some(1), None, "", &chinese);
         assert!(
-            content.starts_with("❌ pi 执行失败：退出码 Some(1)"),
+            content.starts_with("❌ pi 执行失败：退出码 1"),
             "should start with error prefix, got: {}",
             content
         );
