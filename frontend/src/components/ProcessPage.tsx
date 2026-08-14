@@ -15,6 +15,9 @@ import { ProcessFlowGraph } from '@/components/process/ProcessFlowGraph';
 import { ProcessEditor } from '@/components/process/ProcessEditor';
 // M6：新建工艺元信息 Modal
 import { CreateProcessMetaModal } from '@/components/process/CreateProcessMetaModal';
+// 027：工艺分享到官方仓库
+import { ShareToRepoButton, toHomePath } from '@/components/settings/contribute/ShareToRepoButton';
+import { buildProcessContributePrompt } from '@/components/settings/contribute/contributePrompts';
 // 029：pushUrl 用于"创建工艺"按钮导航到编辑器路由（/#/processes?processMode=new）。
 import { useViewState } from '@/hooks/useViewState';
 
@@ -317,14 +320,37 @@ function ProcessListView({ workspaceId, onOpenLoop, processGuid, pushUrl }: Omit
             复制
           </Button>
         ) : (
-          <Button
-            key="edit"
-            type="text"
-            icon={<EditOutlined />}
-            onClick={() => pushUrl('processes', { processMode: 'edit', guid: p.guid })}
-          >
-            编辑
-          </Button>
+          <>
+            <Button
+              key="edit"
+              type="text"
+              icon={<EditOutlined />}
+              onClick={() => pushUrl('processes', { processMode: 'edit', guid: p.guid })}
+            >
+              编辑
+            </Button>
+            {/* 分享仅对用户工艺开放（is_system=false）；source_path 为空（异常/旧数据）时不渲染，
+                避免空路径给 AI 执行器。与模板管理-工艺 Tab 的分享参数一致。 */}
+            {p.source_path && (
+              <span key="share">
+                <ShareToRepoButton
+                  actionType="process_contribute"
+                  actionKey={p.guid}
+                  params={{
+                    resource_name: p.name,
+                    version: p.version,
+                    resource_dir: toHomePath(p.source_path),
+                    remote_path: `processes/${p.category ? p.category + '/' : ''}${p.name}.yaml`,
+                  }}
+                  buildPrompt={buildProcessContributePrompt}
+                  panelTitle={`分享工艺 ${p.display_name || p.name}`}
+                  panelDescription="AI 将读取本机 PAT，把该工艺 YAML 提交为 PR 到官方仓库（可编辑下方 Prompt）"
+                  size="small"
+                  iconOnly
+                />
+              </span>
+            )}
+          </>
         ),
       ]}
     >

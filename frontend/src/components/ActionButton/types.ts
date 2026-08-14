@@ -49,6 +49,12 @@ export interface ActionButtonProps {
   /** 是否显示触发按钮文字；移动端空间紧张可传 false 只留图标 */
   showLabel?: boolean;
   /**
+   * 挂载后自动打开 Drawer（打开动作只触发一次）。
+   * 用途：ShareToRepoButton 首次点击时先查 PAT 配置态，已配置后把组件切换为
+   * ActionButton 并自动弹抽屉，避免用户「再点一次」才打开。
+   */
+  autoOpen?: boolean;
+  /**
    * 自定义完成态视图。提供后，completed 状态不再渲染默认的「结果原文 + 应用/拒绝」，
    * 改由该插槽全权负责（如 ProposalButton 把结果解析成建议列表 + 批量创建）。
    * 完成态的 Drawer footer 同时置空，操作按钮由插槽自行在视图内承载（建议用 sticky 底栏）。

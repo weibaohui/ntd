@@ -53,6 +53,7 @@ export function ActionButton({
   buttonSize = 'middle',
   showLabel = true,
   completedView,
+  autoOpen = false,
 }: ActionButtonProps) {
   const [open, setOpen] = useState(false);
   const [editablePrompt, setEditablePrompt] = useState(prompt);
@@ -123,6 +124,20 @@ export function ActionButton({
   const handleClose = () => {
     setOpen(false);
   };
+
+  // autoOpen：组件挂载后自动打开 Drawer（仅触发一次）。
+  // 分享按钮首次点击查完 PAT 后切换为 ActionButton 并直接弹抽屉，省去用户再点一次；
+  // 之后关闭再点按钮走正常 handleOpen。handleOpen 每次渲染都是新引用，effect 只依赖 autoOpen，
+  // 用 ref 标记避免父组件重渲染（如 checking 变化）时重复打开。
+  const autoOpenedRef = useRef(false);
+  useEffect(() => {
+    if (autoOpen && !autoOpenedRef.current) {
+      autoOpenedRef.current = true;
+      handleOpen();
+    }
+    // handleOpen 每次渲染捕获最新 props，挂载时闭包即当前值，无需加入依赖
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoOpen]);
 
   const handleExecute = () => {
     execute(editablePrompt, selectedExecutor);

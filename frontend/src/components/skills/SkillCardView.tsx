@@ -4,6 +4,8 @@ import { AppstoreOutlined } from '@ant-design/icons';
 import { EXECUTORS } from '@/types';
 import type { SkillMeta, ExecutorSkills } from '@/types';
 import { EXECUTOR_COLORS, splitSkillName, formatSize } from './helpers';
+import { ShareToRepoButton } from '@/components/settings/contribute/ShareToRepoButton';
+import { buildSkillContributePrompt } from '@/components/settings/contribute/contributePrompts';
 import './SkillCardView.css';
 
 interface SkillCardViewProps {
@@ -62,10 +64,12 @@ function ExecutorBlock({ executor, installed }: { executor: string; installed: b
 }
 
 // 单个 Skill 卡片
-function SkillCard({ skill, executors, onClick }: {
+function SkillCard({ skill, executors, onClick, shareDir }: {
   skill: SkillMeta;
   executors: { name: string; installed: boolean }[];
   onClick: () => void;
+  /** 技能目录（~ 相对路径，后端 skills_dir 已转 ~），空则不渲染分享入口 */
+  shareDir: string;
 }) {
   const { category, shortName } = splitSkillName(skill.name);
   const gradient = generateGradient(skill.name);
@@ -171,6 +175,31 @@ function SkillCard({ skill, executors, onClick }: {
         }}>
           {installedCount}/{executors.length}
         </span>
+        {/* 分享到官方仓库：技能全量可分享（不区分来源）。
+            卡片本身可点击打开详情，分享按钮需阻止冒泡，避免误开详情抽屉。 */}
+        {shareDir && (
+          <div
+            onClick={(e) => e.stopPropagation()}
+            role="presentation"
+            style={{ display: 'flex', alignItems: 'center' }}
+          >
+            <ShareToRepoButton
+              actionType="skill_contribute"
+              actionKey={skill.name}
+              params={{
+                resource_name: skill.name,
+                version: skill.version || '',
+                resource_dir: shareDir,
+                remote_path: `skills/${skill.name}/`,
+              }}
+              buildPrompt={buildSkillContributePrompt}
+              panelTitle={`分享技能 ${skill.name}`}
+              panelDescription="AI 将读取本机 PAT，把该技能目录提交为 PR 到官方仓库（可编辑下方 Prompt）"
+              size="small"
+              iconOnly
+            />
+          </div>
+        )}
       </div>
     </div>
   );
@@ -251,7 +280,10 @@ export function SkillCardView({ data, searchText, onSkillClick }: SkillCardViewP
         name,
         installed: installedExecutors.has(name),
       }));
-      return { skill, executors };
+      // 找该技能首个安装执行器的 skills_dir（后端已转 ~ 相对），拼接出技能目录供分享定位
+      const owner = data.find(e => e.skills.some(s => s.name === skill.name));
+      const skillsDir = owner?.skills_dir ? `${owner.skills_dir}/${skill.name}` : '';
+      return { skill, executors, skillsDir };
     });
   }, [dedupedSkills, searchText, selectedCategories, activeExecutors]);
 
@@ -299,11 +331,12 @@ export function SkillCardView({ data, searchText, onSkillClick }: SkillCardViewP
         </div>
       ) : (
         <div className="skill-card-grid">
-          {filteredSkills.map(({ skill, executors }) => (
+          {filteredSkills.map(({ skill, executors, skillsDir }) => (
             <SkillCard
               key={skill.name}
               skill={skill}
               executors={executors}
+              shareDir={skillsDir}
               onClick={() => onSkillClick(skill, executors.find(e => e.installed)?.name || data[0]?.executor || '')}
             />
           ))}

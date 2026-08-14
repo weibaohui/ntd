@@ -4,6 +4,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import {
+  Alert,
   App,
   Button,
   Empty,
@@ -13,6 +14,7 @@ import {
   Spin,
   Table,
   Tag,
+  Tooltip,
   Form,
   Input,
   message as antMessage,
@@ -102,7 +104,15 @@ export function ExpertsTemplatesTab() {
   };
 
   return (
-    <div>
+    <div className="expert-templates-tab">
+      {/* 系统/用户双图层级说明（与工艺 Tab 风格一致）：系统专家来自远程仓库同步，会被覆盖；
+          用户专家存放在 ~/.ntd/experts/，不会被同步覆盖。 */}
+      <Alert
+        type="info"
+        showIcon
+        style={{ marginBottom: 16 }}
+        message="系统专家来自远程仓库，每次同步会被覆盖；用户专家存放在 ~/.ntd/experts/，不会被同步覆盖。如需自定义，请新建或导入自己的专家。"
+      />
       <Space style={{ marginBottom: 16 }} wrap>
         <Button icon={<ReloadOutlined />} onClick={loadExperts} loading={loading}>
           刷新
@@ -119,6 +129,41 @@ export function ExpertsTemplatesTab() {
             pagination={false}
             scroll={{ x: 'max-content' }}
             columns={[
+              // 操作列置于第一列：与事项模板/Skill/工艺各 Tab 保持一致，操作入口前置便于定位
+              {
+                title: '操作',
+                key: 'actions',
+                width: 240,
+                render: (_, record: ExpertMetadata) => (
+                  <Space>
+                    <Tooltip title="查看详情">
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<EyeOutlined />}
+                        onClick={() => handleOpenDetail(record)}
+                      />
+                    </Tooltip>
+                    <Tooltip title="编辑">
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<EditOutlined />}
+                        onClick={() => handleOpenEdit(record)}
+                      />
+                    </Tooltip>
+                    <ContributeButton expert={record} size="small" iconOnly />
+                    <Popconfirm
+                      title="确定删除此专家？"
+                      onConfirm={() => handleDelete(record.name)}
+                    >
+                      <Tooltip title="删除">
+                        <Button type="text" size="small" icon={<DeleteOutlined />} />
+                      </Tooltip>
+                    </Popconfirm>
+                  </Space>
+                ),
+              },
               {
                 title: '名称',
                 key: 'name',
@@ -151,34 +196,6 @@ export function ExpertsTemplatesTab() {
                 dataIndex: 'version',
                 key: 'version',
                 width: 80,
-              },
-              {
-                title: '操作',
-                key: 'actions',
-                width: 240,
-                render: (_, record: ExpertMetadata) => (
-                  <Space>
-                    <Button
-                      type="text"
-                      size="small"
-                      icon={<EyeOutlined />}
-                      onClick={() => handleOpenDetail(record)}
-                    />
-                    <Button
-                      type="text"
-                      size="small"
-                      icon={<EditOutlined />}
-                      onClick={() => handleOpenEdit(record)}
-                    />
-                    <ContributeButton expert={record} size="small" />
-                    <Popconfirm
-                      title="确定删除此专家？"
-                      onConfirm={() => handleDelete(record.name)}
-                    >
-                      <Button type="text" size="small" icon={<DeleteOutlined />} />
-                    </Popconfirm>
-                  </Space>
-                ),
               },
             ]}
           />
