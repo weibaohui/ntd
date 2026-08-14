@@ -49,6 +49,8 @@ pub(crate) struct SessionOutcome {
     pub(crate) raw_stderr: String,
     /// 子进程是否成功退出（status.success()）
     pub(crate) success: bool,
+    /// 退出码（被信号杀死时为 None）——A 通路非零退出的用户文案要报「退出码 N」
+    pub(crate) exit_code: Option<i32>,
 }
 
 /// typed error：A/B 调用方各自映射回原有错误文案，不共用字符串（避免通路语义耦合）。
@@ -188,7 +190,10 @@ where
                         if !raw_stderr.is_empty() {
                             tracing::warn!("[session] stderr: tag={}, stderr={}", log_tag, raw_stderr);
                         }
-                        return Ok(SessionOutcome { raw_stdout, raw_stderr, success: status.success() });
+                        // 退出位与退出码一次性取出后再构造返回值：status 后续不再使用
+                        let success = status.success();
+                        let exit_code = status.code();
+                        return Ok(SessionOutcome { raw_stdout, raw_stderr, success, exit_code });
                     }
                     Err(e) => {
                         let stderr = raw_stderr_lines.join("\n");
@@ -288,6 +293,7 @@ mod tests {
         assert_eq!(outcome.raw_stdout, "line1\nline2");
         assert_eq!(outcome.raw_stderr, "");
         assert!(outcome.success);
+        assert_eq!(outcome.exit_code, Some(0), "正常退出应为退出码 0");
     }
 
     /// 启动失败：程序不存在 → SessionError::Spawn（调用方据此映射各自文案）。
@@ -355,5 +361,6 @@ mod tests {
         .await
         .unwrap();
         assert!(!outcome.success);
+        assert_eq!(outcome.exit_code, Some(3), "exit 3 的退出码应透传给调用方");
     }
 }
