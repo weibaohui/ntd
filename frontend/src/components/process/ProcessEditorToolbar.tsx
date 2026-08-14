@@ -61,7 +61,9 @@ export function ProcessEditorToolbar({
   onBack,
 }: ProcessEditorToolbarProps): JSX.Element {
   return (
-    <div style={toolbarStyle}>
+    // data-testid 供 Playwright 把断言圈在工具栏内——属性面板里也有「删除」按钮，
+    // 按可访问名匹配会误命中，需用 testid 精确定位工具栏的操作区。
+    <div style={toolbarStyle} data-testid="process-editor-toolbar">
       {/* 左：062 起标题统一「模块名: 具体名称」格式；displayName 与唯一名同时保留，
           唯一名作次级文本便于区分同名显示名的工艺。 */}
       <div style={titleStyle}>
