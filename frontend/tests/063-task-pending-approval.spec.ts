@@ -14,6 +14,8 @@
  * 关键约定：
  * - workspace_id=1 匹配默认工作空间；
  * - 任务页视图模式经 localStorage ntd_tasks_view 固定，避免依赖上次浏览残留。
+ * - 种子前缀每次运行唯一（见 beforeAll）：dev 库被全量套件共享，固定前缀 +
+ *   beforeAll/afterAll 清理会在并行 worker 同跑本文件时互删对方种子（自竞态）。
  */
 
 import { test, expect } from '@playwright/test';
@@ -25,7 +27,25 @@ import { join } from 'node:path';
 const BASE = 'http://localhost:18088';
 const DEV_DB = join(homedir(), '.ntd', 'data.dev.db');
 const WS = 1;
-const PREFIX = 'e2e-063-';
+// 本次运行的种子前缀，beforeAll 里生成（见下）：固定值会让并行 worker 的 cleanup()
+// 按 LIKE 误删对方刚种的行；run 唯一前缀保证清理只碰自己的数据，互不干扰。
+let PREFIX = 'e2e-063-';
+
+/**
+ * 带 busy_timeout 的 sqlite3 执行：dev 库同时被后端服务占用，写锁冲突时
+ * sqlite3 CLI 默认立即报 database is locked(5)；busy_timeout 让本次连接
+ * 挂起等锁（最多 5s）而非直接失败，覆盖测试自身并行写入与后端写事务的竞争窗口。
+ * 实现细节两个坑：
+ * - 不能用 PRAGMA busy_timeout：它会向 stdout 输出一行 "5000"，污染 SELECT
+ *   回读（Number("5000\n320") → NaN，063-3/4/5 曾因此全挂）。
+ * - dot-command 必须走 -cmd 选项：混进位置参数会被当 SQL 静默吞掉整段脚本
+ *   （退出码仍为 0，种子不落库且难排查）。
+ */
+function runSql(sql: string): string {
+  return execFileSync('sqlite3', ['-cmd', '.timeout 5000', DEV_DB, sql], {
+    encoding: 'utf-8',
+  });
+}
 
 /**
  * 种子数据：一个 task + 其 loop 的一次执行，环节停在 pending_approval。
@@ -33,7 +53,11 @@ const PREFIX = 'e2e-063-';
  */
 function seedPendingApprovalTask(): number {
   const ts = Date.now();
-  execFileSync('sqlite3', [DEV_DB, `
+  // 关联 id 一律用 last_insert_rowid() 链式回填，不用 (SELECT MAX(id) ...)：
+  // dev 库被多个并行 worker 共享，MAX(id) 在「本 worker INSERT 与取 MAX 之间」
+  // 可能被对方 worker 插入的行反超（A 的 task 挂到 B 的 loop 上，清理时被连带删除）。
+  // last_insert_rowid() 只看本连接会话的最后插入，天然 worker 隔离。
+  runSql(`
     INSERT INTO todos (title, prompt, status, executor, workspace_id, workspace_path, created_at, updated_at)
     VALUES ('${PREFIX}todo-${ts}','待审批环节载体','success','claudecode',${WS},'/tmp',
             datetime('now'), datetime('now'));
@@ -41,31 +65,35 @@ function seedPendingApprovalTask(): number {
     VALUES ('${PREFIX}loop-${ts}','063 待审批透出验证',${WS},'/tmp','enabled',
             datetime('now'), datetime('now'));
     INSERT INTO loop_steps (loop_id,name,description,order_index,todo_id,gate_config,skill_names,created_at)
-    VALUES ((SELECT MAX(id) FROM loops),'人工审批环节','需人工审批',0,
-            (SELECT MAX(id) FROM todos),
+    VALUES (last_insert_rowid(),'人工审批环节','需人工审批',0,
+            (SELECT id FROM todos WHERE title='${PREFIX}todo-${ts}'),
             '[{"name":"人工审批","type":"human_approval"}]','[]', datetime('now'));
     INSERT INTO tasks (title,description,status,workspace_id,loop_id,created_by,created_at,updated_at)
     VALUES ('${PREFIX}task-${ts}','063 待审批透出验证任务','running',${WS},
-            (SELECT MAX(id) FROM loops),'e2e',datetime('now'),datetime('now'));
+            (SELECT id FROM loops WHERE name='${PREFIX}loop-${ts}'),'e2e',datetime('now'),datetime('now'));
     INSERT INTO loop_executions (loop_id,trigger_type,trigger_meta,started_at,status,total_steps,task_id)
-    VALUES ((SELECT MAX(id) FROM loops),'manual','{}',datetime('now'),'running',1,
-            (SELECT MAX(id) FROM tasks));
+    VALUES ((SELECT id FROM loops WHERE name='${PREFIX}loop-${ts}'),'manual','{}',datetime('now'),
+            'running',1,(SELECT id FROM tasks WHERE title='${PREFIX}task-${ts}'));
     INSERT INTO loop_step_executions (loop_execution_id,step_id,todo_id,status,started_at,
                                       sequence_index,approval_status)
-    VALUES ((SELECT MAX(id) FROM loop_executions),(SELECT MAX(id) FROM loop_steps),
-            (SELECT MAX(id) FROM todos),'pending_approval',datetime('now'),1,'pending');
+    VALUES ((SELECT id FROM loop_executions WHERE loop_id=(SELECT id FROM loops WHERE name='${PREFIX}loop-${ts}')),
+            (SELECT id FROM loop_steps WHERE loop_id=(SELECT id FROM loops WHERE name='${PREFIX}loop-${ts}')),
+            (SELECT id FROM todos WHERE title='${PREFIX}todo-${ts}'),
+            'pending_approval',datetime('now'),1,'pending');
     INSERT INTO loop_step_execution_gates (loop_step_execution_id,gate_type,gate_name,config,status)
-    VALUES ((SELECT MAX(id) FROM loop_step_executions),
+    VALUES ((SELECT id FROM loop_step_executions WHERE loop_execution_id=
+              (SELECT id FROM loop_executions WHERE loop_id=(SELECT id FROM loops WHERE name='${PREFIX}loop-${ts}'))),
             'human_approval','人工审批','{"name":"人工审批","type":"human_approval"}','pending');
-  `], { encoding: 'utf-8' });
-  return Number(execFileSync('sqlite3', [DEV_DB,
-    `SELECT id FROM tasks WHERE title LIKE '${PREFIX}task-%' ORDER BY id DESC LIMIT 1`
-  ], { encoding: 'utf-8' }).trim());
+  `);
+  // 回读 task id 也按 run 唯一标题精确匹配，避免 LIKE 前缀误中并行 worker 的行。
+  return Number(runSql(
+    `SELECT id FROM tasks WHERE title='${PREFIX}task-${ts}'`
+  ).trim());
 }
 
-/** 清理 e2e-063- 种子数据（自外而内按 FK 依赖顺序删除）。 */
+/** 清理本次运行的种子数据（自外而内按 FK 依赖顺序删除，仅命中自己的 run 前缀）。 */
 function cleanup(): void {
-  execFileSync('sqlite3', [DEV_DB, `
+  runSql(`
     DELETE FROM loop_step_execution_gates WHERE loop_step_execution_id IN
       (SELECT id FROM loop_step_executions WHERE loop_execution_id IN
         (SELECT id FROM loop_executions WHERE loop_id IN
@@ -80,22 +108,22 @@ function cleanup(): void {
       (SELECT id FROM loops WHERE name LIKE '${PREFIX}%');
     DELETE FROM loops WHERE name LIKE '${PREFIX}%';
     DELETE FROM todos WHERE title LIKE '${PREFIX}%';
-  `], { encoding: 'utf-8' });
+  `);
 }
 
 /**
  * 固定任务页视图模式后打开任务页。
  *
- * 关键修复：同时把 selected_workspace 钉到 WS(=1)。
- * 应用启动时 useTodoContext 的 getInitialWorkspace 会读 localStorage 的 selected_workspace
- * 决定请求哪个 workspace 的任务列表；该值会被其他 e2e 用例（或上一次手动操作）残留成非 1 的 id，
- * 导致本用例种子落到 ws=1、浏览器却请求 ws=N，列表/看板/卡片三态都看不到任务、待审批标记自然不渲染。
- * 种子与接口断言（063-1）都按 WS=1 走，这里必须把浏览器也钉回 WS 保持一致。
+ * 关键实现：用 addInitScript 在任何应用代码执行前写入 localStorage，
+ * 不能用「goto → evaluate → reload」三段式：应用启动后 useApp/App.tsx 的异步
+ * SELECT_WORKSPACE dispatch 会把 evaluate 刚写入的值覆盖回 dirs[0]（dev 库按
+ * path 排序是 ws3），reload 读到 3 而非种子所在的 WS=1，任务行/卡片随机消失
+ * （并发下 dispatch 与 evaluate 的先后顺序不确定，表现为偶发失败）。
+ * addInitScript 先于应用 boot 执行，getInitialWorkspace 直接读到 WS。
  */
 async function gotoTasks(page: import('@playwright/test').Page, mode: 'list' | 'kanban' | 'card') {
-  await page.goto(`${BASE}/#/tasks`, { waitUntil: 'domcontentloaded' });
-  // page.evaluate 的回调会被序列化到浏览器执行，无法闭包捕获外层 WS，必须随 arg 显式传入。
-  await page.evaluate(
+  // addInitScript 回调会被序列化到浏览器执行，无法闭包捕获外层 WS，必须随 arg 显式传入。
+  await page.addInitScript(
     ({ m, ws }) => {
       localStorage.setItem('ntd_tasks_view', m);
       // 钉住工作空间：种子任务在 WS，浏览器请求必须命中同一 workspace 才能看到该任务。
@@ -103,13 +131,19 @@ async function gotoTasks(page: import('@playwright/test').Page, mode: 'list' | '
     },
     { m: mode, ws: WS },
   );
-  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.goto(`${BASE}/#/tasks`, { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(2000);
 }
 
 let taskId = 0;
 
-test.beforeAll(() => { cleanup(); taskId = seedPendingApprovalTask(); });
+test.beforeAll(() => {
+  // run 唯一前缀：TEST_PARALLEL_INDEX 区分同文件并行 worker，时间戳+随机数
+  // 兜底同 worker 内 repeat-each 重复运行（beforeAll 每轮都会重新触发清理+种入）。
+  PREFIX = `e2e-063-w${process.env.TEST_PARALLEL_INDEX ?? 'x'}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}-`;
+  cleanup();
+  taskId = seedPendingApprovalTask();
+});
 test.afterAll(() => cleanup());
 
 // ==========================================================

@@ -42,20 +42,19 @@ test('TodoList 子目录 barrel 拆除后仍渲染', async ({ page }) => {
   expect(listVisible, 'TodoList 区域未渲染').toBeTruthy();
 });
 
-test('MemorialBoard → 看板-环路视图（验证 LoopKanban / RunningBoard barrel 拆除）', async ({ page }) => {
-  await page.goto(`${BASE}/#/memorial`);
+test('环路页看板态（验证 LoopKanban / RunningBoard barrel 拆除）', async ({ page }) => {
+  // 097/098 后入口变迁：MemorialBoard/#/memorial 已删，环路看板归位 /#/loops 页内
+  // Segmented 切换。本用例意图不变——验证 barrel 拆除后 LoopKanban 子组件 import 仍解析。
+  await page.goto(`${BASE}/#/loops`);
   await page.waitForLoadState('networkidle');
 
-  // 看板导航按钮
-  const boardNav = page.locator('[aria-label="看板"]');
-  await expect(boardNav).toBeVisible({ timeout: 5000 });
-  await boardNav.click();
-  await page.waitForLoadState('networkidle');
+  // 等视图切换器可见作为「页面已就绪」信号
+  const toggle = page.getByTestId('loop-list-view-toggle');
+  await expect(toggle).toBeVisible({ timeout: 5000 });
 
-  // 切换到「环路视图」即 LoopKanban 组件
-  const loopOption = page.getByText('环路视图');
-  await expect(loopOption).toBeVisible({ timeout: 5000 });
-  await loopOption.click();
+  // 切看板态：antd 把选项 label 渲染在 .ant-segmented-item-label 的 title 属性上
+  // （radio input 视觉隐藏且 accessible name 是 icon 名，均不可直接点）
+  await toggle.locator('.ant-segmented-item-label[title="看板"]').click();
   await page.waitForLoadState('networkidle');
 
   // LoopKanban 渲染时会创建 .loop-kanban-columns-container 容器

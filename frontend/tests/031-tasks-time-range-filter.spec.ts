@@ -3,7 +3,8 @@
 // 1. 任务页默认「全部」选中，显示所有任务；
 // 2. 切到 24h 后仅最近 24 小时创建的任务可见；
 // 3. 切回「全部」恢复；
-// 4. 看板页（memorial?mode=kanban）分段回归：默认 24h 选中、无「全部」选项。
+// 4. 看板分段回归（默认 24h 选中、无「全部」选项）——097/098 后原
+//    memorial?mode=kanban 已删，看板态现为 /#/loops 页内 Segmented 切换。
 
 import { test, expect } from '@playwright/test';
 
@@ -54,7 +55,16 @@ test('任务页时间过滤分段', async ({ page }) => {
 });
 
 test('看板页时间分段回归（无全部选项，默认 24h）', async ({ page }) => {
-  await page.goto(`${BASE}/#/memorial?mode=kanban`);
+  // 097/098 后入口变迁：直达 /#/loops 再切看板态（antd 选项 label 在
+  // .ant-segmented-item-label 的 title 属性上，radio input 视觉隐藏不可直点）。
+  await page.goto(`${BASE}/#/loops`);
+  await page.waitForLoadState('networkidle');
+  const toggle = page.getByTestId('loop-list-view-toggle');
+  await expect(toggle).toBeVisible({ timeout: 5000 });
+  await toggle.locator('.ant-segmented-item-label[title="看板"]').click();
+  // 看板态挂载信号：LoopKanban 根节点。
+  await expect(page.locator('.loop-kanban-board')).toBeVisible({ timeout: 5000 });
+
   // 看板顶栏分段：含 24h 文本的 Segmented 容器。
   const segment = page.locator('.ant-segmented', { has: page.getByText('24h', { exact: true }) }).first();
   await expect(segment.getByText('6h', { exact: true })).toBeVisible();
