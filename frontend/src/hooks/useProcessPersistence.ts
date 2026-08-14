@@ -12,6 +12,9 @@
 // - handleDelete 弹 Modal.confirm 二次确认；title 优先显示名 → YAML name → GUID，
 //   detail 必须进 deps，否则闭包捕获初始 null 永远显示 GUID（陈旧闭包，原踩坑结论）。
 // - 保留静态 message/Modal（原实现即静态）。
+// - 函数体超 50 行豁免（CLAUDE.md「强行拆分将导致数据碎片化」）：保存/删除/返回/复制
+//   四动作共享 isSaving/isDeleting 加载态，且都经 deps 写回编辑器状态（markClean/
+//   setYamlText）；拆成 4 个一次性子 hook 会把共享加载态与 deps 穿线打散。整段保留。
 // ---------------------------------------------------------------------------
 
 import { useCallback, useState } from 'react';

@@ -15,6 +15,11 @@
 // - setYamlText / markClean 对外暴露：前者供 useProcessPersistence 保存成功后回刷
 //   Monaco（后端递增 version 的真值 YAML），后者供其清未保存标记。两个写出口都属
 //   「持久化回路写回编辑器状态」，故集中暴露而非各自塞回调。
+// - 函数体超 50 行豁免（CLAUDE.md「强行拆分将导致数据碎片化」）：definition/yamlText/
+//   isSyncing/isDirty/debounceRef 构成原子双向联动状态机——isSyncing 防循环 flag 须被
+//   两条联动路径共享，拆成 useEditorData + useEditorSync 会在两个 hook 间穿线 5+ setter
+//   并复制 flag，正是规范明令禁止的碎片化拆分动机。故整段保留；单一抽象层级（编辑器
+//   状态机），非 SQL/JSON/IO 多业务层混居的红线。
 // ---------------------------------------------------------------------------
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -78,9 +83,10 @@ export function useProcessEditorState(processGuid: string): UseProcessEditorStat
   const markClean = useCallback(() => setIsDirty(false), []);
 
   // ── 加载工艺详情副作用 ──
-  // 依赖 [processGuid]：目标工艺变化时重新加载。
+  // processGuid 变化时全量重载：先清旧数据避免切换工艺时闪现上一个工艺的内容，
+  // 再拉详情并解析 YAML。解析失败 definition 保持 null（渲染层走 Empty 占位），
+  // 加载/解析失败都只 message 提示不抛错打断。
   useEffect(() => {
-    // 标记加载开始
     setLoading(true);
     // 清空旧数据，避免切换工艺时闪现上一个工艺的内容
     setDetail(null);
@@ -89,33 +95,26 @@ export function useProcessEditorState(processGuid: string): UseProcessEditorStat
     setDefinition(null);
     setSelectedNodeId(null);
 
-    // 定义异步加载函数
     const loadDetail = async () => {
       try {
-        // 调用 M1 已有的 API 客户端获取工艺详情
         const result = await bundledApi.getProcess(processGuid);
-        // 设置详情和 Monaco 文本
         setDetail(result);
         setYamlText(result.definition);
         setIsSystem(result.is_system);
-        // 解析 YAML 文本为 ProcessDefinition 对象
         const parsed = parseYaml(result.definition);
         if (parsed.parsed && typeof parsed.parsed === 'object') {
           setDefinition(parsed.parsed as ProcessDefinition);
         } else if (parsed.error) {
-          // YAML 解析失败：提示错误，definition 保持 null
+          // 解析失败：definition 保持 null，渲染层显示 Empty 占位
           message.error(`YAML 解析失败：${parsed.error.message}`);
         }
       } catch {
-        // 加载失败时 message.error 提示
         message.error(`加载工艺「${processGuid}」失败`);
       } finally {
-        // 无论成功失败都关闭 loading
         setLoading(false);
       }
     };
 
-    // 触发异步加载
     void loadDetail();
   }, [processGuid]);
 
