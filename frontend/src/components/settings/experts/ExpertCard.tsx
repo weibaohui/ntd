@@ -12,6 +12,7 @@ import {
   getExpertAvatarUrl,
   getCategoryName,
 } from '@/types/expert';
+import { ExpertSourceTag } from './ExpertSourceTag';
 
 const { Text } = Typography;
 
@@ -113,14 +114,8 @@ export function ExpertCard({ expert, onClick }: {
             <Tag color="blue" style={{ margin: 0, fontSize: 10, padding: '1px 6px' }}>
               专家
             </Tag>
-            {/* 来源标签：与模板管理 Tab 的「系统/用户」配色一致（蓝=系统内置，绿=用户自定义），
-                一眼区分哪些专家是自己的（可分享/可编辑）、哪些是同步来的模板（只读）。 */}
-            <Tag
-              color={expert.source === 'system' ? 'blue' : 'green'}
-              style={{ margin: 0, fontSize: 10, padding: '1px 6px' }}
-            >
-              {expert.source === 'system' ? '系统' : '用户'}
-            </Tag>
+            {/* 来源标签：见 ExpertSourceTag（蓝=系统内置只读，绿=用户自定义可分享/可编辑） */}
+            <ExpertSourceTag source={expert.source} />
           </div>
           {profession && (
             <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 2 }}>
