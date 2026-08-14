@@ -58,11 +58,7 @@ test.describe('资源分享入口（route mock PAT 已配置）', () => {
     await userRow.getByRole('button', { name: 'share' }).click();
     await exportResp;
     await statusResp;
-    // 等 React 完成分支切换渲染后再点第二次。
-    await page.waitForTimeout(300);
-
-    // 第二次点击 ActionButton 的「分享」：打开提交 Drawer。
-    await userRow.getByRole('button', { name: 'share' }).click();
+    // autoOpen：ActionButton 挂载后自动打开 Drawer，首次点击即可看到提交面板，无需再点第二次。
 
     // Drawer 中 prompt 编辑区是 textarea，断言提示词包含导出文件路径与 todos/ 远端路径。
     const promptBox = page.locator('.ant-drawer textarea');

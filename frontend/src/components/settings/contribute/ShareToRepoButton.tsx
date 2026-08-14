@@ -70,6 +70,9 @@ export function ShareToRepoButton({
   const [configured, setConfigured] = useState(false);
   // onPrepare 的产出（如事项模板导出后的文件路径），与 params 合并后作为最终占位符参数。
   const [prepared, setPrepared] = useState<Record<string, string> | null>(null);
+  // 首次点击确认 PAT 已配置后置 true：让切换出来的 ActionButton 挂载后自动打开 Drawer，
+  // 避免「第一次点击只查配置、第二次才弹抽屉」的割裂交互。
+  const [autoOpen, setAutoOpen] = useState(false);
 
   // 点击分享：先（可选）准备文件，再查 PAT 配置态，已配置切到 ActionButton，未配置引导去设置填写。
   const handleClick = async () => {
@@ -83,6 +86,8 @@ export function ShareToRepoButton({
       const status = await getContributionAuthStatus();
       if (status.configured) {
         setConfigured(true);
+        // 切到 ActionButton 分支后让它挂载即打开 Drawer，首次点击直接看到提交面板
+        setAutoOpen(true);
       } else {
         // PAT 管理已收口到设置：这里只给提示并跳转，不再内嵌填写框。
         message.info('请先在「设置 → 第三方授权 → GitCode」中填写并保存 PAT');
@@ -112,6 +117,8 @@ export function ShareToRepoButton({
         // iconOnly 时隐藏按钮文字：ActionButton 在 children 为空时兜底显示「优化标题」（历史默认文案），
         // 分享场景必须用 showLabel=false 关掉，否则表格里的分享图标会变成「优化标题」文字按钮。
         showLabel={!iconOnly}
+        // 首次点击查完 PAT 后自动打开 Drawer（autoOpen 只在挂载时触发一次）
+        autoOpen={autoOpen}
         workspaceId={state.selectedWorkspace ?? undefined}
         panelTitle={panelTitle}
         panelDescription={panelDescription}
