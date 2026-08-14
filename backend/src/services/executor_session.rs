@@ -167,6 +167,15 @@ where
     let timeout_fut = tokio::time::sleep(Duration::from_secs(effective_secs));
     tokio::pin!(timeout_fut);
 
+    // on_line panic 隔离（评审修复）：A 原实现把逐行解析放在独立 tokio::spawn 任务里，
+    // panic 被 JoinHandle 降级为空结果，不会击穿 debounce 任务；收敛后闭包内联进本循环，
+    // 用 catch_unwind 恢复同等隔离——且比原来更强：panic 前已解析的 logs 由调用方保留，
+    // raw 收集不受影响。panic 后置 poisoned，后续行只收集不再回调（原「任务死一次即止」语义）。
+    let mut on_line_poisoned = false;
+    // 排空模式（评审修复）：计时器到点时若进程其实已退出、只是管道还在排空，
+    // 不误判超时（A 原实现的超时只包 child.wait()，不存在排空误判）。
+    let mut drain_mode = false;
+
     loop {
         tokio::select! {
             // 读取下一行 stdout：这是主数据流，EOF 即子进程产出完毕
@@ -174,8 +183,23 @@ where
                 match line_result {
                     Ok(Some(line)) => {
                         raw_stdout_lines.push(line.clone());
-                        // 逐行语义（解析 + 事件推送）交还调用方闭包
-                        on_line(&line);
+                        // 逐行语义（解析 + 事件推送）交还调用方闭包；
+                        // panic 只废掉回调本身，骨架继续读流（见 on_line_poisoned 注释）
+                        if !on_line_poisoned {
+                            let callback = std::panic::AssertUnwindSafe(|| on_line(&line));
+                            if let Err(payload) = std::panic::catch_unwind(callback) {
+                                on_line_poisoned = true;
+                                let reason = payload
+                                    .downcast_ref::<&str>()
+                                    .map(|s| (*s).to_string())
+                                    .or_else(|| payload.downcast_ref::<String>().cloned())
+                                    .unwrap_or_else(|| "unknown".to_string());
+                                tracing::error!(
+                                    "[session] on_line callback panicked, disabling callback (tag={}, reason={})",
+                                    log_tag, reason
+                                );
+                            }
+                        }
                     }
                     // stdout 读完了：等子进程退出并打包返回（stderr 可能仍有未消费缓冲，
                     // 与 B 原实现一致——拿到多少算多少，不为凑齐 stderr 阻塞返回）
@@ -215,8 +239,18 @@ where
                     }
                 }
             }
-            // 超时：kill 子进程避免僵尸，错误携带已收集的 stderr 供调用方拼文案
-            _ = &mut timeout_fut => {
+            // 超时：以「进程是否退出」为准（评审修复）。进程已退出只是管道还在排空时
+            // 切入排空模式（禁用计时分支），读完 stdout EOF 正常返回，不误判超时；
+            // 真未退出才 kill 回收，错误携带已收集的 stderr 供调用方拼文案。
+            _ = &mut timeout_fut, if !drain_mode => {
+                if let Ok(Some(_status)) = child.try_wait() {
+                    tracing::info!(
+                        "[session] timer fired but child already exited, draining remaining output: tag={}",
+                        log_tag
+                    );
+                    drain_mode = true;
+                    continue;
+                }
                 tracing::error!(
                     "[session] timed out after {}s, killing child: tag={}",
                     timeout_secs, log_tag
@@ -325,7 +359,7 @@ mod tests {
 
     /// stderr 捕获：stdout/stderr 同时产出时两路各自收集不串流。
     #[tokio::test]
-    async fn test_spawn_and_stream_stderr独立捕获不串stdout() {
+    async fn test_spawn_and_stream_双流分流捕获不串流() {
         let outcome = DirectExecutorSession::spawn_and_stream(
             make_config("/bin/sh", &["-c", "echo out; echo err 1>&2"], 10),
             |_| {},
@@ -348,6 +382,28 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(outcome.raw_stdout, "done");
+        assert!(outcome.success);
+    }
+
+    /// on_line panic 隔离（评审修复的回归锚点）：回调 panic 后骨架不击穿，
+    /// 正常返回完整 raw 文本，回调仅触发到 panic 行为止。
+    #[tokio::test]
+    async fn test_spawn_and_stream_回调panic不击穿骨架() {
+        let mut lines_seen: Vec<String> = Vec::new();
+        let outcome = DirectExecutorSession::spawn_and_stream(
+            make_config("/bin/sh", &["-c", "echo l1; echo l2; echo l3"], 10),
+            |line| {
+                // 第二行模拟解析器 panic：骨架应隔离它并继续收集
+                if line == "l2" {
+                    panic!("模拟解析器 panic");
+                }
+                lines_seen.push(line.to_string());
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(lines_seen, vec!["l1".to_string()], "panic 行之后的回调应被禁用");
+        assert_eq!(outcome.raw_stdout, "l1\nl2\nl3", "raw 收集不受回调 panic 影响");
         assert!(outcome.success);
     }
 
