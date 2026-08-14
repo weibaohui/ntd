@@ -195,7 +195,11 @@ pub async fn export_template_yaml(
 
     let home = dirs::home_dir().ok_or_else(|| AppError::Internal("无法获取 home 目录".to_string()))?;
     let export_dir = home.join(".ntd").join("contribution-export").join("todos");
-    let path = write_template_yaml(&template, &export_dir)?;
+    // 文件写入是磁盘 IO：包进 spawn_blocking 避免阻塞 tokio worker（与 experts.rs::export_expert 一致）；
+    // TodoTemplate/PathBuf 均 Send，闭包可 move 进阻塞线程
+    let path = tokio::task::spawn_blocking(move || write_template_yaml(&template, &export_dir))
+        .await
+        .map_err(|e| AppError::Internal(format!("spawn_blocking join error: {}", e)))??;
 
     Ok(Json(ApiResponse::ok(TemplateExportResponse { path })))
 }

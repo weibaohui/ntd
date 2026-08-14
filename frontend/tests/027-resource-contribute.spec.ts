@@ -80,18 +80,37 @@ test.describe('资源分享入口（route mock PAT 已配置）', () => {
   });
 
   test('工艺：用户行有分享、系统行无分享', async ({ page }) => {
+    // mock 工艺列表：固定 1 个用户工艺 + 1 个系统工艺，不依赖开发库预置（新环境也能跑）。
+    // display_name 避开「用户/系统」字样，保证来源 Tag 是唯一精确匹配文本。
+    // 注意：axios 拦截器把 /api/ 前缀重写为 /api/v1/，实际请求是 /api/v1/bundled/processes
+    await page.route('**/api/v1/bundled/processes*', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          code: 0,
+          data: [
+            { id: 1, guid: 'pw-user-guid', name: 'pw-user-process', display_name: '我的工艺', description: '', category: 'software', complexity: 'light', version: '1.0.0', source_path: '~/.ntd/processes/pw-user-process.yaml', is_system: false, created_at: null, updated_at: null },
+            { id: 2, guid: 'pw-sys-guid', name: 'pw-sys-process', display_name: '内置工艺', description: '', category: 'software', complexity: 'standard', version: '1.0.0', source_path: '~/.ntd/bundled/processes/software/pw-sys-process.yaml', is_system: true, created_at: null, updated_at: null },
+          ],
+        }),
+      }),
+    );
+
     await page.goto('/#/settings?tab=templates');
     await expect(page.locator('.ntd-templates-panel')).toBeVisible({ timeout: 10000 });
     await page.locator('.ntd-templates-panel .ant-tabs-tab').filter({ hasText: '工艺模板' }).click();
     const processTab = page.locator('.process-templates-tab');
     await expect(processTab).toBeVisible({ timeout: 10000 });
 
-    // 排序约定：用户工艺（is_system=false）在前、系统工艺在后（ProcessTemplatesTab 排序逻辑），
-    // 因此第一行应有分享、最后一行（系统）无分享。
-    // 用 tr.ant-table-row 排除 antd 隐藏测量行，first/last 才是真实数据行。
+    // 按来源文本定位行（用户工艺行有分享、系统工艺行无分享），不依赖排序约定；
+    // mock 的 display_name 已避开「用户/系统」字样，行内「用户/系统」文本唯一来自来源 Tag。
+    // 用 tr.ant-table-row 排除 antd 隐藏测量行。
     const rows = processTab.locator('tbody tr.ant-table-row');
-    await expect(rows.first().getByRole('button', { name: 'share' })).toBeVisible({ timeout: 10000 });
-    await expect(rows.last().getByRole('button', { name: 'share' })).toHaveCount(0);
+    const userRow = rows.filter({ hasText: '用户' }).first();
+    const systemRow = rows.filter({ hasText: '系统' }).first();
+    await expect(userRow.getByRole('button', { name: 'share' })).toBeVisible({ timeout: 10000 });
+    await expect(systemRow.getByRole('button', { name: 'share' })).toHaveCount(0);
   });
 
   test('技能：全量可分享，每行都有分享按钮', async ({ page }) => {

@@ -462,11 +462,6 @@ fn collect_skills_recursive(base_dir: &std::path::Path, current_dir: &std::path:
     }
 }
 
-/// 通用扫描：接受任意 executor 名字字符串（含 `agents` 这种只读来源）。
-///
-/// 把核心路径/扫描逻辑抽出来，原 `discover_skills_for_executor` 变为薄包装，
-/// 这样只读 skill 来源（如 `agents`）也能复用同一份发现逻辑。
-///
 /// 把绝对路径转成 ~ 相对路径（家目录前缀替换为 ~）。
 ///
 /// 用途：skills_dir 会进入前端分享提示词（resource_dir），
@@ -483,6 +478,11 @@ fn home_relative(path: &std::path::Path) -> String {
     }
 }
 
+/// 通用扫描：接受任意 executor 名字字符串（含 `agents` 这种只读来源）。
+///
+/// 把核心路径/扫描逻辑抽出来，原 `discover_skills_for_executor` 变为薄包装，
+/// 这样只读 skill 来源（如 `agents`）也能复用同一份发现逻辑。
+///
 /// 行为：
 /// - 输入：executor 名字（如 `"claudecode"` / `"agents"`）+ UI 显示标签
 /// - 输出：该来源的 ExecutorSkills（路径、是否存在、扫描到的 skills）
