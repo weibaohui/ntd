@@ -11,7 +11,7 @@ use crate::service_context::ServiceContext;
 use crate::services::feishu_api_client::FeishuApiClient;
 use crate::services::feishu_card::{
     build_help_console_card, render_card, ExecutorOption, HelpCardState, LoopItem,
-    RecentTaskItem, TodoItem, WorkspaceItem, WorkspaceSummary,
+    ProcessItem, RecentTaskItem, TaskItem, TodoItem, WorkspaceItem, WorkspaceSummary,
 };
 use crate::services::feishu_card_actions::CardActionHandler;
 use crate::services::feishu_listener::FeishuCommandContext;
@@ -575,45 +575,58 @@ impl SlashCommandHandler {
         page: usize,
     ) -> HelpCardState {
         let wid = db.get_agent_bot_workspace_id(bot_id).await.ok().flatten();
-        let workspace = match wid {
-            Some(id) => SlashCommandHandler::build_workspace_summary(db, id).await,
-            None => None,
-        };
-        let push_level = db
-            .get_feishu_push_target(bot_id)
+        let workspace = SlashCommandHandler::load_workspace_summary(db, wid).await;
+        let push_level = SlashCommandHandler::load_push_level(db, bot_id).await;
+        // 最近任务 + 运行状态都来自该 workspace 的最近执行记录
+        let (recent_records, is_running) = SlashCommandHandler::recent_records_and_running(db, wid).await;
+        // 104：四个列表 Tab（事项/环路/任务/工艺）统一抽成独立加载函数——
+        // assemble 曾因逐 Tab 内联查询膨胀到 112 行，抽完后主干只剩「取数 + 组装结构体」，
+        // 每个 loader 查询+降级+截断各自内聚，失败口径（error 日志 + 空列表降级）一致。
+        let todos = SlashCommandHandler::load_todo_items(db, wid, bot_id).await;
+        let loops = SlashCommandHandler::load_loop_items(db, wid).await;
+        let tasks = SlashCommandHandler::load_task_items(db, wid, bot_id).await;
+        let processes = SlashCommandHandler::load_process_items(db, wid, bot_id).await;
+        let workspaces = SlashCommandHandler::load_workspace_items(db, wid).await;
+        let available_executors =
+            SlashCommandHandler::load_executor_options(ctx, workspace.as_ref().map(|w| w.executor.as_str())).await;
+        HelpCardState {
+            current_group: current_group.to_string(),
+            workspace,
+            is_running,
+            push_level,
+            recent_records,
+            todos,
+            loops,
+            tasks,
+            processes,
+            workspaces,
+            page,
+            available_executors,
+        }
+    }
+
+    /// 加载当前 workspace 摘要（104 从 assemble_help_card_state 抽出）：未设置 workspace → None。
+    pub(crate) async fn load_workspace_summary(db: &Database, wid: Option<i64>) -> Option<WorkspaceSummary> {
+        let id = wid?;
+        SlashCommandHandler::build_workspace_summary(db, id).await
+    }
+
+    /// 加载推送级别（104 从 assemble_help_card_state 抽出）：无推送配置时默认 result_only，
+    /// 与既有行为一致（unwrap_or 回退，DB 失败静默）。
+    pub(crate) async fn load_push_level(db: &Database, bot_id: i64) -> String {
+        db.get_feishu_push_target(bot_id)
             .await
             .ok()
             .flatten()
             .map(|t| t.push_level)
-            .unwrap_or_else(|| "result_only".to_string());
-        // 最近任务 + 运行状态都来自该 workspace 的最近执行记录
-        let (recent_records, is_running) = SlashCommandHandler::recent_records_and_running(db, wid).await;
-        let todos = match wid {
-            Some(id) => db
-                // 056：卡片只展示最近 20 条摘要（id+标题+状态图标），
-                // 用 brief 接口替代整行全量拉取；take(20) 截断保持卡片体积。
-                // DB 失败时记 error（含 bot/ws 上下文）后降级为空列表——
-                // 卡片缺区块可接受，但静默吞错会让故障无法定位（CodeRabbit#4）。
-                .get_todo_briefs(Some(id), None, None)
-                .await
-                .map(|ts| ts.into_iter().take(20).map(SlashCommandHandler::brief_to_item).collect())
-                .unwrap_or_else(|e| {
-                    tracing::error!("飞书卡片加载 todo 摘要失败（bot={bot_id}, ws={id}）: {e}");
-                    Vec::new()
-                }),
-            None => vec![],
-        };
-        let loops = match wid {
-            Some(id) => db
-                .list_loops_with_counts(Some(id))
-                .await
-                .ok()
-                .map(|ls| ls.into_iter().map(SlashCommandHandler::loop_to_item).collect())
-                .unwrap_or_default(),
-            None => vec![],
-        };
-        let workspaces = db
-            .get_workspaces()
+            .unwrap_or_else(|| "result_only".to_string())
+    }
+
+    /// 加载工作空间页列表（104 从 assemble_help_card_state 抽出）：
+    /// 全量目录 + 标记当前 workspace；DB 失败静默降级空列表（既有口径，不动）。
+    /// get_workspaces 是 #1054 工作空间命名统一后的新方法名（原 get_project_directories）。
+    pub(crate) async fn load_workspace_items(db: &Database, wid: Option<i64>) -> Vec<WorkspaceItem> {
+        db.get_workspaces()
             .await
             .ok()
             .unwrap_or_default()
@@ -623,32 +636,27 @@ impl SlashCommandHandler {
                 id: d.id,
                 is_current: wid == Some(d.id),
             })
-            .collect();
-        // 已注册执行器列表 + 标记当前 workspace 配的默认执行器，供工作空间页渲染按钮排
-        let current_executor = workspace.as_ref().map(|w| w.executor.as_str()).unwrap_or("");
-        let available_executors = ctx
-            .executor_registry
+            .collect()
+    }
+
+    /// 加载执行器选项排（104 从 assemble_help_card_state 抽出）：
+    /// 已注册执行器 + 标记当前 workspace 配的默认执行器，供工作空间页渲染按钮排。
+    /// current_executor 传空串表示无 workspace 摘要，此时全部不标记。
+    pub(crate) async fn load_executor_options(
+        ctx: &ServiceContext,
+        current_executor: Option<&str>,
+    ) -> Vec<ExecutorOption> {
+        let current = current_executor.unwrap_or("");
+        ctx.executor_registry
             .list_executors()
             .await
             .into_iter()
             .map(|t| {
                 let name = t.as_str().to_string();
-                let is_current = name == current_executor;
+                let is_current = name == current;
                 ExecutorOption { name, is_current }
             })
-            .collect();
-        HelpCardState {
-            current_group: current_group.to_string(),
-            workspace,
-            is_running,
-            push_level,
-            recent_records,
-            todos,
-            loops,
-            workspaces,
-            page,
-            available_executors,
-        }
+            .collect()
     }
 
     /// 当前 workspace 摘要（名 + 默认执行器）。
@@ -693,6 +701,112 @@ impl SlashCommandHandler {
         LoopItem { id: l.loop_.id, name: l.loop_.name, status: l.loop_.status }
     }
 
+    /// 加载事项页条目（104 从 assemble_help_card_state 抽出，与 tasks/processes 同口径）。
+    /// 056：卡片只展示最近 20 条摘要（id+标题+状态图标），用 brief 接口替代整行全量拉取；
+    /// take(20) 截断保持卡片体积。DB 失败时记 error（含 bot/ws 上下文）后降级为空列表——
+    /// 卡片缺区块可接受，但静默吞错会让故障无法定位（CodeRabbit#4）。
+    pub(crate) async fn load_todo_items(db: &Database, wid: Option<i64>, bot_id: i64) -> Vec<TodoItem> {
+        let Some(id) = wid else {
+            return vec![];
+        };
+        db.get_todo_briefs(Some(id), None, None)
+            .await
+            .map(|ts| ts.into_iter().take(20).map(SlashCommandHandler::brief_to_item).collect())
+            .unwrap_or_else(|e| {
+                tracing::error!("飞书卡片加载 todo 摘要失败（bot={bot_id}, ws={id}）: {e}");
+                Vec::new()
+            })
+    }
+
+    /// 加载环路页条目（104 从 assemble_help_card_state 抽出，与 tasks/processes 同口径）。
+    /// 既有行为原样搬迁：DB 失败静默降级空列表（ok() 口径，历史如此，不动）。
+    pub(crate) async fn load_loop_items(db: &Database, wid: Option<i64>) -> Vec<LoopItem> {
+        let Some(id) = wid else {
+            return vec![];
+        };
+        db.list_loops_with_counts(Some(id))
+            .await
+            .ok()
+            .map(|ls| ls.into_iter().map(SlashCommandHandler::loop_to_item).collect())
+            .unwrap_or_default()
+    }
+
+    /// 加载任务页条目（104 新增）：按 workspace 查最近 20 条（id DESC）。
+    /// take(20) 截断与事项页同口径控制卡片体积；DB 失败降级空列表并记 error（对齐 todos 口径）。
+    pub(crate) async fn load_task_items(db: &Database, wid: Option<i64>, bot_id: i64) -> Vec<TaskItem> {
+        let Some(id) = wid else {
+            return vec![];
+        };
+        db.list_tasks(id, None)
+            .await
+            .map(|ts| ts.into_iter().take(20).map(SlashCommandHandler::task_to_item).collect())
+            .unwrap_or_else(|e| {
+                tracing::error!("飞书卡片加载 task 列表失败（bot={bot_id}, ws={id}）: {e}");
+                Vec::new()
+            })
+    }
+
+    /// 加载工艺页条目（104 新增）：系统内置（workspace_id IS NULL）+ 当前 workspace 用户模板，
+    /// 最多 20 条（name ASC 由 DB 排序）；安装/实例化不在卡片上提供。
+    pub(crate) async fn load_process_items(db: &Database, wid: Option<i64>, bot_id: i64) -> Vec<ProcessItem> {
+        db.list_process_templates(None)
+            .await
+            .map(|ts| {
+                ts.into_iter()
+                    .filter(|t| t.workspace_id.is_none() || t.workspace_id == wid)
+                    .take(20)
+                    .map(SlashCommandHandler::process_to_item)
+                    .collect()
+            })
+            .unwrap_or_else(|e| {
+                tracing::error!("飞书卡片加载工艺模板列表失败（bot={bot_id}）: {e}");
+                Vec::new()
+            })
+    }
+
+    /// tasks::Model → 任务页列表项（104 新增）。
+    /// 状态图标与前端 STATUS_COLOR 四态对齐；runnable 只认「环路模式 + 有 loop_id」，
+    /// 委派任务无环路可触，卡片上不提供执行按钮。
+    pub(crate) fn task_to_item(t: crate::db::entity::tasks::Model) -> TaskItem {
+        let status_icon = match t.status.as_str() {
+            "pending" => "⏸️",
+            "running" => "⏳",
+            "success" => "✅",
+            "failed" => "❌",
+            _ => "⏸️", // 未知状态回退「未开始」图标，卡片展示不出错优先于猜错
+        };
+        // 方式标签：委派模式把处理人拼进标签，用户一眼能看到任务交给谁在跑
+        let mode_label = match t.execution_mode.as_str() {
+            "loop" => "环路".to_string(),
+            "delegate" => format!("委派@{}", t.assignee_name.as_deref().unwrap_or("未指定")),
+            other => other.to_string(),
+        };
+        TaskItem {
+            id: t.id,
+            title: t.title,
+            status_icon: status_icon.to_string(),
+            mode_label,
+            runnable: t.execution_mode == "loop" && t.loop_id.is_some(),
+        }
+    }
+
+    /// process_templates::Model → 工艺页列表项（104 新增）。
+    /// meta 拼「复杂度 · v版本 · 系统/用户」，复杂度中文标签与前端 COMPLEXITY_LABEL 对齐。
+    pub(crate) fn process_to_item(t: crate::db::entity::process_templates::Model) -> ProcessItem {
+        let complexity = match t.complexity.as_str() {
+            "light" => "轻量",
+            "standard" => "标准",
+            "complex" => "复杂",
+            other => other, // 未知复杂度展示原值，比截断更真实
+        };
+        // 系统内置（workspace_id IS NULL）与用户模板用不同标识，方便用户区分可编辑性
+        let source = if t.is_system { "系统" } else { "用户" };
+        ProcessItem {
+            display_name: t.display_name,
+            meta: format!("{complexity} · v{} · {source}", t.version),
+        }
+    }
+
     /// ExecutionRecord → 卡片「最近任务」项（状态 emoji + 标题 + 时间）。
     pub(crate) fn record_to_recent_item(r: &crate::models::ExecutionRecord) -> RecentTaskItem {
         use crate::models::ExecutionStatus;
@@ -708,5 +822,134 @@ impl SlashCommandHandler {
             title,
             time_desc: CardActionHandler::format_record_time(&r.started_at),
         }
+    }
+}
+
+#[cfg(test)]
+// 注：本模块测试体不使用 unwrap/expect（用断言宏），无需 lint 豁免——
+// 曾带冗余 allow 被评审指出，删除（13-禁止清单：allow 仅在确有需要时使用）。
+mod tests {
+    use super::SlashCommandHandler;
+    use crate::db::entity::process_templates;
+    use crate::db::entity::tasks;
+
+    /// 造一个字段齐全的 tasks::Model，测试里改关键字段即可覆盖各分支。
+    fn task_fixture() -> tasks::Model {
+        tasks::Model {
+            id: 1,
+            title: "测试任务".to_string(),
+            description: "desc".to_string(),
+            status: "pending".to_string(),
+            workspace_id: Some(1),
+            template_id: None,
+            loop_id: Some(10),
+            created_by: "u".to_string(),
+            created_at: None,
+            updated_at: None,
+            execution_mode: "loop".to_string(),
+            assignee_kind: None,
+            assignee_name: None,
+            auto_continue: 0,
+            continue_rounds: 0,
+            delegate_max_rounds: None,
+        }
+    }
+
+    /// 环路模式 + 有 loop_id：runnable=true，标签「环路」，状态图标按 status 映射。
+    #[test]
+    fn test_task_to_item_loop_mode_runnable() {
+        let item = SlashCommandHandler::task_to_item(task_fixture());
+        assert_eq!(item.id, 1);
+        assert_eq!(item.mode_label, "环路");
+        assert!(item.runnable, "环路模式且有 loop_id 应可执行");
+        assert_eq!(item.status_icon, "⏸️", "pending 应映射 ⏸️");
+    }
+
+    /// 环路模式但缺 loop_id：不可执行（无环路可触）。
+    #[test]
+    fn test_task_to_item_loop_mode_without_loop_id_not_runnable() {
+        let mut t = task_fixture();
+        t.loop_id = None;
+        let item = SlashCommandHandler::task_to_item(t);
+        assert!(!item.runnable, "缺 loop_id 的环路任务不可执行");
+    }
+
+    /// 委派模式：不可执行，标签带处理人「委派@张三」。
+    #[test]
+    fn test_task_to_item_delegate_mode_label() {
+        let mut t = task_fixture();
+        t.execution_mode = "delegate".to_string();
+        t.assignee_name = Some("张三".to_string());
+        let item = SlashCommandHandler::task_to_item(t);
+        assert!(!item.runnable, "委派任务卡片上不可执行");
+        assert_eq!(item.mode_label, "委派@张三");
+    }
+
+    /// 委派模式缺处理人：标签兜底「委派@未指定」，不 panic。
+    #[test]
+    fn test_task_to_item_delegate_missing_assignee_fallback() {
+        let mut t = task_fixture();
+        t.execution_mode = "delegate".to_string();
+        t.assignee_name = None;
+        let item = SlashCommandHandler::task_to_item(t);
+        assert_eq!(item.mode_label, "委派@未指定");
+    }
+
+    /// 状态图标四态映射 + 未知状态回退 ⏸️。
+    #[test]
+    fn test_task_to_item_status_icons() {
+        for (status, icon) in [("running", "⏳"), ("success", "✅"), ("failed", "❌"), ("weird", "⏸️")] {
+            let mut t = task_fixture();
+            t.status = status.to_string();
+            let item = SlashCommandHandler::task_to_item(t);
+            assert_eq!(item.status_icon, icon, "status={status} 图标应映射 {icon}");
+        }
+    }
+
+    /// 工艺项：系统模板 meta 含「标准 · v1.0.0 · 系统」。
+    #[test]
+    fn test_process_to_item_system_template() {
+        let t = process_templates::Model {
+            id: 1,
+            guid: "g1".to_string(),
+            name: "delivery".to_string(),
+            display_name: "标准需求交付工艺".to_string(),
+            description: "".to_string(),
+            category: "software".to_string(),
+            complexity: "standard".to_string(),
+            version: "1.0.0".to_string(),
+            source_path: None,
+            workspace_id: None,
+            is_system: true,
+            previous_version_id: None,
+            created_at: None,
+            updated_at: None,
+        };
+        let item = SlashCommandHandler::process_to_item(t);
+        assert_eq!(item.display_name, "标准需求交付工艺");
+        assert_eq!(item.meta, "标准 · v1.0.0 · 系统");
+    }
+
+    /// 工艺项：用户模板标识「用户」，未知复杂度展示原值不截断。
+    #[test]
+    fn test_process_to_item_user_template_unknown_complexity() {
+        let t = process_templates::Model {
+            id: 2,
+            guid: "g2".to_string(),
+            name: "custom".to_string(),
+            display_name: "自定义流程".to_string(),
+            description: "".to_string(),
+            category: "migration".to_string(),
+            complexity: "weird".to_string(),
+            version: "0.2".to_string(),
+            source_path: None,
+            workspace_id: Some(1),
+            is_system: false,
+            previous_version_id: None,
+            created_at: None,
+            updated_at: None,
+        };
+        let item = SlashCommandHandler::process_to_item(t);
+        assert_eq!(item.meta, "weird · v0.2 · 用户");
     }
 }

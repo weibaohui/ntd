@@ -554,6 +554,10 @@ pub struct HelpCardState {
     pub todos: Vec<TodoItem>,
     /// 环路列表（环路页，按 workspace）
     pub loops: Vec<LoopItem>,
+    /// 任务列表（任务页，按 workspace；104 新增）
+    pub tasks: Vec<TaskItem>,
+    /// 工艺模板列表（工艺页：系统内置 + 当前 workspace 用户模板；104 新增）
+    pub processes: Vec<ProcessItem>,
     /// 事项/环路分页页码（从 1 开始；Default 0 时 build 兜底为 1）
     pub page: usize,
     /// 所有工作空间（工作空间页切换用）
@@ -604,6 +608,27 @@ pub struct LoopItem {
     pub status: String,
 }
 
+/// 任务列表项（任务页；104 新增）。
+#[derive(Debug, Clone)]
+pub struct TaskItem {
+    pub id: i64,
+    pub title: String,
+    /// 状态图标：pending ⏸️ / running ⏳ / success ✅ / failed ❌，未知回退 ⏸️。
+    pub status_icon: String,
+    /// 执行方式标签：「环路」/「委派@<处理人>」/未知模式原值，让用户不点开也能知道怎么跑的。
+    pub mode_label: String,
+    /// 是否可一键再执行（execution_mode=loop 且有 loop_id）；委派任务只展示不给按钮。
+    pub runnable: bool,
+}
+
+/// 工艺模板列表项（工艺页，纯查看无按钮；104 新增）。
+#[derive(Debug, Clone)]
+pub struct ProcessItem {
+    pub display_name: String,
+    /// 摘要行：复杂度 + 版本 + 系统/用户标识（如「标准 · v1.0.0 · 系统」）。
+    pub meta: String,
+}
+
 /// 最近任务列表项（状态页）。
 #[derive(Debug, Clone)]
 pub struct RecentTaskItem {
@@ -621,7 +646,7 @@ pub struct HistoryItem {
     pub time_desc: String,
 }
 
-/// 构建 /help 任务控制台卡片。4 个 Tab（事项/环路/工作空间/状态），默认「状态」。
+/// 构建 /help 任务控制台卡片。6 个 Tab（事项/环路/任务/工艺/工作空间/状态），默认「状态」。
 pub fn build_help_console_card(state: &HelpCardState) -> Card {
     let current = if state.current_group.is_empty() { "status" } else { state.current_group.as_str() };
     let mut builder = CardBuilder::new().title("NTD 控制台", "blue");
@@ -633,15 +658,18 @@ pub fn build_help_console_card(state: &HelpCardState) -> Card {
     builder = match current {
         "todo" => build_todo_page(builder, state),
         "loop" => build_loop_page(builder, state),
+        "task" => build_task_page(builder, state),
+        "process" => build_process_page(builder, state),
         "workspace" => build_workspace_page(builder, state),
         _ => build_status_page(builder, state),
     };
     builder.build()
 }
 
-/// 4 个 Tab 按钮，当前 Tab 高亮 primary。
+/// 6 个 Tab 按钮（104 起新增任务/工艺），当前 Tab 高亮 primary。
+/// 每行 2 个共 3 行：Tab 名短，2 列布局保证窄屏下文字完整不被截断。
 fn help_tabs(current: &str) -> Vec<CardButton> {
-    [("status", "状态"), ("todo", "事项"), ("loop", "环路"), ("workspace", "工作空间")]
+    [("status", "状态"), ("todo", "事项"), ("loop", "环路"), ("task", "任务"), ("process", "工艺"), ("workspace", "工作空间")]
         .iter()
         .map(|(key, title)| {
             let btn_type = if *key == current { "primary" } else { "default" };
@@ -708,7 +736,54 @@ fn build_loop_page(mut builder: CardBuilder, state: &HelpCardState) -> CardBuild
     builder.buttons(pagination_buttons("loops", page, total_pages))
 }
 
-/// 分页按钮（首页无「上一页」，末页无「下一页」）+ 返回状态。kind 为 "todos"/"loops"。
+/// 任务页（104 新增）：当前 workspace 的任务列表，每页 10 个。
+/// 环路模式任务点 [执行] 触发再执行；委派任务只展示（无按钮），避免误触发讨论区接力。
+fn build_task_page(mut builder: CardBuilder, state: &HelpCardState) -> CardBuilder {
+    if state.tasks.is_empty() {
+        return builder.markdown("_当前工作空间暂无任务_");
+    }
+    const PER_PAGE: usize = 10;
+    let total_pages = state.tasks.len().div_ceil(PER_PAGE);
+    let page = state.page.clamp(1, total_pages);
+    let start = (page - 1) * PER_PAGE;
+    let end = (start + PER_PAGE).min(state.tasks.len());
+    for t in &state.tasks[start..end] {
+        let label = format!("{} **{}** · {}", t.status_icon, t.title, t.mode_label);
+        if t.runnable {
+            builder = builder.list_item_btn(
+                &label,
+                "执行", "default",
+                &format!("act:/runtask {}", t.id),
+            );
+        } else {
+            // 委派/无环路任务不提供执行按钮，用纯文本行展示，
+            // 防止用户误以为可从卡片触发委派执行（委派路径走 Web 讨论区）。
+            builder = builder.markdown(&label);
+        }
+    }
+    builder = builder.divider();
+    builder.buttons(pagination_buttons("tasks", page, total_pages))
+}
+
+/// 工艺页（104 新增）：工艺模板列表，每页 10 个，纯查看（安装/实例化仍走 Web 端）。
+fn build_process_page(mut builder: CardBuilder, state: &HelpCardState) -> CardBuilder {
+    if state.processes.is_empty() {
+        return builder.markdown("_暂无工艺模板_");
+    }
+    const PER_PAGE: usize = 10;
+    let total_pages = state.processes.len().div_ceil(PER_PAGE);
+    let page = state.page.clamp(1, total_pages);
+    let start = (page - 1) * PER_PAGE;
+    let end = (start + PER_PAGE).min(state.processes.len());
+    for p in &state.processes[start..end] {
+        // 工艺页无任何按钮：需求 3c 明确仅查看，给按钮反而诱导用户在卡片上做不支持的操作。
+        builder = builder.markdown(&format!("**{}** · {}", p.display_name, p.meta));
+    }
+    builder = builder.divider();
+    builder.buttons(pagination_buttons("processes", page, total_pages))
+}
+
+/// 分页按钮（首页无「上一页」，末页无「下一页」）+ 返回状态。kind 为 "todos"/"loops"/"tasks"/"processes"。
 fn pagination_buttons(kind: &str, page: usize, total_pages: usize) -> Vec<CardButton> {
     let mut nav_btns = Vec::new();
     if page > 1 {
@@ -800,7 +875,9 @@ fn append_history_nav(builder: CardBuilder, page: usize, total_pages: usize) -> 
     if page > 1 {
         nav_btns.push(CardButton::default_btn("← 上一页", &format!("nav:/history {}", page - 1)));
     }
-    nav_btns.push(CardButton::default_btn("返回控制台", "nav:/help task"));
+    // 返回控制台用显式 status 而非原「task」占位值：104 起 task 已成为真实 Tab，
+    // 继续用 task 会让按钮落到任务页而非控制台默认状态页，属行为漂移。
+    nav_btns.push(CardButton::default_btn("返回控制台", "nav:/help status"));
     if page < total_pages {
         nav_btns.push(CardButton::default_btn("下一页 →", &format!("nav:/history {}", page + 1)));
     }
@@ -1435,6 +1512,96 @@ mod tests {
         assert!(json.contains("act:/runloop 20"), "应有执行按钮（按 id）");
     }
 
+    /// 任务页：环路任务带 [执行] 按钮，委派任务仅文本无按钮。
+    #[test]
+    fn test_build_help_console_card_task_page() {
+        let state = HelpCardState {
+            current_group: "task".to_string(),
+            tasks: vec![
+                TaskItem {
+                    id: 30,
+                    title: "实现登录".to_string(),
+                    status_icon: "⏳".to_string(),
+                    mode_label: "环路".to_string(),
+                    runnable: true,
+                },
+                TaskItem {
+                    id: 31,
+                    title: "评审文档".to_string(),
+                    status_icon: "⏸️".to_string(),
+                    mode_label: "委派@张三".to_string(),
+                    runnable: false,
+                },
+            ],
+            ..Default::default()
+        };
+        let json = render_card_map(&build_help_console_card(&state), "sk").to_string();
+        assert!(json.contains("实现登录"), "应显示环路任务标题");
+        assert!(json.contains("act:/runtask 30"), "环路任务应有执行按钮（按 id）");
+        assert!(json.contains("评审文档"), "应显示委派任务标题");
+        assert!(json.contains("委派@张三"), "委派任务应显示方式标签");
+        assert!(!json.contains("act:/runtask 31"), "委派任务不应渲染执行按钮");
+    }
+
+    /// 任务页空列表：显示占位文案而不是空卡片。
+    #[test]
+    fn test_build_help_console_card_task_page_empty() {
+        let state = HelpCardState { current_group: "task".to_string(), ..Default::default() };
+        let json = render_card_map(&build_help_console_card(&state), "sk").to_string();
+        assert!(json.contains("暂无任务"), "空任务列表应有占位文案");
+    }
+
+    /// 工艺页：纯查看无按钮，显示名称与 meta（复杂度/版本/系统标识）。
+    #[test]
+    fn test_build_help_console_card_process_page() {
+        let state = HelpCardState {
+            current_group: "process".to_string(),
+            processes: vec![ProcessItem {
+                display_name: "标准需求交付工艺".to_string(),
+                meta: "标准 · v1.0.0 · 系统".to_string(),
+            }],
+            ..Default::default()
+        };
+        let json = render_card_map(&build_help_console_card(&state), "sk").to_string();
+        assert!(json.contains("标准需求交付工艺"), "应显示工艺名");
+        assert!(json.contains("v1.0.0"), "应显示版本");
+        assert!(!json.contains("act:/"), "工艺页纯查看，不应渲染任何 act 按钮");
+    }
+
+    /// 工艺页空列表：显示占位文案。
+    #[test]
+    fn test_build_help_console_card_process_page_empty() {
+        let state = HelpCardState { current_group: "process".to_string(), ..Default::default() };
+        let json = render_card_map(&build_help_console_card(&state), "sk").to_string();
+        assert!(json.contains("暂无工艺模板"), "空工艺列表应有占位文案");
+    }
+
+    /// 6 Tab 全部渲染，当前 Tab primary 高亮。
+    #[test]
+    fn test_help_tabs_six_tabs_with_current_highlight() {
+        let tabs = help_tabs("task");
+        assert_eq!(tabs.len(), 6, "应渲染 6 个 Tab");
+        let titles: Vec<&str> = tabs.iter().map(|t| t.text.as_str()).collect();
+        assert_eq!(titles, ["状态", "事项", "环路", "任务", "工艺", "工作空间"], "Tab 顺序固定");
+        let task_tab = tabs.iter().find(|t| t.value == "nav:/help task");
+        assert_eq!(task_tab.map(|t| t.button_type.as_str()), Some("primary"), "当前 Tab 应 primary");
+        let status_tab = tabs.iter().find(|t| t.value == "nav:/help status");
+        assert_eq!(status_tab.map(|t| t.button_type.as_str()), Some("default"), "非当前 Tab 应 default");
+    }
+
+    /// 任务/工艺分页：第 1 页无「上一页」，末页无「下一页」，中间页两者皆有。
+    #[test]
+    fn test_pagination_buttons_tasks_pages() {
+        // 首页（page 1 / 共 2 页）：无上一页，有下一页，kind 拼接 nav:/tasks
+        let first = pagination_buttons("tasks", 1, 2);
+        assert!(!first.iter().any(|b| b.value == "nav:/tasks 0"), "首页无上一页");
+        assert!(first.iter().any(|b| b.value == "nav:/tasks 2"), "首页应有下一页");
+        // 末页（page 2 / 共 2 页）：有上一页，无下一页
+        let last = pagination_buttons("processes", 2, 2);
+        assert!(last.iter().any(|b| b.value == "nav:/processes 1"), "末页应有上一页");
+        assert!(!last.iter().any(|b| b.value == "nav:/processes 3"), "末页无下一页");
+    }
+
     /// 历史子页：分页按钮 + 页码 + 上一页/下一页跳转。
     #[test]
     fn test_build_history_card_pagination() {
@@ -1449,7 +1616,7 @@ mod tests {
         assert!(json.contains("上一页"), "非首页应有上一页");
         assert!(json.contains("下一页"), "非末页应有下一页");
         assert!(json.contains("nav:/history 1"), "上一页应跳到 page 1");
-        assert!(json.contains("nav:/help task"), "应能返回控制台");
+        assert!(json.contains("nav:/help status"), "应能返回控制台（状态页）");
     }
 
     #[test]
