@@ -661,11 +661,10 @@ mod tests {
         assert_eq!(CardActionHandler::parse_nav_page("act:/runtask 1"), None);
     }
 
-    /// 任务可执行校验：环路模式 + 有 loop_id + 归属正确 → Ok(loop_id)。
-    #[test]
-    pub(crate) fn test_validate_task_runnable_loop_mode_ok() {
-        use crate::db::entity::tasks;
-        let mut t = tasks::Model {
+    /// 任务可执行校验测试夹具：workspace=7 的环路任务（loop_id=10），
+    /// 各用例只改关心的字段——避免每个分支重复构造 16 个字段的全量 Model。
+    fn validate_task_fixture() -> crate::db::entity::tasks::Model {
+        crate::db::entity::tasks::Model {
             id: 1,
             title: "t".to_string(),
             description: "d".to_string(),
@@ -682,14 +681,41 @@ mod tests {
             auto_continue: 0,
             continue_rounds: 0,
             delegate_max_rounds: None,
-        };
-        assert_eq!(CardActionHandler::validate_task_runnable(&t, 7), Ok(10));
+        }
+    }
+
+    /// 环路模式 + 归属正确 + 有 loop_id → Ok(loop_id)（正常路径）。
+    #[test]
+    pub(crate) fn test_validate_task_runnable_loop_mode_ok() {
+        assert_eq!(CardActionHandler::validate_task_runnable(&validate_task_fixture(), 7), Ok(10));
+    }
+
+    /// 任务归属其它 workspace → 拒绝（防旧卡片跨工作空间执行）。
+    /// 含 None 分支：孤儿任务（workspace_id NULL）不得因 None==None 旁路通过。
+    #[test]
+    pub(crate) fn test_validate_task_runnable_wrong_workspace_rejected() {
+        let mut t = validate_task_fixture();
         t.workspace_id = Some(8);
         assert!(CardActionHandler::validate_task_runnable(&t, 7).is_err(), "跨 workspace 应拒绝");
-        t.workspace_id = Some(7);
+        t.workspace_id = None;
+        assert!(
+            CardActionHandler::validate_task_runnable(&t, 7).is_err(),
+            "NULL workspace 的孤儿任务不得通过 Some(wid)!=None 的归属校验"
+        );
+    }
+
+    /// 委派模式任务 → 拒绝（卡片侧无委派执行路径）。
+    #[test]
+    pub(crate) fn test_validate_task_runnable_delegate_mode_rejected() {
+        let mut t = validate_task_fixture();
         t.execution_mode = "delegate".to_string();
         assert!(CardActionHandler::validate_task_runnable(&t, 7).is_err(), "委派任务应拒绝");
-        t.execution_mode = "loop".to_string();
+    }
+
+    /// 环路模式但未关联环路（loop_id None）→ 拒绝（无环路可触）。
+    #[test]
+    pub(crate) fn test_validate_task_runnable_missing_loop_id_rejected() {
+        let mut t = validate_task_fixture();
         t.loop_id = None;
         assert!(CardActionHandler::validate_task_runnable(&t, 7).is_err(), "缺 loop_id 应拒绝");
     }

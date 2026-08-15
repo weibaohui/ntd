@@ -575,72 +575,20 @@ impl SlashCommandHandler {
         page: usize,
     ) -> HelpCardState {
         let wid = db.get_agent_bot_workspace_id(bot_id).await.ok().flatten();
-        let workspace = match wid {
-            Some(id) => SlashCommandHandler::build_workspace_summary(db, id).await,
-            None => None,
-        };
-        let push_level = db
-            .get_feishu_push_target(bot_id)
-            .await
-            .ok()
-            .flatten()
-            .map(|t| t.push_level)
-            .unwrap_or_else(|| "result_only".to_string());
+        let workspace = SlashCommandHandler::load_workspace_summary(db, wid).await;
+        let push_level = SlashCommandHandler::load_push_level(db, bot_id).await;
         // 最近任务 + 运行状态都来自该 workspace 的最近执行记录
         let (recent_records, is_running) = SlashCommandHandler::recent_records_and_running(db, wid).await;
-        let todos = match wid {
-            Some(id) => db
-                // 056：卡片只展示最近 20 条摘要（id+标题+状态图标），
-                // 用 brief 接口替代整行全量拉取；take(20) 截断保持卡片体积。
-                // DB 失败时记 error（含 bot/ws 上下文）后降级为空列表——
-                // 卡片缺区块可接受，但静默吞错会让故障无法定位（CodeRabbit#4）。
-                .get_todo_briefs(Some(id), None, None)
-                .await
-                .map(|ts| ts.into_iter().take(20).map(SlashCommandHandler::brief_to_item).collect())
-                .unwrap_or_else(|e| {
-                    tracing::error!("飞书卡片加载 todo 摘要失败（bot={bot_id}, ws={id}）: {e}");
-                    Vec::new()
-                }),
-            None => vec![],
-        };
-        let loops = match wid {
-            Some(id) => db
-                .list_loops_with_counts(Some(id))
-                .await
-                .ok()
-                .map(|ls| ls.into_iter().map(SlashCommandHandler::loop_to_item).collect())
-                .unwrap_or_default(),
-            None => vec![],
-        };
-        // 104：任务/工艺列表抽成独立加载函数——assemble 已超长，查询+降级+截断各自内聚，
-        // 且失败口径（error 日志 + 空列表降级）与 todos 对齐，便于独立单测与复用。
+        // 104：四个列表 Tab（事项/环路/任务/工艺）统一抽成独立加载函数——
+        // assemble 曾因逐 Tab 内联查询膨胀到 112 行，抽完后主干只剩「取数 + 组装结构体」，
+        // 每个 loader 查询+降级+截断各自内聚，失败口径（error 日志 + 空列表降级）一致。
+        let todos = SlashCommandHandler::load_todo_items(db, wid, bot_id).await;
+        let loops = SlashCommandHandler::load_loop_items(db, wid).await;
         let tasks = SlashCommandHandler::load_task_items(db, wid, bot_id).await;
         let processes = SlashCommandHandler::load_process_items(db, wid, bot_id).await;
-        let workspaces = db
-            .get_project_directories()
-            .await
-            .ok()
-            .unwrap_or_default()
-            .into_iter()
-            .map(|d| WorkspaceItem {
-                name: d.name.clone().unwrap_or_else(|| d.path.clone()),
-                id: d.id,
-                is_current: wid == Some(d.id),
-            })
-            .collect();
-        // 已注册执行器列表 + 标记当前 workspace 配的默认执行器，供工作空间页渲染按钮排
-        let current_executor = workspace.as_ref().map(|w| w.executor.as_str()).unwrap_or("");
-        let available_executors = ctx
-            .executor_registry
-            .list_executors()
-            .await
-            .into_iter()
-            .map(|t| {
-                let name = t.as_str().to_string();
-                let is_current = name == current_executor;
-                ExecutorOption { name, is_current }
-            })
-            .collect();
+        let workspaces = SlashCommandHandler::load_workspace_items(db, wid).await;
+        let available_executors =
+            SlashCommandHandler::load_executor_options(ctx, workspace.as_ref().map(|w| w.executor.as_str())).await;
         HelpCardState {
             current_group: current_group.to_string(),
             workspace,
@@ -655,6 +603,59 @@ impl SlashCommandHandler {
             page,
             available_executors,
         }
+    }
+
+    /// 加载当前 workspace 摘要（104 从 assemble_help_card_state 抽出）：未设置 workspace → None。
+    pub(crate) async fn load_workspace_summary(db: &Database, wid: Option<i64>) -> Option<WorkspaceSummary> {
+        let id = wid?;
+        SlashCommandHandler::build_workspace_summary(db, id).await
+    }
+
+    /// 加载推送级别（104 从 assemble_help_card_state 抽出）：无推送配置时默认 result_only，
+    /// 与既有行为一致（unwrap_or 回退，DB 失败静默）。
+    pub(crate) async fn load_push_level(db: &Database, bot_id: i64) -> String {
+        db.get_feishu_push_target(bot_id)
+            .await
+            .ok()
+            .flatten()
+            .map(|t| t.push_level)
+            .unwrap_or_else(|| "result_only".to_string())
+    }
+
+    /// 加载工作空间页列表（104 从 assemble_help_card_state 抽出）：
+    /// 全量目录 + 标记当前 workspace；DB 失败静默降级空列表（既有口径，不动）。
+    pub(crate) async fn load_workspace_items(db: &Database, wid: Option<i64>) -> Vec<WorkspaceItem> {
+        db.get_project_directories()
+            .await
+            .ok()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|d| WorkspaceItem {
+                name: d.name.clone().unwrap_or_else(|| d.path.clone()),
+                id: d.id,
+                is_current: wid == Some(d.id),
+            })
+            .collect()
+    }
+
+    /// 加载执行器选项排（104 从 assemble_help_card_state 抽出）：
+    /// 已注册执行器 + 标记当前 workspace 配的默认执行器，供工作空间页渲染按钮排。
+    /// current_executor 传空串表示无 workspace 摘要，此时全部不标记。
+    pub(crate) async fn load_executor_options(
+        ctx: &ServiceContext,
+        current_executor: Option<&str>,
+    ) -> Vec<ExecutorOption> {
+        let current = current_executor.unwrap_or("");
+        ctx.executor_registry
+            .list_executors()
+            .await
+            .into_iter()
+            .map(|t| {
+                let name = t.as_str().to_string();
+                let is_current = name == current;
+                ExecutorOption { name, is_current }
+            })
+            .collect()
     }
 
     /// 当前 workspace 摘要（名 + 默认执行器）。
@@ -697,6 +698,36 @@ impl SlashCommandHandler {
     /// LoopListRow → 环路页列表项。
     pub(crate) fn loop_to_item(l: crate::db::loop_::LoopListRow) -> LoopItem {
         LoopItem { id: l.loop_.id, name: l.loop_.name, status: l.loop_.status }
+    }
+
+    /// 加载事项页条目（104 从 assemble_help_card_state 抽出，与 tasks/processes 同口径）。
+    /// 056：卡片只展示最近 20 条摘要（id+标题+状态图标），用 brief 接口替代整行全量拉取；
+    /// take(20) 截断保持卡片体积。DB 失败时记 error（含 bot/ws 上下文）后降级为空列表——
+    /// 卡片缺区块可接受，但静默吞错会让故障无法定位（CodeRabbit#4）。
+    pub(crate) async fn load_todo_items(db: &Database, wid: Option<i64>, bot_id: i64) -> Vec<TodoItem> {
+        let Some(id) = wid else {
+            return vec![];
+        };
+        db.get_todo_briefs(Some(id), None, None)
+            .await
+            .map(|ts| ts.into_iter().take(20).map(SlashCommandHandler::brief_to_item).collect())
+            .unwrap_or_else(|e| {
+                tracing::error!("飞书卡片加载 todo 摘要失败（bot={bot_id}, ws={id}）: {e}");
+                Vec::new()
+            })
+    }
+
+    /// 加载环路页条目（104 从 assemble_help_card_state 抽出，与 tasks/processes 同口径）。
+    /// 既有行为原样搬迁：DB 失败静默降级空列表（ok() 口径，历史如此，不动）。
+    pub(crate) async fn load_loop_items(db: &Database, wid: Option<i64>) -> Vec<LoopItem> {
+        let Some(id) = wid else {
+            return vec![];
+        };
+        db.list_loops_with_counts(Some(id))
+            .await
+            .ok()
+            .map(|ls| ls.into_iter().map(SlashCommandHandler::loop_to_item).collect())
+            .unwrap_or_default()
     }
 
     /// 加载任务页条目（104 新增）：按 workspace 查最近 20 条（id DESC）。
@@ -794,7 +825,8 @@ impl SlashCommandHandler {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+// 注：本模块测试体不使用 unwrap/expect（用断言宏），无需 lint 豁免——
+// 曾带冗余 allow 被评审指出，删除（13-禁止清单：allow 仅在确有需要时使用）。
 mod tests {
     use super::SlashCommandHandler;
     use crate::db::entity::process_templates;
