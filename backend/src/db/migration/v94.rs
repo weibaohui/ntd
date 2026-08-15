@@ -24,14 +24,22 @@ impl Migration for V94RenameProjectDirectoriesToWorkspaces {
     async fn up(&self, db: &Database) -> Result<(), sea_orm::DbErr> {
         // 幂等守卫（防半途残留态）：迁移 runner 里 up() 与写 schema_version 不在同一事务，
         // 若 RENAME 已成功但进程在记录版本前崩溃，重启后 V94 重跑会因为源表不存在而
-        // 永久失败，库打不开。判定「workspaces 已存在且 project_directories 已消失」
-        // 即视为已完成，直接跳过（与 V87 BUG-009 自愈同一思路）。
-        if table_exists(db, "workspaces").await? && !table_exists(db, "project_directories").await? {
+        // 永久失败，库打不开（与 V87 BUG-009 自愈同一思路）。
+        // 完成判定必须覆盖表改名 AND 列改名两个维度：up() 内各 DDL 独立自动提交，
+        // 崩溃可能落在「表已改名、列未改名」的中间态——只判表会把这种库误判为已完成，
+        // 跳过后 feishu_project_bindings.project_dir_id 永不改名，而 main 上代码已全面
+        // 改用 workspace_id 列名，飞书绑定查询会静默失败。列守卫放在跳过条件里而非
+        // 放在后面单独兜底，正是为了让中间态继续走完剩余步骤而非被整体跳过。
+        if table_exists(db, "workspaces").await?
+            && !table_exists(db, "project_directories").await?
+            && !table_has_column(db, "feishu_project_bindings", "project_dir_id").await?
+        {
             return Ok(());
         }
 
         // 先删旧触发器与旧名索引：SQLite 没有 RENAME INDEX / RENAME TRIGGER，
         // 必须显式 drop 后以新名重建，否则库里会残留带 project_directories 名字的对象。
+        // IF EXISTS：中间态重跑时这些对象可能已随表改名而不存在。
         db.exec("DROP TRIGGER IF EXISTS set_project_directories_created_at_utc")
             .await?;
         db.exec("DROP INDEX IF EXISTS idx_project_directories_path").await?;
@@ -39,11 +47,15 @@ impl Migration for V94RenameProjectDirectoriesToWorkspaces {
         // 表改名。SQLite ≥3.25 会自动把其它表 CREATE 语句里
         // REFERENCES project_directories(id) 改写为 REFERENCES workspaces(id)，
         // 无需手工重建外键表（漂移测试会校验这一点）。
-        db.exec("ALTER TABLE project_directories RENAME TO workspaces")
-            .await?;
+        // 守卫：中间态（表已改名、列未改名）重跑时源表已不存在，直接 RENAME 会报
+        // no such table 使库打不开——这正是守卫要自愈的场景，跳过即可。
+        if table_exists(db, "project_directories").await? {
+            db.exec("ALTER TABLE project_directories RENAME TO workspaces")
+                .await?;
+        }
 
         // 以新名重建 path 唯一索引与 created_at UTC 触发器，保持旧库既有行为不变。
-        // IF NOT EXISTS 与守卫配合：列改名阶段崩溃重跑时，前两步已完成也能安全通过。
+        // IF NOT EXISTS 与守卫配合：任一中间态崩溃重跑时，已完成的步骤都能安全通过。
         db.exec("CREATE INDEX IF NOT EXISTS idx_workspaces_path ON workspaces(path)")
             .await?;
         db.exec(
@@ -56,7 +68,8 @@ impl Migration for V94RenameProjectDirectoriesToWorkspaces {
 
         // 飞书绑定表的 project_dir_id 列名一并统一为 workspace_id（API 可见字段），
         // 与系统内其它 workspace_id 列（agent_bots/todos/blackboards 等）对齐。
-        // 同样加列存在性守卫：表改名已完成、列改名未做的残留态重跑时不报错。
+        // 列存在性守卫：这是 up() 的最后一步，完整跑完后列必然不存在，
+        // 中间态重跑时则据此补完剩余改名。
         if table_has_column(db, "feishu_project_bindings", "project_dir_id").await? {
             db.exec("ALTER TABLE feishu_project_bindings RENAME COLUMN project_dir_id TO workspace_id")
                 .await?;
@@ -67,7 +80,7 @@ impl Migration for V94RenameProjectDirectoriesToWorkspaces {
 
 #[cfg(test)]
 // 测试断言用 expect/panic 直接失败即可，与 v57/v87 等历史迁移测试的豁免口径一致。
-#[allow(clippy::expect_used)]
+#[allow(clippy::expect_used, clippy::panic)]
 mod tests {
     use super::super::super::Database;
     use super::super::Migration;
@@ -193,12 +206,25 @@ mod tests {
         // FK 行为验证（RENAME 后约束语义不变）：blackboards 对 workspaces 是
         // ON DELETE CASCADE——先在 workspace 9 下挂一条黑板，删除 workspace 后
         // 黑板应被级联清掉，证明外键在新表名下真实生效（而非仅 DDL 文本改写）。
-        db.exec("INSERT INTO blackboards (workspace_id, content) VALUES (9, 'c')")
+        // 必须钉在同一条连接上执行 DELETE：Database::exec 走连接池（max=10），每条
+        // 语句可能落在不同连接；v1-v93 增量链里有迁移以 PRAGMA foreign_keys=OFF/ON
+        // 重建表，而 PRAGMA 只对当时那条连接生效——池中部分连接可能停留在 FK=OFF，
+        // DELETE 落上去 CASCADE 不触发，断言就会随机失败（本测试初期踩过的坑）。
+        // 钉法：取池底层连接，先 PRAGMA foreign_keys=ON 再 INSERT/DELETE，
+        // 三条语句确定同连接同 FK 状态。PRAGMA 必须在事务外执行（SQLite 对事务内
+        // 的该 PRAGMA 视为 no-op），所以不用 begin() 事务、而是直接持有裸连接。
+        // SeaORM 提供的 get_sqlite_connection_pool 直接取底层 sqlx 池，
+        // acquire 一条连接钉住（仅测试内使用，不污染生产代码）。
+        let pool = db.conn.get_sqlite_connection_pool();
+        let mut conn = pool
+            .acquire()
             .await
-            .expect("insert blackboard child row");
-        db.exec("DELETE FROM workspaces WHERE id = 9")
-            .await
-            .expect("CASCADE 下删除父行应成功");
+            .expect("acquire pinned connection");
+        exec_on_pinned(&mut conn, "PRAGMA foreign_keys = ON").await;
+        exec_on_pinned(&mut conn, "INSERT INTO blackboards (workspace_id, content) VALUES (9, 'c')")
+            .await;
+        exec_on_pinned(&mut conn, "DELETE FROM workspaces WHERE id = 9").await;
+        drop(conn);
         assert_eq!(
             query_text(
                 &db,
@@ -225,4 +251,78 @@ mod tests {
             .expect("残留态下重跑 V94 应被守卫跳过而非报错");
         assert!(has_table(&db, "workspaces").await);
     }
+
+    /// 中间态自愈：崩溃落在「表已改名、列未改名」之间（up() 各 DDL 独立自动提交），
+    /// 重跑 V94 必须补完剩余列改名，而非被表级守卫误判为已完成整体跳过。
+    /// 这是表+列双维守卫的回归用例——只判表会让 feishu 绑定列永远停留旧名。
+    #[tokio::test]
+    async fn test_v94_resumes_column_rename_after_interrupted_table_rename() {
+        let db = Database::connect_without_migrations(":memory:")
+            .await
+            .expect(":memory: db must open");
+        db.run_migrations_with(93).await.expect("build v93 state");
+
+        // 手工执行到表改名为止，模拟进程在此之后、列改名之前崩溃：
+        // drop 旧触发器/索引 → RENAME 表（中间态：列还是 project_dir_id）。
+        db.exec("DROP TRIGGER IF EXISTS set_project_directories_created_at_utc")
+            .await
+            .expect("drop old trigger");
+        db.exec("DROP INDEX IF EXISTS idx_project_directories_path")
+            .await
+            .expect("drop old index");
+        db.exec("ALTER TABLE project_directories RENAME TO workspaces")
+            .await
+            .expect("simulate interrupted table rename");
+
+        // 此刻处于中间态：表已换新名，但飞书绑定列还是旧名
+        assert!(has_table(&db, "workspaces").await);
+        assert!(
+            table_has_column_for_test(&db, "feishu_project_bindings", "project_dir_id").await,
+            "前置校验：中间态下列应仍为 project_dir_id"
+        );
+
+        // 重跑 V94：守卫不误判，补完列改名与索引/触发器重建
+        V94RenameProjectDirectoriesToWorkspaces
+            .up(&db)
+            .await
+            .expect("中间态重跑 V94 应补完剩余步骤而非报错");
+
+        // 列最终被改名为 workspace_id，旧列名消失
+        assert!(
+            !table_has_column_for_test(&db, "feishu_project_bindings", "project_dir_id").await,
+            "中间态重跑后旧列名 project_dir_id 应不存在"
+        );
+        assert!(
+            table_has_column_for_test(&db, "feishu_project_bindings", "workspace_id").await,
+            "中间态重跑后列应已改名为 workspace_id"
+        );
+        // 索引/触发器也应在新名下就位（重跑补完了全部剩余步骤）
+        assert_eq!(
+            query_text(
+                &db,
+                "SELECT CAST(COUNT(*) AS TEXT) FROM sqlite_master WHERE type = 'index' AND name = 'idx_workspaces_path'"
+            )
+            .await,
+            Some("1".to_string()),
+            "idx_workspaces_path 索引应在重跑后重建"
+        );
+    }
+
+    /// 在钉住的连接上执行单条 SQL（测试用，失败即 panic）。
+    /// 借用 sqlx 原生 execute：sea-orm 的 TransactionTrait 在此处不便使用，
+    /// 因 PRAGMA foreign_keys 在事务内是 no-op，必须裸连接执行。
+    async fn exec_on_pinned(conn: &mut sqlx::SqliteConnection, sql: &str) {
+        use sqlx::Executor;
+        conn.execute(sql)
+            .await
+            .unwrap_or_else(|e| panic!("pinned exec must succeed: {sql} -> {e}"));
+    }
+
+    /// 测试内直接访问 mod.rs 的 table_has_column（与 has_table 同样复用判定口径）。
+    async fn table_has_column_for_test(db: &Database, table: &str, column: &str) -> bool {
+        crate::db::migration::table_has_column(db, table, column)
+            .await
+            .expect("table_has_column must succeed")
+    }
 }
+
