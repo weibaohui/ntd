@@ -25,8 +25,11 @@ test('091-refresh：运行看板 stats bar「刷新」按钮可点击无错误',
   const errors: string[] = [];
   attachErrorCollector(page, errors);
 
-  // 运行视图：挂载 RunningBoard，stats bar 末尾带刷新按钮（复用 useRunningBoard.refresh）。
-  await page.goto(`${BASE}/#/memorial?mode=running`, { waitUntil: 'domcontentloaded' });
+  // 098 后运行视图归位事项页（原 memorial?mode=running 已删）：
+  // /#/todos 页视图切换器切「执行监控」态挂载 RunningBoard。
+  // 先写 localStorage 钉住视图模式再进页，避免点击切换按钮的时序开销。
+  await page.addInitScript(() => localStorage.setItem('ntd_items_view', 'running'));
+  await page.goto(`${BASE}/#/todos`, { waitUntil: 'domcontentloaded' });
   // 等初始 loadRunningRecords 完成（loading 从 true→false）后 stats bar 才进入主渲染分支。
   await page.waitForTimeout(2500);
 
