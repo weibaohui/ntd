@@ -94,6 +94,39 @@ pub async fn verify_todos_belong_to_ws(
     Ok(())
 }
 
+/// 校验 task 属于指定 workspace。
+///
+/// 背景（106 体检）：tasks 域此前系统性忽略路径里的 ws（`Path((_ws, id))` 直接丢弃），
+/// 跨 ws 可读详情、删除、甚至触发他人 loop 真实执行。tasks 表自带 `workspace_id` 列，
+/// 与 loop/todo 一样直接比对即可。
+pub async fn verify_task_belongs_to_ws(
+    db: &Database,
+    task_id: i64,
+    ws_id: i64,
+) -> Result<(), AppError> {
+    let model = db.get_task(task_id).await?.ok_or(AppError::NotFound)?;
+    if workspace_id_matches(model.workspace_id, ws_id) {
+        Ok(())
+    } else {
+        Err(AppError::Forbidden(format!(
+            "task #{} 不属于工作空间 #{}",
+            task_id, ws_id
+        )))
+    }
+}
+
+/// 批量校验一组 task 是否都属于指定 workspace（逐条查询，batch 通常较小）。
+pub async fn verify_tasks_belong_to_ws(
+    db: &Database,
+    ids: &[i64],
+    ws_id: i64,
+) -> Result<(), AppError> {
+    for &id in ids {
+        verify_task_belongs_to_ws(db, id, ws_id).await?;
+    }
+    Ok(())
+}
+
 /// 校验 execution record 属于指定 workspace。
 ///
 /// v89 起 `execution_records` 自带 `workspace_id` 列（record 创建时由写入点回填），
@@ -311,6 +344,45 @@ mod tests {
         let ws = create_workspace(&db, "/tmp/ws-nf").await;
         assert!(matches!(
             verify_execution_belongs_to_ws(&db, 99999, ws).await.unwrap_err(),
+            AppError::NotFound
+        ));
+    }
+
+    // ── verify_task_belongs_to_ws（106 体检新增）───────────────
+
+    #[tokio::test]
+    async fn test_verify_task_belongs_to_ws_ok() {
+        let db = Database::new(":memory:").await.expect("db must open");
+        let ws = create_workspace(&db, "/tmp/ws-task-a").await;
+        let task = db
+            .create_task("t", ws, 1, None)
+            .await
+            .expect("create task must succeed");
+        assert!(verify_task_belongs_to_ws(&db, task.id, ws).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_verify_task_belongs_to_ws_cross_ws_rejected() {
+        let db = Database::new(":memory:").await.expect("db must open");
+        let ws_a = create_workspace(&db, "/tmp/ws-task-a").await;
+        let ws_b = create_workspace(&db, "/tmp/ws-task-b").await;
+        let task = db
+            .create_task("t", ws_a, 1, None)
+            .await
+            .expect("create task must succeed");
+        // 跨 ws 访问他人 task → Forbidden（106：tasks 域原先完全不校验）
+        assert!(matches!(
+            verify_task_belongs_to_ws(&db, task.id, ws_b).await,
+            Err(AppError::Forbidden(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_verify_task_belongs_to_ws_not_found() {
+        let db = Database::new(":memory:").await.expect("db must open");
+        let ws = create_workspace(&db, "/tmp/ws-task-nf").await;
+        assert!(matches!(
+            verify_task_belongs_to_ws(&db, 99999, ws).await.unwrap_err(),
             AppError::NotFound
         ));
     }

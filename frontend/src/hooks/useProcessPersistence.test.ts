@@ -38,6 +38,7 @@ function makeDeps(over: { yamlText?: string; detail?: ProcessTemplateDetail | nu
     yamlText: over.yamlText ?? 'yaml-current',
     setYamlText: vi.fn(),
     markClean: vi.fn(),
+    isDirty: false,
   };
 }
 

@@ -5,7 +5,7 @@
 //! | 方法 | 路径 | 说明 |
 //! |------|------|------|
 //! | GET | `/api/v1/providers` | Provider 列表 |
-//! | GET | `/api/v1/providers/{name}` | Provider 详情（含 api_key） |
+//! | GET | `/api/v1/providers/{name}` | Provider 详情（api_key 为脱敏值，106 起不再回明文） |
 //! | POST | `/api/v1/providers` | 创建 Provider |
 //! | PUT | `/api/v1/providers/{name}` | 更新 Provider |
 //! | DELETE | `/api/v1/providers/{name}` | 删除 Provider |
@@ -110,6 +110,24 @@ async fn list_executor_configs(
     Ok(ApiResponse::ok(all_executor_configs()))
 }
 
+/// 把 api_key 脱敏为「前 4 位 + **** + 后 4 位」（≤8 位全打码）。
+///
+/// 与前端 ProfilesPanel 的 maskKey 规则完全一致——这是有意为之：
+/// 列表展示会对详情返回值再做一次 maskKey，规则相同时幂等（掩码值的
+/// 首尾 4 位与原值相同），显示结果不受二次打码影响。
+fn mask_api_key(key: &str) -> String {
+    if key.chars().count() <= 8 {
+        return "****".to_string();
+    }
+    let prefix: String = key.chars().take(4).collect();
+    let suffix: String = {
+        // 后 4 位按字符取（api_key 理论上是 ASCII，但按字符处理杜绝多字节边界问题）。
+        let n = key.chars().count();
+        key.chars().skip(n - 4).collect()
+    };
+    format!("{}****{}", prefix, suffix)
+}
+
 async fn get_provider(
     State(_state): State<AppState>,
     axum::extract::Path(name): axum::extract::Path<String>,
@@ -119,7 +137,10 @@ async fn get_provider(
     Ok(ApiResponse::ok(ProviderDetail {
         name: name.clone(),
         display_name: p.name.clone(),
-        api_key: p.api_key.clone(),
+        // 106 体检修复：详情接口不再回明文 api_key（此前任何能访问 API 的人都可读走
+        // LLM 凭证）。编辑表单回填的是掩码值，保存时 update_provider 识别掩码原样回传
+        // 并视为「不修改」，前后端配套完成闭环。
+        api_key: mask_api_key(&p.api_key),
         base_url: p.base_url.clone(),
         protocol: p.protocol,
         models: p.models.clone(),
@@ -134,7 +155,14 @@ async fn update_provider(
     let mut cfg = load()?;
     let provider = cfg.providers.get_mut(&name).ok_or(AppError::NotFound)?;
     if let Some(dn) = req.display_name { provider.name = dn; }
-    if let Some(k) = req.api_key { provider.api_key = k; }
+    if let Some(k) = req.api_key {
+        // 106：编辑表单回填的是脱敏值（get_provider 返回掩码）。若原样回传，
+        // 识别为「未修改」保留旧 key，避免把 "sk-1****wxyz" 当成真 key 落库。
+        // 用「等于当前 key 的掩码」精确判定，不会误伤真实含 * 的新 key。
+        if k != mask_api_key(&provider.api_key) {
+            provider.api_key = k;
+        }
+    }
     if let Some(u) = req.base_url { provider.base_url = u; }
     if let Some(p) = req.protocol { provider.protocol = p; }
     if let Some(m) = req.models { provider.models = m; }
@@ -479,6 +507,28 @@ fn validate_profile_name(name: &str) -> Result<(), AppError> {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_mask_api_key_long_key() {
+        // 长 key 保留首尾 4 位，与前端 maskKey 规则一致（二次打码幂等的前提）。
+        assert_eq!(mask_api_key("sk-1234567890abcd"), "sk-1****abcd");
+    }
+
+    #[test]
+    fn test_mask_api_key_short_key_fully_masked() {
+        // ≤8 位全打码：短 key 保留首尾即等于泄露大半。
+        assert_eq!(mask_api_key("short"), "****");
+        assert_eq!(mask_api_key(""), "****");
+    }
+
+    #[test]
+    fn test_mask_api_key_idempotent_under_frontend_remask() {
+        // 前端列表会对详情返回值再跑一次 maskKey（slice(0,4)+****+slice(-4)）；
+        // 掩码值首尾 4 位与原值相同，二次打码结果不变。
+        let masked = mask_api_key("sk-ant-api03-xyz12345");
+        let remasked = format!("{}****{}", &masked[..4], &masked[masked.len() - 4..]);
+        assert_eq!(masked, remasked);
+    }
 
     #[test]
     fn test_validate_profile_name_valid() {

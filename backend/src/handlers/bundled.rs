@@ -1550,13 +1550,21 @@ pub async fn get_bundled_skill_content(
     let local_path = state.config_snapshot(|c| c.bundled_source.local_path.clone());
 
     let result = tokio::task::spawn_blocking(move || {
-        // 定位 {local_path}/skills/{name}/SKILL.md
-        let skill_dir = git_sync::bundled_dir(&local_path)
+        // 定位 {local_path}/skills/{name}/SKILL.md。
+        // 安全：name 是 URL 路径段，percent-decode 后可携带 `../` 穿越序列，
+        // 必须复用 skills.rs 的既有双道防线（字符串级拒绝对路径/ParentDir +
+        // 存在性检查），不能直接 join——否则可读取任意目录的 SKILL.md 并列出其文件清单。
+        let skills_root = git_sync::bundled_dir(&local_path)
             .ok_or_else(|| AppError::Internal("无法获取 home 目录".to_string()))?
-            .join("skills")
-            .join(&decoded_name);
+            .join("skills");
+        let skill_dir = crate::handlers::skills::resolve_skill_path_for_read(&skills_root, &decoded_name)
+            .map_err(|e| match e {
+                // 保持原有「不存在返回 400 + 技能名」的错误语义，NotFound 也映射过来。
+                AppError::NotFound => AppError::BadRequest(format!("技能 '{}' 不存在", decoded_name)),
+                other => other,
+            })?;
 
-        if !skill_dir.exists() || !skill_dir.is_dir() {
+        if !skill_dir.is_dir() {
             return Err(AppError::BadRequest(format!(
                 "技能 '{}' 不存在",
                 decoded_name

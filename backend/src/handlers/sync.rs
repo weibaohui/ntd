@@ -157,7 +157,10 @@ pub async fn cloud_sync_status(
     // 如果已配置 token，尝试从云端获取真实同步状态
     let last_sync_at = if let Some(token) = &token {
         if !server_url.is_empty() {
-            match reqwest::Client::new()
+            // 106：带超时的共享客户端（裸 Client::new() 无超时，云端半开会挂起该接口）。
+            match crate::feishu::sdk::config::build_client_with_timeout(
+                crate::feishu::sdk::config::DEFAULT_REQ_TIMEOUT,
+            )
                 .get(format!("{}/api/v1/sync/status?data_type=todos", server_url))
                 .header("Authorization", format!("Bearer {}", token))
                 .send()
@@ -239,7 +242,35 @@ pub async fn cloud_save_config(
     #[allow(clippy::unwrap_used)]
     let mut cfg = state.config.write().unwrap_or_else(|e| e.into_inner());
     if let Some(url) = req.server_url {
-        cfg.cloud_sync.server_url = url.trim_end_matches('/').to_string();
+        let trimmed = url.trim_end_matches('/');
+        // 106 体检修复：server_url 此前无校验，且 push 会携带已存 Bearer token——
+        // 攻击者改 URL 到受控服务器再触发 push 即可窃取 token + 全量数据。
+        // 两道防线：
+        // 1. 只允许 http/https（挡 file://、gopher:// 等伪协议）；
+        // 2. URL 变更即清空已存 token——换服务器必须重新填写 token，
+        //    杜绝「改 URL 后用旧 token 外发」的窃取链（前端 token 字段留空即保留
+        //    旧值的语义不变，但 URL 变更场景下旧值已被清除，必须显式重填）。
+        let parsed = url::Url::parse(trimmed)
+            .map_err(|e| AppError::BadRequest(format!("Invalid server_url: {}", e)))?;
+        if parsed.scheme() != "http" && parsed.scheme() != "https" {
+            return Err(AppError::BadRequest(
+                "server_url only supports http/https".to_string(),
+            ));
+        }
+        if parsed.host_str().is_none() {
+            return Err(AppError::BadRequest("server_url must have a host".to_string()));
+        }
+        if cfg.cloud_sync.server_url != trimmed {
+            if cfg.cloud_sync.sync_token.is_some() {
+                tracing::warn!(
+                    old = %cfg.cloud_sync.server_url,
+                    new = %trimmed,
+                    "cloud_sync server_url changed; stored sync_token cleared (must re-enter)"
+                );
+            }
+            cfg.cloud_sync.sync_token = None;
+        }
+        cfg.cloud_sync.server_url = trimmed.to_string();
     }
     if let Some(token) = req.sync_token {
         cfg.cloud_sync.sync_token = Some(token);

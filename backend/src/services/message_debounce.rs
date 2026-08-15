@@ -50,6 +50,15 @@ pub struct PendingMessage {
 struct DebounceEntry {
     messages: Vec<PendingMessage>,
     timer: JoinHandle<()>,
+    /// 代际计数（106 体检）：push 每次重建 entry 时 +1。
+    ///
+    /// 修复的竞态：旧 timer 的 sleep 已结束、正被调度执行（尚未 entries.remove）时，
+    /// 并发 push 会 remove 走旧 entry 并 abort 旧 timer——但 abort 要到下一个
+    /// yield 点才生效，旧 timer 的同步 remove 会把**新 entry（M1+M2）**取走，
+    /// 随后在首个 await 被 abort 杀掉：消息已移除却未执行，整批静默丢失。
+    /// 现在 timer remove 时比对 generation，不一致说明 entry 已被新 push 替换，
+    /// 直接归还不执行，由新 timer 接管。
+    generation: u64,
 }
 
 /// 私聊串行队列的维度 key：(bot_id, workspace_id, sender)
@@ -120,6 +129,16 @@ enum QueuePop {
     Drained,
     /// 并发 push 在 pop 之后插入了消息但本次未取到，需重新循环
     Retry,
+}
+
+impl QueuePop {
+    /// 取出内部消息（Drained/Retry 返回 None），供窗口期复查路径复用。
+    fn message(self) -> Option<Box<PendingMessage>> {
+        match self {
+            Self::Message(m) => Some(m),
+            _ => None,
+        }
+    }
 }
 
 pub struct MessageDebounce {
@@ -215,14 +234,14 @@ impl MessageDebounce {
         let key = (msg.bot_id, msg.chat_id.clone());
 
         // Remove old entry and collect existing messages
-        let mut all_msgs = self
+        let (mut all_msgs, next_generation) = self
             .entries
             .remove(&key)
             .map(|(_, old)| {
                 old.timer.abort();
-                old.messages
+                (old.messages, old.generation + 1)
             })
-            .unwrap_or_default();
+            .unwrap_or_else(|| (Vec::new(), 0));
         all_msgs.push(msg);
 
         // @提及是显式点名请求，跳过 debounce 等待立即执行；
@@ -253,6 +272,8 @@ impl MessageDebounce {
             let p2p_queue = self.p2p_queue.clone();
             // 私聊运行状态：clone Arc 引用，用于执行完成后清除运行标记
             let p2p_running = self.p2p_running.clone();
+            // 本 timer 绑定的代际：sleep 结束后 remove 时比对，防旧 timer 抢走新 entry。
+            let my_generation = next_generation;
 
             tokio::spawn(async move {
                 // 群聊需要 debounce 等待窗口，避免多条消息触发多次执行；
@@ -270,6 +291,29 @@ impl MessageDebounce {
                 let key = (bot_id, chat_id);
                 let pending = entries.remove(&key);
                 if let Some((_, entry)) = pending {
+                    // 代际守卫（106）：entry 已被更新的 push 重建说明本 timer 是被
+                    // abort 的旧任务——remove 取到的是新 entry，归还不执行，
+                    // 否则会在首个 await 被 abort 杀掉，消息移除却未执行（静默丢失）。
+                    if entry.generation != my_generation {
+                        tracing::debug!(
+                            "[debounce] stale timer for bot_id={}, chat_id={} (gen {} != {}), returning messages to new entry",
+                            bot_id, key.1, my_generation, entry.generation
+                        );
+                        // 把消息还给 entries 里的现行 entry（若已被再次移除则无法归还，
+                        // 记 warn 便于追溯）。
+                        match entries.entry(key.clone()) {
+                            dashmap::mapref::entry::Entry::Occupied(mut e) => {
+                                e.get_mut().messages = entry.messages;
+                            }
+                            dashmap::mapref::entry::Entry::Vacant(_) => {
+                                tracing::warn!(
+                                    "[debounce] stale timer for bot_id={}, chat_id={} cannot return messages: entry vanished",
+                                    bot_id, key.1
+                                );
+                            }
+                        }
+                        return;
+                    }
                     if entry.messages.is_empty() {
                         return;
                     }
@@ -282,7 +326,14 @@ impl MessageDebounce {
                     // p2p 运行标记 guard：必须在「首次执行之前」创建，覆盖「首次执行 + 队列 drain」
                     // 全过程。guard drop 时清除 running 标记——即使首次执行 panic，drop 也会执行，
                     // 保证该维度不被永久死锁。group 消息不进串行队列，guard 为 None。
-                    let _p2p_guard = if target_type == "p2p" {
+                    //
+                    // 106 体检补充：drop（清 running 标记）发生在块结束时，但 drain 返回
+                    // Drained 与 guard drop 之间存在窗口——期间到达的 push 会看到 running
+                    // 标记而入队，随后标记被清、无 runner 存活，消息滞留队列直到下一条消息
+                    // 到达才被顺带处理。故 drain 结束后先显式 drop guard 再复查一次队列，
+                    // 有滞留消息则继续 drain（此时 running 标记已清，新 push 会自己拉起新任务，
+                    // 不会形成双 runner——最坏情况是两条消息并行执行，可接受且不丢消息）。
+                    let mut p2p_guard = if target_type == "p2p" {
                         let qk = (bot_id, last.workspace_id.unwrap_or(NO_WORKSPACE), last.sender.clone());
                         Some(P2pRunningGuard { key: qk, running: p2p_running.clone() })
                     } else {
@@ -361,6 +412,33 @@ impl MessageDebounce {
                             Self::mark_message(&next, &r, &db).await;
                             // 继续循环处理下一条
                         }
+
+                        // 窗口期复查（106）：显式 drop guard 清 running 标记后，若窗口期
+                        // （Drained → guard drop）有消息入队，这里再 drain 一轮收尾，
+                        // 保证「入队提示了稍后执行」的消息必然被执行。
+                        drop(p2p_guard.take());
+                        if let Some(stranded) = Self::pop_or_drain_queue(&p2p_queue, &queue_key)
+                            .message()
+                        {
+                            tracing::info!(
+                                "[p2p-queue] 复查发现窗口期滞留消息，继续执行: bot_id={}, sender={}",
+                                bot_id, stranded.sender
+                            );
+                            let merged = stranded.content.clone();
+                            let resolved = Self::resolve_execution(&stranded, &merged, &db).await;
+                            let r = Self::dispatch_execution(
+                                &stranded, &merged, &resolved,
+                                &db, &executor_registry, &task_manager, &config, &tx, &loop_runner,
+                                &expert_manager, &blackboard_debouncer,
+                            )
+                            .await;
+                            Self::update_binding(
+                                stranded.binding_id, &r, resolved.is_resume,
+                                resolved.sid_for_binding.as_deref(), &db,
+                            )
+                            .await;
+                            Self::mark_message(&stranded, &r, &db).await;
+                        }
                     }
                 }
             })
@@ -371,6 +449,7 @@ impl MessageDebounce {
             DebounceEntry {
                 messages: all_msgs,
                 timer: new_timer,
+                generation: next_generation,
             },
         );
     }

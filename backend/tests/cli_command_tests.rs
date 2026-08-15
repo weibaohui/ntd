@@ -402,7 +402,8 @@ mod config_parsing_tests {
     fn test_config_default() {
         let config = Config::default();
         assert_eq!(config.port, 8088);
-        assert_eq!(config.host, "0.0.0.0");
+        // 106 体检：默认 host 收紧为回环地址（/api/v1 无鉴权，绑全网卡 = 暴露 RCE 链）。
+        assert_eq!(config.host, "127.0.0.1");
         assert!(config.log_level.contains("INFO") || config.log_level == "INFO");
     }
 

@@ -265,7 +265,15 @@ export function LoopDetailPanel({
             (() => {
               // 异常处理启用判定：以工艺定义的 prompt 是否存在为准（需求 035）
               const hasHandler = detail.abnormal_handler_prompt != null && detail.abnormal_handler_prompt !== '';
-              const triggerOn = detail.abnormal_handler_trigger_on ? JSON.parse(detail.abnormal_handler_trigger_on) : [];
+              // 106：try 兜底防脏数据（手工改库/迁移残留的非法 JSON）让整个详情页白屏；
+              // 相邻 limits_config 的 parse 都有 try，这里补齐同一兜底。
+              const triggerOn = (() => {
+                try {
+                  return detail.abnormal_handler_trigger_on ? JSON.parse(detail.abnormal_handler_trigger_on) : [];
+                } catch {
+                  return [];
+                }
+              })();
               const hasCappedTrigger = Array.isArray(triggerOn) && (triggerOn.includes('capped_step') || triggerOn.includes('capped_token'));
               const enabled = hasHandler && hasCappedTrigger;
               return (

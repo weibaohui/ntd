@@ -161,8 +161,19 @@ where
                 .unwrap_or_else(|| EventPipeline::new(executor.executor_type().as_str()));
 
             // BufReader::lines 在读到 EOF 时返回 Ok(None)，循环自然退出。
+            // 106：next_line 遇非法 UTF-8 返回 Err——`while let Ok(Some(..))` 会让循环
+            // 静默终止，该 stream 之后的全部日志丢失。改为显式 match：Err 记 warn 后
+            // 继续读（跳过坏行），只有 EOF 才退出。
             let mut reader = BufReader::new(stderr_reader).lines();
-            while let Ok(Some(line)) = reader.next_line().await {
+            loop {
+                let line = match reader.next_line().await {
+                    Ok(Some(l)) => l,
+                    Ok(None) => break,
+                    Err(e) => {
+                        tracing::warn!("[log-capture] stderr 行解码失败（跳过该行继续）: task={}, err={}", task_id, e);
+                        continue;
+                    }
+                };
                 // 跳过 atomcode 流式/中间过程输出行
                 let t = line.trim_start();
                 if t.starts_with("[tool-streaming") || t.starts_with("[tool-batch") {
@@ -262,7 +273,16 @@ where
         // resume 场景下 DB 已有正确 session_id，跳过覆盖。
         let mut session_id_updated = initial_session_id.is_some();
 
-        while let Ok(Some(line)) = reader.next_line().await {
+        // 106：同 stderr 侧——显式 match 让非法 UTF-8 行只跳过不终止，EOF 才退出。
+        loop {
+            let line = match reader.next_line().await {
+                Ok(Some(l)) => l,
+                Ok(None) => break,
+                Err(e) => {
+                    tracing::warn!("[log-capture] stdout 行解码失败（跳过该行继续）: task={}, err={}", tid, e);
+                    continue;
+                }
+            };
             // 优先尝试用 EventPipeline 解析
             let parsed_list =
                 parse_and_broadcast(&mut pipeline, &line, &tx_clone, &tid, wid, executor_clone.as_ref());

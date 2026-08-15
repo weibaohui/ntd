@@ -21,7 +21,10 @@ pub struct FeishuInitResponse {
 }
 
 pub async fn feishu_init() -> Result<impl IntoResponse, AppError> {
-    let client = Client::new();
+    // 106：飞书 OAuth 域调用统一走带超时客户端（裸 Client 无超时会永久悬挂）。
+    let client = crate::feishu::sdk::config::build_client_with_timeout(
+        crate::feishu::sdk::config::DEFAULT_REQ_TIMEOUT,
+    );
     let res = client
         .post("https://accounts.feishu.cn/oauth/v1/app/registration")
         .header("Content-Type", "application/x-www-form-urlencoded")
@@ -61,7 +64,10 @@ pub struct FeishuBeginResponse {
 }
 
 pub async fn feishu_begin() -> Result<impl IntoResponse, AppError> {
-    let client = Client::new();
+    // 106：飞书 OAuth 域调用统一走带超时客户端（裸 Client 无超时会永久悬挂）。
+    let client = crate::feishu::sdk::config::build_client_with_timeout(
+        crate::feishu::sdk::config::DEFAULT_REQ_TIMEOUT,
+    );
     let form = [
         ("action", "begin"),
         ("archetype", "PersonalAgent"),
@@ -172,7 +178,7 @@ pub async fn feishu_poll_sse(
         let client = Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
-            .unwrap_or_else(|_| Client::new());
+            .unwrap_or_else(|_| crate::feishu::sdk::config::build_client_with_timeout(crate::feishu::sdk::config::DEFAULT_REQ_TIMEOUT));
 
         // 辅助函数：发送 SSE 事件，成功返回 true，channel 关闭时返回 false
         async fn send_sse_event(
@@ -375,7 +381,10 @@ pub async fn feishu_poll_sse(
 
 
 async fn probe_bot(app_id: &str, app_secret: &str) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-    let client = Client::new();
+    // 106：飞书 OAuth 域调用统一走带超时客户端（裸 Client 无超时会永久悬挂）。
+    let client = crate::feishu::sdk::config::build_client_with_timeout(
+        crate::feishu::sdk::config::DEFAULT_REQ_TIMEOUT,
+    );
 
     let token_res = client
         .post("https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal")

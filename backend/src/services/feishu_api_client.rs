@@ -5,10 +5,22 @@
 //! unit struct 仅作命名空间承载，不持有状态。
 
 use dashmap::DashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
-use crate::feishu::sdk::config::Config as FeishuSdkConfig;
+use crate::feishu::sdk::config::{build_client_with_timeout, Config as FeishuSdkConfig, DEFAULT_REQ_TIMEOUT};
 use crate::feishu::sdk::token_manager::TokenManager;
+
+/// 全模块共享的带超时 HTTP Client（连接池复用）。
+///
+/// 106 体检：此前每个函数每次调用 `reqwest::Client::new()`——无超时（TCP 半开
+/// 挂死串行推送循环）、无连接复用（繁忙时打爆临时端口/触发飞书限流）。
+/// 15s 超时与 SDK 默认（DEFAULT_REQ_TIMEOUT）保持同一策略。
+fn shared_http_client() -> reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT
+        .get_or_init(|| build_client_with_timeout(DEFAULT_REQ_TIMEOUT))
+        .clone()
+}
 
 /// 见模块头注释。unit struct：仅作命名空间（函数全部关联函数形态）。
 pub(crate) struct FeishuApiClient;
@@ -28,7 +40,7 @@ impl FeishuApiClient {
             .await
             .ok_or_else(|| anyhow::anyhow!("no token for bot {}", bot_id))?;
 
-        let client = reqwest::Client::new();
+        let client = shared_http_client();
         let url = format!(
             "{}/open-apis/im/v1/messages/{}",
             base_url, message_id
@@ -76,7 +88,7 @@ impl FeishuApiClient {
             None => return,
         };
 
-        let client = reqwest::Client::new();
+        let client = shared_http_client();
         let url = format!(
             "{}/open-apis/im/v1/messages?receive_id_type={}",
             base_url, receive_id_type
@@ -130,7 +142,7 @@ impl FeishuApiClient {
             .await
             .ok_or_else(|| anyhow::anyhow!("no token for bot {}", bot_id))?;
 
-        let client = reqwest::Client::new();
+        let client = shared_http_client();
         let url = format!(
             "{}/open-apis/im/v1/messages?receive_id_type={}",
             base_url, receive_id_type
@@ -179,7 +191,7 @@ impl FeishuApiClient {
             .await
             .ok_or_else(|| anyhow::anyhow!("no token for bot {}", bot_id))?;
 
-        let client = reqwest::Client::new();
+        let client = shared_http_client();
         // 使用 reply API 而不是 create
         let url = format!(
             "{}/open-apis/im/v1/messages/{}/reply",
@@ -228,7 +240,7 @@ impl FeishuApiClient {
             .await
             .ok_or_else(|| anyhow::anyhow!("no token for bot {}", bot_id))?;
 
-        let client = reqwest::Client::new();
+        let client = shared_http_client();
         let url = format!(
             "{}/open-apis/im/v1/messages?receive_id_type={}",
             base_url, receive_id_type
@@ -271,7 +283,7 @@ impl FeishuApiClient {
             .await
             .ok_or_else(|| anyhow::anyhow!("no token for bot {}", bot_id))?;
 
-        let client = reqwest::Client::new();
+        let client = shared_http_client();
         let url = format!(
             "{}/open-apis/im/v1/messages?receive_id_type={}",
             base_url, receive_id_type
@@ -332,7 +344,7 @@ impl FeishuApiClient {
                 .app_secret(app_secret)
                 .base_url(base_url)
                 .enable_token_cache(true)
-                .http_client(reqwest::Client::new())
+                .http_client(shared_http_client())
                 .build(),
         )
     }
@@ -360,7 +372,7 @@ impl FeishuApiClient {
         let token = FeishuApiClient::get_tenant_token(credentials, token_manager, bot_id).await?;
         let base_url = FeishuApiClient::base_url(credentials, bot_id)?;
 
-        let client = reqwest::Client::new();
+        let client = shared_http_client();
         let res = client
             .get(format!("{base_url}/open-apis/bot/v3/info"))
             .header("Authorization", format!("Bearer {token}"))
@@ -386,7 +398,7 @@ impl FeishuApiClient {
         let token = FeishuApiClient::get_tenant_token(credentials, token_manager, bot_id).await?;
         let base_url = FeishuApiClient::base_url(credentials, bot_id)?;
 
-        let client = reqwest::Client::new();
+        let client = shared_http_client();
         let url = format!("{base_url}/open-apis/im/v1/messages/{message_id}/reactions");
         let body_json = serde_json::json!({
             "reaction_type": {
@@ -465,7 +477,7 @@ impl FeishuApiClient {
             None => return,
         };
 
-        let client = reqwest::Client::new();
+        let client = shared_http_client();
         match client
             .delete(format!(
                 "{base_url}/open-apis/im/v1/messages/{message_id}/reactions/{reaction_id}"

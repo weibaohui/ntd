@@ -30,6 +30,8 @@ export function AssistantManagementPage({}: AssistantManagementPageProps) {
   const [bindSuccess, setBindSuccess] = useState(false);
   const [feishuEventSource, setFeishuEventSource] = useState<EventSource | null>(null);
   const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 106：建连窗口期取消标志（见 handleStartBind 注释）。
+  const bindCancelledRef = useRef(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -89,9 +91,15 @@ export function AssistantManagementPage({}: AssistantManagementPageProps) {
     setPollError('');
     setQrCodeUrl('');
     setBindModalOpen(true);
+    // 106：建连窗口期取消守卫——init/begin/二维码生成是秒级 await，期间用户点取消
+    // 时 onCancel 关闭的还是 null 的 feishuEventSource；await 返回后新 EventSource
+    // 存进 state 但弹窗已关，SSE 会一直挂到 expire_in（默认 1800s）。
+    // 置 cancelled 标志，await 返回后立即关闭新连接并丢弃状态写入。
+    bindCancelledRef.current = false;
 
     try {
       const initRes = await db.feishuInit();
+      if (bindCancelledRef.current) return;
       if (!initRes.supported) {
         setPollError('当前环境不支持 client_secret 认证');
         setBinding(false);
@@ -99,7 +107,9 @@ export function AssistantManagementPage({}: AssistantManagementPageProps) {
       }
 
       const beginRes = await db.feishuBegin();
+      if (bindCancelledRef.current) return;
       const qrDataUrl = await QRCode.toDataURL(beginRes.qr_url, { width: 256, margin: 2 });
+      if (bindCancelledRef.current) return;
       setQrCodeUrl(qrDataUrl);
 
       // 绑定时不传 workspaceId，绑定的 Bot 默认不分配工作空间
@@ -130,6 +140,11 @@ export function AssistantManagementPage({}: AssistantManagementPageProps) {
           setBinding(false);
         },
       );
+      // 建连窗口期已被取消：立即关闭，不进 state（否则无人再关它）。
+      if (bindCancelledRef.current) {
+        eventSource.close();
+        return;
+      }
       setFeishuEventSource(eventSource);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : '启动绑定失败';
@@ -200,6 +215,9 @@ export function AssistantManagementPage({}: AssistantManagementPageProps) {
         title="绑定飞书智能助手"
         open={bindModalOpen}
         onCancel={() => {
+          // 106：置取消标志——若 init/begin 的 await 还没返回，返回后会关闭
+          // 新建的 EventSource 而不是把它泄漏到 expire_in。
+          bindCancelledRef.current = true;
           setBindModalOpen(false);
           setQrCodeUrl('');
           setPollError('');

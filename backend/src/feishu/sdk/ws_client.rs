@@ -308,6 +308,11 @@ impl LarkWsClient {
     }
 
     async fn handler_loop(&mut self, event_handler: EventDispatcherHandler) {
+        // 106 体检：事件级去重（LRU 容量 4096）。
+        // 飞书在断连/处理超时会重投未确认事件，而处理失败也会回 200（对端不再重试），
+        // 重连窗口期的重复事件此前会被重复执行（重复建 todo / 重复 reaction）。
+        // key 优先 event_id，兜底 message_id（旧格式事件无 event_id 头）。
+        let mut seen_events: QuickCache<()> = QuickCache::with_capacity(4096);
         while let Some(ws_event) = self.event_rx.recv().await {
             if let WsEvent::Data(frame) = ws_event {
                 let _ = self.state_machine.handle_event(StateMachineEvent::DataReceived);
@@ -320,6 +325,26 @@ impl LarkWsClient {
                 let Some(frame) = processed_frame else {
                     continue;
                 };
+
+                // 去重检查放在分包重组之后（event_id 头在完整帧里才可读）。
+                let header_of = |name: &str| {
+                    frame.headers
+                        .iter()
+                        .find(|h| h.key == name)
+                        .map(|h| h.value.clone())
+                };
+                let event_key = header_of("event_id")
+                    .or_else(|| header_of("message_id"));
+                if let Some(key) = event_key {
+                    if !key.is_empty() {
+                        if seen_events.get(&key).is_some() {
+                            info!("Duplicate event suppressed: {key}");
+                            continue;
+                        }
+                        // 保留 10 分钟：覆盖重连窗口期的重投；超出容量 LRU 逐出最旧。
+                        seen_events.set(&key, (), 600);
+                    }
+                }
 
                 if let Some(response_frame) =
                     FrameHandler::handle_frame(frame, &event_handler).await
@@ -478,7 +503,7 @@ async fn client_loop(
                         if msg.is_ping() {
                             ping_time = Instant::now();
                         }
-                        if let Err(e) = handle_message(msg, &mut sink, &mut event_sender, service_id).await {
+                        if let Err(e) = handle_message(msg, &mut sink, &mut event_sender, service_id, &mut ping_time).await {
                             let _ = event_sender.send(WsEvent::Error(e));
                             break;
                         }
@@ -528,6 +553,7 @@ async fn handle_message(
     sink: &mut futures_util::stream::SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
     event_sender: &mut mpsc::UnboundedSender<WsEvent>,
     _service_id: i32,
+    ping_time: &mut Instant,
 ) -> WsClientResult<()> {
     match msg {
         Message::Ping(data) => {
@@ -547,6 +573,11 @@ async fn handle_message(
                         .map(|h| h.value.as_str())
                         .unwrap_or("");
                     if frame_type == "pong" {
+                        // 106 体检修复：pbbp2 协议的 pong 是 Binary 控制帧而非协议级
+                        // Ping，此前不刷新 ping_time——若网关不发协议级 Ping，
+                        // 心跳看门狗每 HEARTBEAT_TIMEOUT 秒自杀式断连一次。
+                        // 收到 pong 即证明链路存活，重置看门狗计时。
+                        *ping_time = Instant::now();
                         if let Some(payload) = &frame.payload {
                             if let Ok(config) = serde_json::from_slice::<ClientConfig>(payload) {
                                 debug!("Received pong with config: ping_interval={}", config.ping_interval);

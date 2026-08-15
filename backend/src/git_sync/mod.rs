@@ -92,11 +92,33 @@ async fn run_git_command(args: &[&str], cwd: Option<&Path>) -> Result<(String, S
         cmd.current_dir(path);
     }
     cmd.env("GIT_TERMINAL_PROMPT", "0");
-    cmd.env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes -o StrictHostKeyChecking=no");
+    // 106：accept-new 替代 no——首次连接自动接受并记录主机密钥，之后连接密钥变化
+    // 即拒绝（防 MITM 替换 bundled 工艺/专家资源内容）。no 完全放弃校验。
+    cmd.env(
+        "GIT_SSH_COMMAND",
+        "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new",
+    );
 
-    let output = cmd.output().await.map_err(|e| {
-        GitSyncError::CommandFailed(format!("执行命令失败: {}", e))
-    })?;
+    // 106：网络半开时 output() 会永久悬挂，同步任务卡死。clone/fetch 走网络，
+    // 给 120s；kill_on_drop 兜底回收超时分支的 git 进程（timeout 后 child drop）。
+    const GIT_NET_TIMEOUT_SECS: u64 = 120;
+    let output = match tokio::time::timeout(
+        std::time::Duration::from_secs(GIT_NET_TIMEOUT_SECS),
+        cmd.output(),
+    )
+    .await
+    {
+        Ok(res) => res.map_err(|e| {
+            GitSyncError::CommandFailed(format!("执行命令失败: {}", e))
+        })?,
+        Err(_) => {
+            return Err(GitSyncError::CommandFailed(format!(
+                "git 命令超时（{}s）: git {}",
+                GIT_NET_TIMEOUT_SECS,
+                args.join(" ")
+            )));
+        }
+    };
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();

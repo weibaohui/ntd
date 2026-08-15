@@ -31,6 +31,8 @@ export interface UseProcessPersistenceDeps {
   setYamlText: (text: string) => void;
   /** 清未保存标记（保存/删除成功后调用）。 */
   markClean: () => void;
+  /** 未保存修改标记。handleBack 在导航**前**用它决定是否弹确认框。 */
+  isDirty: boolean;
 }
 
 export interface UseProcessPersistenceReturn {
@@ -50,7 +52,7 @@ export function useProcessPersistence(
   processGuid: string,
   deps: UseProcessPersistenceDeps,
 ): UseProcessPersistenceReturn {
-  const { detail, yamlText, setYamlText, markClean } = deps;
+  const { detail, yamlText, setYamlText, markClean, isDirty } = deps;
 
   // 保存中状态，控制保存按钮禁用 + loading
   const [isSaving, setIsSaving] = useState(false);
@@ -110,11 +112,26 @@ export function useProcessPersistence(
   }, [processGuid, detail, markClean]);
 
   // ── 返回工艺列表页 ─────────────────────────────────
-  // 仅设置 location.hash 触发 hashchange；若 isDirty，离开拦截的 hashchange
-  // 监听会弹「未保存修改」确认框，确认后才真正跳转，避免误丢改动。
+  // 106 体检修复：导航**前**拦截。原实现先置 hash 再靠 useLeaveGuard 的
+  // hashchange 事后弹框——但 hash 变化同时触发 popstate，useViewState 已把视图
+  // 切走（编辑器卸载、dirty 状态丢失），「留下」分支只能做事后补偿，视图与
+  // URL 容易脱节。主路径改为先问后跳；浏览器后退键仍由 useLeaveGuard 兜底。
   const handleBack = useCallback(() => {
-    window.location.hash = '#/processes';
-  }, []);
+    if (!isDirty) {
+      window.location.hash = '#/processes';
+      return;
+    }
+    Modal.confirm({
+      title: '你有未保存的修改',
+      content: '确认离开？未保存的修改将丢失。',
+      okText: '离开',
+      cancelText: '留下',
+      onOk: () => {
+        markClean();
+        window.location.hash = '#/processes';
+      },
+    });
+  }, [isDirty, markClean]);
 
   // ── 复制系统工艺到用户层 ──────────────────────────
   // 成功后 message.success 提示用户重新打开编辑器

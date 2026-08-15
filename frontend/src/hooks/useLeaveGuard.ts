@@ -44,14 +44,23 @@ export function useLeaveGuard(isDirty: boolean, markClean: () => void): void {
           // 用户确认后允许跳转：先清 isDirty=false 避免目标路由二次拦截
           // （下面设置 location.hash 会再触发一次 hashchange，不清标记会再次弹框）。
           markClean();
-          // 跳目标 hash（e.newURL 已含完整 URL，取 # 后部分）
+          // 跳目标 hash（e.newURL 已含完整 URL，取 # 后部分）。
+          // 106：hash 导航在 hashchange 之前已触发原生 popstate，useViewState
+          // 多半已切到目标视图；此处 hash 已等于 newHash 时赋值是 no-op，
+          // 仅在异常时序（视图未同步）下补一次显式导航。
           const newHash = e.newURL.split('#')[1] ?? '';
-          window.location.hash = newHash;
+          if (window.location.hash !== `#${newHash}`) {
+            window.location.hash = newHash;
+          }
         },
         onCancel: () => {
-          // 取消时不跳转：hashchange 已触发，需回退旧 hash
-          // 用 history.replaceState 避免再触发 hashchange（直接设 location.hash 会再触发）
+          // 取消时不跳转：hashchange 已触发，需回退旧 hash。
+          // 用 history.replaceState 避免再触发 hashchange（直接设 location.hash 会再触发）。
           history.replaceState(null, '', e.oldURL);
+          // 106 体检修复：replaceState 不派发任何事件，useViewState 停留在已切换的
+          // 目标视图，而 URL 已回退——视图与地址脱节（编辑器已卸载、dirty 状态丢失）。
+          // 补发一个合成 popstate 让 useViewState 立即按当前 URL 重新同步回编辑器。
+          window.dispatchEvent(new PopStateEvent('popstate'));
         },
       });
     };

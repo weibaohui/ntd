@@ -19,6 +19,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+// 106：group_spawn/kill 整组杀进程的扩展 trait（与主链路 spawn_lifecycle 同源）。
+use command_group::AsyncCommandGroup;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::adapters::CodeExecutor;
@@ -114,20 +116,26 @@ impl DirectExecutorSession {
             .stderr(std::process::Stdio::piped())
             .stdin(std::process::Stdio::piped())
             .current_dir(&cwd);
-        let mut child = cmd.spawn().map_err(SessionError::Spawn)?;
+        // 106 体检：group_spawn 创建独立进程组，kill 时整组杀——此前裸 spawn 只
+        // SIGKILL 直接子进程，执行器派生的孙进程（构建/测试子进程）成孤儿继续跑。
+        // 与主链路 spawn_lifecycle 的 group_spawn 同策略。
+        let mut child = cmd
+            .group_spawn()
+            .map_err(SessionError::Spawn)?;
 
         // take() 并 drop 关闭 stdin，避免 CLI 进程执行完后挂起等待 EOF。
         // 两条通路均非 worktree 场景，不预写 payload（pi 的 "y" 应答只在切
         // worktree 目录时才有意义，乱写会污染 stdin——A/B 原注释同源结论）。
-        drop(child.stdin.take());
+        // group child 的 stdio 需经 inner() 访问（AsyncGroupChild 包了一层）。
+        drop(child.inner().stdin.take());
 
         // piped 模式下 take 理论上必为 Some；防御性兜底为空流（立即 EOF → 走 wait 路径，
         // 返回空 raw 文本），与 A 原实现的「无 stdout → 空结果」降级语义一致。
-        let stdout: Box<dyn tokio::io::AsyncRead + Unpin + Send> = match child.stdout.take() {
+        let stdout: Box<dyn tokio::io::AsyncRead + Unpin + Send> = match child.inner().stdout.take() {
             Some(s) => Box::new(s),
             None => Box::new(tokio::io::empty()),
         };
-        let stderr: Box<dyn tokio::io::AsyncRead + Unpin + Send> = match child.stderr.take() {
+        let stderr: Box<dyn tokio::io::AsyncRead + Unpin + Send> = match child.inner().stderr.take() {
             Some(s) => Box::new(s),
             None => Box::new(tokio::io::empty()),
         };
@@ -143,7 +151,7 @@ impl DirectExecutorSession {
 /// 三个分支是宏内联状态机，共享 raw_stdout_lines / raw_stderr_lines / child 的可变
 /// 借用，把分支抽成独立函数需把这套状态在每次轮转间穿线传递。
 async fn stream_lines_until_exit<F>(
-    mut child: tokio::process::Child,
+    mut child: command_group::AsyncGroupChild,
     stdout: Box<dyn tokio::io::AsyncRead + Unpin + Send>,
     stderr: Box<dyn tokio::io::AsyncRead + Unpin + Send>,
     timeout_secs: u64,
@@ -160,6 +168,11 @@ where
     // 收集容器：raw 文本按行 push、结束时 join，避免反复 String concat
     let mut raw_stdout_lines: Vec<String> = Vec::new();
     let mut raw_stderr_lines: Vec<String> = Vec::new();
+    // 106 体检：行数上限——执行器失控刷输出（死循环打印）时无上限缓冲会让内存随
+    // 输出线性增长，timeout_secs=0（不限时）时无任何兜底。超限丢弃后续行并记 warn，
+    // stdout 回调同样停发（结果已无意义），主循环继续消费管道防写端阻塞。
+    const MAX_LINES_PER_STREAM: usize = 10_000;
+    let (mut stdout_dropped, mut stderr_dropped) = (false, false);
 
     // 0 = 不限时：用极大 duration（u64::MAX 秒 ≈ 5.8 亿年）模拟「永不超时」，
     // select! 该分支永不命中（与 C 的 configure_timeout_sleep 同一手法）
@@ -185,10 +198,20 @@ where
             line_result = stdout_reader.next_line() => {
                 match line_result {
                     Ok(Some(line)) => {
-                        raw_stdout_lines.push(line.clone());
+                        if !stdout_dropped {
+                            if raw_stdout_lines.len() >= MAX_LINES_PER_STREAM {
+                                stdout_dropped = true;
+                                tracing::error!(
+                                    "[session] stdout exceeded {} lines, dropping remaining output (tag={})",
+                                    MAX_LINES_PER_STREAM, log_tag
+                                );
+                            } else {
+                                raw_stdout_lines.push(line.clone());
+                            }
+                        }
                         // 逐行语义（解析 + 事件推送）交还调用方闭包；
                         // panic 只废掉回调本身，骨架继续读流（见 on_line_poisoned 注释）
-                        if !on_line_poisoned {
+                        if !on_line_poisoned && !stdout_dropped {
                             let callback = std::panic::AssertUnwindSafe(|| on_line(&line));
                             if let Err(payload) = std::panic::catch_unwind(callback) {
                                 on_line_poisoned = true;
@@ -204,16 +227,52 @@ where
                             }
                         }
                     }
-                    // stdout 读完了：等子进程退出并打包返回（stderr 可能仍有未消费缓冲，
-                    // 与 B 原实现一致——拿到多少算多少，不为凑齐 stderr 阻塞返回）
+                    // stdout 读完了：等子进程退出并打包返回。
                     Ok(None) => {
-                        // wait 失败也要 kill 回收：child 未开 kill_on_drop，直接 drop
-                        // 会让执行器进程变孤儿继续跑（评审修复）
-                        let status = match child.wait().await {
-                            Ok(s) => s,
-                            Err(e) => {
+                        // 先排空 stderr 再等退出。
+                        // 106：select! 轮转顺序不保证 stderr 先于 stdout EOF 被消费——
+                        // 进程退出时两个管道同时关闭，缓冲里的 stderr 行可能还没读到，
+                        // 直接返回会丢诊断信息（全量测试并行时该窗口被放大，偶发断言失败）。
+                        // 5s 兜底：不为凑齐 stderr 无限阻塞（与「拿到多少算多少」语义兼容）。
+                        while !stderr_done {
+                            match tokio::time::timeout(
+                                Duration::from_secs(5),
+                                stderr_reader.next_line(),
+                            )
+                            .await
+                            {
+                                Ok(Ok(Some(line))) => {
+                                    if !stderr_dropped {
+                                        if raw_stderr_lines.len() >= MAX_LINES_PER_STREAM {
+                                            stderr_dropped = true;
+                                        } else {
+                                            raw_stderr_lines.push(line);
+                                        }
+                                    }
+                                }
+                                // EOF / 读失败 / 5s 超时：与主循环同语义终止排空。
+                                Ok(Ok(None)) | Ok(Err(_)) | Err(_) => break,
+                            }
+                        }
+                        // 106 体检：wait 包 5 分钟超时——select! 的计时器对本分支不再
+                        // 生效，子进程关了 stdout 但自身不退出（或 exec 后挂起）时
+                        // wait 会永久阻塞。超时后按整组 kill 回收再上抛，不留孤儿。
+                        let wait_result =
+                            tokio::time::timeout(Duration::from_secs(300), child.wait()).await;
+                        let status = match wait_result {
+                            Ok(Ok(s)) => s,
+                            Ok(Err(e)) => {
                                 let _ = child.kill().await;
                                 return Err(SessionError::WaitFailed(e.to_string()));
+                            }
+                            Err(_) => {
+                                tracing::error!(
+                                    "[session] child did not exit after stdout EOF within 300s, killing group: tag={}",
+                                    log_tag
+                                );
+                                let _ = child.kill().await;
+                                let stderr = raw_stderr_lines.join("\n");
+                                return Err(SessionError::Timeout { secs: 300, stderr });
                             }
                         };
                         let raw_stderr = raw_stderr_lines.join("\n");
@@ -244,7 +303,17 @@ where
             line_result = stderr_reader.next_line(), if !stderr_done => {
                 match line_result {
                     Ok(Some(line)) => {
-                        raw_stderr_lines.push(line);
+                        if !stderr_dropped {
+                            if raw_stderr_lines.len() >= MAX_LINES_PER_STREAM {
+                                stderr_dropped = true;
+                                tracing::error!(
+                                    "[session] stderr exceeded {} lines, dropping remaining output (tag={})",
+                                    MAX_LINES_PER_STREAM, log_tag
+                                );
+                            } else {
+                                raw_stderr_lines.push(line);
+                            }
+                        }
                     }
                     // stderr EOF：关闭本分支，继续等 stdout 主流
                     Ok(None) => {

@@ -690,13 +690,23 @@ async fn run_server(cli_port: Option<u16>) {
     info!("  Open http://localhost:{} in your browser", port);
     info!("===========================================");
 
-    let std_listener = match std::net::TcpListener::bind(format!("0.0.0.0:{}", port)) {
+    // 绑定地址尊重 cfg.host（默认 127.0.0.1）：此前硬编码 0.0.0.0 会忽略用户配置，
+    // 且 /api/v1 无鉴权，绑全网卡等于把执行器配置写入口暴露给同网段。
+    let bind_host = &cfg.host;
+    if bind_host != "127.0.0.1" && bind_host != "localhost" && bind_host != "::1" {
+        // 非回环绑定 + 无鉴权 = 同网段可完整读写 API，启动时显式告警让用户知情。
+        tracing::warn!(
+            host = %bind_host,
+            "ntd is binding to a non-loopback address; /api/v1 has NO authentication — any host able to reach this port can read config/secrets and trigger executors"
+        );
+    }
+    let std_listener = match std::net::TcpListener::bind(format!("{}:{}", bind_host, port)) {
         Ok(l) => l,
         Err(e) => {
             // 端口绑定失败（如被占用、权限不足）：典型启动级不可恢复错误。
             // 同上保留 eprintln! 作为 last-resort 兜底。
-            tracing::error!(port, error = %e, "Failed to bind to port");
-            eprintln!("Failed to bind to port {}: {}", port, e);
+            tracing::error!(host = %bind_host, port, error = %e, "Failed to bind to address");
+            eprintln!("Failed to bind to {}:{}: {}", bind_host, port, e);
             std::process::exit(1);
         }
     };

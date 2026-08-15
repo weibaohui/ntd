@@ -401,10 +401,34 @@ fn compute_session_stats(sessions: &[SessionInfo]) -> SessionStats {
     }
 }
 
+/// 校验 session_id 是否安全用于文件路径拼接。
+///
+/// 背景：session_id 来自 URL 路径段，axum 会做 percent-decode，
+/// `..%2F` 这类编码会还原成 `../` 进入 `join(format!("{}.jsonl", id))`，
+/// 构成路径穿越（可读/删任意 .jsonl 文件及同名目录）。
+/// 各执行器生成的 session id 均为 UUID 形态（字母数字+连字符/下划线），
+/// 白名单校验不会误伤合法 id。
+fn validate_session_id(session_id: &str) -> Result<(), AppError> {
+    let ok = !session_id.is_empty()
+        && session_id.len() <= 128
+        && session_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    if ok {
+        Ok(())
+    } else {
+        Err(AppError::BadRequest(
+            "invalid session_id: only ASCII alphanumeric, '-' and '_' are allowed".to_string(),
+        ))
+    }
+}
+
 pub async fn get_session_detail(
     State(_state): State<AppState>,
     Path(session_id): Path<String>,
 ) -> Result<ApiResponse<SessionDetail>, AppError> {
+    // 入口先净化：scanner 内部全部基于 session_id 拼文件路径。
+    validate_session_id(&session_id)?;
     // 通过 SCANNERS 注册表顺序遍历,与重构前 `if let Some(d) = get_X_detail(...)`
     // 的回退顺序一致——遇到第一个命中的 scanner 即返回,未命中走 NotFound。
     let detail = tokio::task::spawn_blocking(move || {
@@ -428,6 +452,8 @@ pub async fn delete_session(
     State(_state): State<AppState>,
     Path(session_id): Path<String>,
 ) -> Result<ApiResponse<()>, AppError> {
+    // 删除路径同样先净化：该分支会 remove_file + remove_dir_all，穿越危害更大。
+    validate_session_id(&session_id)?;
     tokio::task::spawn_blocking(move || {
         // Try to delete from each source
         let claude_dir = home_dir().join(".claude/projects");
@@ -873,5 +899,34 @@ mod sessions_cache_tests {
         assert_eq!(stats.total_sessions, 0);
         assert_eq!(stats.active_sessions, 0);
         assert!(stats.by_source.is_empty());
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod validate_session_id_tests {
+    use super::validate_session_id;
+
+    #[test]
+    fn test_validate_session_id_accepts_uuid() {
+        // 合法 UUID 形态（Claude Code 等执行器的实际 id 格式）必须放行。
+        assert!(validate_session_id("c3f6a1b2-4e5d-4a6b-9c8d-7e0f1a2b3c4d").is_ok());
+        assert!(validate_session_id("session_2026_08_15").is_ok());
+    }
+
+    #[test]
+    fn test_validate_session_id_rejects_path_traversal() {
+        // percent-decode 后的穿越序列必须被拒绝（删除接口会 remove_dir_all）。
+        assert!(validate_session_id("../../../tmp/victim").is_err());
+        assert!(validate_session_id("..\\..\\win").is_err());
+        assert!(validate_session_id("..").is_err());
+        assert!(validate_session_id("a/b").is_err());
+    }
+
+    #[test]
+    fn test_validate_session_id_rejects_empty_and_oversize() {
+        // 空串会拼成 ".jsonl" 命中意外文件；超长 id 无合法来源。
+        assert!(validate_session_id("").is_err());
+        assert!(validate_session_id(&"a".repeat(129)).is_err());
     }
 }

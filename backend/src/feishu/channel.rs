@@ -8,8 +8,12 @@ use super::codec::decode_message_content;
 use super::config::{FeishuConfig, FeishuConnectionMode};
 use super::message::ChannelMessage;
 
+/// 连续失败重连上限：只惩罚「连不上/秒断」。健康连接断开会复位计数（见 listen()）。
 const MAX_RECONNECT_ATTEMPTS: u32 = 10;
 const RECONNECT_BASE_DELAY_SECS: u64 = 2;
+/// 连接存活超过该阈值即视为「曾是健康连接」：被网关踢/网络抖动断开不消耗重连额度。
+/// 106 体检 C3：此前计数器只增不减，长跑实例累计 10 次断线后飞书接入永久死亡。
+const HEALTHY_CONNECTION_LIVED_SECS: u64 = 60;
 
 /// 去掉飞书群聊 @提及占位符（`@_user_N`），只保留用户实际输入的文本。
 ///
@@ -116,20 +120,25 @@ impl FeishuChannelService {
         }
 
         let config = self.client.config.clone();
-        let mut attempt: u32 = 0;
+        // 连续失败计数：只在「连不上或秒断」时累计；连接曾健康存活（>= 阈值）后断开
+        // 会复位为 0。修复前该计数器单调递增、连接成功也不清零——飞书网关例行踢
+        // 连接 + 网络抖动累计 10 次后 listen() 永久返回 Err，bot 静默死亡（106 C3）。
+        let mut consecutive_failures: u32 = 0;
 
         loop {
-            attempt += 1;
-            if attempt > MAX_RECONNECT_ATTEMPTS {
-                error!("WebSocket: exceeded max reconnect attempts ({})", MAX_RECONNECT_ATTEMPTS);
-                return Err(anyhow::anyhow!("WebSocket: exceeded max reconnect attempts"));
+            if consecutive_failures >= MAX_RECONNECT_ATTEMPTS {
+                error!("WebSocket: exceeded max consecutive reconnect failures ({})", MAX_RECONNECT_ATTEMPTS);
+                return Err(anyhow::anyhow!("WebSocket: exceeded max consecutive reconnect failures"));
             }
 
-            if attempt > 1 {
-                let delay = RECONNECT_BASE_DELAY_SECS * 2u64.pow((attempt - 2).min(5));
-                warn!("WebSocket: reconnect attempt {}/{} in {}s", attempt, MAX_RECONNECT_ATTEMPTS, delay);
+            if consecutive_failures > 0 {
+                let delay = RECONNECT_BASE_DELAY_SECS * 2u64.pow((consecutive_failures - 1).min(5));
+                warn!("WebSocket: reconnect attempt {}/{} in {}s", consecutive_failures, MAX_RECONNECT_ATTEMPTS, delay);
                 tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
             }
+
+            // 记录本次连接启动时刻：连接关闭/出错时用存活时长判断是否为健康断开。
+            let connect_started = std::time::Instant::now();
 
             let tx_clone = tx.clone();
             let config_clone = config.clone();
@@ -179,6 +188,9 @@ impl FeishuChannelService {
                                 preview
                             );
 
+                            // try_send 失败分支的日志需要 message_id，先留一份拷贝
+                            //（下方 struct 构造会 move 原 message_id）。
+                            let message_id_for_log = message_id.clone();
                             let channel_msg = ChannelMessage {
                                 id: message_id,
                                 sender: sender_open_id,
@@ -191,7 +203,12 @@ impl FeishuChannelService {
                             };
 
                             if let Err(e) = tx.try_send(channel_msg) {
-                                error!("Failed to forward message to channel bus: {e}");
+                                // 106：带上 message_id 便于事后对账——消费端串行 await，
+                                // 突发高峰把 256 容量打满时消息会被丢弃，至少可从日志追溯丢了哪些。
+                                error!(
+                                    "Failed to forward message to channel bus (dropped, message_id={}): {e}",
+                                    message_id_for_log
+                                );
                             } else {
                                 debug!("Message forwarded to channel bus: chat_id={}", msg.message.chat_id);
                             }
@@ -324,12 +341,24 @@ impl FeishuChannelService {
             .await
             .map_err(|e| anyhow::anyhow!("Join error: {e}"))?;
 
+            let lived = connect_started.elapsed();
             match result {
                 Ok(()) => {
-                    info!("WebSocket: connection closed normally, reconnecting...");
+                    // 正常关闭说明连接曾成功建立，复位连续失败计数。
+                    consecutive_failures = 0;
+                    info!("WebSocket: connection closed normally after {:?}, reconnecting...", lived);
                 }
                 Err(e) => {
-                    warn!("WebSocket: connection error: {e}");
+                    if lived >= std::time::Duration::from_secs(HEALTHY_CONNECTION_LIVED_SECS) {
+                        // 连接健康存活后才断开（网关踢人/网络抖动）：不消耗重连额度。
+                        consecutive_failures = 0;
+                        info!("WebSocket: healthy connection lived {:?} before error, resetting failure count: {e}", lived);
+                    } else {
+                        // 秒断/连不上才累计失败——真正的故障场景（凭证错、网络不通）。
+                        consecutive_failures += 1;
+                        warn!("WebSocket: connection failed after {:?} (consecutive failure {}/{}): {e}",
+                            lived, consecutive_failures, MAX_RECONNECT_ATTEMPTS);
+                    }
                 }
             }
         }

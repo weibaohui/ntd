@@ -657,7 +657,7 @@ impl LoopRunner {
 
         // 7. 计算下一步索引
         let next_policy = if gate_passed { &step.on_success } else { &step.on_rating_fail };
-        let next_idx = self.resolve_next(step, next_policy, &step_id_to_idx, step_idx);
+        let next_idx = self.resolve_next(step, next_policy, &step_id_to_idx, step_idx, gate_passed);
 
         info!(
             "resume: loop_execution #{} step #{} status={} gate_passed={} next_idx={:?}",
@@ -1140,7 +1140,8 @@ impl LoopRunner {
                     .await
                     .map_err(|e| e.to_string())?;
                 st.failed += 1;
-                st.current_idx = self.resolve_next(step, &step.on_rating_fail, &run.step_id_to_idx, idx);
+                // 启动失败 = 失败分支：跳转目标取 fail_goto（106：此前不分成败）。
+                st.current_idx = self.resolve_next(step, &step.on_rating_fail, &run.step_id_to_idx, idx, false);
                 *st.consecutive_retries.entry(step.id).or_insert(0) += 1;
                 return Ok(None);
             }
@@ -1336,11 +1337,11 @@ impl LoopRunner {
             st.total_tokens_used += step_tokens;
         }
 
-        // 4l. 确定下一步
+        // 4l. 确定下一步（成败语义传入 resolve_next，跳转目标按 gates_passed 选取）
         st.current_idx = if gate_passed {
-            self.resolve_next(step, &step.on_success, &run.step_id_to_idx, idx)
+            self.resolve_next(step, &step.on_success, &run.step_id_to_idx, idx, true)
         } else {
-            self.resolve_next(step, &step.on_rating_fail, &run.step_id_to_idx, idx)
+            self.resolve_next(step, &step.on_rating_fail, &run.step_id_to_idx, idx, false)
         };
         Ok(())
     }
@@ -1496,34 +1497,46 @@ impl LoopRunner {
     }
 
     /// 解析下一步：根据策略和当前索引决定下一个 step 的索引。
+    /// 解析下一环节索引。
+    ///
+    /// 策略语义与 process/transition_resolver.rs 严格对齐（106 体检修复）：
+    /// - 保留字 `next`/`skip` → 下一索引；`end`/`break` → 终止（None）；
+    /// - 其他一切值（含 `"goto"` 与 installer 写入的裸环节名，如 `"write-prd"`）
+    ///   = 跳转：按 `gates_passed` 成败语义取安装时解析好的目标 id。
+    ///
+    /// 修复前的两处缺陷：
+    /// 1. `"goto"` 臂用 `success_goto.or(fail_goto)` 不分成败——失败路径会跳到
+    ///    成功目标（审批拒绝后的返工被绕过，环路方向完全错误）；
+    /// 2. 裸环节名落到 `_` 兜底按 next 处理——installer 写入的裸名策略
+    ///    （resume 审批拒绝、启动失败分支、legacy 环节）全部错误推进。
     fn resolve_next(
         &self,
         step: &loop_steps::Model,
         policy: &str,
         step_id_to_idx: &HashMap<i64, usize>,
         current_idx: usize,
+        gates_passed: bool,
     ) -> Option<usize> {
         match policy {
-            "next" => Some(current_idx + 1),
-            "goto" => {
-                let target = step.success_goto_step_id
-                    .or(step.fail_goto_step_id)?;
-                match step_id_to_idx.get(&target) {
-                    Some(&idx) => {
-                        info!("loop_runner: goto step #{} (idx={})", target, idx);
+            "next" | "skip" => Some(current_idx + 1),
+            "end" | "break" => None,
+            // 非保留字（"goto" 或裸环节名）都视为跳转目标。
+            _ => {
+                let target = if gates_passed {
+                    step.success_goto_step_id
+                } else {
+                    step.fail_goto_step_id
+                };
+                match target.and_then(|id| step_id_to_idx.get(&id).copied()) {
+                    Some(idx) => {
+                        info!("loop_runner: goto step #{} (idx={}) [policy={}, passed={}]", step.id, idx, policy, gates_passed);
                         Some(idx)
                     }
                     None => {
-                        warn!("loop_runner: goto target step #{} not found, falling back to next", target);
+                        warn!("loop_runner: goto target for step #{} (policy={}, passed={}) not found, falling back to next", step.id, policy, gates_passed);
                         Some(current_idx + 1)
                     }
                 }
-            }
-            "end" | "break" => None,
-            "skip" => Some(current_idx + 1),
-            _ => {
-                warn!("loop_runner: unknown policy '{}', falling back to next", policy);
-                Some(current_idx + 1)
             }
         }
     }
@@ -2112,17 +2125,19 @@ mod tests {
         policy: &str,
         step_id_to_idx: &HashMap<i64, usize>,
         current_idx: usize,
+        gates_passed: bool,
     ) -> Option<usize> {
         match policy {
-            "next" => Some(current_idx + 1),
-            "goto" => {
-                let target = step.success_goto_step_id
-                    .or(step.fail_goto_step_id)?;
-                step_id_to_idx.get(&target).copied().or(Some(current_idx + 1))
-            }
+            "next" | "skip" => Some(current_idx + 1),
             "end" | "break" => None,
-            "skip" => Some(current_idx + 1),
-            _ => Some(current_idx + 1),
+            _ => {
+                let target = if gates_passed {
+                    step.success_goto_step_id
+                } else {
+                    step.fail_goto_step_id
+                };
+                target.and_then(|id| step_id_to_idx.get(&id).copied()).or(Some(current_idx + 1))
+            }
         }
     }
 
@@ -2134,7 +2149,7 @@ mod tests {
         ];
         let mut idx_map = HashMap::new();
         for (i, s) in steps.iter().enumerate() { idx_map.insert(s.id, i); }
-        assert_eq!(resolve_next_algo(&steps[0], "next", &idx_map, 0), Some(1));
+        assert_eq!(resolve_next_algo(&steps[0], "next", &idx_map, 0, true), Some(1));
     }
 
     #[test]
@@ -2142,7 +2157,7 @@ mod tests {
         let steps = vec![make_step(1, "end", "break", None, None)];
         let mut idx_map = HashMap::new();
         idx_map.insert(1, 0);
-        assert_eq!(resolve_next_algo(&steps[0], "end", &idx_map, 0), None);
+        assert_eq!(resolve_next_algo(&steps[0], "end", &idx_map, 0, true), None);
     }
 
     #[test]
@@ -2150,7 +2165,7 @@ mod tests {
         let steps = vec![make_step(1, "next", "break", None, None)];
         let mut idx_map = HashMap::new();
         idx_map.insert(1, 0);
-        assert_eq!(resolve_next_algo(&steps[0], "break", &idx_map, 0), None);
+        assert_eq!(resolve_next_algo(&steps[0], "break", &idx_map, 0, false), None);
     }
 
     #[test]
@@ -2161,7 +2176,7 @@ mod tests {
         ];
         let mut idx_map = HashMap::new();
         for (i, s) in steps.iter().enumerate() { idx_map.insert(s.id, i); }
-        assert_eq!(resolve_next_algo(&steps[0], "skip", &idx_map, 0), Some(1));
+        assert_eq!(resolve_next_algo(&steps[0], "skip", &idx_map, 0, false), Some(1));
     }
 
     #[test]
@@ -2174,7 +2189,7 @@ mod tests {
         let mut idx_map = HashMap::new();
         for (i, s) in steps.iter().enumerate() { idx_map.insert(s.id, i); }
         // success_goto_step_id = 3 → idx 2
-        assert_eq!(resolve_next_algo(&steps[0], "goto", &idx_map, 0), Some(2));
+        assert_eq!(resolve_next_algo(&steps[0], "goto", &idx_map, 0, true), Some(2));
     }
 
     #[test]
@@ -2186,7 +2201,44 @@ mod tests {
         let mut idx_map = HashMap::new();
         for (i, s) in steps.iter().enumerate() { idx_map.insert(s.id, i); }
         // 目标 999 不存在 → fallback to next (idx 1)
-        assert_eq!(resolve_next_algo(&steps[0], "goto", &idx_map, 0), Some(1));
+        assert_eq!(resolve_next_algo(&steps[0], "goto", &idx_map, 0, true), Some(1));
+    }
+
+    /// 106 回归：失败分支必须取 fail_goto，而非 success_goto 优先。
+    #[test]
+    fn resolve_next_fail_goto_uses_fail_target_not_success() {
+        // success_goto=3（成功目标），fail_goto=2（返工目标）。
+        // 修复前 "goto" 臂 or 链优先取 3——失败路径跳到成功目标，返工被绕过。
+        let steps = vec![
+            make_step(1, "goto", "goto", Some(3), Some(2)),
+            make_step(2, "next", "break", None, None),
+            make_step(3, "next", "break", None, None),
+        ];
+        let mut idx_map = HashMap::new();
+        for (i, s) in steps.iter().enumerate() { idx_map.insert(s.id, i); }
+        // 失败分支（gates_passed=false）→ 必须跳返工目标 step 2（idx 1）。
+        assert_eq!(resolve_next_algo(&steps[0], "goto", &idx_map, 0, false), Some(1));
+        // 成功分支 → 跳成功目标 step 3（idx 2）。
+        assert_eq!(resolve_next_algo(&steps[0], "goto", &idx_map, 0, true), Some(2));
+    }
+
+    /// 106 回归：installer 写入的裸环节名策略（如 "write-prd"）按跳转目标解析，
+    /// 不再落到 unknown 兜底错误推进到 next。
+    #[test]
+    fn resolve_next_bare_step_name_resolves_as_goto() {
+        // on_rating_fail = "write-prd"（裸名），fail_goto_step_id 已由 installer 解析为 2。
+        let steps = vec![
+            make_step(1, "next", "write-prd", None, Some(2)),
+            make_step(2, "next", "break", None, None),
+            make_step(3, "next", "break", None, None),
+        ];
+        let mut idx_map = HashMap::new();
+        for (i, s) in steps.iter().enumerate() { idx_map.insert(s.id, i); }
+        // 失败 + 裸名策略 → 跳 step 2（idx 1）；修复前会 warn 后推到 next（idx 1 恰好
+        // 相同），故再构造一个目标更远的场景验证区分度。
+        assert_eq!(resolve_next_algo(&steps[0], "write-prd", &idx_map, 0, false), Some(1));
+        // 裸名 + 目标不存在 → fallback next。
+        assert_eq!(resolve_next_algo(&steps[0], "write-prd", &idx_map, 0, true), Some(1));
     }
 
     #[test]
@@ -2197,7 +2249,7 @@ mod tests {
         ];
         let mut idx_map = HashMap::new();
         for (i, s) in steps.iter().enumerate() { idx_map.insert(s.id, i); }
-        assert_eq!(resolve_next_algo(&steps[0], "unknown", &idx_map, 0), Some(1));
+        assert_eq!(resolve_next_algo(&steps[0], "unknown", &idx_map, 0, false), Some(1));
     }
 
     // ── LimitsConfig 解析测试 ──

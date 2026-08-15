@@ -142,10 +142,22 @@ impl FeishuListener {
         let ch = channel.clone();
         let bot_id = bot.id;
         tokio::spawn(async move {
-            tracing::info!("[feishu:{}] starting listen()", bot_id);
-            match ch.listen(tx).await {
-                Ok(()) => tracing::warn!("[feishu:{}] listen() returned Ok", bot_id),
-                Err(e) => tracing::error!("[feishu:{}] listen() error: {e}", bot_id),
+            // 106 体检 C3 修复：listen() 返回（连续重连失败耗尽额度）后此前只打一行
+            // 日志，bot 永久收不到消息直到 daemon 重启。这里加 supervisor：
+            // 带退避地重启监听（30s 起步、上限 10 分钟），配置修复后无需重启进程即可自愈。
+            let mut restart_delay_secs = 30u64;
+            const MAX_RESTART_DELAY_SECS: u64 = 600;
+            loop {
+                tracing::info!("[feishu:{}] starting listen()", bot_id);
+                match ch.listen(tx.clone()).await {
+                    Ok(()) => tracing::warn!("[feishu:{}] listen() returned Ok", bot_id),
+                    Err(e) => tracing::error!("[feishu:{}] listen() error: {e}", bot_id),
+                }
+                tracing::warn!(
+                    "[feishu:{}] restarting listener in {}s", bot_id, restart_delay_secs
+                );
+                tokio::time::sleep(std::time::Duration::from_secs(restart_delay_secs)).await;
+                restart_delay_secs = (restart_delay_secs * 2).min(MAX_RESTART_DELAY_SECS);
             }
         });
 

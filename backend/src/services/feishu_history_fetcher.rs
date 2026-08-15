@@ -87,8 +87,11 @@ impl FeishuHistoryFetcher {
             token_manager,
             bot_credentials,
             debounce,
-            // 复用单例 Client；与旧代码各处 reqwest::Client::new() 行为一致（infallible 构造）。
-            http_client: reqwest::Client::new(),
+            // 复用单例 Client；106 起带上 15s 超时（此前无超时，翻页请求挂起会
+            // 拖死历史拉取任务）。构造 infallible。
+            http_client: crate::feishu::sdk::config::build_client_with_timeout(
+                crate::feishu::sdk::config::DEFAULT_REQ_TIMEOUT,
+            ),
             bot_open_ids: DashMap::new(),
         }
     }

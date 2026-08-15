@@ -204,14 +204,29 @@ async fn has_running_tasks(db: &Database) -> bool {
 
 /// 通过 npm view 获取最新版本号。
 async fn check_npm_latest_version() -> Result<Option<String>, String> {
-    let output = tokio::task::spawn_blocking(|| {
-        std::process::Command::new("npm")
-            .args(["view", "@weibaohui/ntd", "version"])
-            .output()
-    })
+    // 106：npm 网络挂起时 output() 无限阻塞，spawn_blocking 线程永不释放且调度
+    // 主循环停在本次 await 上（之后不再有任何检查）。包一层超时。
+    const NPM_VIEW_TIMEOUT_SECS: u64 = 60;
+    let output = match tokio::time::timeout(
+        std::time::Duration::from_secs(NPM_VIEW_TIMEOUT_SECS),
+        tokio::task::spawn_blocking(|| {
+            std::process::Command::new("npm")
+                .args(["view", "@weibaohui/ntd", "version"])
+                .output()
+        }),
+    )
     .await
-    .map_err(|e| format!("spawn_blocking failed: {}", e))?
-    .map_err(|e| format!("npm view failed: {}", e))?;
+    {
+        Ok(joined) => joined
+            .map_err(|e| format!("spawn_blocking failed: {}", e))?
+            .map_err(|e| format!("npm view failed: {}", e))?,
+        Err(_) => {
+            return Err(format!(
+                "npm view 超时（{}s），跳过本轮检查",
+                NPM_VIEW_TIMEOUT_SECS
+            ));
+        }
+    };
 
     if output.status.success() {
         let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -234,20 +249,34 @@ async fn execute_silent_upgrade() -> Result<(), String> {
     let prefix = crate::npm_utils::get_npm_global_prefix();
     let prefix_for_npm = prefix.clone();
 
-    // 执行 npm 升级
-    let npm_result = tokio::task::spawn_blocking(move || {
-        std::process::Command::new("npm")
-            .args([
-                "install",
-                "-g",
-                &format!("--prefix={}", prefix_for_npm),
-                "@weibaohui/ntd@latest",
-            ])
-            .output()
-    })
+    // 执行 npm 升级（106：10 分钟超时兜底——install 慢但有限，网络挂起则报错
+    // 而非永久拖住升级流程；超时分支 spawn_blocking 里的进程随线程自然结束）。
+    const NPM_INSTALL_TIMEOUT_SECS: u64 = 600;
+    let npm_result = match tokio::time::timeout(
+        std::time::Duration::from_secs(NPM_INSTALL_TIMEOUT_SECS),
+        tokio::task::spawn_blocking(move || {
+            std::process::Command::new("npm")
+                .args([
+                    "install",
+                    "-g",
+                    &format!("--prefix={}", prefix_for_npm),
+                    "@weibaohui/ntd@latest",
+                ])
+                .output()
+        }),
+    )
     .await
-    .map_err(|e| format!("spawn_blocking failed: {}", e))?
-    .map_err(|e| format!("npm install failed: {}", e))?;
+    {
+        Ok(joined) => joined
+            .map_err(|e| format!("spawn_blocking failed: {}", e))?
+            .map_err(|e| format!("npm install failed: {}", e))?,
+        Err(_) => {
+            return Err(format!(
+                "npm install 超时（{}s），本轮升级放弃",
+                NPM_INSTALL_TIMEOUT_SECS
+            ));
+        }
+    };
 
     if !npm_result.status.success() {
         let stderr = String::from_utf8_lossy(&npm_result.stderr);

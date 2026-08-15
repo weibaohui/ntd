@@ -437,12 +437,15 @@ pub struct BatchDeleteTodosRequest {
 }
 pub async fn batch_delete_todos(
     State(state): State<AppState>,
-    Path(_ws_id): Path<i64>, // ws_id 留用将来做 workspace 归属校验
+    Path(ws_id): Path<i64>,
     ApiJson(req): ApiJson<BatchDeleteTodosRequest>,
 ) -> Result<ApiResponse<serde_json::Value>, AppError> {
     if req.ids.is_empty() {
         return Ok(ApiResponse::ok(serde_json::json!({"deleted": 0})));
     }
+    // 106 体检修复：同文件其他 batch 接口（executor/workspace/scheduler）都过
+    // verify_todos_belong_to_ws，唯独批量删除漏了——跨 workspace 软删他人事项。
+    crate::handlers::workspace_guard::verify_todos_belong_to_ws(&state.db, &req.ids, ws_id).await?;
     // 一次批量查所有 id 的引用计数（替代逐 id 查询，消除 N+1，091 性能优化）。
     let ref_counts = state.db.count_loop_steps_by_todos(&req.ids).await?;
     // 按引用计数拆分：被 loop_steps 引用的阻止删除并上报原因，其余进入批量软删。

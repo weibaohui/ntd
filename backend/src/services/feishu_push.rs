@@ -248,7 +248,11 @@ impl FeishuPushService {
                                     if let Err(e) = res {
                                         warn!("[feishu-push] send failed for bot {}: {}", bot_id, e);
                                     } else {
-                                        debug!("[feishu-push] sent to bot {}: {}", bot_id, &text[..text.len().min(60)]);
+                                        // 106 体检：按字符截断——此前 `&text[..min(len,60)]` 按字节
+                                        // 切片，中文/emoji 落在第 60 字节边界时 panic，且该行在唯一
+                                        // 推送循环任务内，panic 即整个推送服务永久失效且无看护。
+                                        let preview: String = text.chars().take(60).collect();
+                                        debug!("[feishu-push] sent to bot {}: {}", bot_id, preview);
                                     }
                                 }
                             }

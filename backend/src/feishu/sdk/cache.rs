@@ -16,7 +16,12 @@ impl<T: Clone> Default for QuickCache<T> {
 
 impl<T: Clone> QuickCache<T> {
     pub fn new() -> Self {
-        let cache = Cache::new(10);
+        Self::with_capacity(10)
+    }
+
+    /// 指定容量构造（106：事件去重需要比默认 10 大得多的 LRU 窗口）。
+    pub fn with_capacity(cap: usize) -> Self {
+        let cache = Cache::new(cap);
         Self { cache }
     }
 
