@@ -657,7 +657,7 @@ impl LoopRunner {
 
         // 7. 计算下一步索引
         let next_policy = if gate_passed { &step.on_success } else { &step.on_rating_fail };
-        let next_idx = self.resolve_next(step, next_policy, &step_id_to_idx, step_idx, gate_passed);
+        let next_idx = Self::resolve_next(step, next_policy, &step_id_to_idx, step_idx, gate_passed);
 
         info!(
             "resume: loop_execution #{} step #{} status={} gate_passed={} next_idx={:?}",
@@ -1141,7 +1141,7 @@ impl LoopRunner {
                     .map_err(|e| e.to_string())?;
                 st.failed += 1;
                 // 启动失败 = 失败分支：跳转目标取 fail_goto（106：此前不分成败）。
-                st.current_idx = self.resolve_next(step, &step.on_rating_fail, &run.step_id_to_idx, idx, false);
+                st.current_idx = Self::resolve_next(step, &step.on_rating_fail, &run.step_id_to_idx, idx, false);
                 *st.consecutive_retries.entry(step.id).or_insert(0) += 1;
                 return Ok(None);
             }
@@ -1339,9 +1339,9 @@ impl LoopRunner {
 
         // 4l. 确定下一步（成败语义传入 resolve_next，跳转目标按 gates_passed 选取）
         st.current_idx = if gate_passed {
-            self.resolve_next(step, &step.on_success, &run.step_id_to_idx, idx, true)
+            Self::resolve_next(step, &step.on_success, &run.step_id_to_idx, idx, true)
         } else {
-            self.resolve_next(step, &step.on_rating_fail, &run.step_id_to_idx, idx, false)
+            Self::resolve_next(step, &step.on_rating_fail, &run.step_id_to_idx, idx, false)
         };
         Ok(())
     }
@@ -1496,7 +1496,6 @@ impl LoopRunner {
         Ok(())
     }
 
-    /// 解析下一步：根据策略和当前索引决定下一个 step 的索引。
     /// 解析下一环节索引。
     ///
     /// 策略语义与 process/transition_resolver.rs 严格对齐（106 体检修复）：
@@ -1509,8 +1508,11 @@ impl LoopRunner {
     ///    成功目标（审批拒绝后的返工被绕过，环路方向完全错误）；
     /// 2. 裸环节名落到 `_` 兜底按 next 处理——installer 写入的裸名策略
     ///    （resume 审批拒绝、启动失败分支、legacy 环节）全部错误推进。
+    ///
+    /// 关联函数而非 &self 方法（106 评审修复）：逻辑不依赖任何实例状态，
+    /// 测试因此可以直测本函数本身——不再维护一份「算法镜像副本」让测试
+    /// 测副本而非真实现（镜像与实现漂移时测试会给出假绿）。
     fn resolve_next(
-        &self,
         step: &loop_steps::Model,
         policy: &str,
         step_id_to_idx: &HashMap<i64, usize>,
@@ -2119,27 +2121,6 @@ mod tests {
         }
     }
 
-    /// 模拟 resolve_next 的核心算法（不依赖 LoopRunner::resolve_next 的 &self）
-    fn resolve_next_algo(
-        step: &loop_steps::Model,
-        policy: &str,
-        step_id_to_idx: &HashMap<i64, usize>,
-        current_idx: usize,
-        gates_passed: bool,
-    ) -> Option<usize> {
-        match policy {
-            "next" | "skip" => Some(current_idx + 1),
-            "end" | "break" => None,
-            _ => {
-                let target = if gates_passed {
-                    step.success_goto_step_id
-                } else {
-                    step.fail_goto_step_id
-                };
-                target.and_then(|id| step_id_to_idx.get(&id).copied()).or(Some(current_idx + 1))
-            }
-        }
-    }
 
     #[test]
     fn resolve_next_success_next_returns_plus_one() {
@@ -2149,7 +2130,7 @@ mod tests {
         ];
         let mut idx_map = HashMap::new();
         for (i, s) in steps.iter().enumerate() { idx_map.insert(s.id, i); }
-        assert_eq!(resolve_next_algo(&steps[0], "next", &idx_map, 0, true), Some(1));
+        assert_eq!(LoopRunner::resolve_next(&steps[0], "next", &idx_map, 0, true), Some(1));
     }
 
     #[test]
@@ -2157,7 +2138,7 @@ mod tests {
         let steps = vec![make_step(1, "end", "break", None, None)];
         let mut idx_map = HashMap::new();
         idx_map.insert(1, 0);
-        assert_eq!(resolve_next_algo(&steps[0], "end", &idx_map, 0, true), None);
+        assert_eq!(LoopRunner::resolve_next(&steps[0], "end", &idx_map, 0, true), None);
     }
 
     #[test]
@@ -2165,7 +2146,7 @@ mod tests {
         let steps = vec![make_step(1, "next", "break", None, None)];
         let mut idx_map = HashMap::new();
         idx_map.insert(1, 0);
-        assert_eq!(resolve_next_algo(&steps[0], "break", &idx_map, 0, false), None);
+        assert_eq!(LoopRunner::resolve_next(&steps[0], "break", &idx_map, 0, false), None);
     }
 
     #[test]
@@ -2176,7 +2157,7 @@ mod tests {
         ];
         let mut idx_map = HashMap::new();
         for (i, s) in steps.iter().enumerate() { idx_map.insert(s.id, i); }
-        assert_eq!(resolve_next_algo(&steps[0], "skip", &idx_map, 0, false), Some(1));
+        assert_eq!(LoopRunner::resolve_next(&steps[0], "skip", &idx_map, 0, false), Some(1));
     }
 
     #[test]
@@ -2189,7 +2170,7 @@ mod tests {
         let mut idx_map = HashMap::new();
         for (i, s) in steps.iter().enumerate() { idx_map.insert(s.id, i); }
         // success_goto_step_id = 3 → idx 2
-        assert_eq!(resolve_next_algo(&steps[0], "goto", &idx_map, 0, true), Some(2));
+        assert_eq!(LoopRunner::resolve_next(&steps[0], "goto", &idx_map, 0, true), Some(2));
     }
 
     #[test]
@@ -2201,7 +2182,7 @@ mod tests {
         let mut idx_map = HashMap::new();
         for (i, s) in steps.iter().enumerate() { idx_map.insert(s.id, i); }
         // 目标 999 不存在 → fallback to next (idx 1)
-        assert_eq!(resolve_next_algo(&steps[0], "goto", &idx_map, 0, true), Some(1));
+        assert_eq!(LoopRunner::resolve_next(&steps[0], "goto", &idx_map, 0, true), Some(1));
     }
 
     /// 106 回归：失败分支必须取 fail_goto，而非 success_goto 优先。
@@ -2217,9 +2198,9 @@ mod tests {
         let mut idx_map = HashMap::new();
         for (i, s) in steps.iter().enumerate() { idx_map.insert(s.id, i); }
         // 失败分支（gates_passed=false）→ 必须跳返工目标 step 2（idx 1）。
-        assert_eq!(resolve_next_algo(&steps[0], "goto", &idx_map, 0, false), Some(1));
+        assert_eq!(LoopRunner::resolve_next(&steps[0], "goto", &idx_map, 0, false), Some(1));
         // 成功分支 → 跳成功目标 step 3（idx 2）。
-        assert_eq!(resolve_next_algo(&steps[0], "goto", &idx_map, 0, true), Some(2));
+        assert_eq!(LoopRunner::resolve_next(&steps[0], "goto", &idx_map, 0, true), Some(2));
     }
 
     /// 106 回归：installer 写入的裸环节名策略（如 "write-prd"）按跳转目标解析，
@@ -2236,9 +2217,9 @@ mod tests {
         for (i, s) in steps.iter().enumerate() { idx_map.insert(s.id, i); }
         // 失败 + 裸名策略 → 跳 step 2（idx 1）；修复前会 warn 后推到 next（idx 1 恰好
         // 相同），故再构造一个目标更远的场景验证区分度。
-        assert_eq!(resolve_next_algo(&steps[0], "write-prd", &idx_map, 0, false), Some(1));
+        assert_eq!(LoopRunner::resolve_next(&steps[0], "write-prd", &idx_map, 0, false), Some(1));
         // 裸名 + 目标不存在 → fallback next。
-        assert_eq!(resolve_next_algo(&steps[0], "write-prd", &idx_map, 0, true), Some(1));
+        assert_eq!(LoopRunner::resolve_next(&steps[0], "write-prd", &idx_map, 0, true), Some(1));
     }
 
     #[test]
@@ -2249,7 +2230,7 @@ mod tests {
         ];
         let mut idx_map = HashMap::new();
         for (i, s) in steps.iter().enumerate() { idx_map.insert(s.id, i); }
-        assert_eq!(resolve_next_algo(&steps[0], "unknown", &idx_map, 0, false), Some(1));
+        assert_eq!(LoopRunner::resolve_next(&steps[0], "unknown", &idx_map, 0, false), Some(1));
     }
 
     // ── LimitsConfig 解析测试 ──

@@ -87,11 +87,11 @@ impl FeishuHistoryFetcher {
             token_manager,
             bot_credentials,
             debounce,
-            // 复用单例 Client；106 起带上 15s 超时（此前无超时，翻页请求挂起会
-            // 拖死历史拉取任务）。构造 infallible。
-            http_client: crate::feishu::sdk::config::build_client_with_timeout(
-                crate::feishu::sdk::config::DEFAULT_REQ_TIMEOUT,
-            ),
+            // 106 评审修复：改为真·进程级单例（OnceLock），与 feishu_api_client 的
+            // shared_http_client 同源——旧实现注释声称「复用单例」实则每次 new()
+            // 都新建 Client（连接池不共享）；起多个 fetcher 实例时仍会各开一套。
+            // 带超时 + 连接池真正共享。
+            http_client: crate::services::feishu_api_client::shared_http_client(),
             bot_open_ids: DashMap::new(),
         }
     }

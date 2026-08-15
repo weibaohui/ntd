@@ -21,7 +21,6 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Arc;
 use std::time::Duration;
 use dashmap::DashMap;
 use thiserror::Error;
@@ -73,12 +72,12 @@ pub enum WorktreeError {
 pub struct WorktreeService;
 
 /// 同 repo 路径的互斥锁表：进程级全局，防止并发 git init / 空提交相互踩 index.lock。
-/// 用 std Mutex 守护 DashMap（短临界区、无 await）；锁值是 std::sync::Mutex 的
-/// 语义化别名，实际靠 `lock_repo_path` 的获取/释放 RAII 保护临界区。
-static REPO_LOCKS: std::sync::OnceLock<DashMap<String, Arc<std::sync::Mutex<()>>>> =
+/// 值是 `&'static Mutex`（从 DashMap 的 entry 里 leak 出来，每个路径恰好一次），
+/// 让 guard 可以跨 `lock_repo_path` 返回存活。
+static REPO_LOCKS: std::sync::OnceLock<DashMap<String, &'static std::sync::Mutex<()>>> =
     std::sync::OnceLock::new();
 
-fn repo_locks() -> &'static DashMap<String, Arc<std::sync::Mutex<()>>> {
+fn repo_locks() -> &'static DashMap<String, &'static std::sync::Mutex<()>> {
     REPO_LOCKS.get_or_init(DashMap::new)
 }
 
@@ -86,20 +85,24 @@ fn repo_locks() -> &'static DashMap<String, Arc<std::sync::Mutex<()>>> {
 ///
 /// 调用方式：`let _guard = lock_repo_path(project_path)?;` —— guard drop 即解锁，
 /// 临界区内的 git init / commit 串行化。
+///
+/// 106 评审修复：leak 从「每次调用」改为「每个路径恰好一次」——旧实现每次调用
+/// 都 `Box::leak(Box::new(arc))`，同一路径锁 100 次泄漏 100 个 Box（评论指出；
+/// 早期注释声称「每路径最多一次」与代码不符）。现在 entry API 的 `or_insert_with`
+/// 只在首次命中时 leak，DashMap 值本身持有 `&'static` 引用，重复调用零分配。
 fn lock_repo_path(
     project_path: &str,
 ) -> Result<std::sync::MutexGuard<'static, ()>, WorktreeError> {
-    // 锁表进程级存活：每个 repo 路径最多 leak 一个 Arc（指针大小），生命周期与
-    // 静态表一致，无实际泄漏；换来 guard 可作为 'static 返回。
-    let arc = if let Some(existing) = repo_locks().get(project_path) {
-        existing.clone()
-    } else {
-        repo_locks()
+    // entry() 持写锁完成「查 + 按需 leak」，并发首调也只有一个线程执行 leak。
+    // 泄漏量：每路径一个 Mutex（+DashMap 键的 String），与进程生命周期一致。
+    // entry guard 显式解引用取出 &'static（RefMut 持有期间 DashMap 分片被锁住，
+    // 先拷出静态引用再放掉 guard，避免锁跨 lock() 调用）。
+    let mutex: &'static std::sync::Mutex<()> = {
+        let entry = repo_locks()
             .entry(project_path.to_string())
-            .or_default()
-            .clone()
+            .or_insert_with(|| Box::leak(Box::new(std::sync::Mutex::new(()))));
+        *entry
     };
-    let mutex: &'static std::sync::Mutex<()> = Box::leak(Box::new(arc));
     // 立即上锁。中毒说明曾有持锁线程 panic——按项目惯例接管继续（git 操作幂等）。
     mutex
         .lock()

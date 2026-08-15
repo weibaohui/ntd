@@ -93,7 +93,7 @@ fn next_staging_id() -> u64 {
 /// - `/etc/passwd` 这种 escape 读取
 /// - 符号链接绕过（canonicalize 后再 starts_with）
 /// - 末尾 `/` 让 `split('/').next_back()` 得空串导致误删 skills 根
-fn resolve_skill_path_under(base: &Path, skill_name: &str) -> Result<PathBuf, AppError> {
+pub(crate) fn resolve_skill_path_under(base: &Path, skill_name: &str) -> Result<PathBuf, AppError> {
     // 第一道：纯字符串级校验，挡住最常见的恶意输入（不必走 IO 就能拒）
     let rel = Path::new(skill_name);
     if rel.as_os_str().is_empty() {

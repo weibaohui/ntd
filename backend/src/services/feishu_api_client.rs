@@ -15,7 +15,7 @@ use crate::feishu::sdk::token_manager::TokenManager;
 /// 106 体检：此前每个函数每次调用 `reqwest::Client::new()`——无超时（TCP 半开
 /// 挂死串行推送循环）、无连接复用（繁忙时打爆临时端口/触发飞书限流）。
 /// 15s 超时与 SDK 默认（DEFAULT_REQ_TIMEOUT）保持同一策略。
-fn shared_http_client() -> reqwest::Client {
+pub(crate) fn shared_http_client() -> reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT
         .get_or_init(|| build_client_with_timeout(DEFAULT_REQ_TIMEOUT))
