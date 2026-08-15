@@ -5,7 +5,8 @@ import {
   FileTextOutlined, DownloadOutlined, InfoCircleOutlined,
   SwapOutlined, DeleteOutlined, FolderOutlined,
 } from '@ant-design/icons';
-import XMarkdown from '@ant-design/x-markdown';
+// 093：x-markdown 换懒加载封装——Drawer 打开时才加载 markdown 渲染树。
+import { LazyXMarkdown as XMarkdown } from '@/components/common/LazyXMarkdown';
 import * as db from '@/utils/database';
 import { formatSize, formatTime, EXECUTOR_COLORS } from './helpers';
 import { EXECUTORS, type ExecutorSkills } from '@/types';

@@ -20,7 +20,9 @@ import {
   UnorderedListOutlined, ArrowLeftOutlined, StarOutlined,
   LinkOutlined, DownOutlined,
 } from '@ant-design/icons';
-import XMarkdown from '@ant-design/x-markdown';
+// 093：x-markdown 换懒加载封装——本组件经 SkillsPanel 懒加载，markdown 预览
+// 仅在打开详情时才需要，静态 import 会让 chunk 边界失效。
+import { LazyXMarkdown as XMarkdown } from '@/components/common/LazyXMarkdown';
 import { bundledApi, type BundledSkillMeta, type BundledSkillFile, type SkillSourceMeta, } from '@/api/bundled';
 import type { ExecutorSkills } from '@/types';
 import { EXECUTORS } from '@/types';

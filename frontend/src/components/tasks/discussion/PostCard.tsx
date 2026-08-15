@@ -4,7 +4,8 @@
 
 import { Card, Tag, Space, Button, Spin, Typography, Popconfirm, theme } from 'antd';
 import { DeleteOutlined, MessageOutlined } from '@ant-design/icons';
-import XMarkdown from '@ant-design/x-markdown';
+// 093：x-markdown 换懒加载封装，避免 markdown 依赖树（~600KB）被静态链锚定。
+import { LazyXMarkdown as XMarkdown } from '@/components/common/LazyXMarkdown';
 import type { TaskPost } from '@/types';
 
 const { Text } = Typography;

@@ -3,7 +3,8 @@ import { Spin, Typography, Tag, Space, Button, message } from 'antd';
 import {
   DownloadOutlined, CopyOutlined, FileOutlined,
 } from '@ant-design/icons';
-import XMarkdown from '@ant-design/x-markdown';
+// 093：x-markdown 换懒加载封装——预览打开时才加载 markdown 渲染树。
+import { LazyXMarkdown as XMarkdown } from '@/components/common/LazyXMarkdown';
 import type { SkillFileInfo } from '@/utils/database/skills';
 import { formatSize, formatTime, getFileColor } from './helpers';
 
