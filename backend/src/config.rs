@@ -15,11 +15,11 @@ pub const DEFAULT_PORT: u16 = 8088;
 pub const DEFAULT_DEV_PORT: u16 = 18088;
 /// Default host.
 ///
-/// 安全取舍：默认只绑回环地址。ntd 的 /api/v1 目前没有鉴权中间件，
-/// 默认绑 0.0.0.0 会把全部 API（含执行器配置写入 = 远程命令执行链）
-/// 暴露给同网段任意主机。已有配置文件里显式写的 host 不受影响；
-/// 确需局域网访问的用户需显式配置 0.0.0.0 并自行承担暴露风险。
-pub const DEFAULT_HOST: &str = "127.0.0.1";
+/// 维持 0.0.0.0（106 评审决定：保留局域网直连的默认可达性）。
+/// 已知取舍：/api/v1 目前没有鉴权中间件，绑全网卡会把全部 API 暴露给同网段
+/// 任意主机；缓解措施是启动时对非回环绑定打 warn 提示暴露面（见 main.rs），
+/// 完整 token 鉴权体系另行立项。
+pub const DEFAULT_HOST: &str = "0.0.0.0";
 /// 执行超时「开关打开时」使用的默认时长（秒）。
 ///
 /// 这是推荐/启用态的默认时长：180 分钟 = 10800 秒。
@@ -124,7 +124,7 @@ impl SyncScheduleDefaults {
 pub struct Config {
     /// Server port (default: 8088)
     pub port: u16,
-    /// Server host (default: 127.0.0.1；显式配置 0.0.0.0 才会监听全部网卡)
+    /// Server host (default: 0.0.0.0；绑定尊重该配置，非回环地址启动时 warn 提示)
     pub host: String,
     /// Database file path (default: ~/.ntd/data.db)
     pub db_path: String,

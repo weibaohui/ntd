@@ -234,24 +234,21 @@ where
                         // 进程退出时两个管道同时关闭，缓冲里的 stderr 行可能还没读到，
                         // 直接返回会丢诊断信息（全量测试并行时该窗口被放大，偶发断言失败）。
                         // 5s 兜底：不为凑齐 stderr 无限阻塞（与「拿到多少算多少」语义兼容）。
-                        while !stderr_done {
-                            match tokio::time::timeout(
+                        // while let 形态：Ok(Some(line)) 持续排空，其余（EOF/读失败/超时）终止。
+                        if !stderr_done {
+                            while let Ok(Ok(Some(line))) = tokio::time::timeout(
                                 Duration::from_secs(5),
                                 stderr_reader.next_line(),
                             )
                             .await
                             {
-                                Ok(Ok(Some(line))) => {
-                                    if !stderr_dropped {
-                                        if raw_stderr_lines.len() >= MAX_LINES_PER_STREAM {
-                                            stderr_dropped = true;
-                                        } else {
-                                            raw_stderr_lines.push(line);
-                                        }
+                                if !stderr_dropped {
+                                    if raw_stderr_lines.len() >= MAX_LINES_PER_STREAM {
+                                        stderr_dropped = true;
+                                    } else {
+                                        raw_stderr_lines.push(line);
                                     }
                                 }
-                                // EOF / 读失败 / 5s 超时：与主循环同语义终止排空。
-                                Ok(Ok(None)) | Ok(Err(_)) | Err(_) => break,
                             }
                         }
                         // 106 体检：wait 包 5 分钟超时——select! 的计时器对本分支不再
