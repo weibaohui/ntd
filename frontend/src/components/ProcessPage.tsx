@@ -283,10 +283,17 @@ function ProcessListView({ workspaceId, onOpenLoop, processGuid, pushUrl }: Omit
 
   // 单张工艺卡片渲染（039 从网格 JSX 中抽出，控制列表渲染块的嵌套层级与函数长度）。
   // 040：寻址/高亮统一按 guid（name 可重复）；系统工艺展示「复制」按钮把模板转成可编辑的我的工艺。
+  // 工艺卡片点击体验：整卡可点——点击卡片主体等同点「详情」按钮弹出详情 Modal。
+  // 底部 actions 区（详情/安装/复制/编辑/分享）的按钮点击会冒泡到卡片 onClick，
+  // 必须用 .ant-card-actions 守卫放行，否则点「安装」会同时弹详情 Modal 互相遮挡。
   const renderProcessCard = (p: ProcessTemplate) => (
     <Card
       hoverable
       style={{ flex: 1 }}
+      onClick={(e) => {
+        if ((e.target as HTMLElement).closest('.ant-card-actions')) return;
+        handleShowDetail(p.guid);
+      }}
       title={p.display_name || p.name}
       extra={
         <Space>
