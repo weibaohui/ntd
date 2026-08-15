@@ -136,6 +136,37 @@ impl DirectExecutorSession {
     }
 }
 
+/// 收尾：两路 EOF 齐备后 wait 子进程并打包结果。
+/// 独立成函数是因为 stdout/stderr 两个 EOF 分支都可能成为收敛点，
+/// wait+kill 回退+日志+构造返回的逻辑必须只存在一份。
+async fn finish_session(
+    child: &mut tokio::process::Child,
+    raw_stdout: String,
+    raw_stderr: String,
+    log_tag: &str,
+) -> Result<SessionOutcome, SessionError> {
+    // wait 失败也要 kill 回收：child 未开 kill_on_drop，直接 drop
+    // 会让执行器进程变孤儿继续跑（评审修复）
+    let status = match child.wait().await {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = child.kill().await;
+            return Err(SessionError::WaitFailed(e.to_string()));
+        }
+    };
+    tracing::info!(
+        "[session] finished: tag={}, exit_code={:?}, stdout_len={}, stderr_len={}",
+        log_tag, status.code(), raw_stdout.len(), raw_stderr.len()
+    );
+    if !raw_stderr.is_empty() {
+        tracing::warn!("[session] stderr: tag={}, stderr={}", log_tag, raw_stderr);
+    }
+    // 退出位与退出码一次性取出后再构造返回值：status 后续不再使用
+    let success = status.success();
+    let exit_code = status.code();
+    Ok(SessionOutcome { raw_stdout, raw_stderr, success, exit_code })
+}
+
 /// select! 主循环：逐行读 stdout（回调调用方）/ stderr（收集）/ 超时（kill），
 /// 直到 stdout EOF 后 wait 子进程返回。骨架逐字源自 B（blackboard）——最自洽的一份。
 ///
@@ -178,11 +209,15 @@ where
     // stderr EOF/读失败后禁用该分支（评审修复）：next_line() 在 EOF 后持续立即
     // 返回 Ok(None)，不禁用会让 select! 在 stdout 未结束时空转占满 CPU
     let mut stderr_done = false;
+    // stdout EOF 后禁用其分支：否则 next_line() 持续立即返回 Ok(None) 形成忙循环，
+    // 且 select! 会一直命中该分支、stderr 排空永远轮不到
+    let mut stdout_done = false;
 
     loop {
         tokio::select! {
-            // 读取下一行 stdout：这是主数据流，EOF 即子进程产出完毕
-            line_result = stdout_reader.next_line() => {
+            // 读取下一行 stdout：这是主数据流，EOF 即子进程产出完毕；
+            // 禁用条件是 stdout 已 EOF（防忙循环，见 stdout_done 注释）
+            line_result = stdout_reader.next_line(), if !stdout_done => {
                 match line_result {
                     Ok(Some(line)) => {
                         raw_stdout_lines.push(line.clone());
@@ -204,31 +239,17 @@ where
                             }
                         }
                     }
-                    // stdout 读完了：等子进程退出并打包返回（stderr 可能仍有未消费缓冲，
-                    // 与 B 原实现一致——拿到多少算多少，不为凑齐 stderr 阻塞返回）
+                    // stdout 读完了：不能立即返回——stderr 管道可能仍有缓冲未消费
+                    // （双流同时产出时 select! 可能先命中本分支，如「echo out; echo err 1>&2」），
+                    // 直接返回会丢诊断信息。置 stdout_done 后继续轮询，等 stderr 排空 EOF
+                    // 两路齐备再收尾（stderr 已 EOF 则立即收尾）。
                     Ok(None) => {
-                        // wait 失败也要 kill 回收：child 未开 kill_on_drop，直接 drop
-                        // 会让执行器进程变孤儿继续跑（评审修复）
-                        let status = match child.wait().await {
-                            Ok(s) => s,
-                            Err(e) => {
-                                let _ = child.kill().await;
-                                return Err(SessionError::WaitFailed(e.to_string()));
-                            }
-                        };
-                        let raw_stderr = raw_stderr_lines.join("\n");
-                        let raw_stdout = raw_stdout_lines.join("\n");
-                        tracing::info!(
-                            "[session] finished: tag={}, exit_code={:?}, stdout_len={}, stderr_len={}",
-                            log_tag, status.code(), raw_stdout.len(), raw_stderr.len()
-                        );
-                        if !raw_stderr.is_empty() {
-                            tracing::warn!("[session] stderr: tag={}, stderr={}", log_tag, raw_stderr);
+                        stdout_done = true;
+                        if stderr_done {
+                            let raw_stdout = std::mem::take(&mut raw_stdout_lines).join("\n");
+                            let raw_stderr = std::mem::take(&mut raw_stderr_lines).join("\n");
+                            return finish_session(&mut child, raw_stdout, raw_stderr, log_tag).await;
                         }
-                        // 退出位与退出码一次性取出后再构造返回值：status 后续不再使用
-                        let success = status.success();
-                        let exit_code = status.code();
-                        return Ok(SessionOutcome { raw_stdout, raw_stderr, success, exit_code });
                     }
                     Err(e) => {
                         // stdout 读失败即放弃本次执行：先 kill 回收，再上抛（评审修复，
@@ -246,9 +267,15 @@ where
                     Ok(Some(line)) => {
                         raw_stderr_lines.push(line);
                     }
-                    // stderr EOF：关闭本分支，继续等 stdout 主流
+                    // stderr EOF：关闭本分支，继续等 stdout 主流；
+                    // 若 stdout 已 EOF，两路齐备，收尾返回
                     Ok(None) => {
                         stderr_done = true;
+                        if stdout_done {
+                            let raw_stdout = std::mem::take(&mut raw_stdout_lines).join("\n");
+                            let raw_stderr = std::mem::take(&mut raw_stderr_lines).join("\n");
+                            return finish_session(&mut child, raw_stdout, raw_stderr, log_tag).await;
+                        }
                     }
                     // stderr 读失败不致命：关闭本分支，丢掉诊断信息，主流继续（B 原语义）
                     Err(e) => {
@@ -380,6 +407,21 @@ mod tests {
     async fn test_spawn_and_stream_双流分流捕获不串流() {
         let outcome = DirectExecutorSession::spawn_and_stream(
             make_config("/bin/sh", &["-c", "echo out; echo err 1>&2"], 10),
+            |_| {},
+        )
+        .await
+        .unwrap();
+        assert_eq!(outcome.raw_stdout, "out");
+        assert_eq!(outcome.raw_stderr, "err");
+        assert!(outcome.success);
+    }
+
+    /// stderr 先 EOF、stdout 后收尾：收敛点在 stderr EOF 分支侧
+    /// （stderr_done 置位时 stdout 未结束，不能提前返回；须等 stdout EOF 两路齐备）。
+    #[tokio::test]
+    async fn test_spawn_and_stream_stderr先结束_stdout后收尾() {
+        let outcome = DirectExecutorSession::spawn_and_stream(
+            make_config("/bin/sh", &["-c", "echo err 1>&2; echo out"], 10),
             |_| {},
         )
         .await
