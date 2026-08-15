@@ -17,11 +17,11 @@ export function WorkspacesPanel({ onOpenMessages }: WorkspacesPanelProps = {}) {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [workspacesLoading, setWorkspacesLoading] = useState(false);
   // 新增表单的路径与名称：均为必填项，名称是 Todo 侧按"项目"识别目录的唯一 key
-  const [newDirPath, setNewDirPath] = useState('');
-  const [newDirName, setNewDirName] = useState('');
-  const [addingDir, setAddingDir] = useState(false);
-  const [editingDirId, setEditingDirId] = useState<number | null>(null);
-  const [editingDirName, setEditingDirName] = useState('');
+  const [newWorkspacePath, setNewWorkspacePath] = useState('');
+  const [newWorkspaceName, setNewWorkspaceName] = useState('');
+  const [addingWorkspace, setAddingWorkspace] = useState(false);
+  const [editingWorkspaceId, setEditingWorkspaceId] = useState<number | null>(null);
+  const [editingWorkspaceName, setEditingWorkspaceName] = useState('');
   // 智能体列表，用于统计每个工作区的绑定数量
   const [agentBots, setAgentBots] = useState<AgentBot[]>([]);
   // 基础约定弹窗状态：记录要编辑的工作空间 id 和名称
@@ -62,8 +62,8 @@ export function WorkspacesPanel({ onOpenMessages }: WorkspacesPanelProps = {}) {
   }, []);
 
   const handleAddWorkspace = async () => {
-    const path = newDirPath.trim();
-    const name = newDirName.trim();
+    const path = newWorkspacePath.trim();
+    const name = newWorkspaceName.trim();
     // 名称与路径都为必填：工作空间是 Todo 按"项目"维度分组的依据，
     // 任意一项缺失都会让 Todo 侧无法定位到具体项目分组
     if (!path) {
@@ -74,22 +74,22 @@ export function WorkspacesPanel({ onOpenMessages }: WorkspacesPanelProps = {}) {
       message.error('请输入项目名称');
       return;
     }
-    setAddingDir(true);
+    setAddingWorkspace(true);
     try {
-      const dir = await db.createWorkspace(path, name);
-      setWorkspaces(prev => [...prev.filter(d => d.id !== dir.id), dir].sort((a, b) => a.path.localeCompare(b.path)));
-      setNewDirPath('');
-      setNewDirName('');
+      const ws = await db.createWorkspace(path, name);
+      setWorkspaces(prev => [...prev.filter(d => d.id !== ws.id), ws].sort((a, b) => a.path.localeCompare(b.path)));
+      setNewWorkspacePath('');
+      setNewWorkspaceName('');
       message.success('添加成功');
     } catch (err: any) {
       message.error('添加失败: ' + (err?.message || String(err)));
     } finally {
-      setAddingDir(false);
+      setAddingWorkspace(false);
     }
   };
 
   const handleUpdateWorkspaceName = async (id: number) => {
-    const name = editingDirName.trim();
+    const name = editingWorkspaceName.trim();
     if (!name) {
       message.error('请输入项目名称');
       return;
@@ -97,8 +97,8 @@ export function WorkspacesPanel({ onOpenMessages }: WorkspacesPanelProps = {}) {
     try {
       await db.updateWorkspace(id, name);
       setWorkspaces(prev => prev.map(d => d.id === id ? { ...d, name } : d));
-      setEditingDirId(null);
-      setEditingDirName('');
+      setEditingWorkspaceId(null);
+      setEditingWorkspaceName('');
       message.success('更新成功');
     } catch (err: any) {
       message.error('更新失败: ' + (err?.message || String(err)));
@@ -168,16 +168,16 @@ export function WorkspacesPanel({ onOpenMessages }: WorkspacesPanelProps = {}) {
             </div>
             <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
               <Input
-                value={newDirName}
-                onChange={(e) => setNewDirName(e.target.value)}
+                value={newWorkspaceName}
+                onChange={(e) => setNewWorkspaceName(e.target.value)}
                 placeholder="名称"
                 style={{ width: 180 }}
                 onPressEnter={handleAddWorkspace}
                 size="large"
               />
               <Input
-                value={newDirPath}
-                onChange={(e) => setNewDirPath(e.target.value)}
+                value={newWorkspacePath}
+                onChange={(e) => setNewWorkspacePath(e.target.value)}
                 placeholder="路径"
                 style={{ flex: 1 }}
                 onPressEnter={handleAddWorkspace}
@@ -186,7 +186,7 @@ export function WorkspacesPanel({ onOpenMessages }: WorkspacesPanelProps = {}) {
               <Button
                 type="primary"
                 icon={<PlusOutlined />}
-                loading={addingDir}
+                loading={addingWorkspace}
                 onClick={handleAddWorkspace}
                 size="large"
               >
@@ -200,9 +200,9 @@ export function WorkspacesPanel({ onOpenMessages }: WorkspacesPanelProps = {}) {
             <Empty description="暂无工作空间" image={Empty.PRESENTED_IMAGE_SIMPLE} />
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {workspaces.map((dir) => (
+              {workspaces.map((ws) => (
                 <Card
-                  key={dir.id}
+                  key={ws.id}
                   size="small"
                   style={{
                     borderRadius: 12,
@@ -228,19 +228,19 @@ export function WorkspacesPanel({ onOpenMessages }: WorkspacesPanelProps = {}) {
                         <FolderOutlined style={{ fontSize: 20, color: '#fff' }} />
                       </div>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        {editingDirId === dir.id ? (
+                        {editingWorkspaceId === ws.id ? (
                           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                             <Input
-                              value={editingDirName}
-                              onChange={(e) => setEditingDirName(e.target.value)}
+                              value={editingWorkspaceName}
+                              onChange={(e) => setEditingWorkspaceName(e.target.value)}
                               placeholder="输入名称"
                               size="small"
                               style={{ width: 180 }}
-                              onPressEnter={() => handleUpdateWorkspaceName(dir.id)}
+                              onPressEnter={() => handleUpdateWorkspaceName(ws.id)}
                               autoFocus
                             />
-                            <Button size="small" type="primary" onClick={() => handleUpdateWorkspaceName(dir.id)}>保存</Button>
-                            <Button size="small" onClick={() => { setEditingDirId(null); setEditingDirName(''); }}>取消</Button>
+                            <Button size="small" type="primary" onClick={() => handleUpdateWorkspaceName(ws.id)}>保存</Button>
+                            <Button size="small" onClick={() => { setEditingWorkspaceId(null); setEditingWorkspaceName(''); }}>取消</Button>
                           </div>
                         ) : (
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -249,7 +249,7 @@ export function WorkspacesPanel({ onOpenMessages }: WorkspacesPanelProps = {}) {
                               fontWeight: 600,
                               color: 'var(--color-text)',
                             }}>
-                              {dir.name || <span style={{ color: 'var(--color-warning)' }}>未命名</span>}
+                              {ws.name || <span style={{ color: 'var(--color-warning)' }}>未命名</span>}
                             </span>
                             {/* 绑定消息智能体数量，可点击跳转到独立消息页并联动该工作空间 */}
                             <Typography.Link
@@ -265,10 +265,10 @@ export function WorkspacesPanel({ onOpenMessages }: WorkspacesPanelProps = {}) {
                               }}
                               // 联动跳转：交由父层切视图到 messages 并切 workspace 到该 id，
                               // 与左上角 WorkspaceSwitcher 联动语义保持一致。
-                              onClick={() => onOpenMessages?.(dir.id)}
+                              onClick={() => onOpenMessages?.(ws.id)}
                             >
                               <RobotOutlined />
-                              {getWorkspaceBotCount(dir.id)}
+                              {getWorkspaceBotCount(ws.id)}
                             </Typography.Link>
                           </div>
                         )}
@@ -281,7 +281,7 @@ export function WorkspacesPanel({ onOpenMessages }: WorkspacesPanelProps = {}) {
                           whiteSpace: 'nowrap',
                           fontFamily: 'monospace',
                         }}>
-                          {dir.path}
+                          {ws.path}
                         </div>
                       </div>
                     </div>
@@ -296,7 +296,7 @@ export function WorkspacesPanel({ onOpenMessages }: WorkspacesPanelProps = {}) {
                               key: 'edit',
                               icon: <EditOutlined />,
                               label: '编辑',
-                              onClick: () => { setEditingDirId(dir.id); setEditingDirName(dir.name || ''); },
+                              onClick: () => { setEditingWorkspaceId(ws.id); setEditingWorkspaceName(ws.name || ''); },
                             },
                             {
                               key: 'delete',
@@ -307,7 +307,7 @@ export function WorkspacesPanel({ onOpenMessages }: WorkspacesPanelProps = {}) {
                           ],
                           onClick: ({ key }) => {
                             if (key === 'delete') {
-                              handleDeleteWorkspace(dir.id);
+                              handleDeleteWorkspace(ws.id);
                             }
                           },
                         }}
@@ -332,7 +332,7 @@ export function WorkspacesPanel({ onOpenMessages }: WorkspacesPanelProps = {}) {
                     <Tooltip title="配置该工作空间下所有 todo 执行时注入的前置 prompt">
                       <span
                         style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
-                        onClick={() => setPromptModalWorkspace({ id: dir.id, name: dir.name || '' })}
+                        onClick={() => setPromptModalWorkspace({ id: ws.id, name: ws.name || '' })}
                       >
                         <FileTextOutlined style={{ fontSize: 13, color: 'var(--color-text-secondary)' }} />
                         <span style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>基础约定</span>
@@ -342,8 +342,8 @@ export function WorkspacesPanel({ onOpenMessages }: WorkspacesPanelProps = {}) {
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
                         <Switch
                           size="small"
-                          checked={!!dir.git_worktree_enabled}
-                          onChange={(v) => handleToggleWorktree(dir.id, 'gitWorktreeEnabled', v)}
+                          checked={!!ws.git_worktree_enabled}
+                          onChange={(v) => handleToggleWorktree(ws.id, 'gitWorktreeEnabled', v)}
                         />
                         <span style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>Git Worktree</span>
                       </span>
@@ -352,13 +352,13 @@ export function WorkspacesPanel({ onOpenMessages }: WorkspacesPanelProps = {}) {
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
                         <Switch
                           size="small"
-                          checked={!!dir.auto_cleanup}
-                          disabled={!dir.git_worktree_enabled}
-                          onChange={(v) => handleToggleWorktree(dir.id, 'autoCleanup', v)}
+                          checked={!!ws.auto_cleanup}
+                          disabled={!ws.git_worktree_enabled}
+                          onChange={(v) => handleToggleWorktree(ws.id, 'autoCleanup', v)}
                         />
                         <span style={{
                           fontSize: 13,
-                          color: !dir.git_worktree_enabled ? 'var(--color-text-tertiary)' : 'var(--color-text-secondary)',
+                          color: !ws.git_worktree_enabled ? 'var(--color-text-tertiary)' : 'var(--color-text-secondary)',
                         }}>
                           自动清理
                         </span>

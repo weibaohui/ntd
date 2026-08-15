@@ -18,11 +18,11 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-  Panel["WorkspacesPanel.tsx<br>WorkspacesPanel()"] --> editingDirIdState["useState editingDirId"]
-  Panel --> editingDirNameState["useState editingDirName"]
+  Panel["WorkspacesPanel.tsx<br>WorkspacesPanel()"] --> editingWorkspaceIdState["useState editingWorkspaceId"]
+  Panel --> editingWorkspaceNameState["useState editingWorkspaceName"]
   Panel --> Dropdown["更多 Dropdown onClick key=edit"]
   Dropdown --> setEditingDir["setEditingDirId(dir.id)<br>setEditingDirName(dir.name)"]
-  Panel --> EditInput["Input value=editingDirName<br>onPressEnter=handleUpdate"]
+  Panel --> EditInput["Input value=editingWorkspaceName<br>onPressEnter=handleUpdate"]
   Panel --> SaveBtn["保存 Button<br>onClick=handleUpdate"]
   Panel --> CancelBtn["取消 Button<br>setEditingDirId(null)"]
   SaveBtn --> handleUpdateWorkspaceName["handleUpdateWorkspaceName(id)"]

@@ -19,9 +19,9 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-  Panel["WorkspacesPanel.tsx<br>WorkspacesPanel()"] --> newDirNameState["useState newDirName"]
+  Panel["WorkspacesPanel.tsx<br>WorkspacesPanel()"] --> newWorkspaceNameState["useState newWorkspaceName"]
   Panel --> newDirPathState["useState newDirPath"]
-  Panel --> addingDirState["useState addingDir"]
+  Panel --> addingWorkspaceState["useState addingWorkspace"]
   Panel --> handleAddWorkspace["handleAddWorkspace"]
   handleAddWorkspace --> trimCheck["path/name trim 非空校验"]
   trimCheck --> setAddingDir["setAddingDir(true)"]
