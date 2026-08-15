@@ -88,39 +88,38 @@ pub(crate) fn format_record_time(started_at: &str) -> String {
             CardActionHandler::patch_history_page(context, msg, page).await;
             return true;
         }
-        // nav:/todos <page> - 事项分页（每页 10）。
-        if let Some(page_arg) = action.strip_prefix("nav:/todos") {
-            let page = page_arg.trim().parse::<usize>().unwrap_or(1).max(1);
-            let state = SlashCommandHandler::assemble_help_card_state(context.ctx, context.db, context.bot_id, "todo", page).await;
-            let card = build_help_console_card(&state);
-            CardActionHandler::patch_rendered_card(context, msg, &card).await;
-            return true;
-        }
-        // nav:/loops <page> - 环路分页（每页 10）。
-        if let Some(page_arg) = action.strip_prefix("nav:/loops") {
-            let page = page_arg.trim().parse::<usize>().unwrap_or(1).max(1);
-            let state = SlashCommandHandler::assemble_help_card_state(context.ctx, context.db, context.bot_id, "loop", page).await;
-            let card = build_help_console_card(&state);
-            CardActionHandler::patch_rendered_card(context, msg, &card).await;
-            return true;
-        }
-        // nav:/tasks <page> - 任务分页（每页 10；104 新增，与 todos/loops 同形态）。
-        if let Some(page_arg) = action.strip_prefix("nav:/tasks") {
-            let page = page_arg.trim().parse::<usize>().unwrap_or(1).max(1);
-            let state = SlashCommandHandler::assemble_help_card_state(context.ctx, context.db, context.bot_id, "task", page).await;
-            let card = build_help_console_card(&state);
-            CardActionHandler::patch_rendered_card(context, msg, &card).await;
-            return true;
-        }
-        // nav:/processes <page> - 工艺分页（每页 10；104 新增，工艺页纯查看）。
-        if let Some(page_arg) = action.strip_prefix("nav:/processes") {
-            let page = page_arg.trim().parse::<usize>().unwrap_or(1).max(1);
-            let state = SlashCommandHandler::assemble_help_card_state(context.ctx, context.db, context.bot_id, "process", page).await;
+        // nav:/todos|loops|tasks|processes <page> - 四个列表 Tab 的通用分页（每页 10）。
+        // 与 nav:/help 分开：help 是无页码切 Tab，这里带页码重查后 patch；
+        // tasks/processes 是 104 新增，与 todos/loops 同形态，共用 parse_nav_page 解析。
+        if let Some((group, page)) = CardActionHandler::parse_nav_page(action) {
+            let state = SlashCommandHandler::assemble_help_card_state(context.ctx, context.db, context.bot_id, group, page).await;
             let card = build_help_console_card(&state);
             CardActionHandler::patch_rendered_card(context, msg, &card).await;
             return true;
         }
         false
+    }
+
+    /// 把 nav 分页动作解析为 (Tab group, page)。纯函数便于单测。
+    /// 覆盖 todos/loops/tasks/processes 四个列表 Tab；页码非法（非数字/0/负）统一回退第 1 页。
+    pub(crate) fn parse_nav_page(action: &str) -> Option<(&'static str, usize)> {
+        // 前缀 → Tab key 映射；按前缀匹配避免与 nav:/help、nav:/history 分支冲突
+        let candidates: [(&str, &'static str); 4] = [
+            ("nav:/todos", "todo"),
+            ("nav:/loops", "loop"),
+            ("nav:/tasks", "task"),
+            ("nav:/processes", "process"),
+        ];
+        let (prefix, group) = candidates.into_iter().find(|(p, _)| action.starts_with(p))?;
+        // strip_prefix 在前缀已命中时恒为 Some，unwrap_or 仅作防御；空余部/非数字 → 第 1 页
+        let page = action
+            .strip_prefix(prefix)
+            .unwrap_or("")
+            .trim()
+            .parse::<usize>()
+            .unwrap_or(1)
+            .max(1);
+        Some((group, page))
     }
 
     /// 执行卡片 act 动作，执行后 patch 刷新控制台。
@@ -345,36 +344,29 @@ pub(crate) fn format_record_time(started_at: &str) -> String {
 
     /// 触发任务再执行（104 新增）：复用任务的 requirement 描述，经任务绑定的环路重跑一次。
     /// 仅环路模式任务可执行——委派任务走讨论区 @处理人 接力，卡片不提供触发入口。
+    /// 校验顺序对齐设计 §3.6：workspace → 任务实体 → 可执行校验 → runner → 触发 → 绑定。
     pub(crate) async fn act_run_task(context: &ListenerMessageContext<'_>, msg: &ChannelMessage, task_id: i64) -> ActionOutcome {
+        // 先拿 workspace：区分「未设置」与「查询失败」，避免把 DB 错误伪装成归属错误
+        let workspace_id = match CardActionHandler::bot_workspace_id(context).await {
+            Ok(Some(id)) => id,
+            Ok(None) => return ActionOutcome { success: false, message: "未设置工作空间".to_string() },
+            Err(e) => return ActionOutcome { success: false, message: format!("查询工作空间失败：{e}") },
+        };
+        // 任务不存在与 DB 失败分开报：后者不该让用户误以为任务被删了
+        let task = match context.db.get_task(task_id).await {
+            Ok(Some(t)) => t,
+            Ok(None) => return ActionOutcome { success: false, message: format!("任务 #{task_id} 不存在") },
+            Err(e) => return ActionOutcome { success: false, message: format!("查询任务失败：{e}") },
+        };
+        // 三重校验抽成纯函数：可单测，也让 act_run_task 主干保持线性
+        let loop_id = match CardActionHandler::validate_task_runnable(&task, workspace_id) {
+            Ok(id) => id,
+            Err(msg) => return ActionOutcome { success: false, message: msg },
+        };
         let Some(runner) = context.debounce.loop_runner() else {
             return ActionOutcome { success: false, message: "环路执行器未就绪".to_string() };
         };
         let (receive_id, receive_id_type) = CardActionHandler::resolve_receive_target(msg);
-        let workspace_id = context.db.get_agent_bot_workspace_id(context.bot_id).await.ok().flatten();
-        let task = match context.db.get_task(task_id).await {
-            Ok(Some(t)) => t,
-            _ => return ActionOutcome { success: false, message: format!("任务 #{task_id} 不存在") },
-        };
-        // 校验任务属于 bot 当前 workspace，防止旧卡片跨 workspace 触发（与 act_run_todo 同口径）
-        if task.workspace_id != workspace_id {
-            return ActionOutcome {
-                success: false,
-                message: format!("任务 #{task_id} 不属于当前工作空间，无法执行"),
-            };
-        }
-        // 只允许环路模式执行：委派任务与无环路任务没有卡片侧可触发的执行路径
-        if task.execution_mode != "loop" {
-            return ActionOutcome {
-                success: false,
-                message: format!("任务 #{task_id} 是委派任务，请到 Web 端讨论区执行"),
-            };
-        }
-        let Some(loop_id) = task.loop_id else {
-            return ActionOutcome {
-                success: false,
-                message: format!("任务 #{task_id} 未关联环路，无法执行"),
-            };
-        };
         // meta 口径与 Web 端 dispatch_manual_with_meta 一致（requirement + source），
         // 飞书层没有 loop_trigger_dispatcher，LoopRunner::spawn_run 是等价触发路径。
         let meta = serde_json::json!({ "requirement": task.description, "source": "task" });
@@ -387,8 +379,15 @@ pub(crate) fn format_record_time(started_at: &str) -> String {
             Some(receive_id.to_string()),
             Some(receive_id_type.to_string()),
         );
+        // spawn_run 失败返回 -1：此时根本没有可绑定的执行，必须报失败，不能假成功
+        if exec_id < 0 {
+            return ActionOutcome {
+                success: false,
+                message: format!("创建环路执行失败（任务「{}」）", task.title),
+            };
+        }
         // 把新执行绑定回任务，让任务详情页的执行记录能挂到该任务；
-        // 绑定失败只 warn——执行已触发，回滚执行比留一条未绑定的记录代价更大。
+        // 绑定失败只 warn——执行已触发，回滚执行比留一条未绑定的记录代价更大（需求 §10）。
         if let Err(e) = context.db.update_loop_execution_task_id(exec_id, task_id).await {
             tracing::warn!(
                 "[feishu:{}] 绑定 loop_execution {} 到任务 {} 失败: {}",
@@ -397,6 +396,32 @@ pub(crate) fn format_record_time(started_at: &str) -> String {
         }
         let title = task.title;
         ActionOutcome { success: true, message: format!("已触发任务「{title}」") }
+    }
+
+    /// 查询 bot 当前绑定 workspace，把 DB 错误与「未绑定」区分开交给调用方提示（104 新增）。
+    pub(crate) async fn bot_workspace_id(context: &ListenerMessageContext<'_>) -> Result<Option<i64>, String> {
+        context
+            .db
+            .get_agent_bot_workspace_id(context.bot_id)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    /// 校验任务能否从卡片触发再执行（104 新增）。纯函数便于单测。
+    /// 返回 Ok(loop_id) 仅当：任务属于当前 workspace、execution_mode=loop、且关联环路。
+    pub(crate) fn validate_task_runnable(task: &crate::db::entity::tasks::Model, workspace_id: i64) -> Result<i64, String> {
+        // 归属校验防旧卡片跨 workspace 触发（与 act_run_todo/act_run_loop 同口径）
+        if task.workspace_id != Some(workspace_id) {
+            return Err(format!("任务 #{} 不属于当前工作空间，无法执行", task.id));
+        }
+        // 只允许环路模式执行：委派任务没有卡片侧可触发的执行路径
+        if task.execution_mode != "loop" {
+            return Err(format!("任务 #{} 是委派任务，请到 Web 端讨论区执行", task.id));
+        }
+        match task.loop_id {
+            Some(id) => Ok(id),
+            None => Err(format!("任务 #{} 未关联环路，无法执行", task.id)),
+        }
     }
 
     /// 把当前 workspace 的「默认响应执行器」设为指定 executor：
@@ -614,6 +639,59 @@ mod tests {
         assert_eq!(CardActionHandler::action_target_group(&CardAction::RunTodo(10)), "todo");
         assert_eq!(CardActionHandler::action_target_group(&CardAction::RunLoop(20)), "loop");
         assert_eq!(CardActionHandler::action_target_group(&CardAction::Stop), "status");
+    }
+
+    /// nav 分页解析：四个列表 Tab 的正常页码与 Tab key 映射。
+    #[test]
+    pub(crate) fn test_parse_nav_page_four_kinds() {
+        assert_eq!(CardActionHandler::parse_nav_page("nav:/todos 2"), Some(("todo", 2)));
+        assert_eq!(CardActionHandler::parse_nav_page("nav:/loops 3"), Some(("loop", 3)));
+        assert_eq!(CardActionHandler::parse_nav_page("nav:/tasks 4"), Some(("task", 4)));
+        assert_eq!(CardActionHandler::parse_nav_page("nav:/processes 5"), Some(("process", 5)));
+    }
+
+    /// nav 分页解析：缺页码/非数字/0/负数统一回退第 1 页，未知前缀返回 None。
+    #[test]
+    pub(crate) fn test_parse_nav_page_fallbacks() {
+        assert_eq!(CardActionHandler::parse_nav_page("nav:/tasks"), Some(("task", 1)));
+        assert_eq!(CardActionHandler::parse_nav_page("nav:/tasks abc"), Some(("task", 1)));
+        assert_eq!(CardActionHandler::parse_nav_page("nav:/processes 0"), Some(("process", 1)));
+        assert_eq!(CardActionHandler::parse_nav_page("nav:/help task"), None);
+        assert_eq!(CardActionHandler::parse_nav_page("nav:/history 2"), None);
+        assert_eq!(CardActionHandler::parse_nav_page("act:/runtask 1"), None);
+    }
+
+    /// 任务可执行校验：环路模式 + 有 loop_id + 归属正确 → Ok(loop_id)。
+    #[test]
+    pub(crate) fn test_validate_task_runnable_loop_mode_ok() {
+        use crate::db::entity::tasks;
+        let mut t = tasks::Model {
+            id: 1,
+            title: "t".to_string(),
+            description: "d".to_string(),
+            status: "pending".to_string(),
+            workspace_id: Some(7),
+            template_id: None,
+            loop_id: Some(10),
+            created_by: "u".to_string(),
+            created_at: None,
+            updated_at: None,
+            execution_mode: "loop".to_string(),
+            assignee_kind: None,
+            assignee_name: None,
+            auto_continue: 0,
+            continue_rounds: 0,
+            delegate_max_rounds: None,
+        };
+        assert_eq!(CardActionHandler::validate_task_runnable(&t, 7), Ok(10));
+        t.workspace_id = Some(8);
+        assert!(CardActionHandler::validate_task_runnable(&t, 7).is_err(), "跨 workspace 应拒绝");
+        t.workspace_id = Some(7);
+        t.execution_mode = "delegate".to_string();
+        assert!(CardActionHandler::validate_task_runnable(&t, 7).is_err(), "委派任务应拒绝");
+        t.execution_mode = "loop".to_string();
+        t.loop_id = None;
+        assert!(CardActionHandler::validate_task_runnable(&t, 7).is_err(), "缺 loop_id 应拒绝");
     }
 
     #[test]

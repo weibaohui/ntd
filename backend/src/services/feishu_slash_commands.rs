@@ -612,33 +612,10 @@ impl SlashCommandHandler {
                 .unwrap_or_default(),
             None => vec![],
         };
-        // 104：任务列表——按当前 workspace 查最近 20 条（id DESC），take(20) 截断与事项页同口径控制卡片体积。
-        let tasks = match wid {
-            Some(id) => db
-                .list_tasks(id, None)
-                .await
-                .map(|ts| ts.into_iter().take(20).map(SlashCommandHandler::task_to_item).collect())
-                .unwrap_or_else(|e| {
-                    // DB 失败降级为空列表并带上下文记 error，卡片缺区块可接受但故障必须可定位（对齐 todos 口径）。
-                    tracing::error!("飞书卡片加载 task 列表失败（bot={bot_id}, ws={id}）: {e}");
-                    Vec::new()
-                }),
-            None => vec![],
-        };
-        // 104：工艺模板——系统内置（workspace_id IS NULL）+ 当前 workspace 用户模板，
-        // 全部模板取 20 条展示（name ASC 由 DB 排序），安装/实例化不在卡片上提供。
-        let processes = match db.list_process_templates(None).await {
-            Ok(ts) => ts
-                .into_iter()
-                .filter(|t| t.workspace_id.is_none() || t.workspace_id == wid)
-                .take(20)
-                .map(SlashCommandHandler::process_to_item)
-                .collect(),
-            Err(e) => {
-                tracing::error!("飞书卡片加载工艺模板列表失败（bot={bot_id}）: {e}");
-                Vec::new()
-            }
-        };
+        // 104：任务/工艺列表抽成独立加载函数——assemble 已超长，查询+降级+截断各自内聚，
+        // 且失败口径（error 日志 + 空列表降级）与 todos 对齐，便于独立单测与复用。
+        let tasks = SlashCommandHandler::load_task_items(db, wid, bot_id).await;
+        let processes = SlashCommandHandler::load_process_items(db, wid, bot_id).await;
         let workspaces = db
             .get_project_directories()
             .await
@@ -720,6 +697,39 @@ impl SlashCommandHandler {
     /// LoopListRow → 环路页列表项。
     pub(crate) fn loop_to_item(l: crate::db::loop_::LoopListRow) -> LoopItem {
         LoopItem { id: l.loop_.id, name: l.loop_.name, status: l.loop_.status }
+    }
+
+    /// 加载任务页条目（104 新增）：按 workspace 查最近 20 条（id DESC）。
+    /// take(20) 截断与事项页同口径控制卡片体积；DB 失败降级空列表并记 error（对齐 todos 口径）。
+    pub(crate) async fn load_task_items(db: &Database, wid: Option<i64>, bot_id: i64) -> Vec<TaskItem> {
+        let Some(id) = wid else {
+            return vec![];
+        };
+        db.list_tasks(id, None)
+            .await
+            .map(|ts| ts.into_iter().take(20).map(SlashCommandHandler::task_to_item).collect())
+            .unwrap_or_else(|e| {
+                tracing::error!("飞书卡片加载 task 列表失败（bot={bot_id}, ws={id}）: {e}");
+                Vec::new()
+            })
+    }
+
+    /// 加载工艺页条目（104 新增）：系统内置（workspace_id IS NULL）+ 当前 workspace 用户模板，
+    /// 最多 20 条（name ASC 由 DB 排序）；安装/实例化不在卡片上提供。
+    pub(crate) async fn load_process_items(db: &Database, wid: Option<i64>, bot_id: i64) -> Vec<ProcessItem> {
+        db.list_process_templates(None)
+            .await
+            .map(|ts| {
+                ts.into_iter()
+                    .filter(|t| t.workspace_id.is_none() || t.workspace_id == wid)
+                    .take(20)
+                    .map(SlashCommandHandler::process_to_item)
+                    .collect()
+            })
+            .unwrap_or_else(|e| {
+                tracing::error!("飞书卡片加载工艺模板列表失败（bot={bot_id}）: {e}");
+                Vec::new()
+            })
     }
 
     /// tasks::Model → 任务页列表项（104 新增）。
