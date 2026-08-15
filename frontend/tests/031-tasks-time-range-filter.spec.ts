@@ -7,6 +7,8 @@
 //    memorial?mode=kanban 已删，看板态现为 /#/loops 页内 Segmented 切换。
 
 import { test, expect } from '@playwright/test';
+// antd 图标式 Segmented 选项定位收敛到共享 helper（DOM 细节单点维护）
+import { segmentedOption } from './helpers/segmented';
 
 const BASE = 'http://localhost:18088';
 
@@ -55,13 +57,12 @@ test('任务页时间过滤分段', async ({ page }) => {
 });
 
 test('看板页时间分段回归（无全部选项，默认 24h）', async ({ page }) => {
-  // 097/098 后入口变迁：直达 /#/loops 再切看板态（antd 选项 label 在
-  // .ant-segmented-item-label 的 title 属性上，radio input 视觉隐藏不可直点）。
+  // 097/098 后入口变迁：直达 /#/loops 再切看板态（antd 图标式选项定位细节收敛在 helper）。
   await page.goto(`${BASE}/#/loops`);
   await page.waitForLoadState('networkidle');
   const toggle = page.getByTestId('loop-list-view-toggle');
   await expect(toggle).toBeVisible({ timeout: 5000 });
-  await toggle.locator('.ant-segmented-item-label[title="看板"]').click();
+  await segmentedOption(page, '看板', toggle).click();
   // 看板态挂载信号：LoopKanban 根节点。
   await expect(page.locator('.loop-kanban-board')).toBeVisible({ timeout: 5000 });
 

@@ -1,4 +1,6 @@
 import { test, expect } from '@playwright/test';
+// antd 图标式 Segmented 选项定位收敛到共享 helper（DOM 细节单点维护）
+import { segmentedOption } from './helpers/segmented';
 
 /**
  * 验证环路视图的超宽内容只在卡片内部横向滚动。
@@ -18,9 +20,9 @@ test('环路视图仅在内容区横向滚动', async ({ page }) => {
   const toggle = page.getByTestId('loop-list-view-toggle');
   await expect(toggle).toBeVisible({ timeout: 5000 });
 
-  // 切看板态：antd 把选项 label 渲染在 .ant-segmented-item-label 的 title 属性上
-  // （radio input 视觉隐藏且 accessible name 是 icon 名，均不可直接点）
-  await toggle.locator('.ant-segmented-item-label[title="看板"]').click();
+  // 切看板态：antd 图标式选项定位细节（title 在 label div 上、radio 视觉隐藏）
+  // 收敛在 helper 内，本处只表达「点看板选项」的意图。
+  await segmentedOption(page, '看板', toggle).click();
   await expect(page.locator('.loop-kanban-board')).toBeVisible({ timeout: 5000 });
 
   await page.waitForLoadState('networkidle');

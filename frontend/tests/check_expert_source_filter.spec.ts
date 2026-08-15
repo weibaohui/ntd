@@ -7,36 +7,18 @@
 // 曾导致本用例 15s 超时（用户卡片永远不出现）。范式同 092-create-task-delegate。
 
 import { test, expect } from '@playwright/test';
+// 专家 mock 载荷构造收敛到共享 helper（与 026 分享用例同源，防两处漂移）
+import { mockExpert, mockExpertsResponse } from './helpers/expertMock';
 
 const BASE = 'http://localhost:18088';
-
-/** 最小可渲染的 ExpertMetadata：ExpertCard 只读展示字段 + source 驱动筛选。 */
-function mockExpert(name: string, source: 'user' | 'system') {
-  return {
-    name,
-    expert_type: 'agent',
-    version: '1.0.0',
-    display_name_zh: name,
-    member_agents: [],
-    skills: [],
-    tags: [],
-    loaded_at: '2026-01-01T00:00:00Z',
-    is_active: true,
-    source,
-  };
-}
 
 test.beforeEach(async ({ page }) => {
   // 拦截专家列表接口：注入固定 1 用户 + 1 系统专家，断言不依赖环境数据量。
   await page.route('**/api/v1/experts', (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        code: 0,
-        data: [mockExpert('mock-user-expert', 'user'), mockExpert('mock-system-expert', 'system')],
-      }),
-    }),
+    route.fulfill(mockExpertsResponse([
+      mockExpert('mock-user-expert', 'user'),
+      mockExpert('mock-system-expert', 'system'),
+    ])),
   );
 });
 

@@ -17,6 +17,9 @@
 // 具体 workspace 的数据内容，任何 ws 下列头与空态必居其一，故无需钉定。
 
 import { test, expect } from '@playwright/test';
+// antd 图标式 Segmented 选项定位收敛到共享 helper（DOM 细节单点维护，
+// 也消除了本套件「注释提倡 testid、代码却用 class 选择器」的自相矛盾）
+import { segmentedOption } from './helpers/segmented';
 
 test.describe('环路视图功能测试', () => {
 
@@ -47,13 +50,9 @@ test.describe('环路视图功能测试', () => {
   // 测试切换到环路看板的交互流程（核心功能路径）。
   // 为什么需要：看板是执行历史的观察入口，必须验证从 list 切过去的完整链路。
   test('test_switch_to_loop_kanban_view', async ({ page }) => {
-    // 为什么用 filter(hasText)：antd Segmented 选项的可见 label 渲染在 item 内部
-    // （radio input 是视觉隐藏的，直接点 radio 角色会「not visible」超时）；
-    // hasText 过滤后点整个 item，语义明确且不依赖 nth 顺序。
-    await page
-      .getByTestId('loop-list-view-toggle')
-      .locator('.ant-segmented-item-label[title="看板"]')
-      .click();
+    // 选项定位细节（antd 图标式 Segmented 的 label 在 title 属性上）收敛在
+    // helper 内；scope 限定到本切换器，避免同页其他 Segmented 的同名选项误命中。
+    await segmentedOption(page, '看板', page.getByTestId('loop-list-view-toggle')).click();
 
     // 为什么等 .loop-kanban-board：它是 LoopKanban 根 div，恒定渲染，
     // 可见即表示组件已挂载（工具栏 headerExtra 在两个视图下都渲染，不能作切换信号）。
@@ -63,10 +62,7 @@ test.describe('环路视图功能测试', () => {
   // 测试环路看板的核心 UI 元素渲染（列头 + 看板主体或空状态）。
   // 为什么需要：覆盖加载态、空态、正常态三种分支，确保 UI 不会白屏或卡死。
   test('test_loop_kanban_renders_board_or_empty_state', async ({ page }) => {
-    await page
-      .getByTestId('loop-list-view-toggle')
-      .locator('.ant-segmented-item-label[title="看板"]')
-      .click();
+    await segmentedOption(page, '看板', page.getByTestId('loop-list-view-toggle')).click();
 
     // .loop-kanban-board 恒定渲染，作为「组件已挂载」的可靠信号（见上用例注释）。
     await expect(page.locator('.loop-kanban-board')).toBeVisible({ timeout: 10000 });
@@ -84,18 +80,17 @@ test.describe('环路视图功能测试', () => {
   // 测试时间过滤功能（边界条件：切换选项后数据重新过滤）。
   // 为什么需要：时间窗是 kanban 态共享状态，需验证 onHoursChange 回调正确触发。
   test('test_loop_kanban_time_filter', async ({ page }) => {
-    await page
-      .getByTestId('loop-list-view-toggle')
-      .locator('.ant-segmented-item-label[title="看板"]')
-      .click();
+    await segmentedOption(page, '看板', page.getByTestId('loop-list-view-toggle')).click();
     await expect(page.locator('.loop-kanban-board')).toBeVisible({ timeout: 5000 });
 
     // 时间窗 TimeRangeSegmented 仅 kanban 态渲染；用「7d」文本定位比 nth(2) 更稳定。
     const timeOption = page.getByText('7d', { exact: true });
     await expect(timeOption).toBeVisible({ timeout: 5000 });
     await timeOption.click();
-    // 点击后无崩溃信号即可：数据集变化依赖 dev 库内容，不做数量断言避免环境敏感。
-    await expect(page.locator('.loop-kanban-board')).toBeVisible({ timeout: 5000 });
+    // 断言选中态切换到 7d（onHoursChange 真正生效的直接 DOM 证据），而非仅「无崩溃」；
+    // 卡片数量变化依赖 dev 库内容，不做环境敏感的数量断言。
+    const item7d = page.locator('.ant-segmented-item', { hasText: '7d' }).first();
+    await expect(item7d).toHaveClass(/ant-segmented-item-selected/, { timeout: 5000 });
   });
 
   // 测试搜索功能（边界条件：输入 -> 清空 -> 数据恢复）。

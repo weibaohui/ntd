@@ -1,4 +1,6 @@
 import { test, expect } from '@playwright/test';
+// antd 图标式 Segmented 选项定位收敛到共享 helper（DOM 细节单点维护）
+import { segmentedOption } from './helpers/segmented';
 
 /**
  * 死代码清理回归校验（A/B/D 三类清理 + review 修复后）。
@@ -52,15 +54,17 @@ test('环路页看板态（验证 LoopKanban / RunningBoard barrel 拆除）', a
   const toggle = page.getByTestId('loop-list-view-toggle');
   await expect(toggle).toBeVisible({ timeout: 5000 });
 
-  // 切看板态：antd 把选项 label 渲染在 .ant-segmented-item-label 的 title 属性上
-  // （radio input 视觉隐藏且 accessible name 是 icon 名，均不可直接点）
-  await toggle.locator('.ant-segmented-item-label[title="看板"]').click();
+  // 切看板态：定位细节收敛在 helper，本处只表达「点看板选项」的意图。
+  await segmentedOption(page, '看板', toggle).click();
   await page.waitForLoadState('networkidle');
 
-  // LoopKanban 渲染时会创建 .loop-kanban-columns-container 容器
-  // 这个 class 名是 LoopKanban 内部的稳定 hook，能反映 import 路径改写后子组件仍能解析
-  const container = page.locator('.loop-kanban-columns-container');
-  await expect(container).toBeVisible({ timeout: 5000 });
+  // LoopKanban 已挂载的数据驱动证据：有执行历史 → 列容器（.loop-kanban-columns-container
+  // 是其内部稳定 hook，能反映 import 路径改写后子组件仍解析）；无数据 → Empty 空态。
+  // 二者必居其一——不能只断言列容器：干净库下 filtered 为空走 Empty 分支，
+  // 曾靠 dev 库有数据侥幸通过（环境敏感脆弱断言）。
+  const columns = page.locator('.loop-kanban-columns-container');
+  const emptyState = page.locator('.ant-empty-description');
+  await expect(columns.or(emptyState).first()).toBeVisible({ timeout: 10000 });
 });
 
 test('Loop Studio detail：验证 triggers/executions barrel 拆除', async ({ page }) => {

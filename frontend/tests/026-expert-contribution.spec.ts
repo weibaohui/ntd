@@ -11,6 +11,8 @@
 import { test, expect } from '@playwright/test';
 // 直接导入纯函数模板做内容断言：不依赖页面渲染，改动提示词即可在此处回归。
 import { buildContributePrompt } from '../src/components/settings/experts/contributePrompt';
+// 专家 mock 载荷构造复用共享 helper（与 check_expert_source_filter 同源）
+import { mockExpert, mockExpertsResponse } from './helpers/expertMock';
 
 test('提示词模板：不含 username / 绝对路径标签，且使用 ~ 家目录相对路径', () => {
   const prompt = buildContributePrompt();
@@ -62,29 +64,10 @@ test.describe('PAT 已配置态（route mock）', () => {
     );
     // 分享用例需要「用户来源」专家卡片：真实后端只保证系统专家（用户专家目录
     // ~/.ntd/experts/ 在干净环境不存在），route mock 注入一个确定性用户专家。
+    // 载荷构造复用 helpers/expertMock（与 check_expert_source_filter 同源，防两处漂移）；
     // definition_dir 带 /.ntd/ 标记，让 toHomePath 能转成 ~/ 相对路径（提示词断言依赖）。
     await page.route('**/api/v1/experts', (route) =>
-      route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          code: 0,
-          data: [{
-            name: 'mock-user-expert',
-            expert_type: 'agent',
-            version: '1.0.0',
-            display_name_zh: 'mock 用户专家',
-            definition_dir: '/Users/tester/.ntd/experts/mock-user-expert',
-            plugin_json_path: '/Users/tester/.ntd/experts/mock-user-expert/.codebuddy-plugin/plugin.json',
-            member_agents: [],
-            skills: [],
-            tags: [],
-            loaded_at: '2026-01-01T00:00:00Z',
-            is_active: true,
-            source: 'user',
-          }],
-        }),
-      }),
+      route.fulfill(mockExpertsResponse([mockExpert('mock-user-expert', 'user')])),
     );
   });
 

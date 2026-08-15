@@ -74,18 +74,19 @@ test.describe('056 服务端分页', () => {
     await page.goto(`${BASE}/#/todos`);
     await page.waitForTimeout(2500);
 
-    // 卡片视图是默认形态，无需切换；等卡片或空态渲染完成。
+    // 卡片视图是默认形态，无需切换。卡片或空态必居其一——两者都不可见才是失败
+    // （白屏/loading 卡死），不能静默通过。
     const cards = page.locator('.todo-center-card');
     const empty = page.locator('.ant-empty');
     await expect(cards.or(empty).first()).toBeVisible({ timeout: 10000 });
 
-    // dev 库有待执行事项时验证 brief 加载→渲染链路；无数据时空态也可（环境兜底）。
+    // 与本文件「列表形态」用例同款兜底：干净环境无种子数据时跳过 brief 抽查，
+    // 避免环境敏感硬失败；dev 库有数据时 brief 链路是硬断言。
     const count = await cards.count();
     console.log('事项卡片数:', count);
-    if (count > 0) {
-      // brief 字段渲染抽查：卡片标题区应带 #id 前缀（TodoCenterCard 固定结构）。
-      await expect(cards.first().locator('.todo-center-card-id')).toBeVisible();
-    }
+    test.skip(count === 0, '当前环境无种子数据，跳过 brief 渲染断言');
+    // brief 字段渲染抽查：卡片标题区应带 #id 前缀（TodoCenterCard 固定结构）。
+    await expect(cards.first().locator('.todo-center-card-id')).toBeVisible();
 
     await page.screenshot({ path: 'tests/__screenshots__/056-card-brief.png' });
   });
