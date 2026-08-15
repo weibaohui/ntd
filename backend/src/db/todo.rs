@@ -615,6 +615,48 @@ impl Database {
             .collect())
     }
 
+    /// 工作空间内全部未删除 todo 计数（含归档、含讨论载体）。
+    ///
+    /// 与 `count_todos_by_workspace` 的「日常视图」口径不同：本函数服务删除守卫
+    /// （106：delete_workspace 前的引用检查），归档/载体 todo 同样持有
+    /// workspace_id 引用，留着它们删 workspace 会产生孤儿数据与幽灵调度。
+    pub async fn count_all_todos_by_workspace(
+        &self,
+        workspace_id: i64,
+    ) -> Result<i64, sea_orm::DbErr> {
+        let count = todos::Entity::find()
+            .filter(todos::Column::DeletedAt.is_null())
+            .filter(todos::Column::WorkspaceId.eq(workspace_id))
+            .count(&self.conn)
+            .await?;
+        Ok(count.try_into().unwrap_or(i64::MAX))
+    }
+
+    /// 工作空间内环路计数（106 评审补充：delete_workspace 守卫——挂 loop 不挂
+    /// todo 的 ws 删掉后 loops 成为孤儿行，loop_trigger 调度残留）。
+    pub async fn count_loops_by_workspace(
+        &self,
+        workspace_id: i64,
+    ) -> Result<i64, sea_orm::DbErr> {
+        let count = crate::db::entity::loops::Entity::find()
+            .filter(crate::db::entity::loops::Column::WorkspaceId.eq(workspace_id))
+            .count(&self.conn)
+            .await?;
+        Ok(count.try_into().unwrap_or(i64::MAX))
+    }
+
+    /// 工作空间内任务计数（106 评审补充：与 loops 同理，tasks 持 workspace_id 引用）。
+    pub async fn count_tasks_by_workspace(
+        &self,
+        workspace_id: i64,
+    ) -> Result<i64, sea_orm::DbErr> {
+        let count = crate::db::entity::tasks::Entity::find()
+            .filter(crate::db::entity::tasks::Column::WorkspaceId.eq(workspace_id))
+            .count(&self.conn)
+            .await?;
+        Ok(count.try_into().unwrap_or(i64::MAX))
+    }
+
     /// 工作空间内未删除且未归档 todo 计数（056 轻量接口）：COUNT(*)，不拉行。
     pub async fn count_todos_by_workspace(
         &self,

@@ -19,6 +19,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+// 106：group_spawn/kill 整组杀进程的扩展 trait（与主链路 spawn_lifecycle 同源）。
+use command_group::AsyncCommandGroup;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::adapters::CodeExecutor;
@@ -114,20 +116,26 @@ impl DirectExecutorSession {
             .stderr(std::process::Stdio::piped())
             .stdin(std::process::Stdio::piped())
             .current_dir(&cwd);
-        let mut child = cmd.spawn().map_err(SessionError::Spawn)?;
+        // 106 体检：group_spawn 创建独立进程组，kill 时整组杀——此前裸 spawn 只
+        // SIGKILL 直接子进程，执行器派生的孙进程（构建/测试子进程）成孤儿继续跑。
+        // 与主链路 spawn_lifecycle 的 group_spawn 同策略。
+        let mut child = cmd
+            .group_spawn()
+            .map_err(SessionError::Spawn)?;
 
         // take() 并 drop 关闭 stdin，避免 CLI 进程执行完后挂起等待 EOF。
         // 两条通路均非 worktree 场景，不预写 payload（pi 的 "y" 应答只在切
         // worktree 目录时才有意义，乱写会污染 stdin——A/B 原注释同源结论）。
-        drop(child.stdin.take());
+        // group child 的 stdio 需经 inner() 访问（AsyncGroupChild 包了一层）。
+        drop(child.inner().stdin.take());
 
         // piped 模式下 take 理论上必为 Some；防御性兜底为空流（立即 EOF → 走 wait 路径，
         // 返回空 raw 文本），与 A 原实现的「无 stdout → 空结果」降级语义一致。
-        let stdout: Box<dyn tokio::io::AsyncRead + Unpin + Send> = match child.stdout.take() {
+        let stdout: Box<dyn tokio::io::AsyncRead + Unpin + Send> = match child.inner().stdout.take() {
             Some(s) => Box::new(s),
             None => Box::new(tokio::io::empty()),
         };
-        let stderr: Box<dyn tokio::io::AsyncRead + Unpin + Send> = match child.stderr.take() {
+        let stderr: Box<dyn tokio::io::AsyncRead + Unpin + Send> = match child.inner().stderr.take() {
             Some(s) => Box::new(s),
             None => Box::new(tokio::io::empty()),
         };
@@ -140,23 +148,31 @@ impl DirectExecutorSession {
 /// 独立成函数是因为 stdout/stderr 两个 EOF 分支都可能成为收敛点，
 /// wait+kill 回退+日志+构造返回的逻辑必须只存在一份。
 ///
-/// 已知边界：若子进程提前关闭 stdout/stderr 但自身继续运行（如主动重定向
-/// stdio 后 daemon 化），两路 EOF 均会到达并进入本函数，此处的 wait 没有
-/// 超时兜底（已退出 select! 循环，计时分支无法再介入）——属存量行为，
-/// 执行器均无此用法，暂不引入 wait 超时复杂度。
+/// 106 体检：wait 包 5 分钟超时——收敛后已退出 select! 循环，select! 的计时
+/// 分支无法再介入，子进程提前关闭 stdio 但自身不退出（如 daemon 化）时 wait
+/// 会永久阻塞。超时后按整组 kill 回收再上抛，不留孤儿。
 async fn finish_session(
-    child: &mut tokio::process::Child,
+    child: &mut command_group::AsyncGroupChild,
     raw_stdout: String,
     raw_stderr: String,
     log_tag: &str,
 ) -> Result<SessionOutcome, SessionError> {
     // wait 失败也要 kill 回收：child 未开 kill_on_drop，直接 drop
     // 会让执行器进程变孤儿继续跑（评审修复）
-    let status = match child.wait().await {
-        Ok(s) => s,
-        Err(e) => {
+    let wait_result = tokio::time::timeout(Duration::from_secs(300), child.wait()).await;
+    let status = match wait_result {
+        Ok(Ok(s)) => s,
+        Ok(Err(e)) => {
             let _ = child.kill().await;
             return Err(SessionError::WaitFailed(e.to_string()));
+        }
+        Err(_) => {
+            tracing::error!(
+                "[session] child did not exit after streams closed within 300s, killing group: tag={}",
+                log_tag
+            );
+            let _ = child.kill().await;
+            return Err(SessionError::Timeout { secs: 300, stderr: raw_stderr });
         }
     };
     tracing::info!(
@@ -176,7 +192,7 @@ async fn finish_session(
 /// 抽成函数是因为 EOF 齐备的判断分布在三个分支（stdout EOF / stderr EOF / stderr 读失败），
 /// take+join+收尾的样板若各写一份，新增分支时极易漏写收敛（stderr 读失败分支就漏过）。
 async fn converge_finish(
-    child: &mut tokio::process::Child,
+    child: &mut command_group::AsyncGroupChild,
     raw_stdout_lines: &mut Vec<String>,
     raw_stderr_lines: &mut Vec<String>,
     log_tag: &str,
@@ -195,7 +211,7 @@ async fn converge_finish(
 /// 三个分支是宏内联状态机，共享 raw_stdout_lines / raw_stderr_lines / child 的可变
 /// 借用，把分支抽成独立函数需把这套状态在每次轮转间穿线传递。
 async fn stream_lines_until_exit<F>(
-    mut child: tokio::process::Child,
+    mut child: command_group::AsyncGroupChild,
     stdout: Box<dyn tokio::io::AsyncRead + Unpin + Send>,
     stderr: Box<dyn tokio::io::AsyncRead + Unpin + Send>,
     timeout_secs: u64,
@@ -212,6 +228,14 @@ where
     // 收集容器：raw 文本按行 push、结束时 join，避免反复 String concat
     let mut raw_stdout_lines: Vec<String> = Vec::new();
     let mut raw_stderr_lines: Vec<String> = Vec::new();
+    // 106 体检：行数上限——执行器失控刷输出（死循环打印）时无上限缓冲会让内存随
+    // 输出线性增长，timeout_secs=0（不限时）时无任何兜底。超限丢弃后续行并记 warn，
+    // stdout 回调同样停发（结果已无意义），主循环继续消费管道防写端阻塞。
+    const MAX_LINES_PER_STREAM: usize = 10_000;
+    /// stdout EOF 后排空 stderr 的总预算（106 评审：防失控进程借持续 stderr 产出
+    /// 无限拖住返回，变相绕过 wait 的 300s 超时保护）。
+    const STDERR_DRAIN_BUDGET_SECS: u64 = 30;
+    let (mut stdout_dropped, mut stderr_dropped) = (false, false);
 
     // 0 = 不限时：用极大 duration（u64::MAX 秒 ≈ 5.8 亿年）模拟「永不超时」，
     // select! 该分支永不命中（与 C 的 configure_timeout_sleep 同一手法）
@@ -233,6 +257,9 @@ where
     // stdout EOF 后禁用其分支：否则 next_line() 持续立即返回 Ok(None) 形成忙循环，
     // 且 select! 会一直命中该分支、stderr 排空永远轮不到
     let mut stdout_done = false;
+    // stdout EOF 后的排空预算截止时刻（106 评审）：None = stdout 尚未 EOF。
+    // 到期后即便 stderr 未 EOF 也强制收敛，防失控进程无限产出 stderr。
+    let mut stdout_drain_deadline: Option<tokio::time::Instant> = None;
 
     loop {
         tokio::select! {
@@ -241,10 +268,20 @@ where
             line_result = stdout_reader.next_line(), if !stdout_done => {
                 match line_result {
                     Ok(Some(line)) => {
-                        raw_stdout_lines.push(line.clone());
+                        if !stdout_dropped {
+                            if raw_stdout_lines.len() >= MAX_LINES_PER_STREAM {
+                                stdout_dropped = true;
+                                tracing::error!(
+                                    "[session] stdout exceeded {} lines, dropping remaining output (tag={})",
+                                    MAX_LINES_PER_STREAM, log_tag
+                                );
+                            } else {
+                                raw_stdout_lines.push(line.clone());
+                            }
+                        }
                         // 逐行语义（解析 + 事件推送）交还调用方闭包；
                         // panic 只废掉回调本身，骨架继续读流（见 on_line_poisoned 注释）
-                        if !on_line_poisoned {
+                        if !on_line_poisoned && !stdout_dropped {
                             let callback = std::panic::AssertUnwindSafe(|| on_line(&line));
                             if let Err(payload) = std::panic::catch_unwind(callback) {
                                 on_line_poisoned = true;
@@ -264,9 +301,18 @@ where
                     // （双流同时产出时 select! 可能先命中本分支，如「echo out; echo err 1>&2」），
                     // 直接返回会丢诊断信息。置 stdout_done 后继续轮询，等 stderr 排空 EOF
                     // 两路齐备再收尾（stderr 已 EOF 则立即收尾）。
+                    // 合并说明（106）：采用 main #1059 的「两路 EOF 齐备收敛」结构，
+                    // 替代本分支早期的「stdout EOF 后内联排空 stderr」写法。
                     Ok(None) => {
                         stdout_done = true;
-                        if stderr_done {
+                        // 106 评审：两路齐备前的排空预算——失控进程持续产出 stderr 时
+                        // 不能无限排空（否则 timeout 分支永不介入）。超过预算视为排空
+                        // 完毕强制收敛，拿到多少算多少。
+                        if stdout_drain_deadline.is_none() {
+                            stdout_drain_deadline =
+                                Some(tokio::time::Instant::now() + Duration::from_secs(STDERR_DRAIN_BUDGET_SECS));
+                        }
+                        if stderr_done || stdout_drain_deadline.is_some_and(|d| tokio::time::Instant::now() >= d) {
                             return converge_finish(&mut child, &mut raw_stdout_lines, &mut raw_stderr_lines, log_tag).await;
                         }
                     }
@@ -284,7 +330,28 @@ where
             line_result = stderr_reader.next_line(), if !stderr_done => {
                 match line_result {
                     Ok(Some(line)) => {
-                        raw_stderr_lines.push(line);
+                        // 106 评审：排空预算到期强制收敛（stdout 已 EOF 且 stderr 无限
+                        // 产出时，永远走不到 EOF 分支——在这里截断，拿到多少算多少）。
+                        if stdout_done
+                            && stdout_drain_deadline.is_some_and(|d| tokio::time::Instant::now() >= d)
+                        {
+                            tracing::warn!(
+                                "[session] stderr drain exceeded budget, returning with partial stderr: tag={}",
+                                log_tag
+                            );
+                            return converge_finish(&mut child, &mut raw_stdout_lines, &mut raw_stderr_lines, log_tag).await;
+                        }
+                        if !stderr_dropped {
+                            if raw_stderr_lines.len() >= MAX_LINES_PER_STREAM {
+                                stderr_dropped = true;
+                                tracing::error!(
+                                    "[session] stderr exceeded {} lines, dropping remaining output (tag={})",
+                                    MAX_LINES_PER_STREAM, log_tag
+                                );
+                            } else {
+                                raw_stderr_lines.push(line);
+                            }
+                        }
                     }
                     // stderr EOF：关闭本分支，继续等 stdout 主流；
                     // 若 stdout 已 EOF，两路齐备，收尾返回
@@ -476,13 +543,14 @@ mod tests {
     #[tokio::test]
     async fn test_stream_lines_until_exit_stderr读失败_stdout已eof_正常收尾() {
         // 真实子进程只为提供可 wait 的 child（立即退出）；
-        // stdout/stderr 不入参——骨架读的是下面注入的假流
+        // stdout/stderr 不入参——骨架读的是下面注入的假流。
+        // group_spawn（106）与生产路径同构，wait/kill 走进程组语义。
         let child = tokio::process::Command::new("/bin/sh")
             .arg("-c")
             .arg("exit 0")
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
-            .spawn()
+            .group_spawn()
             .unwrap();
         let outcome = tokio::time::timeout(
             Duration::from_secs(5),

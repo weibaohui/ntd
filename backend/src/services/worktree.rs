@@ -22,6 +22,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
+use dashmap::DashMap;
 use thiserror::Error;
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -64,7 +65,53 @@ pub enum WorktreeError {
 /// 这里用 unit struct 而不是 free function 集合，原因是 issue 描述里要求
 /// "由 ntd 程序托管 worktree 生命周期" —— 用一个具名类型让调用方更明确
 /// 表达"这是 worktree 相关操作"，未来加 metrics/tracing 接入也好挂。
+///
+/// 106 体检：同 repo 路径的 init/commit 操作加了进程级互斥锁（见
+/// `with_repo_lock`）——两个同 workspace 的 todo 并发首次执行时会并发跑
+/// `git init`/`git commit`，index.lock 竞争让一方静默失败回退主 workspace 执行。
 pub struct WorktreeService;
+
+/// 同 repo 路径的互斥锁表：进程级全局，防止并发 git init / 空提交相互踩 index.lock。
+/// 值是 `&'static Mutex`（从 DashMap 的 entry 里 leak 出来，每个路径恰好一次），
+/// 让 guard 可以跨 `lock_repo_path` 返回存活。
+static REPO_LOCKS: std::sync::OnceLock<DashMap<String, &'static std::sync::Mutex<()>>> =
+    std::sync::OnceLock::new();
+
+fn repo_locks() -> &'static DashMap<String, &'static std::sync::Mutex<()>> {
+    REPO_LOCKS.get_or_init(DashMap::new)
+}
+
+/// 获取（或创建）指定 repo 路径的互斥锁并**立即上锁**，返回 guard。
+///
+/// 调用方式：`let _guard = lock_repo_path(project_path)?;` —— guard drop 即解锁，
+/// 临界区内的 git init / commit 串行化。
+///
+/// 106 评审修复：leak 从「每次调用」改为「每个路径恰好一次」——旧实现每次调用
+/// 都 `Box::leak(Box::new(arc))`，同一路径锁 100 次泄漏 100 个 Box（评论指出；
+/// 早期注释声称「每路径最多一次」与代码不符）。现在 entry API 的 `or_insert_with`
+/// 只在首次命中时 leak，DashMap 值本身持有 `&'static` 引用，重复调用零分配。
+fn lock_repo_path(
+    project_path: &str,
+) -> Result<std::sync::MutexGuard<'static, ()>, WorktreeError> {
+    // entry() 持写锁完成「查 + 按需 leak」，并发首调也只有一个线程执行 leak。
+    // 泄漏量：每路径一个 Mutex（+DashMap 键的 String），与进程生命周期一致。
+    // entry guard 显式解引用取出 &'static（RefMut 持有期间 DashMap 分片被锁住，
+    // 先拷出静态引用再放掉 guard，避免锁跨 lock() 调用）。
+    let mutex: &'static std::sync::Mutex<()> = {
+        let entry = repo_locks()
+            .entry(project_path.to_string())
+            .or_insert_with(|| Box::leak(Box::new(std::sync::Mutex::new(()))));
+        *entry
+    };
+    // 立即上锁。中毒说明曾有持锁线程 panic——按项目惯例接管继续（git 操作幂等）。
+    mutex
+        .lock()
+        .map_err(|_| WorktreeError::GitCommandFailed {
+            cmd: "repo lock poisoned".into(),
+            dir: project_path.to_string(),
+            stderr: "repo mutex poisoned".into(),
+        })
+}
 
 /// `dir_and_branch` helper 的返回值。私有 struct，只在 worktree 模块内部用，
 /// 故不暴露 `Clone` / `Debug` 等 trait 派生，保持 API 表面积最小（YAGNI）。
@@ -163,6 +210,10 @@ impl WorktreeService {
         if !p.exists() {
             return Err(WorktreeError::WorkspaceDirMissing(project_path.to_string()));
         }
+        // 106：同 repo 的 init/commit 串行化——并发首次执行会竞争 index.lock，
+        // 失败方静默回退主 workspace 执行（失去隔离且用户无感知）。guard 持到
+        // 函数返回，覆盖整个「探测 → init → 空提交」序列。
+        let _repo_guard = lock_repo_path(project_path)?;
 
         // 用 `git rev-parse --git-dir` 探测：返回成功即表示已是 git 仓库，
         // 比检查 `.git` 子目录更稳（worktree 自身的 `.git` 是文件不是目录）。
@@ -348,11 +399,37 @@ impl WorktreeService {
                 let stderr = String::from_utf8_lossy(&o.stderr).into_owned();
                 warn!(worktree = %worktree_path, stderr = %stderr, "git worktree remove failed, falling back to rm -rf");
                 let _ = std::fs::remove_dir_all(path);
+                // 106：目录删了但 .git/worktrees/<name> 元数据会残留累积——补一次
+                // prune 让 git 自行清掉陈旧元数据（幂等，无 worktree 可清时是 no-op）。
+                let _ = Self::prune_worktree_metadata(&main_repo);
                 Ok(())
             }
             Err(e) => {
                 warn!(worktree = %worktree_path, error = %e, "failed to spawn git worktree remove, falling back to rm -rf");
                 let _ = std::fs::remove_dir_all(path);
+                let _ = Self::prune_worktree_metadata(&main_repo);
+                Ok(())
+            }
+        }
+    }
+
+    /// `git worktree prune`：清理 `.git/worktrees/` 下指向已不存在目录的元数据。
+    ///
+    /// rm -rf 兜底路径只删了 worktree 目录，主仓的 `.git/worktrees/<name>` 记录
+    /// 会永久残留（106 体检：从不 prune 时随执行次数线性累积）。
+    /// 失败只记日志——prune 是卫生操作，不应影响清理主流程。
+    fn prune_worktree_metadata(main_repo: &Path) -> Result<(), WorktreeError> {
+        let mut cmd = Command::new("git");
+        cmd.arg("worktree").arg("prune").current_dir(main_repo);
+        match run_git_with_timeout(cmd, "worktree prune", &main_repo.to_string_lossy()) {
+            Ok(o) if o.status.success() => Ok(()),
+            Ok(o) => {
+                let stderr = String::from_utf8_lossy(&o.stderr).into_owned();
+                warn!(repo = %main_repo.display(), stderr = %stderr, "git worktree prune failed (non-fatal)");
+                Ok(())
+            }
+            Err(e) => {
+                warn!(repo = %main_repo.display(), error = %e, "git worktree prune failed to run (non-fatal)");
                 Ok(())
             }
         }

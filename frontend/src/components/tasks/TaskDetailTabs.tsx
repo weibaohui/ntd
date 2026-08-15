@@ -164,8 +164,15 @@ export function OverviewTab({
             <DetailField label="超限异常处理" value={
               (() => {
                 const hasHandler = loopDetail.abnormal_handler_prompt != null && loopDetail.abnormal_handler_prompt !== '';
-                const triggerOn = loopDetail.abnormal_handler_trigger_on
-                  ? JSON.parse(loopDetail.abnormal_handler_trigger_on) : [];
+                // 106：try 兜底防脏数据让任务详情 Tab 崩溃（同 LoopStudioDetailPanel）。
+                const triggerOn = (() => {
+                  try {
+                    return loopDetail.abnormal_handler_trigger_on
+                      ? JSON.parse(loopDetail.abnormal_handler_trigger_on) : [];
+                  } catch {
+                    return [];
+                  }
+                })();
                 const enabled = hasHandler && Array.isArray(triggerOn)
                   && (triggerOn.includes('capped_step') || triggerOn.includes('capped_token'));
                 return (

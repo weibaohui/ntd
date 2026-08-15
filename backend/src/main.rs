@@ -690,13 +690,34 @@ async fn run_server(cli_port: Option<u16>) {
     info!("  Open http://localhost:{} in your browser", port);
     info!("===========================================");
 
-    let std_listener = match std::net::TcpListener::bind(format!("0.0.0.0:{}", port)) {
+    // 绑定地址尊重 cfg.host（默认 0.0.0.0，评审决定保留局域网可达性）：
+    // 此前硬编码 0.0.0.0 会忽略用户配置。/api/v1 无鉴权，绑全网卡有暴露面，
+    // 下方对非回环绑定打提示让用户知情（完整鉴权另行立项）。
+    let bind_host = &cfg.host;
+    // 非回环判定按 IP 语义（"localhost"/"127.0.0.2"/"[::1]" 都正确识别）；
+    // 解析失败（如配了未知主机名）按非回环处理——保守方向是提醒而非沉默。
+    let is_loopback_bind = bind_host
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .parse::<std::net::IpAddr>()
+        .map(|ip| ip.is_loopback())
+        .unwrap_or(false)
+        || bind_host == "localhost";
+    if !is_loopback_bind {
+        // 默认 host 即 0.0.0.0（评审决定保留），用 info 级别避免默认安装每次启动
+        // 都被 warn 噪音淹没；风险实质相同，依赖后续独立鉴权特性收口。
+        tracing::info!(
+            host = %bind_host,
+            "ntd is binding to a non-loopback address; /api/v1 has NO authentication — any host able to reach this port can read config/secrets and trigger executors"
+        );
+    }
+    let std_listener = match std::net::TcpListener::bind(format!("{}:{}", bind_host, port)) {
         Ok(l) => l,
         Err(e) => {
             // 端口绑定失败（如被占用、权限不足）：典型启动级不可恢复错误。
             // 同上保留 eprintln! 作为 last-resort 兜底。
-            tracing::error!(port, error = %e, "Failed to bind to port");
-            eprintln!("Failed to bind to port {}: {}", port, e);
+            tracing::error!(host = %bind_host, port, error = %e, "Failed to bind to address");
+            eprintln!("Failed to bind to {}:{}: {}", bind_host, port, e);
             std::process::exit(1);
         }
     };

@@ -65,6 +65,8 @@ export function ProcessEditor({ processGuid }: ProcessEditorProps): JSX.Element 
     yamlText: editor.yamlText,
     setYamlText: editor.setYamlText,
     markClean: editor.markClean,
+    // 106：返回按钮的导航前拦截需要 isDirty（原先只在事后由 useLeaveGuard 兜底）。
+    isDirty: editor.isDirty,
   });
   // 离开拦截：isDirty 时弹确认/原生提示；确认离开前清标记防二次 hashchange。
   useLeaveGuard(editor.isDirty, editor.markClean);

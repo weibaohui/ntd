@@ -110,7 +110,10 @@ export function Dashboard() {
   const loadMsgStats = async (hours?: number) => {
     try {
       setMsgStatsError(false);
-      const data = await db.getFeishuMessageStats(hours);
+      // 106 体检修复：签名是 (workspaceId?, hours?)，此前把 hours 塞进第一个参数，
+      // 请求变成 workspace_id=720（不存在的空间），统计恒为空。
+      // 全局视图不按空间过滤，第一参数显式传 undefined。
+      const data = await db.getFeishuMessageStats(undefined, hours);
       setMsgStats(data);
     } catch {
       // 飞书未配置时该端点会失败,用布尔标记降级展示,不弹错误打扰用户。

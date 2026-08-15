@@ -13,6 +13,21 @@ pub const EXPIRY_DELTA: i32 = 60 * 3;
 
 pub const CONTENT_TYPE_JSON: &str = "application/json";
 
+/// 飞书 HTTP 请求默认超时（106 体检：reqwest 默认无超时，TCP 半开 = await 永久悬挂）。
+pub const DEFAULT_REQ_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// 构造带超时的 reqwest Client。
+///
+/// 全仓库飞书调用点此前直接 `reqwest::Client::new()`（无超时且每次新建、无连接复用），
+/// 串行 await 的推送循环里一次挂起即可拖死整条通知链路。集中在此构造，保证
+/// 所有调用点共享同一策略；构造是 infallible 的（超时参数总是合法）。
+pub fn build_client_with_timeout(timeout: Duration) -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(timeout)
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
+
 #[derive(Default, Hash, Eq, PartialEq, Debug, Copy, Clone)]
 pub enum AppType {
     #[default]
@@ -55,8 +70,10 @@ impl Default for ConfigInner {
             base_url: FEISHU_BASE_URL.to_string(),
             enable_token_cache: true,
             app_type: AppType::SelfBuild,
-            http_client: reqwest::Client::new(),
-            req_timeout: None,
+            // 106 体检：reqwest 默认无超时，TCP 半开会让所有飞书 API await 永久悬挂
+            // （token_manager 取 token 挂起 = 拖死全部调用方）。默认 15s 超时。
+            http_client: build_client_with_timeout(DEFAULT_REQ_TIMEOUT),
+            req_timeout: Some(DEFAULT_REQ_TIMEOUT),
             header: HashMap::new(),
             token_manager: Arc::new(Mutex::new(TokenManager::new())),
         }

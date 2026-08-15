@@ -10,6 +10,55 @@ use crate::db::Database;
 use crate::handlers::{ApiResponse, AppError, AppState};
 use crate::models::{Todo, TodoStatus};
 
+/// 校验云端同步 server_url 的安全约束（106 评审落地设计文档 §1.5 承诺）。
+///
+/// 三条规则：
+/// 1. 必须 https——云端同步携带 Bearer token + 全量数据，明文 http 会在线路上裸奔；
+/// 2. 唯一例外：localhost/127.0.0.1/[::1] 允许 http——本地自建云端服务的开发场景；
+/// 3. 拒绝字面私网 IP（10/8、172.16/12、192.168/16、回环外的链路本地等）——
+///    SSRF 防线：未鉴权调用者把 URL 指向内网服务探测/打点。
+///    注意：只挡字面 IP，不解析 DNS（解析时刻与请求时刻的解析结果可能不同，
+///    TOCTOU 下 DNS 方案的收益有限；完整方案留给后续鉴权/出网代理特性）。
+fn validate_cloud_server_url(trimmed: &str) -> Result<(), AppError> {
+    let parsed = url::Url::parse(trimmed)
+        .map_err(|e| AppError::BadRequest(format!("Invalid server_url: {}", e)))?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| AppError::BadRequest("server_url must have a host".to_string()))?;
+    let is_loopback = host == "localhost"
+        || host.trim_start_matches('[').trim_end_matches(']')
+            .parse::<std::net::IpAddr>()
+            .map(|ip| ip.is_loopback())
+            .unwrap_or(false);
+    let scheme = parsed.scheme();
+    if scheme != "https" && !(is_loopback && scheme == "http") {
+        return Err(AppError::BadRequest(
+            "server_url 必须使用 https（仅 localhost 开发场景允许 http）".to_string(),
+        ));
+    }
+    if !is_loopback {
+        if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+            let private = match ip {
+                std::net::IpAddr::V4(v4) => {
+                    let o = v4.octets();
+                    v4.is_unspecified()
+                        || o[0] == 10
+                        || (o[0] == 172 && (16..=31).contains(&o[1]))
+                        || (o[0] == 192 && o[1] == 168)
+                        || o[0] == 169 && o[1] == 254
+                }
+                std::net::IpAddr::V6(v6) => v6.is_unspecified() || (v6.segments()[0] & 0xfe00) == 0xfc00,
+            };
+            if private {
+                return Err(AppError::BadRequest(
+                    "server_url 不允许指向私网地址".to_string(),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 // ============ Types ============
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -157,7 +206,10 @@ pub async fn cloud_sync_status(
     // 如果已配置 token，尝试从云端获取真实同步状态
     let last_sync_at = if let Some(token) = &token {
         if !server_url.is_empty() {
-            match reqwest::Client::new()
+            // 106：带超时的共享客户端（裸 Client::new() 无超时，云端半开会挂起该接口）。
+            match crate::feishu::sdk::config::build_client_with_timeout(
+                crate::feishu::sdk::config::DEFAULT_REQ_TIMEOUT,
+            )
                 .get(format!("{}/api/v1/sync/status?data_type=todos", server_url))
                 .header("Authorization", format!("Bearer {}", token))
                 .send()
@@ -239,7 +291,35 @@ pub async fn cloud_save_config(
     #[allow(clippy::unwrap_used)]
     let mut cfg = state.config.write().unwrap_or_else(|e| e.into_inner());
     if let Some(url) = req.server_url {
-        cfg.cloud_sync.server_url = url.trim_end_matches('/').to_string();
+        // 空串 = 显式清除云端配置（106 评审：Url::parse("") 必然失败会让
+        // 「清除配置」操作永远不可达）。清除时一并清 token，不留半套凭证。
+        let trimmed = url.trim().trim_end_matches('/');
+        if trimmed.is_empty() {
+            tracing::warn!("cloud_sync server_url cleared");
+            cfg.cloud_sync.server_url = String::new();
+            cfg.cloud_sync.sync_token = None;
+        } else {
+        // 106 体检修复：server_url 此前无校验，且 push 会携带已存 Bearer token——
+        // 攻击者改 URL 到受控服务器再触发 push 即可窃取 token + 全量数据。
+        // 三道防线：
+        // 1. https-only + 私网 IP 拒绝（validate_cloud_server_url，106 评审落地
+        //    设计文档 §1.5 承诺；localhost http 开发场景例外）；
+        // 2. URL 变更即清空已存 token——换服务器必须重新填写 token，
+        //    杜绝「改 URL 后用旧 token 外发」的窃取链；
+        // 3. 空串 = 显式清除云端配置（见上方分支）。
+        validate_cloud_server_url(trimmed)?;
+        if cfg.cloud_sync.server_url != trimmed {
+            if cfg.cloud_sync.sync_token.is_some() {
+                tracing::warn!(
+                    old = %cfg.cloud_sync.server_url,
+                    new = %trimmed,
+                    "cloud_sync server_url changed; stored sync_token cleared (must re-enter)"
+                );
+            }
+            cfg.cloud_sync.sync_token = None;
+        }
+        cfg.cloud_sync.server_url = trimmed.to_string();
+        }
     }
     if let Some(token) = req.sync_token {
         cfg.cloud_sync.sync_token = Some(token);
@@ -840,4 +920,40 @@ pub async fn cloud_clear_sync_records(
         .await
         .map_err(|e| AppError::Internal(format!("清空同步历史失败: {}", e)))?;
     Ok(ApiResponse::ok(ClearSyncRecordsResponse { deleted }))
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod validate_cloud_server_url_tests {
+    use super::validate_cloud_server_url;
+
+    #[test]
+    fn test_validate_cloud_server_url_accepts_https_public() {
+        // 公网 https：正常云端地址，放行。
+        assert!(validate_cloud_server_url("https://cloud.example.com/api").is_ok());
+    }
+
+    #[test]
+    fn test_validate_cloud_server_url_accepts_localhost_http_for_dev() {
+        // 回环 http：本地自建云端的开发场景例外放行。
+        assert!(validate_cloud_server_url("http://127.0.0.1:9090").is_ok());
+        assert!(validate_cloud_server_url("http://localhost:9090").is_ok());
+        assert!(validate_cloud_server_url("http://[::1]:9090").is_ok());
+    }
+
+    #[test]
+    fn test_validate_cloud_server_url_rejects_plain_http_remote() {
+        // 远端明文 http：token 在线路上裸奔，拒绝。
+        assert!(validate_cloud_server_url("http://cloud.example.com").is_err());
+    }
+
+    #[test]
+    fn test_validate_cloud_server_url_rejects_private_ip_and_fake_schemes() {
+        // 字面私网 IP（SSRF 探测面）与伪协议拒绝。
+        assert!(validate_cloud_server_url("https://10.0.0.5").is_err());
+        assert!(validate_cloud_server_url("https://192.168.1.10").is_err());
+        assert!(validate_cloud_server_url("https://172.16.0.1").is_err());
+        assert!(validate_cloud_server_url("https://169.254.169.254").is_err());
+        assert!(validate_cloud_server_url("file:///etc/passwd").is_err());
+    }
 }

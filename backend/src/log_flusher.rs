@@ -356,11 +356,15 @@ impl LogFlusher {
             let success = inner.sink.append(inner.record_id, &snapshot).await.is_ok();
 
             if !success {
-                // 失败回滚：把 snapshot 放回 buffer，counter 加回 snapshot_len。
-                // 注意：counter 此时可能因为并发 writer 已经累加了新值，但
-                // fetch_add 是原子的，不会丢增量。
+                // 失败回滚：旧条目回到 buffer **头部**（106 体检修复）。
+                // 取走 snapshot 期间新 push 的条目已在 logs 里，此前 extend 把旧
+                // 条目追加到新条目之后，下次 flush 按错乱顺序入库（任何一次 DB
+                // 抖动都会让该执行记录的日志时间线乱序）。prepend 恢复时间序。
+                // counter 加回 snapshot_len：fetch_add 原子，不丢并发增量。
                 let mut logs = inner.logs.lock().await;
+                let newer = std::mem::take(&mut *logs);
                 logs.extend(snapshot);
+                logs.extend(newer);
                 inner.unflushed.fetch_add(snapshot_len, Ordering::AcqRel);
             }
             inner.pending.store(false, Ordering::Release);

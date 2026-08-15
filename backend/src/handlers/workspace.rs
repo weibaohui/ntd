@@ -90,6 +90,34 @@ pub async fn delete_workspace(
     State(state): State<AppState>,
     axum::extract::Path(id): axum::extract::Path<i64>,
 ) -> Result<ApiResponse<()>, super::AppError> {
+    // 106 体检修复：此前删除不做任何前置检查——不存在的 id 静默成功（调用方无法
+    // 区分），仍挂着 todo 的 workspace 删除后产生孤儿数据（列表按 ws 过滤隐形，
+    // 但 cron 仍会触发执行落到已注销目录）。
+    state
+        .db
+        .get_workspace_by_id(id)
+        .await?
+        .ok_or(super::AppError::NotFound)?;
+    let refs = state.db.count_all_todos_by_workspace(id).await?;
+    if refs > 0 {
+        return Err(super::AppError::Conflict(format!(
+            "工作空间下仍有 {refs} 个事项，请先迁移或删除后再删工作空间"
+        )));
+    }
+    // 106 评审补充：loops/tasks 同样持 workspace_id 引用——挂 loop 不挂 todo 的
+    // ws 删掉后成为孤儿行（loop_trigger 调度残留、任务详情不可达）。
+    let loop_refs = state.db.count_loops_by_workspace(id).await?;
+    if loop_refs > 0 {
+        return Err(super::AppError::Conflict(format!(
+            "工作空间下仍有 {loop_refs} 个环路，请先删除后再删工作空间"
+        )));
+    }
+    let task_refs = state.db.count_tasks_by_workspace(id).await?;
+    if task_refs > 0 {
+        return Err(super::AppError::Conflict(format!(
+            "工作空间下仍有 {task_refs} 个任务，请先删除后再删工作空间"
+        )));
+    }
     state.db.delete_workspace(id).await?;
     Ok(ApiResponse::ok(()))
 }

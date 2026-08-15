@@ -53,8 +53,9 @@ pub struct BlackboardDebouncer {
     /// flush 接收端（一次性取出）：Mutex<Option> 形态让 `new()` 无需装配参数穿透——
     /// 实例先进各上下文，装配根在启动 listener 时经 `take_flush_rx` 取走。
     flush_rx: tokio::sync::Mutex<Option<mpsc::Receiver<BlackboardFlushMsg>>>,
-    /// workspace 维度的计时器状态（只读查询走 get_timer_state）
-    timer_states: RwLock<HashMap<i64, WorkspaceTimerState>>,
+    /// workspace 维度的计时器状态（只读查询走 get_timer_state）。
+    /// Arc 包一层：timer task 需跨 await 持有（106 分片 sleep 每片重读最新阈值）。
+    timer_states: Arc<RwLock<HashMap<i64, WorkspaceTimerState>>>,
     /// timer 运行互斥标记：workspace_id → 是否有 timer 正在运行
     active_timers: RwLock<HashMap<i64, bool>>,
 }
@@ -66,7 +67,7 @@ impl BlackboardDebouncer {
         Arc::new(Self {
             flush_tx: tx,
             flush_rx: tokio::sync::Mutex::new(Some(rx)),
-            timer_states: RwLock::new(HashMap::new()),
+            timer_states: Arc::new(RwLock::new(HashMap::new())),
             active_timers: RwLock::new(HashMap::new()),
         })
     }
@@ -273,10 +274,45 @@ impl BlackboardDebouncer {
         let this = Arc::clone(self);
 
         // 启动 timer（per-workspace 防抖时长）
+        let timer_states = self.timer_states.clone();
         tokio::spawn(async move {
             // 使用 sleep 而非 interval：interval.tick() 第一次立即返回，不符合"等待周期"的需求
             tracing::info!("黑板 debounce timer 已启动: workspace_id={}, {}s 后触发", workspace_id, debounce_secs);
-            tokio::time::sleep(Duration::from_secs(debounce_secs as u64)).await;
+            // 106 体检：分片 sleep + 每片前重读 timer_states 里的最新阈值。
+            // 此前一次性 sleep 固定时长——调大阈值（reconcile 只改 states 展示值）后
+            // 旧任务仍按旧时长触发，黑板提前刷新且 UI 倒计时与实际行为矛盾。
+            // 分片 5s 粒度：读状态的额外开销可忽略，且满足阈值变更 ≤5s 内生效的实时性。
+            const SLICE_SECS: i64 = 5;
+            let mut waited: i64 = 0;
+            loop {
+                // 每片重读当前阈值（reconcile/cancel 都会写 timer_states）。
+                let current_target: i64 = {
+                    let states = timer_states.read().await;
+                    states
+                        .get(&workspace_id)
+                        .map(|s| s.debounce_secs)
+                        .unwrap_or(debounce_secs)
+                };
+                if waited >= current_target.max(1) {
+                    break;
+                }
+                let slice = SLICE_SECS.min(current_target - waited).max(1);
+                tokio::time::sleep(Duration::from_secs(slice as u64)).await;
+                waited += slice;
+                // 状态被 cancel_timer 清除（enabled=false）：按原设计退出，
+                // 到期后的 flush 由 enabled 检查兜底，这里不发。
+                let cancelled = {
+                    let states = timer_states.read().await;
+                    !states.contains_key(&workspace_id)
+                };
+                if cancelled {
+                    tracing::info!(
+                        "黑板 timer 检测到状态已清除（cancel），提前退出: workspace_id={}",
+                        workspace_id
+                    );
+                    return;
+                }
+            }
             tracing::debug!("黑板 debounce timer 触发: workspace_id={}", workspace_id);
 
             // 清除 timer 状态

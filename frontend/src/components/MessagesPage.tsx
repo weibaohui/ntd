@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Spin, Empty, Space, message } from 'antd';
 import { MessageOutlined } from '@ant-design/icons';
 import { PageCard } from '@/components/common/PageCard';
@@ -101,9 +101,24 @@ export function MessagesPage({ workspaceId, onManageWorkspace }: MessagesPagePro
       .catch(() => setChats([]));
   }, [workspaceId, bots]);
 
+  // 106：loadMessages 的竞态守卫——快速连续改筛选时，晚返回的旧响应会用旧结果
+  // 覆盖新筛选的数据。每次发起请求递增序号，await 返回后发现序号已过期则丢弃。
+  const messagesReqSeq = useRef(0);
+
+  // 106：所有筛选变化统一回第 1 页——停留在旧页码（如第 5 页）时筛选后总页数
+  // 可能不足，请求返回空列表、Pagination 卡在超出范围的页码上显示空白。
+  // 此前只有 searchText 做了重置，其余筛选全部遗漏。
+  const changeChatFilter = useCallback((v: string | undefined) => { setMessagesPage(1); setSelectedChatId(v); }, []);
+  const changeHistoryFilter = useCallback((v: boolean | undefined) => { setMessagesPage(1); setIsHistory(v); }, []);
+  const changeProcessedFilter = useCallback((v: boolean | undefined) => { setMessagesPage(1); setProcessedFilter(v); }, []);
+  const changeChatTypeFilter = useCallback((v: string | undefined) => { setMessagesPage(1); setChatTypeFilter(v); }, []);
+  const changeProcessedTypeFilter = useCallback((v: string | undefined) => { setMessagesPage(1); setProcessedTypeFilter(v); }, []);
+  const changeActiveBot = useCallback((v: number | null) => { setMessagesPage(1); setActiveBotId(v); }, []);
+
   const loadMessages = useCallback(async () => {
     if (!workspaceId) return;
 
+    const reqId = ++messagesReqSeq.current;
     setMessagesLoading(true);
     try {
       // 直接通过后端 workspace_id 和 bot_id 参数筛选，无需前端二次过滤
@@ -122,12 +137,16 @@ export function MessagesPage({ workspaceId, onManageWorkspace }: MessagesPagePro
         page_size: messagesPageSize,
       });
 
+      // 竞态守卫：期间用户又改了筛选（发起了新请求），本次结果作废。
+      if (reqId !== messagesReqSeq.current) return;
       // 关键字搜索已在后端完成(见 keyword 参数)，前端不再二次过滤。
       setMessages(data.messages);
       setMessagesTotal(data.total);
     } catch {
     } finally {
-      setMessagesLoading(false);
+      if (reqId === messagesReqSeq.current) {
+        setMessagesLoading(false);
+      }
     }
   }, [workspaceId, selectedChatId, isHistory, processedFilter, chatTypeFilter, processedTypeFilter, messagesPage, messagesPageSize, activeBotId, debouncedSearch]);
 
@@ -227,7 +246,7 @@ export function MessagesPage({ workspaceId, onManageWorkspace }: MessagesPagePro
           <Space wrap>
             <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>筛选 Bot：</span>
             <button
-              onClick={() => setActiveBotId(null)}
+              onClick={() => changeActiveBot(null)}
               style={{
                 padding: '4px 12px',
                 borderRadius: 4,
@@ -243,7 +262,7 @@ export function MessagesPage({ workspaceId, onManageWorkspace }: MessagesPagePro
             {bots.map(bot => (
               <button
                 key={bot.id}
-                onClick={() => setActiveBotId(bot.id)}
+                onClick={() => changeActiveBot(bot.id)}
                 style={{
                   padding: '4px 12px',
                   borderRadius: 4,
@@ -275,11 +294,11 @@ export function MessagesPage({ workspaceId, onManageWorkspace }: MessagesPagePro
           processedTypeFilter={processedTypeFilter}
           searchText={searchText}
           onSearchChange={setSearchText}
-          onChatChange={setSelectedChatId}
-          onHistoryChange={setIsHistory}
-          onProcessedChange={setProcessedFilter}
-          onChatTypeChange={setChatTypeFilter}
-          onProcessedTypeChange={setProcessedTypeFilter}
+          onChatChange={changeChatFilter}
+          onHistoryChange={changeHistoryFilter}
+          onProcessedChange={changeProcessedFilter}
+          onChatTypeChange={changeChatTypeFilter}
+          onProcessedTypeChange={changeProcessedTypeFilter}
           onPageChange={(p, ps) => { setMessagesPage(p); setMessagesPageSize(ps); }}
           onViewDetail={handleViewDetail}
           onViewExecution={handleViewExecutionRecord}
@@ -318,7 +337,7 @@ export function MessagesPage({ workspaceId, onManageWorkspace }: MessagesPagePro
         <MessageSidebar
           bots={bots}
           activeBotId={activeBotId}
-          onSelectBot={setActiveBotId}
+          onSelectBot={changeActiveBot}
         />
 
         <MessageTimeline
@@ -336,11 +355,11 @@ export function MessagesPage({ workspaceId, onManageWorkspace }: MessagesPagePro
           processedTypeFilter={processedTypeFilter}
           searchText={searchText}
           onSearchChange={setSearchText}
-          onChatChange={setSelectedChatId}
-          onHistoryChange={setIsHistory}
-          onProcessedChange={setProcessedFilter}
-          onChatTypeChange={setChatTypeFilter}
-          onProcessedTypeChange={setProcessedTypeFilter}
+          onChatChange={changeChatFilter}
+          onHistoryChange={changeHistoryFilter}
+          onProcessedChange={changeProcessedFilter}
+          onChatTypeChange={changeChatTypeFilter}
+          onProcessedTypeChange={changeProcessedTypeFilter}
           onPageChange={(p, ps) => { setMessagesPage(p); setMessagesPageSize(ps); }}
           onViewDetail={handleViewDetail}
           onViewExecution={handleViewExecutionRecord}

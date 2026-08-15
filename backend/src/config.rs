@@ -14,6 +14,11 @@ pub const DEFAULT_PORT: u16 = 8088;
 /// Dev mode port.
 pub const DEFAULT_DEV_PORT: u16 = 18088;
 /// Default host.
+///
+/// 维持 0.0.0.0（106 评审决定：保留局域网直连的默认可达性）。
+/// 已知取舍：/api/v1 目前没有鉴权中间件，绑全网卡会把全部 API 暴露给同网段
+/// 任意主机；缓解措施是启动时对非回环绑定打 warn 提示暴露面（见 main.rs），
+/// 完整 token 鉴权体系另行立项。
 pub const DEFAULT_HOST: &str = "0.0.0.0";
 /// 执行超时「开关打开时」使用的默认时长（秒）。
 ///
@@ -119,7 +124,7 @@ impl SyncScheduleDefaults {
 pub struct Config {
     /// Server port (default: 8088)
     pub port: u16,
-    /// Server host (default: 0.0.0.0)
+    /// Server host (default: 0.0.0.0；绑定尊重该配置，非回环地址启动时 warn 提示)
     pub host: String,
     /// Database file path (default: ~/.ntd/data.db)
     pub db_path: String,

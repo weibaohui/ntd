@@ -121,17 +121,22 @@ pub async fn create_task(
 /// 从原 create_task 抽出，逻辑保持不变；仅 loop_id 因 CreateTaskRequest 改 Option 而显式解包。
 async fn create_loop_task(
     state: &AppState,
-    _ws: i64,
+    ws: i64,
     req: CreateTaskRequest,
 ) -> Result<(axum::http::StatusCode, ApiResponse<serde_json::Value>), AppError> {
     let loop_id = req.loop_id.ok_or_else(|| {
         AppError::BadRequest("工艺环路模式必须指定 loop_id".to_string())
     })?;
+    // 106 体检修复：此前完全忽略路径 ws——用 `/workspaces/999/tasks` 带 ws 1 的
+    // loop_id 即可在他人目录建任务并真实触发执行。先校验 loop 归属当前 ws。
+    crate::handlers::workspace_guard::verify_loop_belongs_to_ws(&state.db, loop_id, ws).await?;
     let lp = state.db.get_loop(loop_id).await?.ok_or(AppError::NotFound)?;
     let title = task_title_from_requirement(&req.requirement);
+    // workspace 归属以路径 ws 为准（上面已校验与 loop 一致），
+    // 不再用 `unwrap_or(1)` 把未归属 loop 魔法回退到 ws 1。
     let task = state
         .db
-        .create_task(&title, lp.workspace_id.unwrap_or(1), lp.process_template_id.unwrap_or(0), Some(loop_id))
+        .create_task(&title, ws, lp.process_template_id.unwrap_or(0), Some(loop_id))
         .await?;
     state.db.update_task_description(task.id, &req.requirement).await?;
     // 需求不写入 step todo 的 prompt（避免污染模板），通过 trigger_meta 传递给 LoopRunner。
@@ -390,8 +395,10 @@ async fn build_task_executions(
 /// GET /api/v1/tasks/{id}
 pub async fn get_task_detail(
     State(state): State<AppState>,
-    Path((_ws, id)): Path<(i64, i64)>,
+    Path((ws, id)): Path<(i64, i64)>,
 ) -> Result<impl axum::response::IntoResponse, AppError> {
+    // 106：此前 `_ws` 被丢弃，跨 workspace 可读他人任务详情（含 prompt/执行记录）。
+    crate::handlers::workspace_guard::verify_task_belongs_to_ws(&state.db, id, ws).await?;
     let task = state.db.get_task(id).await?.ok_or(AppError::NotFound)?;
     let template = if let Some(tid) = task.template_id { state.db.get_process_template_by_id(tid).await? } else { None };
     let loop_ = if let Some(lid) = task.loop_id { state.db.get_loop(lid).await? } else { None };
@@ -444,7 +451,12 @@ pub async fn get_artifact_content(
     // 产生误导性错误（读到错误位置或报「文件不存在」），掩盖真实的 DB 故障。
     let ws_path = resolve_artifact_workspace(&state.db, &artifact).await?;
     let content = if artifact.artifact_type == "file" {
-        read_workspace_file(&ws_path, &artifact.locator).await
+        // 106：locator 来自 DB（执行器输出可写），先拒绝对路径/`..`，
+        // 再 canonicalize 后做 workspace 前缀 containment，防读工作目录外文件。
+        match resolve_artifact_file_path(&ws_path, &artifact.locator) {
+            Ok(p) => read_workspace_file(&p).await,
+            Err(msg) => msg,
+        }
     } else {
         artifact.content_text.unwrap_or_else(|| format!("({}: {})", artifact.artifact_type, artifact.locator))
     };
@@ -466,11 +478,45 @@ async fn resolve_artifact_workspace(
         .unwrap_or_default())
 }
 
-async fn read_workspace_file(ws: &str, rel: &str) -> String {
-    let full = std::path::Path::new(ws).join(rel);
-    match tokio::fs::read_to_string(&full).await {
-        Ok(s) if s.len() <= 128*1024 => s,
-        Ok(s) => format!("{}…(仅显示前128KB)", &s[..128*1024]),
+/// 把 artifact 的 locator 解析为 workspace 内的安全绝对路径。
+///
+/// 双道防线与 skills.rs 同源：
+/// 1. 字符串级：拒绝空、绝对路径、`..` 父级引用（零 IO 快速拒绝）；
+/// 2. IO 级：canonicalize（解符号链接）后必须仍落在 canonical 后的 workspace 内。
+fn resolve_artifact_file_path(ws: &str, rel: &str) -> Result<std::path::PathBuf, String> {
+    let rel_path = std::path::Path::new(rel);
+    if rel.is_empty()
+        || rel_path.is_absolute()
+        || rel_path.components().any(|c| {
+            matches!(c, std::path::Component::ParentDir | std::path::Component::Prefix(_))
+        })
+    {
+        return Err(format!("非法的 artifact 路径: {}", rel));
+    }
+    let ws_canonical = std::path::Path::new(ws)
+        .canonicalize()
+        .map_err(|e| format!("workspace 路径不可解析: {} ({})", ws, e))?;
+    let full = ws_canonical.join(rel_path);
+    // 文件可能不存在（产物被清理）：不存在时退回 join 结果，由读取处报「无法读取」；
+    // 存在时必须过 containment。
+    if let Ok(full_canonical) = full.canonicalize() {
+        if !full_canonical.starts_with(&ws_canonical) {
+            return Err(format!("artifact 路径越出 workspace: {}", rel));
+        }
+        return Ok(full_canonical);
+    }
+    Ok(full)
+}
+
+/// 读取 artifact 文件内容，超过 128KB 截断。
+///
+/// 截断按字符而非字节切片：`&s[..128*1024]` 在多字节 UTF-8 字符边界上会 panic
+///（产物含中文/emoji 极常见；同型 bug 见本文件 BUG-001 修复记录与 feishu_push.rs）。
+async fn read_workspace_file(full: &std::path::Path) -> String {
+    const MAX_CHARS: usize = 128 * 1024;
+    match tokio::fs::read_to_string(full).await {
+        Ok(s) if s.chars().count() <= MAX_CHARS => s,
+        Ok(s) => format!("{}…(仅显示前128KB)", s.chars().take(MAX_CHARS).collect::<String>()),
         Err(e) => format!("无法读取: {} ({})", e, full.display()),
     }
 }
@@ -478,9 +524,11 @@ async fn read_workspace_file(ws: &str, rel: &str) -> String {
 /// POST /api/v1/tasks/{id}/executions — 为已有任务创建新执行（复用 task_id + loop）。
 pub async fn create_task_execution(
     State(state): State<AppState>,
-    Path((_ws, id)): Path<(i64, i64)>,
+    Path((ws, id)): Path<(i64, i64)>,
     Json(req): Json<NewExecutionRequest>,
 ) -> Result<impl axum::response::IntoResponse, AppError> {
+    // 106：触发执行前必须校验归属——该接口会真实拉起执行器在 workspace 目录运行。
+    crate::handlers::workspace_guard::verify_task_belongs_to_ws(&state.db, id, ws).await?;
     let task = state.db.get_task(id).await?.ok_or(AppError::NotFound)?;
     let loop_id = task.loop_id.ok_or_else(|| AppError::BadRequest("任务未关联 Loop".to_string()))?;
     state.db.update_task_description(id, &req.requirement).await?;
@@ -503,8 +551,10 @@ pub struct NewExecutionRequest { pub requirement: String }
 /// DELETE /api/v1/workspaces/{ws}/tasks/{id} — 删除单个任务。
 pub async fn delete_task(
     State(state): State<AppState>,
-    Path((_ws, id)): Path<(i64, i64)>,
+    Path((ws, id)): Path<(i64, i64)>,
 ) -> Result<ApiResponse<()>, AppError> {
+    // 106：删除前校验归属，杜绝跨 workspace 删除他人任务。
+    crate::handlers::workspace_guard::verify_task_belongs_to_ws(&state.db, id, ws).await?;
     state.db.delete_task(id).await.map_err(AppError::from)?;
     Ok(ApiResponse::ok(()))
 }
@@ -514,9 +564,11 @@ pub async fn delete_task(
 pub struct BatchDeleteTasksRequest { pub ids: Vec<i64> }
 pub async fn batch_delete_tasks(
     State(state): State<AppState>,
-    Path(_ws): Path<i64>,
+    Path(ws): Path<i64>,
     Json(req): Json<BatchDeleteTasksRequest>,
 ) -> Result<ApiResponse<serde_json::Value>, AppError> {
+    // 106：批量删除同样先过归属校验，任一 id 跨 ws 整体拒绝（与其他 batch 接口语义一致）。
+    crate::handlers::workspace_guard::verify_tasks_belong_to_ws(&state.db, &req.ids, ws).await?;
     let deleted = state.db.batch_delete_tasks(&req.ids).await?;
     Ok(ApiResponse::ok(serde_json::json!({
         "deleted": deleted, "total": req.ids.len(),
@@ -542,8 +594,9 @@ pub async fn update_task(
     let task = state.db.get_task(id).await?.ok_or(AppError::NotFound)?;
     // 工作空间归属校验：path ws 与任务 workspace_id 不符则 404，防 URL 串用改他空间任务。
     // 仅当任务 workspace_id 已落值时校验（存量 None 任务跳过，避免误拒）。
-    // 注：同文件 get_task_detail/delete_task 沿用旧的全局 id 口径未做此校验（存量遗留，ntd 为本地单用户
-    // 工具，非租户隔离边界）；本新端点先行收紧，全面 ws 化属另一次专项改造，不在本 PR 范围。
+    // 注：106 起 get_task_detail/delete_task/batch_delete/create_task_execution 已统一走
+    // workspace_guard::verify_task(s)_belongs_to_ws（None 视为不匹配、跨 ws 返回 403）；
+    // 本端点保留自己的 404 口径，仅因历史行为兼容（前端按 404 处理「任务不存在或不在本空间」）。
     if let Some(w) = task.workspace_id {
         if w != ws {
             return Err(AppError::NotFound);
@@ -1037,5 +1090,47 @@ mod tests {
         // 空串 / 纯空白：lines().next() 为 None 时回退原串，trim 后为空，不 panic。
         assert_eq!(super::task_title_from_requirement(""), "");
         assert_eq!(super::task_title_from_requirement("   \n  "), "");
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod artifact_path_tests {
+    use super::resolve_artifact_file_path;
+
+    #[test]
+    fn test_resolve_artifact_file_path_allows_normal_relative() {
+        // 常规相对路径落在 workspace 内 → 放行。
+        let dir = std::env::temp_dir().join("ntd-art-ok");
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = resolve_artifact_file_path(dir.to_str().unwrap(), "out/result.md");
+        assert!(p.is_ok(), "正常相对路径应放行: {p:?}");
+    }
+
+    #[test]
+    fn test_resolve_artifact_file_path_rejects_traversal() {
+        // `..` 穿越与绝对路径必须拒绝（106：locator 来自执行器输出，不可信）。
+        let dir = std::env::temp_dir().join("ntd-art-bad");
+        std::fs::create_dir_all(&dir).unwrap();
+        let ws = dir.to_str().unwrap();
+        assert!(resolve_artifact_file_path(ws, "../../../../etc/passwd").is_err());
+        assert!(resolve_artifact_file_path(ws, "/etc/passwd").is_err());
+        assert!(resolve_artifact_file_path(ws, "").is_err());
+    }
+
+    #[test]
+    fn test_resolve_artifact_file_path_rejects_symlink_escape() {
+        // 符号链接指向 workspace 外时，canonicalize 后 containment 必须拦住。
+        let dir = std::env::temp_dir().join("ntd-art-link");
+        let outside = std::env::temp_dir().join("ntd-art-outside.txt");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&outside, "secret").unwrap();
+        let link = dir.join("escape.txt");
+        let _ = std::fs::remove_file(&link);
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&outside, &link).unwrap();
+            assert!(resolve_artifact_file_path(dir.to_str().unwrap(), "escape.txt").is_err());
+        }
     }
 }

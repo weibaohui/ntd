@@ -87,8 +87,11 @@ impl FeishuHistoryFetcher {
             token_manager,
             bot_credentials,
             debounce,
-            // 复用单例 Client；与旧代码各处 reqwest::Client::new() 行为一致（infallible 构造）。
-            http_client: reqwest::Client::new(),
+            // 106 评审修复：改为真·进程级单例（OnceLock），与 feishu_api_client 的
+            // shared_http_client 同源——旧实现注释声称「复用单例」实则每次 new()
+            // 都新建 Client（连接池不共享）；起多个 fetcher 实例时仍会各开一套。
+            // 带超时 + 连接池真正共享。
+            http_client: crate::services::feishu_api_client::shared_http_client(),
             bot_open_ids: DashMap::new(),
         }
     }

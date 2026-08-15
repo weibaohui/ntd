@@ -25,7 +25,13 @@ fn validate_execution_timeout_secs(execution_timeout_secs: u64) -> Result<(), Ap
 pub async fn get_config(State(state): State<AppState>) -> Result<ApiResponse<Config>, AppError> {
     // RwLock 中毒 = 曾有线程持锁 panic，继续执行无意义
     #[allow(clippy::unwrap_used)]
-    let cfg = state.config.read().unwrap_or_else(|e| e.into_inner()).clone();
+    let mut cfg = state.config.read().unwrap_or_else(|e| e.into_inner()).clone();
+    // 106 体检修复：全量序列化会把 cloud_sync.sync_token 明文吐给任何能访问
+    // /api/v1/config 的调用方。token 的读写走专用接口（/api/v1/cloud/config，
+    // 该接口只回 has_token 不回明文），这里统一抹掉。
+    // 不能用 #[serde(skip_serializing)]——同一个 Serialize 派生还用于 save() 落盘，
+    // skip 会让 token 永远写不进 config.yaml。
+    cfg.cloud_sync.sync_token = None;
     Ok(ApiResponse::ok(cfg))
 }
 
@@ -113,7 +119,9 @@ pub async fn update_config(
     };
 
     // 落盘 + 回包用同一份 owned Config,顺序无依赖,两份独立 clone 即可。
-    let cfg_to_return = cfg_to_save.clone();
+    // 回包这份先抹掉 sync_token（同 get_config：token 明文不出 API，落盘那份保留）。
+    let mut cfg_to_return = cfg_to_save.clone();
+    cfg_to_return.cloud_sync.sync_token = None;
     tokio::task::spawn_blocking(move || cfg_to_save.save())
         .await
         .map_err(|e| AppError::Internal(format!("Join error: {}", e)))?
