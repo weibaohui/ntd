@@ -124,6 +124,8 @@ impl FeishuChannelService {
         // 会复位为 0。修复前该计数器单调递增、连接成功也不清零——飞书网关例行踢
         // 连接 + 网络抖动累计 10 次后 listen() 永久返回 Err，bot 静默死亡（106 C3）。
         let mut consecutive_failures: u32 = 0;
+        // 首个连接不退避（进程冷启动要尽快连上）；此后每轮重连至少一个基础退避。
+        let mut first_iteration = true;
 
         loop {
             if consecutive_failures >= MAX_RECONNECT_ATTEMPTS {
@@ -131,11 +133,23 @@ impl FeishuChannelService {
                 return Err(anyhow::anyhow!("WebSocket: exceeded max consecutive reconnect failures"));
             }
 
-            if consecutive_failures > 0 {
-                let delay = RECONNECT_BASE_DELAY_SECS * 2u64.pow((consecutive_failures - 1).min(5));
-                warn!("WebSocket: reconnect attempt {}/{} in {}s", consecutive_failures, MAX_RECONNECT_ATTEMPTS, delay);
+            // 106 评审修复：每轮重连前保证至少一个基础退避（首个连接除外）——
+            // 若网关出现「接受连接→立即优雅关闭」的抖动（Ok 且 lived < 健康阈值），
+            // consecutive_failures 不累计也不复位，若退避只挂在失败计数上会形成
+            // 零延时热循环（每轮一次线程 spawn + 握手）。失败计数 >0 取指数退避，
+            // 否则用基础值。
+            let delay = if consecutive_failures > 0 {
+                RECONNECT_BASE_DELAY_SECS * 2u64.pow((consecutive_failures - 1).min(5))
+            } else {
+                RECONNECT_BASE_DELAY_SECS
+            };
+            if !first_iteration {
+                if consecutive_failures > 0 {
+                    warn!("WebSocket: reconnect attempt {}/{} in {}s", consecutive_failures, MAX_RECONNECT_ATTEMPTS, delay);
+                }
                 tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
             }
+            first_iteration = false;
 
             // 记录本次连接启动时刻：连接关闭/出错时用存活时长判断是否为健康断开。
             let connect_started = std::time::Instant::now();
@@ -344,8 +358,12 @@ impl FeishuChannelService {
             let lived = connect_started.elapsed();
             match result {
                 Ok(()) => {
-                    // 正常关闭说明连接曾成功建立，复位连续失败计数。
-                    consecutive_failures = 0;
+                    // 正常关闭且健康存活过 → 复位失败计数；秒断的「优雅关闭」属于
+                    // 网关抖动，不累计失败（避免误耗额度）但也不复位，
+                    // 由上面的固定基础退避兜住节奏。
+                    if lived >= std::time::Duration::from_secs(HEALTHY_CONNECTION_LIVED_SECS) {
+                        consecutive_failures = 0;
+                    }
                     info!("WebSocket: connection closed normally after {:?}, reconnecting...", lived);
                 }
                 Err(e) => {

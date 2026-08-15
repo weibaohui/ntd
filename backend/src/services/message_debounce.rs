@@ -287,33 +287,18 @@ impl MessageDebounce {
                     tokio::time::sleep(std::time::Duration::from_secs(secs as u64)).await;
                 }
 
-                // Timer fired: drain all pending messages for this key
+                // Timer fired: drain all pending messages for this key。
+                //
+                // 代际守卫（106 评审修复）：用 remove_if 原子地「仅当代际匹配时才移除」。
+                // 早期实现先 remove 再比对 generation，stale 分支试图把消息「归还」给
+                // 现行 entry——但 remove 与归还之间存在窗口：stale timer 取走的是新
+                // push 插入的 entry，归还时 map 已空（新 timer 还在 sleep）→ 消息被
+                // 丢弃，或用旧快照覆盖掉更新的 entry，仍会丢消息。
+                // remove_if 一步完成：代际不匹配 → 本 timer 什么都不碰（entry 与消息
+                // 完整留给新 timer 接管），杜绝所有中间态。
                 let key = (bot_id, chat_id);
-                let pending = entries.remove(&key);
+                let pending = entries.remove_if(&key, |_, e| e.generation == my_generation);
                 if let Some((_, entry)) = pending {
-                    // 代际守卫（106）：entry 已被更新的 push 重建说明本 timer 是被
-                    // abort 的旧任务——remove 取到的是新 entry，归还不执行，
-                    // 否则会在首个 await 被 abort 杀掉，消息移除却未执行（静默丢失）。
-                    if entry.generation != my_generation {
-                        tracing::debug!(
-                            "[debounce] stale timer for bot_id={}, chat_id={} (gen {} != {}), returning messages to new entry",
-                            bot_id, key.1, my_generation, entry.generation
-                        );
-                        // 把消息还给 entries 里的现行 entry（若已被再次移除则无法归还，
-                        // 记 warn 便于追溯）。
-                        match entries.entry(key.clone()) {
-                            dashmap::mapref::entry::Entry::Occupied(mut e) => {
-                                e.get_mut().messages = entry.messages;
-                            }
-                            dashmap::mapref::entry::Entry::Vacant(_) => {
-                                tracing::warn!(
-                                    "[debounce] stale timer for bot_id={}, chat_id={} cannot return messages: entry vanished",
-                                    bot_id, key.1
-                                );
-                            }
-                        }
-                        return;
-                    }
                     if entry.messages.is_empty() {
                         return;
                     }

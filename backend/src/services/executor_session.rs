@@ -172,6 +172,9 @@ where
     // 输出线性增长，timeout_secs=0（不限时）时无任何兜底。超限丢弃后续行并记 warn，
     // stdout 回调同样停发（结果已无意义），主循环继续消费管道防写端阻塞。
     const MAX_LINES_PER_STREAM: usize = 10_000;
+    /// stdout EOF 后排空 stderr 的总预算（106 评审：防失控进程借持续 stderr 产出
+    /// 无限拖住返回，变相绕过 wait 的 300s 超时保护）。
+    const STDERR_DRAIN_BUDGET_SECS: u64 = 30;
     let (mut stdout_dropped, mut stderr_dropped) = (false, false);
 
     // 0 = 不限时：用极大 duration（u64::MAX 秒 ≈ 5.8 亿年）模拟「永不超时」，
@@ -233,15 +236,25 @@ where
                         // 106：select! 轮转顺序不保证 stderr 先于 stdout EOF 被消费——
                         // 进程退出时两个管道同时关闭，缓冲里的 stderr 行可能还没读到，
                         // 直接返回会丢诊断信息（全量测试并行时该窗口被放大，偶发断言失败）。
-                        // 5s 兜底：不为凑齐 stderr 无限阻塞（与「拿到多少算多少」语义兼容）。
+                        // 预算控制（106 评审）：总预算 30s + 每行 5s——失控进程持续产出
+                        // stderr 时不能无限排空，否则 wait 的 300s 保护被变相绕过。
                         // while let 形态：Ok(Some(line)) 持续排空，其余（EOF/读失败/超时）终止。
                         if !stderr_done {
+                            let drain_deadline = tokio::time::Instant::now()
+                                + Duration::from_secs(STDERR_DRAIN_BUDGET_SECS);
                             while let Ok(Ok(Some(line))) = tokio::time::timeout(
                                 Duration::from_secs(5),
                                 stderr_reader.next_line(),
                             )
                             .await
                             {
+                                if tokio::time::Instant::now() >= drain_deadline {
+                                    tracing::warn!(
+                                        "[session] stderr drain exceeded {}s budget, returning with partial stderr: tag={}",
+                                        STDERR_DRAIN_BUDGET_SECS, log_tag
+                                    );
+                                    break;
+                                }
                                 if !stderr_dropped {
                                     if raw_stderr_lines.len() >= MAX_LINES_PER_STREAM {
                                         stderr_dropped = true;

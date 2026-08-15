@@ -242,7 +242,14 @@ pub async fn cloud_save_config(
     #[allow(clippy::unwrap_used)]
     let mut cfg = state.config.write().unwrap_or_else(|e| e.into_inner());
     if let Some(url) = req.server_url {
-        let trimmed = url.trim_end_matches('/');
+        // 空串 = 显式清除云端配置（106 评审：Url::parse("") 必然失败会让
+        // 「清除配置」操作永远不可达）。清除时一并清 token，不留半套凭证。
+        let trimmed = url.trim().trim_end_matches('/');
+        if trimmed.is_empty() {
+            tracing::warn!("cloud_sync server_url cleared");
+            cfg.cloud_sync.server_url = String::new();
+            cfg.cloud_sync.sync_token = None;
+        } else {
         // 106 体检修复：server_url 此前无校验，且 push 会携带已存 Bearer token——
         // 攻击者改 URL 到受控服务器再触发 push 即可窃取 token + 全量数据。
         // 两道防线：
@@ -271,6 +278,7 @@ pub async fn cloud_save_config(
             cfg.cloud_sync.sync_token = None;
         }
         cfg.cloud_sync.server_url = trimmed.to_string();
+        }
     }
     if let Some(token) = req.sync_token {
         cfg.cloud_sync.sync_token = Some(token);

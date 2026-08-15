@@ -327,20 +327,32 @@ impl LarkWsClient {
                 };
 
                 // 去重检查放在分包重组之后（event_id 头在完整帧里才可读）。
+                // 106 评审修复：只用 event_id 做 key——message_id 兜底会误伤
+                // 「同一 message 的 receive 事件 + card.action 事件」（卡片按钮
+                // 点击被当重复吞掉）。旧格式事件若真无 event_id，宁可不去重
+                // （维持修复前行为）也不能丢交互事件。
                 let header_of = |name: &str| {
                     frame.headers
                         .iter()
                         .find(|h| h.key == name)
                         .map(|h| h.value.clone())
                 };
-                let event_key = header_of("event_id")
-                    .or_else(|| header_of("message_id"));
+                let event_key = header_of("event_id");
                 if let Some(key) = event_key {
-                    if !key.is_empty() {
-                        if seen_events.get(&key).is_some() {
-                            info!("Duplicate event suppressed: {key}");
-                            continue;
+                    if !key.is_empty() && seen_events.get(&key).is_some() {
+                        // 106 评审修复：命中去重仍要回 ok 响应帧——直接 continue 会让
+                        // 对端收不到 ack，反而加大重投。用与 handle_frame 成功路径
+                        // 相同的 NewWsResponse::ok 构造 ack（不重复下发业务处理）。
+                        info!("Duplicate event suppressed: {key}");
+                        let mut ack = frame.clone();
+                        ack.payload =
+                            Some(serde_json::to_vec(&NewWsResponse::ok()).unwrap_or_default());
+                        if let Err(e) = self.frame_tx.send(ack) {
+                            error!("Failed to send dedup ack frame: {e:?}");
                         }
+                        continue;
+                    }
+                    if !key.is_empty() {
                         // 保留 10 分钟：覆盖重连窗口期的重投；超出容量 LRU 逐出最旧。
                         seen_events.set(&key, (), 600);
                     }

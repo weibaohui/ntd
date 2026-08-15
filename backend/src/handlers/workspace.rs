@@ -104,6 +104,20 @@ pub async fn delete_workspace(
             "工作空间下仍有 {refs} 个事项，请先迁移或删除后再删工作空间"
         )));
     }
+    // 106 评审补充：loops/tasks 同样持 workspace_id 引用——挂 loop 不挂 todo 的
+    // ws 删掉后成为孤儿行（loop_trigger 调度残留、任务详情不可达）。
+    let loop_refs = state.db.count_loops_by_workspace(id).await?;
+    if loop_refs > 0 {
+        return Err(super::AppError::Conflict(format!(
+            "工作空间下仍有 {loop_refs} 个环路，请先删除后再删工作空间"
+        )));
+    }
+    let task_refs = state.db.count_tasks_by_workspace(id).await?;
+    if task_refs > 0 {
+        return Err(super::AppError::Conflict(format!(
+            "工作空间下仍有 {task_refs} 个任务，请先删除后再删工作空间"
+        )));
+    }
     state.db.delete_workspace(id).await?;
     Ok(ApiResponse::ok(()))
 }

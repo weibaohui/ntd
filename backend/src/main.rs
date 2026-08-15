@@ -690,12 +690,23 @@ async fn run_server(cli_port: Option<u16>) {
     info!("  Open http://localhost:{} in your browser", port);
     info!("===========================================");
 
-    // 绑定地址尊重 cfg.host（默认 127.0.0.1）：此前硬编码 0.0.0.0 会忽略用户配置，
-    // 且 /api/v1 无鉴权，绑全网卡等于把执行器配置写入口暴露给同网段。
+    // 绑定地址尊重 cfg.host（默认 0.0.0.0，评审决定保留局域网可达性）：
+    // 此前硬编码 0.0.0.0 会忽略用户配置。/api/v1 无鉴权，绑全网卡有暴露面，
+    // 下方对非回环绑定打提示让用户知情（完整鉴权另行立项）。
     let bind_host = &cfg.host;
-    if bind_host != "127.0.0.1" && bind_host != "localhost" && bind_host != "::1" {
-        // 非回环绑定 + 无鉴权 = 同网段可完整读写 API，启动时显式告警让用户知情。
-        tracing::warn!(
+    // 非回环判定按 IP 语义（"localhost"/"127.0.0.2"/"[::1]" 都正确识别）；
+    // 解析失败（如配了未知主机名）按非回环处理——保守方向是提醒而非沉默。
+    let is_loopback_bind = bind_host
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .parse::<std::net::IpAddr>()
+        .map(|ip| ip.is_loopback())
+        .unwrap_or(false)
+        || bind_host == "localhost";
+    if !is_loopback_bind {
+        // 默认 host 即 0.0.0.0（评审决定保留），用 info 级别避免默认安装每次启动
+        // 都被 warn 噪音淹没；风险实质相同，依赖后续独立鉴权特性收口。
+        tracing::info!(
             host = %bind_host,
             "ntd is binding to a non-loopback address; /api/v1 has NO authentication — any host able to reach this port can read config/secrets and trigger executors"
         );

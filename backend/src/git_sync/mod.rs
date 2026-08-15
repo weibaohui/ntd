@@ -100,7 +100,10 @@ async fn run_git_command(args: &[&str], cwd: Option<&Path>) -> Result<(String, S
     );
 
     // 106：网络半开时 output() 会永久悬挂，同步任务卡死。clone/fetch 走网络，
-    // 给 120s；kill_on_drop 兜底回收超时分支的 git 进程（timeout 后 child drop）。
+    // 给 120s。kill_on_drop(true)（106 评审修复）：tokio::process::Command 默认
+    // false——超时分支 future 被 drop 时若不杀子进程，git 会变孤儿继续跑
+    // （还持着 index.lock/fetch 锁）。
+    cmd.kill_on_drop(true);
     const GIT_NET_TIMEOUT_SECS: u64 = 120;
     let output = match tokio::time::timeout(
         std::time::Duration::from_secs(GIT_NET_TIMEOUT_SECS),
