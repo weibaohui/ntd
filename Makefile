@@ -87,6 +87,16 @@ dev: stop
 	@echo ""
 	@echo "Press Ctrl+C to stop"
 
+# UI 回归测试（AI/CI 一键执行）：tsc 类型检查 + Playwright 全量真实浏览器测试。
+# 前提：dev 实例已在 18088 运行（make dev）；未运行会给出提示。
+test-ui:
+	@echo "== [1/3] 检查 dev 实例 =="
+	@curl -s -o /dev/null -w "dev(18088): %{http_code}\n" http://localhost:18088/ || true
+	@echo "== [2/3] 前端类型检查 (tsc) =="
+	cd frontend && npx tsc --noEmit
+	@echo "== [3/3] Playwright 全量 UI 测试 =="
+	cd frontend && npx playwright test --reporter=list
+
 # Cross-build for Windows (x86_64 + i686), macOS (x86_64 + aarch64), Linux (x86_64 + aarch64)
 cross-build:
 	@echo "=== Cross-building ntd for win/mac/linux x86+arm ==="
