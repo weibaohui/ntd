@@ -23,9 +23,13 @@ use std::process::Command;
 use super::common::{ntd_binary_path, ntd_dir};
 use super::DaemonAction;
 
-// launchd 标签统一为 com.ntd.ntd：早期版本用过 com.nothing-todo.ntd（工作目录名残留），
-// 存量已安装服务需卸载旧标签后再安装（uninstall --force 可清理旧 plist）。
+// launchd 标签统一为 com.ntd.ntd：早期版本用过 com.nothing-todo.ntd（工作目录名残留）。
 const LAUNCHD_LABEL: &str = "com.ntd.ntd";
+
+// 旧标签常量：仅供 legacy 清理逻辑引用，新装 plist 一律用 LAUNCHD_LABEL。
+// 旧 plist 带 RunAtLoad + KeepAlive，若不清理，重启后新旧两个 daemon 会同时拉起，
+// 旧二进制面对已改名的 workspaces 表只会反复报错——必须在 install/uninstall 时顺带卸掉。
+const LEGACY_LAUNCHD_LABEL: &str = "com.nothing-todo.ntd";
 
 // handle 是 daemon 子命令的统一入口，根据 Action 分发到具体处理函数。
 // install 和 start 返回 Result，失败时打印错误并退出（CLI 语义：非零退出码）；
@@ -58,6 +62,36 @@ fn plist_path() -> PathBuf {
 
 fn launchd_domain() -> String {
     format!("gui/{}", crate::sys::current_uid())
+}
+
+/// 清理早期版本的旧标签服务（com.nothing-todo.ntd）：bootout + 删旧 plist。
+/// 全程 best-effort——旧服务不存在时 bootout 自然失败，删文件前判断存在性，
+/// 任何失败都不阻断主流程（清理是兼容性增强，不是本次操作的必要条件）。
+fn cleanup_legacy_service() {
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
+    let legacy_plist = home
+        .join("Library")
+        .join("LaunchAgents")
+        .join(format!("{LEGACY_LAUNCHD_LABEL}.plist"));
+
+    // 只在旧 plist 还在时才动手：plist 已删说明之前清理过，bootout 徒增耗时。
+    if !legacy_plist.exists() {
+        return;
+    }
+    println!("Found legacy service {}", LEGACY_LAUNCHD_LABEL);
+
+    // bootout 失败忽略——旧服务可能已手动卸载，只剩孤儿 plist 文件。
+    let _ = Command::new("launchctl")
+        .args([
+            "bootout",
+            &format!("{}/{}", launchd_domain(), LEGACY_LAUNCHD_LABEL),
+        ])
+        .output();
+
+    // 删文件失败不阻断：下次 install/uninstall 会再尝试清理（以 plist 存在性为幂等依据）。
+    if fs::remove_file(&legacy_plist).is_ok() {
+        println!("Removed legacy plist {}", legacy_plist.display());
+    }
 }
 
 fn generate_plist() -> String {
@@ -163,6 +197,10 @@ fn install(force: bool) -> Result<(), Box<dyn std::error::Error>> {
     fs::create_dir_all(&ntd_dir).ok();
     plist_path.parent().map(|p| fs::create_dir_all(p).ok());
 
+    // 装新标签前清掉旧标签服务：否则重启后两个 daemon 同时被 launchd 拉起，
+    // 旧进程持有 8088 端口会让新进程启动失败（或反过来），表现为「升级后服务异常」。
+    cleanup_legacy_service();
+
     println!("Installing launchd service to: {}", plist_path.display());
     // 写入 plist 配置文件，失败时返回错误而非 panic
     fs::write(&plist_path, generate_plist())?;
@@ -193,6 +231,9 @@ fn install(force: bool) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn uninstall() {
+    // 先清旧标签：存量机器可能新旧两个 plist 并存，只卸新标签会留下旧服务继续跑。
+    cleanup_legacy_service();
+
     let plist_path = plist_path();
     let domain = launchd_domain();
     let label = LAUNCHD_LABEL;

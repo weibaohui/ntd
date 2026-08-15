@@ -1269,7 +1269,8 @@ async fn resolve_process_guid(client: &ApiClient, key: &str) -> Result<String> {
 }
 
 /// 按 path 反查 workspace_id。workspaces.path 不保证唯一，取第一条匹配。
-/// 抽出来供 run 复用，统一 path→id 解析口径（修复旧版 /v1/workspaces 双前缀 404）。
+/// 抽出来供 run 复用，统一 path→id 解析口径（此前的 bug：旧接口按 /v1/project-directories
+/// 访问会与 client 自动补的 /api/v1 前缀叠成双前缀导致 404；改名后统一走 /workspaces）。
 async fn resolve_workspace_id_by_path(client: &ApiClient, path: &str) -> Result<i64> {
     let resp: ClientResponse<Vec<Value>> = client.get("/workspaces").await?;
     let ws_id = resp
@@ -1618,7 +1619,8 @@ async fn query_execution_status(
     let ws_resp: ClientResponse<Vec<Value>> = client.get("/workspaces").await?;
     for ws in ws_resp.data.as_deref().unwrap_or(&[]) {
         let Some(ws_id) = ws.get("id").and_then(Value::as_i64) else { continue };
-        // 修复旧版 /v1/workspaces 双前缀 404：client 已自动补 /api/v1。
+        // 路径只写相对段即可：client 已自动补 /api/v1 前缀，写全路径会叠成双前缀 404
+        // （旧接口名 project-directories 时代踩过的坑，改名后沿用此约定）。
         let loops_resp: ClientResponse<Vec<Value>> =
             match client.get(&format!("/workspaces/{}/loops", ws_id)).await {
                 Ok(r) => r,
