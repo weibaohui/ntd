@@ -30,7 +30,7 @@ interface TodoDrawerProps {
   tags: Array<{ id: number; name: string; color: string }>;
   onClose: () => void;
   onSaved: (todo?: Todo) => void;
-  /** 打开创建模式时自动选中的工作空间 ID（project_directories.id） */
+  /** 打开创建模式时自动选中的工作空间 ID（workspaces.id） */
   defaultWorkspaceId?: number | null;
 }
 

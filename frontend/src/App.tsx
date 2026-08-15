@@ -26,7 +26,7 @@ const TaskDetailPage = lazy(() => import('@/components/tasks/TaskDetailPage').th
 const ConceptNavPage = lazy(() => import('@/components/onboarding/ConceptNavPage').then(m => ({ default: m.ConceptNavPage })));
 const SettingsPage = lazy(() => import('@/components/SettingsPage').then(m => ({ default: m.SettingsPage })));
 const SkillsPanel = lazy(() => import('@/components/SkillsPanel').then(m => ({ default: m.SkillsPanel })));
-const ProjectDirectoriesPanel = lazy(() => import('@/components/settings/ProjectDirectoriesPanel').then(m => ({ default: m.ProjectDirectoriesPanel })));
+const WorkspacesPanel = lazy(() => import('@/components/settings/WorkspacesPanel').then(m => ({ default: m.WorkspacesPanel })));
 const ExecutorsPanel = lazy(() => import('@/components/settings/ExecutorsPanel').then(m => ({ default: m.ExecutorsPanel })));
 const ExpertsPanel = lazy(() => import('@/components/settings/ExpertsPanel').then(m => ({ default: m.ExpertsPanel })));
 const BlackboardPage = lazy(() => import('@/components/BlackboardPage').then(m => ({ default: m.BlackboardPage })));
@@ -271,7 +271,7 @@ function AppContent() {
     if (key === 'dashboard') { handleShowView('dashboard'); return; }
     if (key === 'blackboard') { handleShowView('blackboard'); return; }
     if (key === 'settings') { showSettings(null); return; }
-    if (key === 'settings_projectDirectories') { showStandaloneSettingsPanel('projectDirectories'); return; }
+    if (key === 'settings_workspaces') { showStandaloneSettingsPanel('workspaces'); return; }
     if (key === 'settings_skills') { showStandaloneSettingsPanel('skills'); return; }
     if (key === 'settings_executors') { showStandaloneSettingsPanel('executors'); return; }
     if (key === 'settings_experts') { showStandaloneSettingsPanel('experts'); return; }
@@ -427,10 +427,10 @@ function AppContent() {
             >
               {activeView === 'skills' ? (
                 <SkillsPanel />
-              ) : activeView === 'projectDirectories' ? (
+              ) : activeView === 'workspaces' ? (
                 // 工作空间管理页：「智能助手配置」入口已迁移为独立菜单，
                 // 这里注入回调：切视图到 messages 并联动 workspace id，实现从管理工作空间下钻到消息页。
-                <ProjectDirectoriesPanel
+                <WorkspacesPanel
                   onOpenMessages={(workspaceId) => {
                     dispatch({ type: 'SELECT_WORKSPACE', payload: workspaceId });
                     handleShowView('messages');
@@ -451,7 +451,7 @@ function AppContent() {
                 // 未选中时 MessagesPage 内部给出空态引导，onManageWorkspace 落到工作空间管理页。
                 <MessagesPage
                   workspaceId={state.selectedWorkspace}
-                  onManageWorkspace={() => showStandaloneSettingsPanel('projectDirectories')}
+                  onManageWorkspace={() => showStandaloneSettingsPanel('workspaces')}
                 />
               ) : activeView === 'wiki' ? (
                 <WikiViewPage />

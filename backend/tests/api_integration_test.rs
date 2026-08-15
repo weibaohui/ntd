@@ -24,7 +24,7 @@ async fn create_test_app() -> (axum::Router, i64) {
 
     // 创建测试工作空间，handler 要求 workspace_id 必须对应已有目录
     let ws_id = db
-        .create_project_directory("/tmp/test-api-workspace", Some("test"), false, false)
+        .create_workspace("/tmp/test-api-workspace", Some("test"), false, false)
         .await
         .unwrap();
 
@@ -702,7 +702,7 @@ async fn test_batch_delete_loops_empty_ids_rejected() {
 /// 建一个额外 workspace 返回其 id，用于跨 ws 越权测试。
 #[allow(dead_code)]
 async fn create_second_workspace(db: &Database) -> i64 {
-    db.create_project_directory("/tmp/test-api-workspace-B", Some("test-B"), false, false)
+    db.create_workspace("/tmp/test-api-workspace-B", Some("test-B"), false, false)
         .await
         .unwrap()
 }
@@ -737,11 +737,11 @@ async fn test_cross_workspace_todo_other_ws_rejected() {
     // 在两个真实 workspace 间验证越权拒绝
     let db = Arc::new(Database::new(":memory:").await.unwrap());
     let ws_a = db
-        .create_project_directory("/tmp/test-ws-a", Some("A"), false, false)
+        .create_workspace("/tmp/test-ws-a", Some("A"), false, false)
         .await
         .unwrap();
     let ws_b = db
-        .create_project_directory("/tmp/test-ws-b", Some("B"), false, false)
+        .create_workspace("/tmp/test-ws-b", Some("B"), false, false)
         .await
         .unwrap();
 

@@ -10,7 +10,7 @@ flowchart LR
   User["点击刷新"] --> handleRefresh["handleRefresh"]
   handleRefresh --> loadData["loadData()"]
   loadData -->|"Promise.all"| API1["db.getAgentBots<br>GET /api/v1/agent-bots"]
-  loadData -->|"Promise.all"| API2["db.getProjectDirectories<br>GET /api/v1/project-directories"]
+  loadData -->|"Promise.all"| API2["db.getWorkspaces<br>GET /api/v1/workspaces"]
   API1 --> setBots["setBots(botList)"]
   API2 --> setWorkspaces["setWorkspaces(workspaceList)"]
 ```
@@ -21,7 +21,7 @@ flowchart LR
 flowchart TD
   Page["AssistantManagementPage.tsx<br>AssistantManagementPage()"] --> loadData["loadData()<br>useCallback"]
   loadData --> setLoading["setLoading(true)"]
-  loadData --> PromiseAll["Promise.all<br>getAgentBots + getProjectDirectories"]
+  loadData --> PromiseAll["Promise.all<br>getAgentBots + getWorkspaces"]
   PromiseAll --> setBots["setBots"]
   PromiseAll --> setWorkspaces["setWorkspaces"]
   loadData --> setLoadingFalse["setLoading(false)"]
@@ -46,7 +46,7 @@ classDiagram
     created_at: string
     workspace_id: number
   }
-  class ProjectDirectory {
+  class Workspace {
     id: number
     path: string
     name: string|null
@@ -65,6 +65,6 @@ stateDiagram-v2
 
 ## 开发指导
 - **前端入口**：`frontend/src/components/assistant-management/AssistantManagementPage.tsx` 的 `loadData` / `handleRefresh` 回调
-- **后端入口**：`backend/src/handlers/agent_bot.rs` 处理 `GET /api/v1/agent-bots`；`backend/src/handlers/project_directory.rs` 处理 `GET /api/v1/project-directories`
+- **后端入口**：`backend/src/handlers/agent_bot.rs` 处理 `GET /api/v1/agent-bots`；`backend/src/handlers/workspace.rs` 处理 `GET /api/v1/workspaces`
 - **注意**：`loadData` 用 `Promise.all` 并发拉取 bots 和 workspaces，任何回调（toggle/delete/bind/configChanged）都会触发整页 loadData 刷新
 - **扩展**：新增智能助手平台类型时 `AgentBot.bot_type` 追加值，列表渲染的 `Tag color` 映射需同步更新

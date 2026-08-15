@@ -297,9 +297,9 @@ pub struct LoopDto {
     pub id: i64,
     pub name: String,
     pub description: String,
-    /// 所属工作空间 ID（project_directories.id），唯一键。
-    /// 路径不再作为 API 字段返回——cwd 在后端内部从 project_directories 解析，
-    /// 前端展示用 project_directories.name，避免长路径重复上送。
+    /// 所属工作空间 ID（workspaces.id），唯一键。
+    /// 路径不再作为 API 字段返回——cwd 在后端内部从 workspaces 解析，
+    /// 前端展示用 workspaces.name，避免长路径重复上送。
     pub workspace_id: Option<i64>,
     pub status: String,
     /// 标签 ID 列表（单选，复用 Todo 的标签体系）

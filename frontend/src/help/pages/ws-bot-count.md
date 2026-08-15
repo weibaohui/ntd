@@ -17,7 +17,7 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-  Panel["ProjectDirectoriesPanel.tsx<br>ProjectDirectoriesPanel()"] --> loadAgentBots["loadAgentBots()<br>db.getAgentBots"]
+  Panel["WorkspacesPanel.tsx<br>WorkspacesPanel()"] --> loadAgentBots["loadAgentBots()<br>db.getAgentBots"]
   Panel --> useEffect["useEffect mount loadAgentBots"]
   Panel --> getWorkspaceBotCount["getWorkspaceBotCount(workspaceId)<br>agentBots.filter count"]
   Panel --> BotCountLink["Typography.Link<br>onClick onOpenMessages(dir.id)"]
@@ -32,7 +32,7 @@ classDiagram
     id: number
     workspace_id: number
   }
-  class ProjectDirectory {
+  class Workspace {
     id: number
   }
 ```
@@ -47,7 +47,7 @@ stateDiagram-v2
 ```
 
 ## 开发指导
-- **前端入口**：`frontend/src/components/settings/ProjectDirectoriesPanel.tsx` 的 `loadAgentBots` / `getWorkspaceBotCount` 函数；`onOpenMessages` 由 props 传入
+- **前端入口**：`frontend/src/components/settings/WorkspacesPanel.tsx` 的 `loadAgentBots` / `getWorkspaceBotCount` 函数；`onOpenMessages` 由 props 传入
 - **后端入口**：`backend/src/handlers/agent_bot.rs` 处理 `GET /api/v1/agent-bots`
 - **注意**：`onOpenMessages?.(dir.id)` 是可选 prop，未传入时点击无效果；联动跳转交由父层切视图到 messages 并切 workspace 到该 id
 - **扩展**：如需在工作空间卡上展示更多绑定信息（如活跃推送数），扩展 `getWorkspaceBotCount` 的过滤维度或拉取额外数据

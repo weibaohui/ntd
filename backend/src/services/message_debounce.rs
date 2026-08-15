@@ -1063,7 +1063,7 @@ async fn resolve_executor_workspace(
         send_msg(executor_error_message(executor_type, "未配置工作空间"));
         return Err(None);
     };
-    match db.get_project_directory_by_id(wid).await {
+    match db.get_workspace_by_id(wid).await {
         Ok(Some(pd)) => Ok(pd.path),
         Ok(None) => {
             // wid>0 但查不到：悬空 id（工作空间被删），引导重新切换

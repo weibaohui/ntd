@@ -1,4 +1,4 @@
-// 验证破坏式改造：组件之间传递工作空间主键统一改为 project_directories.id（number）。
+// 验证破坏式改造：组件之间传递工作空间主键统一改为 workspaces.id（number）。
 //
 // 验证目标：
 // 1. WorkspaceSelect 的 antd Select option value 是数字（id），不是路径字符串。
@@ -15,8 +15,8 @@ const BASE = 'http://localhost:18088';
 
 // 通过 API 拿到已存在的 workspace id 与一个示例 loop（用于编辑模式断言）
 async function fetchSeed(api: Awaited<ReturnType<typeof request.newContext>>) {
-  // 拉取 project_directories
-  const dirsResp = await api.get(`${BASE}/api/v1/project-directories`);
+  // 拉取 workspaces
+  const dirsResp = await api.get(`${BASE}/api/v1/workspaces`);
   const dirs = (await dirsResp.json()).data as Array<{ id: number; path: string; name: string | null }>;
   // 拉取 loops：loops 按 workspace 隔离，且 dirs[0]（后端按 path 排序）未必含 loop，
   // 故遍历各工作空间取首个非空 loops，避免盲取导致整组用例空跳。
@@ -44,8 +44,8 @@ test.describe('workspace_id 破坏式改造验证', () => {
   test('WorkspaceSelect option 的 value 是数字（id）而不是路径字符串', async ({ page }) => {
     await page.goto(BASE);
     await page.waitForLoadState('networkidle');
-    // 等待 project_directories 加载
-    await page.waitForResponse(r => r.url().includes('/api/v1/project-directories') && r.status() === 200, { timeout: 5000 }).catch(() => {});
+    // 等待 workspaces 加载
+    await page.waitForResponse(r => r.url().includes('/api/v1/workspaces') && r.status() === 200, { timeout: 5000 }).catch(() => {});
 
     // 打开任意 WorkspaceSelect —— TodoDrawer 的新建按钮 / 左侧 WorkspaceSwitcher / LoopFormModal 都用同一组件
     // 通过 WorkspaceSwitcher dropdown 触发最稳，因为它总是渲染

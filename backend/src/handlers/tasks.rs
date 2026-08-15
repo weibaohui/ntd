@@ -192,7 +192,7 @@ async fn validate_delegate_request(
 ) -> Result<(), AppError> {
     // 校验 path 的 workspace 真实存在：loop 路径靠 get_loop 兜底归属，委派路径无 loop 依托，
     // 必须显式校验，避免为不存在的 ws 建任务、执行落到未定义目录（CodeRabbit #2）。
-    if state.db.get_project_directory_by_id(ws).await?.is_none() {
+    if state.db.get_workspace_by_id(ws).await?.is_none() {
         return Err(AppError::NotFound);
     }
     // 处理人类型与名称齐全：kind 必须是 executor/expert，name 非空。
@@ -613,7 +613,7 @@ mod tests {
     async fn build_app() -> (axum::Router, i64, Arc<Database>) {
         let db = Arc::new(Database::new(":memory:").await.expect("memory db must open"));
         let ws_id = db
-            .create_project_directory("/tmp/test-ntd010-workspace", Some("ntd010"), false, false)
+            .create_workspace("/tmp/test-ntd010-workspace", Some("ntd010"), false, false)
             .await
             .expect("workspace must be created");
 

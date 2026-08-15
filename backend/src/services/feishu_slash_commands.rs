@@ -113,7 +113,7 @@ impl SlashCommandHandler {
             _ => (channel.to_string(), "chat_id"),
         };
 
-        let directories = db.get_project_directories().await.unwrap_or_default();
+        let directories = db.get_workspaces().await.unwrap_or_default();
         if directories.is_empty() {
             FeishuApiClient::send_text(
                 credentials,
@@ -121,7 +121,7 @@ impl SlashCommandHandler {
                 bot_id,
                 &receive_id,
                 receive_id_type,
-                "📂 暂无已注册的项目目录。\n\n请在 Web 设置页「项目目录」中添加，或使用 /bind <名称> 绑定一个项目（首次使用会自动创建）。",
+                "📂 暂无已注册的工作空间。\n\n请在 Web 设置页「工作空间」中添加，或使用 /bind <名称> 绑定一个项目（首次使用会自动创建）。",
             )
             .await;
         } else {
@@ -132,7 +132,7 @@ impl SlashCommandHandler {
                     format!("• {}  →  {}", name, d.path)
                 })
                 .collect();
-            lines.insert(0, format!("📂 已注册的项目目录（共 {} 个）：", directories.len()));
+            lines.insert(0, format!("📂 已注册的工作空间（共 {} 个）：", directories.len()));
             lines.push(String::new());
             lines.push("💡 使用 /bind <名称> 绑定到本项目聊天".to_string());
             FeishuApiClient::send_text(
@@ -624,8 +624,9 @@ impl SlashCommandHandler {
 
     /// 加载工作空间页列表（104 从 assemble_help_card_state 抽出）：
     /// 全量目录 + 标记当前 workspace；DB 失败静默降级空列表（既有口径，不动）。
+    /// get_workspaces 是 #1054 工作空间命名统一后的新方法名（原 get_project_directories）。
     pub(crate) async fn load_workspace_items(db: &Database, wid: Option<i64>) -> Vec<WorkspaceItem> {
-        db.get_project_directories()
+        db.get_workspaces()
             .await
             .ok()
             .unwrap_or_default()

@@ -14,7 +14,7 @@ import {
 } from '@ant-design/icons';
 import { LoopStepsPanel } from '@/components/LoopStudioStepsPanel';
 import { LoopExecutionsPanel } from '@/components/loop-studio/executions';
-import { getWorkspaceDisplayName, useProjectDirectories } from '@/utils/workspaceDisplay';
+import { getWorkspaceDisplayName, useWorkspaces } from '@/utils/workspaceDisplay';
 import type { LoopDetail } from '@/types/loop';
 import type { GateDefinition } from '@/types/process';
 import { complexityColor, complexityLabel, statusColor } from './constants';
@@ -92,12 +92,12 @@ export function gateDetailText(gate: GateDefinition): string {
 
 /** Tab 1：概览 — 环路基本信息 + 全局限制。 */
 export function OverviewTab({
-  task, template, loopDetail, projectDirs,
+  task, template, loopDetail, workspaces,
 }: {
   task: { id: number; title: string; status: string };
   template?: { display_name?: string; version?: string; complexity?: string };
   loopDetail: LoopDetail | null;
-  projectDirs: ReturnType<typeof useProjectDirectories>['dirs'];
+  workspaces: ReturnType<typeof useWorkspaces>['dirs'];
 }) {
   return (
     <div className={styles.paneBody}>
@@ -107,8 +107,8 @@ export function OverviewTab({
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
             <DetailField label="关联工作空间" value={
               loopDetail.workspace_id != null ? (() => {
-                const displayName = getWorkspaceDisplayName(projectDirs, loopDetail.workspace_id);
-                const dir = projectDirs.find(d => d.id === loopDetail.workspace_id);
+                const displayName = getWorkspaceDisplayName(workspaces, loopDetail.workspace_id);
+                const dir = workspaces.find(d => d.id === loopDetail.workspace_id);
                 return dir ? (
                   <div>
                     <div style={{ fontWeight: 500 }}>{displayName}</div>

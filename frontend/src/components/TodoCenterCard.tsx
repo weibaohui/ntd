@@ -579,7 +579,7 @@ function WorkspaceMoveCopyModal({
   // 打开时拉取工作空间列表，并默认选第一个非当前工作空间
   useEffect(() => {
     if (mode === null) return;
-    db.getProjectDirectories()
+    db.getWorkspaces()
       .then((dirs) => {
         setWorkspaces(dirs.map((d) => ({ id: d.id, name: d.name || d.path, path: d.path })));
         const first = dirs.find((d) => d.id !== currentWorkspaceId);

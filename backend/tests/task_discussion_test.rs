@@ -28,7 +28,7 @@ async fn create_discussion_app() -> (axum::Router, i64, Arc<Database>) {
     let db = Arc::new(Database::new(":memory:").await.unwrap());
     // handler 要求 workspace_id 对应已存在目录，先建一个测试目录。
     let ws_id = db
-        .create_project_directory("/tmp/test-discussion-ws", Some("test"), false, false)
+        .create_workspace("/tmp/test-discussion-ws", Some("test"), false, false)
         .await
         .unwrap();
     let executor_registry = Arc::new(ExecutorRegistry::new());

@@ -710,7 +710,7 @@ phases:
     }
 
     async fn seed_workspace(db: &Database) -> i64 {
-        db.create_project_directory("/tmp/test-ws", Some("测试空间"), false, false)
+        db.create_workspace("/tmp/test-ws", Some("测试空间"), false, false)
             .await
             .unwrap()
     }

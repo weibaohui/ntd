@@ -50,7 +50,7 @@ pub struct CloudTodoItem {
     pub scheduler_config: Option<String>,
     #[serde(default)]
     pub tag_names: Vec<String>,
-    /// 工作空间 ID（project_directories.id），唯一键。
+    /// 工作空间 ID（workspaces.id），唯一键。
     /// 同步 payload 不再带路径——破坏式变更，所有调用方必须改为传 id。
     #[serde(default)]
     pub workspace_id: Option<i64>,
@@ -413,21 +413,21 @@ async fn merge_cloud_todos_to_local(
 async fn resolve_cloud_workspace(
     db: &Database,
     workspace_id: Option<i64>,
-) -> Result<crate::db::project_directory::ProjectDirectory, String> {
+) -> Result<crate::db::workspace::Workspace, String> {
     if let Some(wid) = workspace_id {
-        if let Some(dir) = db.get_project_directory_by_id(wid).await.map_err(|e| e.to_string())? {
+        if let Some(dir) = db.get_workspace_by_id(wid).await.map_err(|e| e.to_string())? {
             return Ok(dir);
         }
     }
     // 回退：查 /tmp 是否已注册，没有则建一条 name='临时工作空间' 的目录记录。
-    if let Some(existing) = db.get_project_directory_by_path("/tmp").await.map_err(|e| e.to_string())? {
+    if let Some(existing) = db.get_workspace_by_path("/tmp").await.map_err(|e| e.to_string())? {
         return Ok(existing);
     }
     let new_id = db
-        .create_project_directory("/tmp", Some("临时工作空间"), false, false)
+        .create_workspace("/tmp", Some("临时工作空间"), false, false)
         .await
         .map_err(|e| e.to_string())?;
-    db.get_project_directory_by_id(new_id)
+    db.get_workspace_by_id(new_id)
         .await
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "创建 /tmp fallback 失败".to_string())

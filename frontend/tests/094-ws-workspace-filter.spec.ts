@@ -43,7 +43,7 @@ test('094 WS 连接携带 workspace_id 且切换 workspace 后重连换参', asy
   // 拿目录列表确定首连 workspace 的名称（菜单未传 selectedKeys，无法用 -selected 类排除当前项，
   // 按名称排除最可靠）
   const dirs: Array<{ id: number; name: string }> = await page.evaluate(async () => {
-    const resp = await fetch('/api/v1/project-directories');
+    const resp = await fetch('/api/v1/workspaces');
     const body = await resp.json();
     return body.data;
   });

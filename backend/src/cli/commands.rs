@@ -5,7 +5,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::db::project_directory::ProjectDirectory;
+use crate::db::workspace::Workspace;
 use crate::models::{
     ClientResponse, CreateTagRequest, CreateTodoRequest, DashboardStats,
     ExecutionRecord, ExecutionRecordsPage, ExecutionSummary, Tag, Todo, ExecuteRequest, LoopDto,
@@ -95,7 +95,7 @@ pub enum Commands {
         #[command(subcommand)]
         action: BlackboardAction,
     },
-    /// Workspace (project directory) management
+    /// Workspace management
     Workspace {
         #[command(subcommand)]
         action: WorkspaceAction,
@@ -112,14 +112,14 @@ pub enum Commands {
     },
 }
 
-/// Workspace CLI actions: 列出 / 查询单个 / 注册一个项目目录。
-/// 后端表 `project_directories` 的唯一键是自增 id，path 不保证唯一，
+/// Workspace CLI actions: 列出 / 查询单个 / 注册一个工作空间。
+/// 后端表 `workspaces` 的唯一键是自增 id，path 不保证唯一，
 /// 故 CLI 一律按 id 消费；create 仍要 path+name 是因为注册动作就是登记这两个字段。
 #[derive(Debug, Clone, Subcommand)]
 pub enum WorkspaceAction {
     /// List all registered workspaces
     List,
-    /// Register a new workspace (project directory)
+    /// Register a new workspace
     Create {
         /// Directory path (absolute or relative; stored verbatim)
         #[arg(short, long)]
@@ -139,7 +139,7 @@ pub enum BlackboardAction {
     Wiki {
         #[command(subcommand)]
         action: WikiAction,
-        /// Working directory ID (project_directories.id)
+        /// Workspace ID (workspaces.id)
         #[arg(short = 'w', long = "workspace-id")]
         workspace_id: i64,
     },
@@ -195,7 +195,7 @@ pub enum WikiAction {
 pub enum TaskAction {
     /// 查看任务全貌（GET /workspaces/{ws}/tasks/{id}）
     View {
-        /// Workspace ID（project_directories.id）
+        /// Workspace ID（workspaces.id）
         #[arg(long = "workspace-id")]
         workspace_id: i64,
         /// 任务 ID（对应路径段 {id}）
@@ -204,7 +204,7 @@ pub enum TaskAction {
     },
     /// 列出工作空间下的任务（GET /workspaces/{ws}/tasks）
     List {
-        /// Workspace ID（project_directories.id）
+        /// Workspace ID（workspaces.id）
         #[arg(long = "workspace-id")]
         workspace_id: i64,
         /// 按状态过滤（可选，透传为 ?status=）
@@ -215,7 +215,7 @@ pub enum TaskAction {
     Posts {
         #[command(subcommand)]
         action: TaskPostAction,
-        /// Workspace ID（project_directories.id）
+        /// Workspace ID（workspaces.id）
         #[arg(long = "workspace-id")]
         workspace_id: i64,
         /// 目标任务 ID（帖子挂在 task 下）
@@ -259,7 +259,7 @@ pub enum TodoAction {
         #[arg(short, long)]
         executor: Option<String>,
 
-        /// Working directory ID (project_directories.id). v1 路由必填（嵌入 URL）。
+        /// Workspace ID (workspaces.id). v1 路由必填（嵌入 URL）。
         /// 唯一键，CLI 不再支持 path；stdin 模式下也必须传，body 字段会被本参数覆盖。
         #[arg(short = 'w', long = "workspace-id")]
         workspace_id: i64,
@@ -274,7 +274,7 @@ pub enum TodoAction {
     },
     /// List todos
     List {
-        /// Workspace ID (project_directories.id). v1 路由要求 workspace 嵌入 URL。
+        /// Workspace ID (workspaces.id). v1 路由要求 workspace 嵌入 URL。
         #[arg(long = "workspace-id")]
         workspace_id: i64,
 
@@ -296,7 +296,7 @@ pub enum TodoAction {
     },
     /// Get todo details
     Get {
-        /// Workspace ID (project_directories.id). v1 路由要求 workspace 嵌入 URL。
+        /// Workspace ID (workspaces.id). v1 路由要求 workspace 嵌入 URL。
         #[arg(long = "workspace-id")]
         workspace_id: i64,
 
@@ -308,7 +308,7 @@ pub enum TodoAction {
         /// Todo ID
         id: i64,
 
-        /// Workspace ID (project_directories.id) the todo currently belongs to.
+        /// Workspace ID (workspaces.id) the todo currently belongs to.
         /// v1 路由把 workspace 嵌入 URL；要切换 workspace 请用 --stdin 传 body.workspace_id。
         #[arg(long = "workspace-id")]
         workspace_id: i64,
@@ -347,7 +347,7 @@ pub enum TodoAction {
     },
     /// Delete todo
     Delete {
-        /// Workspace ID (project_directories.id). v1 路由要求 workspace 嵌入 URL。
+        /// Workspace ID (workspaces.id). v1 路由要求 workspace 嵌入 URL。
         #[arg(long = "workspace-id")]
         workspace_id: i64,
 
@@ -356,7 +356,7 @@ pub enum TodoAction {
     },
     /// Execute todo
     Execute {
-        /// Workspace ID (project_directories.id). v1 路由要求 workspace 嵌入 URL。
+        /// Workspace ID (workspaces.id). v1 路由要求 workspace 嵌入 URL。
         #[arg(long = "workspace-id")]
         workspace_id: i64,
 
@@ -378,7 +378,7 @@ pub enum TodoAction {
     },
     /// Stop todo execution
     Stop {
-        /// Workspace ID (project_directories.id). v1 路由要求 workspace 嵌入 URL。
+        /// Workspace ID (workspaces.id). v1 路由要求 workspace 嵌入 URL。
         #[arg(long = "workspace-id")]
         workspace_id: i64,
 
@@ -387,7 +387,7 @@ pub enum TodoAction {
     },
     /// Get todo execution stats
     Stats {
-        /// Workspace ID (project_directories.id). v1 路由要求 workspace 嵌入 URL。
+        /// Workspace ID (workspaces.id). v1 路由要求 workspace 嵌入 URL。
         #[arg(long = "workspace-id")]
         workspace_id: i64,
 
@@ -405,7 +405,7 @@ pub enum TodoAction {
 pub enum ExecutionAction {
     /// List execution records for a todo
     List {
-        /// Workspace ID (project_directories.id). v1 路由要求 workspace 嵌入 URL。
+        /// Workspace ID (workspaces.id). v1 路由要求 workspace 嵌入 URL。
         #[arg(long = "workspace-id")]
         workspace_id: i64,
 
@@ -426,7 +426,7 @@ pub enum ExecutionAction {
     },
     /// Get execution record details
     Get {
-        /// Workspace ID (project_directories.id). v1 路由要求 workspace 嵌入 URL。
+        /// Workspace ID (workspaces.id). v1 路由要求 workspace 嵌入 URL。
         #[arg(long = "workspace-id")]
         workspace_id: i64,
 
@@ -435,7 +435,7 @@ pub enum ExecutionAction {
     },
     /// Resume a conversation from an execution record
     Resume {
-        /// Workspace ID (project_directories.id). v1 路由要求 workspace 嵌入 URL。
+        /// Workspace ID (workspaces.id). v1 路由要求 workspace 嵌入 URL。
         #[arg(long = "workspace-id")]
         workspace_id: i64,
 
@@ -589,14 +589,14 @@ pub enum ProcessAction {
 pub enum LoopAction {
     /// List all loops
     List {
-        /// Workspace ID (project_directories.id). v1 路由要求 workspace 嵌入 URL；
+        /// Workspace ID (workspaces.id). v1 路由要求 workspace 嵌入 URL；
         /// 不再是可选 filter，而是必填 URL 段（旧版跨 workspace 列表能力已下线）。
         #[arg(long = "workspace-id")]
         workspace_id: i64,
     },
     /// Get loop details
     Get {
-        /// Workspace ID (project_directories.id). v1 路由要求 workspace 嵌入 URL。
+        /// Workspace ID (workspaces.id). v1 路由要求 workspace 嵌入 URL。
         #[arg(long = "workspace-id")]
         workspace_id: i64,
 
@@ -605,7 +605,7 @@ pub enum LoopAction {
     },
     /// Update loop
     Update {
-        /// Workspace ID (project_directories.id). v1 路由要求 workspace 嵌入 URL。
+        /// Workspace ID (workspaces.id). v1 路由要求 workspace 嵌入 URL。
         #[arg(long = "workspace-id")]
         workspace_id: i64,
 
@@ -626,7 +626,7 @@ pub enum LoopAction {
     },
     /// Delete loop
     Delete {
-        /// Workspace ID (project_directories.id). v1 路由要求 workspace 嵌入 URL。
+        /// Workspace ID (workspaces.id). v1 路由要求 workspace 嵌入 URL。
         #[arg(long = "workspace-id")]
         workspace_id: i64,
 
@@ -635,7 +635,7 @@ pub enum LoopAction {
     },
     /// Stop a loop (pause all cron triggers)
     Stop {
-        /// Workspace ID (project_directories.id). v1 路由要求 workspace 嵌入 URL。
+        /// Workspace ID (workspaces.id). v1 路由要求 workspace 嵌入 URL。
         #[arg(long = "workspace-id")]
         workspace_id: i64,
 
@@ -644,7 +644,7 @@ pub enum LoopAction {
     },
     /// Get loop execution stats
     Stats {
-        /// Workspace ID (project_directories.id). v1 路由要求 workspace 嵌入 URL。
+        /// Workspace ID (workspaces.id). v1 路由要求 workspace 嵌入 URL。
         #[arg(long = "workspace-id")]
         workspace_id: i64,
 
@@ -668,7 +668,7 @@ pub enum LoopAction {
 pub enum LoopExecutionAction {
     /// List execution records for a loop
     List {
-        /// Workspace ID (project_directories.id). v1 路由要求 workspace 嵌入 URL。
+        /// Workspace ID (workspaces.id). v1 路由要求 workspace 嵌入 URL。
         #[arg(long = "workspace-id")]
         workspace_id: i64,
 
@@ -685,7 +685,7 @@ pub enum LoopExecutionAction {
     },
     /// Get execution details
     Get {
-        /// Workspace ID (project_directories.id). v1 路由要求 workspace 嵌入 URL。
+        /// Workspace ID (workspaces.id). v1 路由要求 workspace 嵌入 URL。
         #[arg(long = "workspace-id")]
         workspace_id: i64,
 
@@ -699,7 +699,7 @@ pub enum LoopExecutionAction {
     /// Show the blackboard (accumulated step conclusions) for a loop execution.
     /// 默认输出 JSON（AI/脚本友好）；加 --human 输出黑板视图（人眼友好）。
     Blackboard {
-        /// Workspace ID (project_directories.id). v1 路由要求 workspace 嵌入 URL。
+        /// Workspace ID (workspaces.id). v1 路由要求 workspace 嵌入 URL。
         #[arg(long = "workspace-id")]
         workspace_id: i64,
 
@@ -1193,7 +1193,7 @@ async fn handle_task_posts(
 
 // ============== Workspace Handlers ==============
 // 三个子命令各拆一个独立函数，避免 handle_workspace 单函数超 30 行；
-// 后端接口路径与 handlers/project_directory.rs::routes 对齐。
+// 后端接口路径与 handlers/workspace.rs::routes 对齐。
 
 async fn handle_workspace(
     client: &ApiClient,
@@ -1268,10 +1268,10 @@ async fn resolve_process_guid(client: &ApiClient, key: &str) -> Result<String> {
     }
 }
 
-/// 按 path 反查 workspace_id。project_directories.path 不保证唯一，取第一条匹配。
-/// 抽出来供 run 复用，统一 path→id 解析口径（修复旧版 /v1/project-directories 双前缀 404）。
+/// 按 path 反查 workspace_id。workspaces.path 不保证唯一，取第一条匹配。
+/// 抽出来供 run 复用，统一 path→id 解析口径（修复旧版 /v1/workspaces 双前缀 404）。
 async fn resolve_workspace_id_by_path(client: &ApiClient, path: &str) -> Result<i64> {
-    let resp: ClientResponse<Vec<Value>> = client.get("/project-directories").await?;
+    let resp: ClientResponse<Vec<Value>> = client.get("/workspaces").await?;
     let ws_id = resp
         .data
         .as_deref()
@@ -1615,7 +1615,7 @@ async fn query_execution_status(
     output: &OutputFormat,
     fields: &Option<String>,
 ) -> Result<()> {
-    let ws_resp: ClientResponse<Vec<Value>> = client.get("/project-directories").await?;
+    let ws_resp: ClientResponse<Vec<Value>> = client.get("/workspaces").await?;
     for ws in ws_resp.data.as_deref().unwrap_or(&[]) {
         let Some(ws_id) = ws.get("id").and_then(Value::as_i64) else { continue };
         // 修复旧版 /v1/workspaces 双前缀 404：client 已自动补 /api/v1。
@@ -1638,20 +1638,20 @@ async fn query_execution_status(
     Ok(())
 }
 
-/// 调 `GET /api/v1/project-directories` 拉全部已注册工作空间。
+/// 调 `GET /api/v1/workspaces` 拉全部已注册工作空间。
 /// 全局资源，路径不嵌 workspace。
 async fn list_workspaces(
     client: &ApiClient,
     output: &OutputFormat,
     fields: &Option<String>,
 ) -> Result<()> {
-    let resp: ClientResponse<Vec<ProjectDirectory>> = client.get("/project-directories").await?;
+    let resp: ClientResponse<Vec<Workspace>> = client.get("/workspaces").await?;
     print_response(&resp, output, fields)?;
     Ok(())
 }
 
-/// 调 `POST /api/v1/project-directories` 注册一个新工作空间。
-/// body 结构与 handlers/project_directory.rs::CreateProjectDirectoryRequest 对齐。
+/// 调 `POST /api/v1/workspaces` 注册一个新工作空间。
+/// body 结构与 handlers/workspace.rs::CreateWorkspaceRequest 对齐。
 /// 全局资源，路径不嵌 workspace。
 async fn create_workspace(
     client: &ApiClient,
@@ -1663,8 +1663,8 @@ async fn create_workspace(
     // 用 serde_json::json 构造 body 而非具名 struct，避免在 models 层再开一个 DTO——
     // create 接口只有两个字段，cli 侧不会再复用，具名反而是过度设计。
     let body = serde_json::json!({ "path": path, "name": name });
-    let resp: ClientResponse<ProjectDirectory> = client
-        .post("/project-directories", &body)
+    let resp: ClientResponse<Workspace> = client
+        .post("/workspaces", &body)
         .await?;
     print_response(&resp, output, fields)?;
     Ok(())

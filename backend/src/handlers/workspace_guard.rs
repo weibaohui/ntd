@@ -171,10 +171,10 @@ mod tests {
 
     // ── 测试数据 helper（in-memory SQLite，参照 db/blackboard.rs 测试模式）──
 
-    /// 建一个工作空间（project_directories），返回其 id。
+    /// 建一个工作空间（workspaces），返回其 id。
     /// path 有唯一约束：同一 db 内建多个 ws 必须传不同 path。
     async fn create_workspace(db: &Database, path: &str) -> i64 {
-        db.create_project_directory(path, None, false, false)
+        db.create_workspace(path, None, false, false)
             .await
             .expect("create workspace must succeed")
     }

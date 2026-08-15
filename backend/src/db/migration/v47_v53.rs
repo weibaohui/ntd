@@ -156,11 +156,11 @@ mod tests {
 
         // 不同 workspace 各自建一个 todo
         let ws1 = db
-            .create_project_directory("/tmp/v47-ws-1", None, false, false)
+            .create_workspace("/tmp/v47-ws-1", None, false, false)
             .await
             .unwrap();
         let ws2 = db
-            .create_project_directory("/tmp/v47-ws-2", None, false, false)
+            .create_workspace("/tmp/v47-ws-2", None, false, false)
             .await
             .unwrap();
         let todo1 = db

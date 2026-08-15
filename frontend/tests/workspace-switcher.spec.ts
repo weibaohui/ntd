@@ -91,7 +91,7 @@ test.describe('工作空间选择器', () => {
     const { browser, page } = await newExpandedSession();
 
     await page.goto(DEV_URL);
-    // 工作空间列表由 db.getProjectDirectories() 异步拉取；等一帧让菜单数据落位。
+    // 工作空间列表由 db.getWorkspaces() 异步拉取；等一帧让菜单数据落位。
     await page.waitForTimeout(2000);
 
     const workspaceSelector = switcherButton(page);
@@ -115,7 +115,7 @@ test.describe('工作空间选择器', () => {
     await workspaceSelector.click();
 
     const workspaceOption = firstWorkspaceMenuItem(page);
-    // 开发库可能为空（无任何 project_directory）：沿用原测试的防御式跳过，
+    // 开发库可能为空（无任何 workspace）：沿用原测试的防御式跳过，
     // 空库下不断言、直接通过，避免硬失败遮蔽真实回归。
     if (await workspaceOption.isVisible()) {
       await workspaceOption.click();

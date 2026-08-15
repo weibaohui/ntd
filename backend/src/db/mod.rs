@@ -313,11 +313,11 @@ impl Database {
         self.ensure_default_review_template().await?;
         // 2. V42/V34 的 /tmp 临时工作空间（孤儿记录收容所）—— 同样的 INSERT OR IGNORE
         self.exec(
-            "INSERT OR IGNORE INTO project_directories (path, name, created_at, updated_at)
+            "INSERT OR IGNORE INTO workspaces (path, name, created_at, updated_at)
              SELECT '/tmp', '临时工作空间',
                     strftime('%Y-%m-%dT%H:%M:%SZ','now','utc'),
                     strftime('%Y-%m-%dT%H:%M:%SZ','now','utc')
-             WHERE NOT EXISTS (SELECT 1 FROM project_directories WHERE path = '/tmp')",
+             WHERE NOT EXISTS (SELECT 1 FROM workspaces WHERE path = '/tmp')",
         )
         .await?;
         let latest = migration::all_migrations()
@@ -419,7 +419,7 @@ pub mod loop_;
 pub(crate) mod feishu_project_binding;
 mod feishu_push_target;
 mod feishu_response_config;
-pub mod project_directory;
+pub mod workspace;
 mod todo_template;
 pub use todo_template::TemplateInput;
 mod review_template;
@@ -1181,8 +1181,8 @@ mod tests {
     async fn test_execution_records_workspace_filter_pagination() {
         let db = setup_db().await;
         // 两个 workspace：ws_a 1 个 todo，ws_b 1 个 todo
-        let ws_a = db.create_project_directory("/tmp/056-ws-a", Some("wa"), false, false).await.unwrap();
-        let ws_b = db.create_project_directory("/tmp/056-ws-b", Some("wb"), false, false).await.unwrap();
+        let ws_a = db.create_workspace("/tmp/056-ws-a", Some("wa"), false, false).await.unwrap();
+        let ws_b = db.create_workspace("/tmp/056-ws-b", Some("wb"), false, false).await.unwrap();
         let todo_a = db.create_todo("A", "p").await.unwrap();
         let todo_b = db.create_todo("B", "p").await.unwrap();
         db.exec(&format!("UPDATE todos SET workspace_id = {ws_a} WHERE id = {todo_a}")).await.unwrap();

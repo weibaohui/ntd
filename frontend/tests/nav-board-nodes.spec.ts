@@ -1,6 +1,9 @@
 // 030-导航关系图黑板看板节点 Playwright 功能测试。
 // 对应测试文档 docs/testing/030-导航关系图黑板看板节点-测试.md 的 TC-01 到 TC-05。
-// （TC-06 触发器 fallback 随 044-loop-slim 下线删除；节点总数同步由 12 → 11。）
+// （TC-06 触发器 fallback 随 044-loop-slim 下线删除。）
+// （TC-03/TC-05 看板节点用例随 097「看板视图归位事项菜单」下线：关系图的 kanban
+//  观察节点已删（GRAPH_NODES 现为 10 个，无 kanban），无节点可断言；看板入口改由
+//  事项页视图态承载，另见 031-tasks-time-range-filter 等事项页套件覆盖。）
 // baseURL 见 playwright.config.ts：http://localhost:18088（dev embedded 模式）。
 // 关系图为纯静态渲染，后端 API 不可达不影响本套件断言。
 
@@ -41,16 +44,15 @@ test.describe('030-导航关系图黑板看板节点', () => {
     await presetStorage(page);
   });
 
-  test('TC-01 关系图渲染 12 个节点，含黑板/看板', async ({ page }) => {
+  test('TC-01 关系图渲染 10 个节点，含黑板', async ({ page }) => {
     await gotoGraph(page);
     // 用 testid 而非文本定位：label 文本可能与其他 UI 撞车，testid 是节点专属锚点
     await expect(page.getByTestId('onboarding-graph-node-blackboard')).toBeVisible();
-    await expect(page.getByTestId('onboarding-graph-node-kanban')).toBeVisible();
     // 每节点 1 个 <circle>，marker 箭头用的是 <path> 不是 circle。
-    // 044 loop-slim 移除了 trigger 触发器节点，当前 GRAPH_NODES 共 11 个（原 12 减去 trigger），
-    // 故圆总数断言同步调整为 11；trigger 节点的回归用例 TC-06 已整体下线。
+    // 节点数变迁：044-loop-slim 删 trigger（12→11），097「看板归位事项」删 kanban（11→10）。
+    // 断言圆总数与 GRAPH_NODES 常量保持同步，是节点增删的第一道回归闸门。
     const circles = page.getByTestId('onboarding-relation-graph').locator('svg circle');
-    await expect(circles).toHaveCount(11);
+    await expect(circles).toHaveCount(10);
   });
 
   test('TC-02 点击黑板 → Drawer 三层语义说明 + 跳转黑板页', async ({ page }) => {
@@ -72,21 +74,8 @@ test.describe('030-导航关系图黑板看板节点', () => {
     await expect(page.locator('.ant-drawer-open')).toHaveCount(0);
   });
 
-  test('TC-03 点击看板 → Drawer 说明 + 跳转看板页（kanban 模式）', async ({ page }) => {
-    await gotoGraph(page);
-    await page.getByTestId('onboarding-graph-node-kanban').click();
-    const drawer = page.locator('.ant-drawer-open');
-    // 需求 §5.4：必须表达「进度」语义
-    await expect(drawer.getByText(/进度/)).toBeVisible();
-    const gotoBtn = page.getByTestId('onboarding-graph-drawer-goto-kanban');
-    await expect(gotoBtn).toBeVisible();
-    await expect(gotoBtn).toHaveText('去看板页');
-    await gotoBtn.click();
-    // kanban 为唯一 query 参数，可直接全串匹配；未来加参数需改正则
-    await expect(page).toHaveURL(/#\/memorial\?mode=kanban/);
-    // 与 TC-02 对齐：看板路径同样不能残留 Drawer 遮罩
-    await expect(page.locator('.ant-drawer-open')).toHaveCount(0);
-  });
+  // TC-03（点击看板节点 → Drawer + 跳转 kanban 模式）已随 097 下线：kanban 观察节点
+  // 从 GRAPH_NODES 删除，看板入口归位事项页视图态，本套件无节点可断言。
 
   test('TC-04 hover 黑板 → 事项/执行记录/环路同步高亮 + 连线升级', async ({ page }) => {
     await gotoGraph(page);
@@ -107,15 +96,7 @@ test.describe('030-导航关系图黑板看板节点', () => {
     }
   });
 
-  test('TC-05 hover 看板 → 执行记录高亮 + 连线升级', async ({ page }) => {
-    await gotoGraph(page);
-    await page.getByTestId('onboarding-graph-node-kanban').hover();
-    await expect.poll(() => nodeFill(page, 'execution')).toBe('#1677ff');
-    // 看板唯一连线的激活态断言（与 TC-04 同标准）
-    const edge = page.getByTestId('onboarding-graph-edge-execution-kanban');
-    await expect(edge).toHaveAttribute('stroke', '#1677ff');
-    await expect(edge).toHaveAttribute('stroke-width', '3');
-  });
+  // TC-05（hover 看板节点 → 执行记录高亮）已随 097 下线，同 TC-03 原因。
 
   // TC-06「回归：既有 fallback 节点（触发器）行为不变」已随 044-loop-slim 下线整体删除：
   // 044 移除触发能力时同步删掉了 onboarding-graph-node-trigger 节点（见 concepts.tsx GRAPH_NODES，

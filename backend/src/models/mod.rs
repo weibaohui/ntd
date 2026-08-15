@@ -202,7 +202,7 @@ pub struct ReviewTemplate {
     pub name: String,
     pub description: Option<String>,
     pub prompt: String,
-    /// 所属工作空间 ID（project_directories.id）。null = 全局模板。
+    /// 所属工作空间 ID（workspaces.id）。null = 全局模板。
     pub workspace_id: Option<i64>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
@@ -217,7 +217,7 @@ pub struct ReviewTemplateOption {
     pub id: i64,
     pub name: String,
     pub description: Option<String>,
-    /// 所属工作空间 ID（project_directories.id）。null = 全局模板。
+    /// 所属工作空间 ID（workspaces.id）。null = 全局模板。
     pub workspace_id: Option<i64>,
 }
 
@@ -228,7 +228,7 @@ pub struct CreateReviewTemplateRequest {
     #[serde(default)]
     pub description: Option<String>,
     pub prompt: String,
-    /// 所属工作空间 ID（project_directories.id）。null = 全局模板。
+    /// 所属工作空间 ID（workspaces.id）。null = 全局模板。
     #[serde(default)]
     pub workspace_id: Option<i64>,
 }

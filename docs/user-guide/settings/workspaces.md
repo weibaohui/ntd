@@ -1,16 +1,16 @@
-# 项目目录
+# 工作空间
 
-> **位置**：设置 →项目目录
-> **前端**：`frontend/src/components/settings/ProjectDirectoriesPanel.tsx`
-> **后端**：`backend/src/handlers/project_directory.rs`
+> **位置**：设置 →工作空间
+> **前端**：`frontend/src/components/settings/WorkspacesPanel.tsx`
+> **后端**：`backend/src/handlers/workspace.rs`
 
-「项目目录」是 ntd **Todo workspace 的白名单**。当 Todo跑起来时，ntd会 cd 到这个目录执行命令。如果路径不在白名单里，CLI工具可能拒绝运行（出于安全考虑）。
+「工作空间」是 ntd **Todo workspace 的白名单**。当 Todo跑起来时，ntd会 cd 到这个目录执行命令。如果路径不在白名单里，CLI工具可能拒绝运行（出于安全考虑）。
 
 ---
 
 ## 1.数据模型
 
-`backend/src/db/project_directory.rs::ProjectDirectory`：
+`backend/src/db/workspace.rs::Workspace`：
 
 |字段 |含义 |
 |------|------|
@@ -28,7 +28,7 @@
 
 |操作 |入口 |
 |------|------|
-| 新增 |右上「+ 新增项目目录」 |
+| 新增 |右上「+ 新增工作空间」 |
 | 编辑 |列表点「编辑」 |
 |删除 |列表点「删除」 |
 
@@ -40,7 +40,7 @@
 
 ### 2.2路径检查
 
--后端只校验**非空**（`backend/src/handlers/project_directory.rs::create_project_directory`）
+-后端只校验**非空**（`backend/src/handlers/workspace.rs::create_workspace`）
 
 >文档之前说「必须以 `/`开头」「目录必须存在」是**错误**的：当前实现**只**做 `trim().is_empty()`检查，绝对路径/目录存在性**不**在创建时强制校验。
 
@@ -52,14 +52,14 @@
 
 新建/编辑 Todo时，「**工作目录**」下拉框：
 
--选项 =项目目录白名单全部
+-选项 =工作空间白名单全部
 -选完存到 `todo.workspace`字段
 
 ### 3.2执行时
 
 -执行器拿到 Todo后，ntd后端 cd 到 `todo.workspace`
 - 如果 workspace已被删/重命名 →执行器报错
--解决：在项目目录 Tab更新路径，或新建同名路径
+-解决：在工作空间 Tab更新路径，或新建同名路径
 
 ---
 
@@ -87,19 +87,19 @@ Todo还有一个 `worktree_enabled`字段：
 
 ### 5.3跨机器同步工作目录
 
--项目目录**不会**随云端同步走
+-工作空间**不会**随云端同步走
 -同步是 title + prompt级别的，路径保留本机
-- 在新机器上要重新配置项目目录
+- 在新机器上要重新配置工作空间
 
 ---
 
 ## 6.相关 API
 
-`project_directory::v1_routes()`挂载在 `/api/v1/project-directories` 下，标准 CRUD：
+`workspace::v1_routes()`挂载在 `/api/v1/workspaces` 下，标准 CRUD：
 
 | Method | Path |用途 |
 |--------|------|------|
-| GET | `/api/v1/project-directories` |列出全部 |
-| POST | `/api/v1/project-directories` |新增（body `{path, name}`，`name`必填） |
-| PUT | `/api/v1/project-directories/{id}` |修改（body `{name}`） |
-| DELETE | `/api/v1/project-directories/{id}` |删除 |
+| GET | `/api/v1/workspaces` |列出全部 |
+| POST | `/api/v1/workspaces` |新增（body `{path, name}`，`name`必填） |
+| PUT | `/api/v1/workspaces/{id}` |修改（body `{name}`） |
+| DELETE | `/api/v1/workspaces/{id}` |删除 |

@@ -490,10 +490,10 @@ mod tests {
     #[tokio::test]
     async fn test_get_distinct_senders_groups_and_counts() {
         let db = fresh_db().await;
-        // FK 链：feishu_messages.bot_id → agent_bots.id → project_directories.id，先铺好父行。
-        db.exec("INSERT INTO project_directories (path, git_worktree_enabled, auto_cleanup) VALUES ('/p', 0, 0)")
+        // FK 链：feishu_messages.bot_id → agent_bots.id → workspaces.id，先铺好父行。
+        db.exec("INSERT INTO workspaces (path, git_worktree_enabled, auto_cleanup) VALUES ('/p', 0, 0)")
             .await
-            .expect("insert project_directory");
+            .expect("insert workspace");
         db.exec("INSERT INTO agent_bots (bot_type, bot_name, app_id, app_secret, workspace_id) VALUES ('feishu','test','a','s',1)")
             .await
             .expect("insert agent_bot");

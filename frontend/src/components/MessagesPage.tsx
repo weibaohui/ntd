@@ -6,7 +6,7 @@ import { ExecutionRecordDrawer } from '@/components/settings/messages/ExecutionR
 import { BlackboardDrawer } from '@/components/loop-studio/executions/BlackboardDrawer';
 import * as db from '@/utils/database';
 import * as dbLoops from '@/utils/database/loops';
-import type { ProjectDirectory, AgentBot } from '@/utils/database';
+import type { Workspace, AgentBot } from '@/utils/database';
 import type { FeishuHistoryMessage, FeishuHistoryChat, FeishuMessageStats, ExecutionRecord } from '@/types';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { MessageHeader } from '@/components/message-monitor/MessageHeader';
@@ -23,7 +23,7 @@ interface MessagesPageProps {
 export function MessagesPage({ workspaceId, onManageWorkspace }: MessagesPageProps) {
   const isMobile = useIsMobile();
 
-  const [workspace, setWorkspace] = useState<ProjectDirectory | null>(null);
+  const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [loading, setLoading] = useState(false);
 
   const [bots, setBots] = useState<AgentBot[]>([]);
@@ -69,7 +69,7 @@ export function MessagesPage({ workspaceId, onManageWorkspace }: MessagesPagePro
     }
     setLoading(true);
     Promise.all([
-      db.getProjectDirectories(),
+      db.getWorkspaces(),
       db.getAgentBots(),
     ])
       .then(([dirs, allBots]) => {

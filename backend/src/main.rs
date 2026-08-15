@@ -75,7 +75,7 @@ enum Commands {
         #[command(subcommand)]
         action: SkillAction,
     },
-    /// Workspace (project directory) management
+    /// Workspace management
     Workspace {
         #[command(subcommand)]
         action: cli::WorkspaceAction,

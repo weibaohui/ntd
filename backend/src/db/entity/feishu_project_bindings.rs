@@ -1,12 +1,12 @@
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
-/// 飞书聊天 ↔ 项目目录绑定关系表
+/// 飞书聊天 ↔ 工作空间绑定关系表
 ///
-/// 设计意图：将飞书会话（私聊/群聊）绑定到特定项目目录，支持多轮对话的会话恢复。
+/// 设计意图：将飞书会话（私聊/群聊）绑定到特定工作空间，支持多轮对话的会话恢复。
 /// - Web UI 创建时 chat_id = "__pending__"，等待飞书侧 /bind 补齐真实 chat_id
 /// - 飞书 /bind 命令可直接创建完整绑定或补齐 pending 绑定的 chat_id
-/// - 绑定后每条飞书消息都通过 Claude Code 在该项目目录下执行
+/// - 绑定后每条飞书消息都通过 Claude Code 在该工作空间下执行
 /// - 首次创建新 session，后续消息 resume 同一 session 保持上下文
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
 #[sea_orm(table_name = "feishu_project_bindings")]
@@ -24,9 +24,9 @@ pub struct Model {
     /// 聊天类型："p2p"（私聊）或 "group"（群聊）
     pub chat_type: String,
 
-    /// 关联的项目目录 ID → project_directories.id
+    /// 关联的工作空间 ID → workspaces.id
     /// Claude Code 在此目录下运行 --worktree 模式
-    pub project_dir_id: i64,
+    pub workspace_id: i64,
 
     /// 该项目对应的 Todo ID，所有对话历史关联到该 Todo
     /// 自动创建时 title="飞书-<项目名>"

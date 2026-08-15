@@ -1,12 +1,12 @@
 import { Card, Tag, Button, Space, Typography, Popconfirm } from 'antd';
 import { RobotOutlined, SettingOutlined, PoweroffOutlined, DeleteOutlined } from '@ant-design/icons';
-import type { AgentBot, ProjectDirectory } from '@/utils/database';
+import type { AgentBot, Workspace } from '@/utils/database';
 
 const { Text } = Typography;
 
 interface AssistantListCardsProps {
   bots: AgentBot[];
-  workspaces: ProjectDirectory[];
+  workspaces: Workspace[];
   onOpenConfig: (bot: AgentBot) => void;
   onToggleEnabled: (bot: AgentBot) => void;
   onDelete: (bot: AgentBot) => void;

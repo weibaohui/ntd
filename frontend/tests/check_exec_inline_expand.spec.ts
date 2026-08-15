@@ -34,8 +34,13 @@ test('执行历史内联展开校验', async ({ page }) => {
   }
   await expect(collapsedItem).toBeVisible();
 
-  // 点击前：该 head 所属 loop-exec-row 内不应含展开详情区。
+  // 063 的 autoExpandFirstPending：首条「待审批」执行会被面板自动展开（审批按钮一步
+  // 可见）。并发套件（063/ntd004）在 ws1 种入待审批数据时，首行可能已是展开态——
+  // 先点一次收起，把断言基线拉回「全收起」，再验证「点击展开」路径本身。
   const preRow = collapsedItem.locator('xpath=ancestor::div[contains(@class,"loop-exec-row")][1]');
+  if (await preRow.locator('.loop-exec-row-detail').count() > 0) {
+    await collapsedItem.click();
+  }
   await expect(preRow.locator('.loop-exec-row-detail')).toHaveCount(0);
 
   // 点击展开（head onClick 切换 expandedId）。

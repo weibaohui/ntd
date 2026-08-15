@@ -17,7 +17,7 @@ vi.mock('@/utils/database/loops', () => ({
 }));
 
 vi.mock('@/utils/database/todos', () => ({
-  getProjectDirectories: vi.fn(),
+  getWorkspaces: vi.fn(),
 }));
 
 import { useLoopRowActions, useLoopConfig } from './LoopListPageParts';
@@ -106,11 +106,11 @@ describe('useLoopConfig', () => {
   it('workspace 为空时 open 不执行', async () => {
     const { result } = renderHook(() => useLoopConfig({ workspaceId: null }));
     await act(() => result.current.handleOpenLoopConfig());
-    expect(todos.getProjectDirectories).not.toHaveBeenCalled();
+    expect(todos.getWorkspaces).not.toHaveBeenCalled();
   });
 
   it('打开配置页：拉取目录并找到对应工作空间', async () => {
-    vi.mocked(todos.getProjectDirectories).mockResolvedValueOnce([
+    vi.mocked(todos.getWorkspaces).mockResolvedValueOnce([
       { id: 1, name: '空间A' },
       { id: 2, name: '空间B' },
     ] as never);
@@ -121,7 +121,7 @@ describe('useLoopConfig', () => {
   });
 
   it('未找到工作空间时弹警告', async () => {
-    vi.mocked(todos.getProjectDirectories).mockResolvedValueOnce([
+    vi.mocked(todos.getWorkspaces).mockResolvedValueOnce([
       { id: 1, name: '空间A' },
     ] as never);
     const { result } = renderHook(() => useLoopConfig({ workspaceId: 99 }));

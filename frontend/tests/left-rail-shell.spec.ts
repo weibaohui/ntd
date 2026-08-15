@@ -20,7 +20,7 @@ test('左侧主导航渲染并支持切换到设置', async ({ page }) => {
 
   await page.getByTestId('left-rail-workspace-switcher').click();
   await page.getByText('管理工作空间').click();
-  // 管理工作空间页（ProjectDirectoriesPanel）的新建入口文案为「新建工作空间」，
-  // 旧文案「添加项目目录」在重构后已不存在。
+  // 管理工作空间页（WorkspacesPanel）的新建入口文案为「新建工作空间」，
+  // 旧文案「添加工作空间」在重构后已不存在。
   await expect(page.getByText('新建工作空间').first()).toBeVisible();
 });

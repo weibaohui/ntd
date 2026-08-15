@@ -16,7 +16,7 @@ Session 是 ntd 把**跨执行器的会话**统一抽象出来的视图。原先
 |------|------|
 | `session_id` | ntd内部 ID（hash of source + project + first_prompt） |
 | `source` |来源：`claudecode` / `codex` / `hermes` / `kimi` / `atomcode` / `pi` |
-| `project_path` |关联项目目录 |
+| `project_path` |关联工作空间 |
 | `executor` |实际跑的执行器 |
 | `model` |用的模型（`claude-3.5-sonnet` 等） |
 | `first_prompt` |第一条 prompt（前200字符） |
@@ -42,7 +42,7 @@ Session 是 ntd 把**跨执行器的会话**统一抽象出来的视图。原先
 
 > `codebuddy` / `opencode` / `mobilecoder` / `codewhale` / `zhanlu` **不**在扫描范围内（参见 `session.rs::scan_for_executors` 的 `match executor`）。原文档提到的 `cc-connect` 来源也已移除。
 >
-> **Pi 编码坑点**：pi 把 cwd 里的 `/` 替换为 `-` 并在头尾各加一个 `-` 作为项目目录名（`/Users/weibh/projects/rust/nothing-todo` → `--Users-weibh-projects-rust-nothing-todo--`）。这导致项目名里的 `-` 与分隔符不可区分（例如上例解码后会变成 `Users/weibh/projects/rust/nothing/todo`）。`scan_pi` 优先使用 JSONL 首行 `cwd` 字段，文件名解码仅作为 fallback。
+> **Pi 编码坑点**：pi 把 cwd 里的 `/` 替换为 `-` 并在头尾各加一个 `-` 作为工作空间名（`/Users/weibh/projects/rust/nothing-todo` → `--Users-weibh-projects-rust-nothing-todo--`）。这导致项目名里的 `-` 与分隔符不可区分（例如上例解码后会变成 `Users/weibh/projects/rust/nothing/todo`）。`scan_pi` 优先使用 JSONL 首行 `cwd` 字段，文件名解码仅作为 fallback。
 
 ---
 

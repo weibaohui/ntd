@@ -3,7 +3,7 @@ use sea_orm::{
     QueryFilter, QueryOrder, QuerySelect, Statement,
 };
 
-use crate::db::entity::project_directories;
+use crate::db::entity::workspaces;
 use crate::db::entity::tags;
 use crate::db::entity::{todo_tags, todos};
 use crate::db::Database;
@@ -122,7 +122,7 @@ pub struct TodoUpdate<'a> {
     pub scheduler_enabled: Option<bool>,
     pub scheduler_config: Option<&'a str>,
     pub scheduler_timezone: Option<&'a str>,
-    /// 工作空间 ID（project_directories.id）。
+    /// 工作空间 ID（workspaces.id）。
     /// None=保持当前工作空间，Some(id)=迁移到该工作空间（handler 同时传 path）。
     /// 不接受路径——DAO 不再单独接受 path 入参。
     pub workspace_id: Option<i64>,
@@ -167,7 +167,7 @@ async fn resolve_workspace_pair(
     txn: &sea_orm::DatabaseTransaction,
     id: i64,
 ) -> Result<Option<(i64, String)>, sea_orm::DbErr> {
-    Ok(project_directories::Entity::find_by_id(id)
+    Ok(workspaces::Entity::find_by_id(id)
         .one(txn)
         .await?
         .map(|m| (m.id, m.path)))
@@ -2788,7 +2788,7 @@ mod todo_center_tests {
         let db = fresh_db().await;
         // ids/count 接口按 ws 过滤，需要一个真实 workspace
         let ws = db
-            .create_project_directory("/tmp/056-ids", Some("w056"), false, false)
+            .create_workspace("/tmp/056-ids", Some("w056"), false, false)
             .await
             .unwrap();
         let keep = seed_todo(&db, "ws内").await;

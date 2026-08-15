@@ -5,14 +5,14 @@
 //
 // 1. LoopListHeader：顶部 header（搜索 + 配置 + 刷新）
 // 2. useLoopRowActions：单行删除/启停状态切换（044：触发/复制已随手工环路能力下线）
-// 3. useLoopConfig：工作空间环路配置页入口（拉取 ProjectDirectory + 切换显示）
+// 3. useLoopConfig：工作空间环路配置页入口（拉取 Workspace + 切换显示）
 
 import { useCallback, useState, type ReactNode } from 'react';
 import { Button, Input, Modal, Segmented, message } from 'antd';
 import { AppstoreOutlined, ReloadOutlined, SearchOutlined, SettingOutlined, UnorderedListOutlined } from '@ant-design/icons';
 import { TimeRangeSegmented } from '@/components/common/TimeRangeSegmented';
 import * as dbLoops from '@/utils/database/loops';
-import { getProjectDirectories, type ProjectDirectory } from '@/utils/database/todos';
+import { getWorkspaces, type Workspace } from '@/utils/database/todos';
 import type { LoopListItem } from '@/types/loop';
 
 interface LoopListHeaderProps {
@@ -163,17 +163,17 @@ interface UseLoopConfigArgs {
 }
 
 /**
- * 工作空间环路配置页入口：拉取 ProjectDirectory + 切换显示状态。
+ * 工作空间环路配置页入口：拉取 Workspace + 切换显示状态。
  * 拆成 hook 避免 LoopListPage 主函数膨胀，同时集中管理 config 相关 state。
  */
 export function useLoopConfig({ workspaceId }: UseLoopConfigArgs) {
   const [loopConfigOpen, setLoopConfigOpen] = useState(false);
-  const [currentWorkspace, setCurrentWorkspace] = useState<ProjectDirectory | null>(null);
+  const [currentWorkspace, setCurrentWorkspace] = useState<Workspace | null>(null);
 
   const handleOpenLoopConfig = useCallback(async () => {
     if (workspaceId == null) return;
     try {
-      const dirs = await getProjectDirectories();
+      const dirs = await getWorkspaces();
       const found = dirs.find(d => d.id === workspaceId);
       if (!found) {
         message.warning('未找到当前工作空间');

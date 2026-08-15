@@ -65,5 +65,5 @@
 
 ### 7.2 项目过滤没生效
 
-- `~/.ntd/data.db` 中 `project_directories` 表为空
-- 先到「设置 → 项目目录」添加白名单
+- `~/.ntd/data.db` 中 `workspaces` 表为空
+- 先到「设置 → 工作空间」添加白名单

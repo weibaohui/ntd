@@ -21,7 +21,7 @@ vi.mock('@/utils/database/loops', () => ({
 }));
 
 vi.mock('@/utils/database/todos', () => ({
-  getProjectDirectories: vi.fn().mockResolvedValue([{ id: 1, name: 'test', path: '/test' }]),
+  getWorkspaces: vi.fn().mockResolvedValue([{ id: 1, name: 'test', path: '/test' }]),
 }));
 
 vi.mock('@/components/common/PageCard', () => ({

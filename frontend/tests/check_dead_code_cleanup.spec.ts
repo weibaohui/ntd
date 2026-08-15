@@ -1,4 +1,6 @@
 import { test, expect } from '@playwright/test';
+// antd 图标式 Segmented 选项定位收敛到共享 helper（DOM 细节单点维护）
+import { segmentedOption } from './helpers/segmented';
 
 /**
  * 死代码清理回归校验（A/B/D 三类清理 + review 修复后）。
@@ -42,26 +44,27 @@ test('TodoList 子目录 barrel 拆除后仍渲染', async ({ page }) => {
   expect(listVisible, 'TodoList 区域未渲染').toBeTruthy();
 });
 
-test('MemorialBoard → 看板-环路视图（验证 LoopKanban / RunningBoard barrel 拆除）', async ({ page }) => {
-  await page.goto(`${BASE}/#/memorial`);
+test('环路页看板态（验证 LoopKanban / RunningBoard barrel 拆除）', async ({ page }) => {
+  // 097/098 后入口变迁：MemorialBoard/#/memorial 已删，环路看板归位 /#/loops 页内
+  // Segmented 切换。本用例意图不变——验证 barrel 拆除后 LoopKanban 子组件 import 仍解析。
+  await page.goto(`${BASE}/#/loops`);
   await page.waitForLoadState('networkidle');
 
-  // 看板导航按钮
-  const boardNav = page.locator('[aria-label="看板"]');
-  await expect(boardNav).toBeVisible({ timeout: 5000 });
-  await boardNav.click();
+  // 等视图切换器可见作为「页面已就绪」信号
+  const toggle = page.getByTestId('loop-list-view-toggle');
+  await expect(toggle).toBeVisible({ timeout: 5000 });
+
+  // 切看板态：定位细节收敛在 helper，本处只表达「点看板选项」的意图。
+  await segmentedOption(page, '看板', toggle).click();
   await page.waitForLoadState('networkidle');
 
-  // 切换到「环路视图」即 LoopKanban 组件
-  const loopOption = page.getByText('环路视图');
-  await expect(loopOption).toBeVisible({ timeout: 5000 });
-  await loopOption.click();
-  await page.waitForLoadState('networkidle');
-
-  // LoopKanban 渲染时会创建 .loop-kanban-columns-container 容器
-  // 这个 class 名是 LoopKanban 内部的稳定 hook，能反映 import 路径改写后子组件仍能解析
-  const container = page.locator('.loop-kanban-columns-container');
-  await expect(container).toBeVisible({ timeout: 5000 });
+  // LoopKanban 已挂载的数据驱动证据：有执行历史 → 列容器（.loop-kanban-columns-container
+  // 是其内部稳定 hook，能反映 import 路径改写后子组件仍解析）；无数据 → Empty 空态。
+  // 二者必居其一——不能只断言列容器：干净库下 filtered 为空走 Empty 分支，
+  // 曾靠 dev 库有数据侥幸通过（环境敏感脆弱断言）。
+  const columns = page.locator('.loop-kanban-columns-container');
+  const emptyState = page.locator('.ant-empty-description');
+  await expect(columns.or(emptyState).first()).toBeVisible({ timeout: 10000 });
 });
 
 test('Loop Studio detail：验证 triggers/executions barrel 拆除', async ({ page }) => {

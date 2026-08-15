@@ -41,7 +41,7 @@
 
 顶部工具栏额外提供：
 
-- **项目维度下拉**：按 `workspace` 路径过滤（数据来自 `project_directories` 表）
+- **项目维度下拉**：按 `workspace` 路径过滤（数据来自 `workspaces` 表）
 - **搜索框**：匹配 `title` 或 `prompt`（不区分大小写）
 
 ## 5. 移动端 Tab 滑动

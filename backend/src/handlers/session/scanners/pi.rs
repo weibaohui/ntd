@@ -4,10 +4,10 @@
 use super::{home_dir, iter_jsonl_files, truncate_str};
 use crate::handlers::session::{SessionDetail, SessionInfo, SessionMessage, SessionScanner};
 
-/// 把 pi 的项目目录编码还原成绝对路径。
+/// 把 pi 的工作空间编码还原成绝对路径。
 ///
 /// pi 把 cwd 里的 `/` 替换为 `-`，并在头尾各加一个 `-`：
-/// `/Users/weibh/projects/rust/nothing-todo` → `--Users-weibh-projects-rust-nothing-todo--`。
+/// `/Users/weibh/projects/rust/demo-app` → `--Users-weibh-projects-rust-demo-app--`。
 /// 反向就是去掉首尾的 `-` 再把 `-` 还原成 `/`。
 fn decode_pi_cwd(encoded: &str) -> String {
     encoded.trim_matches('-').replace('-', "/")
@@ -91,7 +91,7 @@ fn pi_mtime_to_rfc3339(path: &std::path::Path) -> Option<String> {
     Some(dt.to_rfc3339())
 }
 
-/// pi 的 session 按项目目录存储，没有独立 active 索引。
+/// pi 的 session 按工作空间存储，没有独立 active 索引。
 /// 启发式：mtime < ACTIVE_WINDOW_SECONDS 视为 active。
 ///
 /// 5 分钟窗口是个粗略估计：pi 在持续对话时几乎每秒都会 fsync JSONL；超过 5 分钟没
@@ -171,11 +171,11 @@ fn build_pi_session_info_from_file(
     })
 }
 
-/// 把单个项目目录下所有 *.jsonl 解析后追加到 sessions。
-/// 抽离是为了让 scan_pi 主循环只剩「遍历项目目录」一层 for,
+/// 把单个工作空间下所有 *.jsonl 解析后追加到 sessions。
+/// 抽离是为了让 scan_pi 主循环只剩「遍历工作空间」一层 for,
 /// 嵌套深度压到 2 层。
 fn collect_pi_sessions_in_project(project_dir: &std::path::Path, sessions: &mut Vec<SessionInfo>) {
-    // 文件名格式: --Users-weibh-projects-rust-nothing-todo--(首尾各一个 -)
+    // 文件名格式: --Users-weibh-projects-rust-demo-app--(首尾各一个 -)
     let encoded = project_dir.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
     let decoded_cwd = decode_pi_cwd(&encoded);
     for (fpath, _name) in iter_jsonl_files(project_dir) {
@@ -190,7 +190,7 @@ fn scan_pi(sessions: &mut Vec<SessionInfo>) {
     if !root.exists() { return; }
     let Ok(project_dirs) = std::fs::read_dir(&root) else { return };
 
-    // 外层循环遍历项目目录,内层全部委托给 helper,scan_pi 嵌套深度 ≤2 层。
+    // 外层循环遍历工作空间,内层全部委托给 helper,scan_pi 嵌套深度 ≤2 层。
     for project_entry in project_dirs.flatten().filter(|e| e.path().is_dir()) {
         collect_pi_sessions_in_project(&project_entry.path(), sessions);
     }
@@ -209,15 +209,15 @@ mod pi_scan_tests {
         // 没有首尾的 -：原样替换（表示这不是 pi 编码过的）
         assert_eq!(decode_pi_cwd("foo"), "foo");
         // ⚠️ 已知歧义：项目名中的连字符会被错误还原为 /。
-        // 例如真实路径 `/Users/weibh/projects/rust/nothing-todo` 被 pi 编码为
-        // `--Users-weibh-projects-rust-nothing-todo--`，但我们反解码出的是
-        // `Users/weibh/projects/rust/nothing/todo`。这是 pi 编码策略本身的歧义：
+        // 例如真实路径 `/Users/weibh/projects/rust/demo-app` 被 pi 编码为
+        // `--Users-weibh-projects-rust-demo-app--`，但我们反解码出的是
+        // `Users/weibh/projects/rust/demo/app`。这是 pi 编码策略本身的歧义：
         // 它无法区分「路径分隔符」与「合法目录名里的 -」。
         // 调用方（scan_pi）实际优先用 JSONL 首行的 `cwd` 字段，filename
         // 解码结果仅在 cwd 缺失时作为 hint 使用。
         assert_eq!(
-            decode_pi_cwd("--Users-weibh-projects-rust-nothing-todo--"),
-            "Users/weibh/projects/rust/nothing/todo"
+            decode_pi_cwd("--Users-weibh-projects-rust-demo-app--"),
+            "Users/weibh/projects/rust/demo/app"
         );
     }
 
@@ -231,14 +231,14 @@ mod pi_scan_tests {
     #[test]
     fn summarize_pi_jsonl_extracts_tokens_and_first_prompt() {
         let content = "\
-{\"type\":\"session\",\"version\":3,\"id\":\"019eb48c-a6c0-79b1-88ae-44ec6a1bf9bd\",\"timestamp\":\"2026-06-11T02:39:37.152Z\",\"cwd\":\"/Users/weibh/projects/nothing-todo\"}
+{\"type\":\"session\",\"version\":3,\"id\":\"019eb48c-a6c0-79b1-88ae-44ec6a1bf9bd\",\"timestamp\":\"2026-06-11T02:39:37.152Z\",\"cwd\":\"/Users/weibh/projects/demo-app\"}
 {\"type\":\"model_change\",\"id\":\"4500ec8e\",\"timestamp\":\"2026-06-11T02:39:37.175Z\",\"provider\":\"anthropic\",\"modelId\":\"claude-opus-4\"}
 {\"type\":\"message\",\"timestamp\":\"2026-06-11T02:39:39.498Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"你好\"}]}}
 {\"type\":\"message\",\"timestamp\":\"2026-06-11T02:39:50.086Z\",\"message\":{\"role\":\"assistant\",\"content\":[],\"model\":\"claude-opus-4\",\"usage\":{\"input\":15,\"output\":44,\"cacheRead\":2585,\"cacheWrite\":0,\"totalTokens\":2644},\"stopReason\":\"toolUse\"}}
 {\"type\":\"message\",\"timestamp\":\"2026-06-11T02:40:01.000Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"done\"}],\"usage\":{\"input\":1,\"output\":2,\"totalTokens\":3}}}
 ";
         let s = summarize_pi_jsonl(content);
-        assert_eq!(s.cwd.as_deref(), Some("/Users/weibh/projects/nothing-todo"));
+        assert_eq!(s.cwd.as_deref(), Some("/Users/weibh/projects/demo-app"));
         assert_eq!(s.version.as_deref(), Some("3"));
         assert_eq!(s.model.as_deref(), Some("anthropic/claude-opus-4"));
         assert_eq!(s.message_count, 3);
@@ -464,12 +464,12 @@ fn build_pi_messages(content: &str) -> (Vec<SessionMessage>, PiSessionSummary) {
 
 /// 在 project_dir 下找文件名匹配的 pi JSONL 并解析为 SessionDetail。
 /// 抽离出"找文件 + 比对 session_id + 解析文件"三件事,get_pi_detail 主循环只剩
-/// "遍历项目目录 + 用 helper"。
+/// "遍历工作空间 + 用 helper"。
 fn find_pi_detail_in_project(
     project_dir: &std::path::Path,
     session_id: &str,
 ) -> Option<SessionDetail> {
-    // 在项目目录里按文件名 UUID 后缀找匹配的 jsonl
+    // 在工作空间里按文件名 UUID 后缀找匹配的 jsonl
     let path = iter_jsonl_files(project_dir)
         .into_iter()
         .map(|(p, _)| p)
@@ -521,7 +521,7 @@ fn get_pi_detail(session_id: &str) -> Option<SessionDetail> {
     if !root.exists() { return None; }
     let project_dirs = std::fs::read_dir(&root).ok()?;
 
-    // 主循环只剩"遍历项目目录 + 委托给 helper",内层 if let Some 链全消失
+    // 主循环只剩"遍历工作空间 + 委托给 helper",内层 if let Some 链全消失
     for project_dir in project_dirs.flatten().filter(|e| e.path().is_dir()) {
         if let Some(detail) = find_pi_detail_in_project(&project_dir.path(), session_id) {
             return Some(detail);
