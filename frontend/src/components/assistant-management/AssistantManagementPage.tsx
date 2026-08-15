@@ -5,7 +5,7 @@ import QRCode from 'qrcode';
 import { PageCard } from '@/components/common/PageCard';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import * as db from '@/utils/database';
-import type { AgentBot, ProjectDirectory } from '@/utils/database';
+import type { AgentBot, Workspace } from '@/utils/database';
 import { AssistantConfigDrawer } from './AssistantConfigDrawer';
 import { AssistantListTable } from './AssistantListTable';
 import { AssistantListCards } from './AssistantListCards';
@@ -18,7 +18,7 @@ export function AssistantManagementPage({}: AssistantManagementPageProps) {
   const isMobile = useIsMobile();
   const [loading, setLoading] = useState(true);
   const [bots, setBots] = useState<AgentBot[]>([]);
-  const [workspaces, setWorkspaces] = useState<ProjectDirectory[]>([]);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [configDrawerOpen, setConfigDrawerOpen] = useState(false);
   const [selectedBot, setSelectedBot] = useState<AgentBot | null>(null);
 
@@ -36,7 +36,7 @@ export function AssistantManagementPage({}: AssistantManagementPageProps) {
     try {
       const [botList, workspaceList] = await Promise.all([
         db.getAgentBots(),
-        db.getProjectDirectories(),
+        db.getWorkspaces(),
       ]);
       setBots(botList);
       setWorkspaces(workspaceList);

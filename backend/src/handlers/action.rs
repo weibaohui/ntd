@@ -65,7 +65,7 @@ pub async fn execute_action(
     let workspace_path = if workspace_id > 0 {
         state
             .db
-            .get_project_directory_by_id(workspace_id)
+            .get_workspace_by_id(workspace_id)
             .await
             .map_err(|e| AppError::Internal(e.to_string()))?
             .map(|d| d.path)
@@ -131,7 +131,7 @@ async fn find_or_create_todo(
         None => {
             let dirs = state
                 .db
-                .get_project_directories()
+                .get_workspaces()
                 .await
                 .map_err(|e| AppError::Internal(e.to_string()))?;
             dirs.first()
@@ -154,7 +154,7 @@ async fn find_or_create_todo(
     // 2. 未找到，创建新的 action todo
     let dir = state
         .db
-        .get_project_directory_by_id(workspace_id)
+        .get_workspace_by_id(workspace_id)
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?
         .ok_or_else(|| AppError::BadRequest(format!("工作空间 {} 不存在", workspace_id)))?;
@@ -252,7 +252,7 @@ pub fn v1_routes() -> Router<AppState> {
         .merge(super::custom_template::v1_routes())
         .merge(super::bundled::v1_routes())
         .merge(super::process::v1_process_routes())
-        .merge(super::project_directory::v1_routes())
+        .merge(super::workspace::v1_routes())
         // executor-profiles（API Key 管理）：providers + profiles，路径已为 /api/v1/
         .merge(super::profiles::profile_routes())
         // ── 全局统计 ─────────────────────────────────────────────

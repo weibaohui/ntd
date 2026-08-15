@@ -2408,9 +2408,9 @@ mod session_query_tests {
         path: &str,
         session_id: &str,
     ) -> (i64, i64, i64) {
-        // 直接写 project_directories 表造 workspace，避免依赖 create_todo 等业务入口
+        // 直接写 workspaces 表造 workspace，避免依赖 create_todo 等业务入口
         let ws = db
-            .create_project_directory(path, None, false, false)
+            .create_workspace(path, None, false, false)
             .await
             .expect("create workspace");
         // todo 归属 ws：旧实现的子查询要求 todo.workspace_id=ws 且未软删
@@ -2472,7 +2472,7 @@ mod session_query_tests {
         // 记录归属 ws_a；用另一个 ws 查同 session → V1 隔离，应返回空
         let (_ws_a, _todo, _record) = seed_session_record(&db, "/tmp/ws-a", "sess-x").await;
         let other_ws = db
-            .create_project_directory("/tmp/ws-other", None, false, false)
+            .create_workspace("/tmp/ws-other", None, false, false)
             .await
             .expect("create other ws");
         let records = db

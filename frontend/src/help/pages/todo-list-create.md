@@ -18,7 +18,7 @@
 ## 操作后会发生什么
 
 - 标题空串 / 全空白 → handler 返回 `BadRequest("Title is required")`，前端报错。
-- `workspace_id` 必填，handler 按 id 反查 `project_directories` 拿 path，同步写入 `todos.workspace_id` + `workspace_path` 两列。
+- `workspace_id` 必填，handler 按 id 反查 `workspaces` 拿 path，同步写入 `todos.workspace_id` + `workspace_path` 两列。
 - `executor` 缺省时取 DB 默认执行器（`get_default_executor_name`）。
 - 创建后若需补 `action_type` / `expert_name` / `model`，走 `update_todo_full`，因为 `create_todo_with_extras` 不支持这些字段。
 - `tag_ids` 是创建后循环 `add_todo_tag` 写 `todo_tags` 关联表。

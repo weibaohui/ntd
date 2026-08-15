@@ -81,7 +81,7 @@ pub struct Todo {
     /// path 字段保留供 executor_service / worktree 等需要 cwd 的子系统使用。
     #[serde(default)]
     pub workspace_path: Option<String>,
-    /// 所属工作空间 ID（project_directories.id），唯一键。
+    /// 所属工作空间 ID（workspaces.id），唯一键。
     /// 业务层（前端 / CLI / API）统一以此作为工作空间标识符。
     #[serde(default)]
     pub workspace_id: Option<i64>,
@@ -337,7 +337,7 @@ pub struct CreateTodoRequest {
     pub webhook_enabled: Option<bool>,
     #[serde(default)]
     pub auto_review_enabled: Option<bool>,
-    /// 工作空间 ID（project_directories.id），唯一键。
+    /// 工作空间 ID（workspaces.id），唯一键。
     /// 创建时必填；handler 据此查 path 写入 DB cwd 字段。
     /// 使用 #[serde(default)]：v1 路由从 URL 路径覆盖此值，body 中不传也不影响。
     #[serde(default)]
@@ -374,7 +374,7 @@ pub struct UpdateTodoRequest {
     pub scheduler_config: Option<String>,
     #[serde(default)]
     pub scheduler_timezone: Option<String>,
-    /// 工作空间 ID（project_directories.id）。
+    /// 工作空间 ID（workspaces.id）。
     /// None=保持当前工作空间，Some(id)=迁移到该工作空间。
     /// 不接受路径——handler 一律按 id 解析 cwd 路径写入两列。
     #[serde(default)]
@@ -466,7 +466,7 @@ pub struct BatchUpdateTodoResult {
 #[derive(Debug, Clone, Deserialize)]
 pub struct BatchUpdateTodoWorkspaceRequest {
     pub ids: Vec<i64>,
-    /// 目标工作空间 ID（project_directories.id）。
+    /// 目标工作空间 ID（workspaces.id）。
     pub workspace_id: i64,
 }
 
@@ -474,7 +474,7 @@ pub struct BatchUpdateTodoWorkspaceRequest {
 #[derive(Debug, Clone, Deserialize)]
 pub struct BatchCopyTodoWorkspaceRequest {
     pub ids: Vec<i64>,
-    /// 目标工作空间 ID（project_directories.id）。
+    /// 目标工作空间 ID（workspaces.id）。
     pub workspace_id: i64,
 }
 
@@ -489,7 +489,7 @@ pub struct BatchUpdateTodoSchedulerRequest {
 #[derive(Debug, Clone, Deserialize)]
 pub struct BatchUpdateLoopWorkspaceRequest {
     pub ids: Vec<i64>,
-    /// 目标工作空间 ID（project_directories.id）。
+    /// 目标工作空间 ID（workspaces.id）。
     pub workspace_id: i64,
 }
 
@@ -497,7 +497,7 @@ pub struct BatchUpdateLoopWorkspaceRequest {
 #[derive(Debug, Clone, Deserialize)]
 pub struct BatchCopyLoopWorkspaceRequest {
     pub ids: Vec<i64>,
-    /// 目标工作空间 ID（project_directories.id）。
+    /// 目标工作空间 ID（workspaces.id）。
     pub workspace_id: i64,
 }
 

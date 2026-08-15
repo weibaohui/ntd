@@ -58,7 +58,7 @@ function DataLoader() {
     async function loadData() {
       try {
         // 1. 先拉目录列表，用来决定初始 workspace
-        const dirs = await db.getProjectDirectories();
+        const dirs = await db.getWorkspaces();
         // 持久化的 selectedWorkspace 若仍有效，优先用它；否则用第一个目录。
         const remembered = state.selectedWorkspace;
         const initialId =

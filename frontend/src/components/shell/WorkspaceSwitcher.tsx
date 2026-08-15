@@ -3,7 +3,7 @@ import { Button, Dropdown, Modal, Form, Input, App } from 'antd';
 import type { MenuProps } from 'antd';
 import { FolderOutlined, FolderOpenOutlined, SettingOutlined, PlusOutlined, DownOutlined } from '@ant-design/icons';
 import * as db from '@/utils/database';
-import type { ProjectDirectory } from '@/types';
+import type { Workspace } from '@/types';
 
 export type WorkspaceSwitcherMode = 'full' | 'compact';
 
@@ -13,7 +13,7 @@ interface QuickAddFormValues {
 }
 
 interface WorkspaceSwitcherProps {
-  /** 当前选中的工作空间 ID（project_directories.id），唯一键 */
+  /** 当前选中的工作空间 ID（workspaces.id），唯一键 */
   value: number | null;
   /** 选中工作空间后回传 id */
   onChange: (workspaceId: number | null) => void;
@@ -24,10 +24,10 @@ interface WorkspaceSwitcherProps {
   mode?: WorkspaceSwitcherMode;
   /**
    * 外部预加载的工作空间列表。传入时直接复用、跳过内部 loadDirs——
-   * 用于表格里 N 行复用同一份列表，避免每行各发一次 getProjectDirectories。
-   * 不传时维持原行为：组件自己加载并监听 projectDirectoryAdded 事件刷新。
+   * 用于表格里 N 行复用同一份列表，避免每行各发一次 getWorkspaces。
+   * 不传时维持原行为：组件自己加载并监听 workspaceAdded 事件刷新。
    */
-  dirs?: ProjectDirectory[];
+  dirs?: Workspace[];
 }
 
 /**
@@ -52,7 +52,7 @@ export function WorkspaceSwitcher({
 }: WorkspaceSwitcherProps) {
   const { message } = App.useApp();
   // 内部状态仅在外部未提供 dirs 时使用；提供外部 dirs 时跳过加载，由父组件统一管理列表
-  const [internalDirs, setInternalDirs] = useState<ProjectDirectory[]>([]);
+  const [internalDirs, setInternalDirs] = useState<Workspace[]>([]);
   const dirs = externalDirs ?? internalDirs;
   const [loading, setLoading] = useState(false);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
@@ -62,7 +62,7 @@ export function WorkspaceSwitcher({
   const loadDirs = useCallback(async () => {
     setLoading(true);
     try {
-      const list = await db.getProjectDirectories();
+      const list = await db.getWorkspaces();
       setInternalDirs(list);
     } catch (err) {
       message.error(`加载工作空间失败: ${err instanceof Error ? err.message : '未知错误'}`);
@@ -79,8 +79,8 @@ export function WorkspaceSwitcher({
     // 外部传入 dirs 时也不监听事件刷新（由父组件决定何时重载）
     if (externalDirs !== undefined) return;
     const handler = () => loadDirs();
-    window.addEventListener('projectDirectoryAdded', handler);
-    return () => window.removeEventListener('projectDirectoryAdded', handler);
+    window.addEventListener('workspaceAdded', handler);
+    return () => window.removeEventListener('workspaceAdded', handler);
   }, [loadDirs, externalDirs]);
 
   const selectedLabel = useMemo(() => {
@@ -137,15 +137,15 @@ export function WorkspaceSwitcher({
     const values = await quickAddForm.validateFields();
     setQuickAddSaving(true);
     try {
-      const created = await db.createProjectDirectory(values.path.trim(), values.name.trim());
+      const created = await db.createWorkspace(values.path.trim(), values.name.trim());
       message.success('工作空间已创建');
       quickAddForm.resetFields();
       setQuickAddOpen(false);
       // 新建后刷新内部列表（仅 externalDirs 未提供时有效；外部传入时由父组件重载）
-      const list = await db.getProjectDirectories();
+      const list = await db.getWorkspaces();
       setInternalDirs(list);
       onChange(created.id);
-      window.dispatchEvent(new CustomEvent('projectDirectoryAdded', { detail: { id: created.id } }));
+      window.dispatchEvent(new CustomEvent('workspaceAdded', { detail: { id: created.id } }));
     } catch (e) {
       message.error(`创建失败：${(e as Error).message}`);
     } finally {

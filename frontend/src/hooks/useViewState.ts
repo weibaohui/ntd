@@ -12,7 +12,7 @@
  *   /#/settings?tab=system    设置-系统标签
  *   /#/runtime                运行管理
  *   /#/skills                 Skills
- *   /#/projectDirectories     工作空间
+ *   /#/workspaces     工作空间
  *   /#/sessions               会话
  *   /#/executors              执行器
  *   /#/experts                专家管理面板
@@ -47,7 +47,7 @@ export type View =
   | 'settings'
   | 'runtime'
   | 'skills'
-  | 'projectDirectories'
+  | 'workspaces'
   | 'sessions'
   | 'executors'
   | 'experts'
@@ -66,7 +66,7 @@ export type Panel = 'list' | 'detail' | 'post';
 const ALL_VIEWS: View[] = [
   'todos', 'loops', 'tasks',
   'dashboard', 'settings',
-  'runtime', 'skills', 'projectDirectories', 'sessions', 'executors', 'experts',
+  'runtime', 'skills', 'workspaces', 'sessions', 'executors', 'experts',
   'blackboard', 'wiki', 'messages', 'bots', 'processes', 'onboarding',
 ];
 
@@ -320,7 +320,7 @@ const VIEW_TO_NAV_KEY: Record<View, string> = {
   settings: 'settings',
   runtime: 'settings_runtime',
   skills: 'settings_skills',
-  projectDirectories: 'settings_projectDirectories',
+  workspaces: 'settings_workspaces',
   sessions: 'settings_sessions',
   executors: 'settings_executors',
   experts: 'settings_experts',

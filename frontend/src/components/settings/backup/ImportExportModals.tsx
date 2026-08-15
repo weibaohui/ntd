@@ -1,6 +1,6 @@
 import { Modal, Table, Tag as AntTag, Divider, Alert, Select, Button } from 'antd';
 import { InfoCircleOutlined } from '@ant-design/icons';
-import type { ProjectDirectory } from '@/utils/database/todos';
+import type { Workspace } from '@/utils/database/todos';
 import { WorkspaceSwitcher } from '@/components/shell/WorkspaceSwitcher';
 
 export interface BackupDataYaml {
@@ -39,7 +39,7 @@ export interface ImportItem {
 }
 
 /** 按行判断原始工作空间是否在当前环境命中 */
-function isSourceMatched(item: ImportItem, workspaces: ProjectDirectory[]): boolean {
+function isSourceMatched(item: ImportItem, workspaces: Workspace[]): boolean {
   return item.workspace_id != null && workspaces.some((w) => w.id === item.workspace_id);
 }
 
@@ -63,7 +63,7 @@ export function ImportExportModals({
   // 同名项动作批量/逐条设置（覆盖/跳过）
   setItemsAction: (keys: number[], action: 'overwrite' | 'skip') => void;
   // 逐行工作空间选择：key → workspaceId（null=未指定，需用户手选）
-  workspaces: ProjectDirectory[];
+  workspaces: Workspace[];
   rowWorkspaceMap: Record<number, number | null>;
   setRowWorkspaceId: (key: number, id: number | null) => void;
   // 原始工作空间提示（从备份文件检测到后展示，帮助用户判断）

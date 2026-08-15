@@ -18,7 +18,7 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-  Panel["ProjectDirectoriesPanel.tsx<br>ProjectDirectoriesPanel()"] --> promptModalWorkspaceState["useState promptModalWorkspace<br>{id, name} | null"]
+  Panel["WorkspacesPanel.tsx<br>WorkspacesPanel()"] --> promptModalWorkspaceState["useState promptModalWorkspace<br>{id, name} | null"]
   Panel --> ClickLabel["基础约定 span onClick"]
   ClickLabel --> setPromptModalWorkspace["setPromptModalWorkspace<br>{id: dir.id, name: dir.name}"]
   Panel --> WorkspacePromptModal["workspace/WorkspacePromptModal.tsx"]
@@ -27,7 +27,7 @@ flowchart TD
   WorkspacePromptModal --> handleSave["handleSave"]
   handleSave --> formValidate["form.validateFields"]
   formValidate --> db1["db.updateWorkspaceSettings(workspaceId, {system_prompt})"]
-  db1 --> onSaved["onSaved → loadProjectDirectories"]
+  db1 --> onSaved["onSaved → loadWorkspaces"]
   db1 --> onClose["onClose"]
 ```
 
@@ -57,7 +57,7 @@ stateDiagram-v2
 ```
 
 ## 开发指导
-- **前端入口**：`frontend/src/components/settings/workspace/WorkspacePromptModal.tsx` 的 `WorkspacePromptModal` 组件；由 `ProjectDirectoriesPanel` 的 `promptModalWorkspace` state 驱动 `open`
+- **前端入口**：`frontend/src/components/settings/workspace/WorkspacePromptModal.tsx` 的 `WorkspacePromptModal` 组件；由 `WorkspacesPanel` 的 `promptModalWorkspace` state 驱动 `open`
 - **后端入口**：`backend/src/handlers/` 对应 workspace settings handler 处理 `GET /api/v1/workspaces/{id}/settings`、`PUT /api/v1/workspaces/{id}/settings`
 - **注意**：`system_prompt` 为 null 时视作空串显示；空串表示显式清空，不是「不保存」；内容会作为执行器前置 prompt 注入到该工作空间下所有 todo 的执行中
 - **扩展**：如需为工作空间追加更多设置字段（如默认执行器），`WorkspaceSettings` 类型扩展并在弹窗中追加 Form.Item

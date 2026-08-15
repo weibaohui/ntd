@@ -23,7 +23,7 @@ pub mod tasks;
 pub mod task_posts;
 pub mod loops;
 pub mod process_templates;
-pub mod project_directories;
+pub mod workspaces;
 // 两个关联表的 SeaORM 实体定义（联合主键、外键）完全对称，修改一处请同步修改另一处。
 pub mod sync_records;
 pub mod tags;
@@ -63,7 +63,7 @@ pub mod prelude {
     /// 任务讨论帖实体别名（需求 060），供 SeaORM 查询时用 TaskPosts::find() 引用。
     pub use super::task_posts::Entity as TaskPosts;
     pub use super::process_templates::Entity as ProcessTemplates;
-    pub use super::project_directories::Entity as ProjectDirectories;
+    pub use super::workspaces::Entity as Workspaces;
     pub use super::sync_records::Entity as SyncRecords;
     pub use super::tags::Entity as Tags;
     pub use super::todo_tags::Entity as TodoTags;

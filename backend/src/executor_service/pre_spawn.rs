@@ -584,7 +584,7 @@ pub(crate) async fn inject_workspace_prompt(
 /// （盖在专家角色定义之前），让执行器先知道运行环境。
 ///
 /// 与 `inject_workspace_prompt`（需求 022 的 workspace 共识 system_prompt）的区别：
-/// 那个读用户手填的 system_prompt，本函数读 project_directories 的 name/path。
+/// 那个读用户手填的 system_prompt，本函数读 workspaces 的 name/path。
 ///
 /// 失败策略与 `inject_workspace_prompt` 一致：workspace_id 缺失或查询失败时静默返回原 message，
 /// 不阻断执行——背景注入是增强项，不应让 DB 故障拖垮 todo 执行。
@@ -598,7 +598,7 @@ pub(crate) async fn inject_workspace_background(
         return message.to_string();
     };
     // 查询失败/无此工作空间：静默回退原 message，不阻断执行
-    let ws = match db.get_project_directory_by_id(wid).await {
+    let ws = match db.get_workspace_by_id(wid).await {
         Ok(Some(w)) => w,
         Ok(None) => return message.to_string(),
         Err(e) => {
@@ -1274,7 +1274,7 @@ mod tests {
     async fn test_inject_workspace_background_prepends_name_and_path() {
         let db = Database::new(":memory:").await.unwrap();
         let ws = db
-            .get_or_create_project_directory("/tmp/ws1", Some("我的项目"))
+            .get_or_create_workspace("/tmp/ws1", Some("我的项目"))
             .await
             .unwrap();
         let result = inject_workspace_background(&db, Some(ws.id), "原任务").await;
@@ -1289,7 +1289,7 @@ mod tests {
     async fn test_inject_workspace_background_name_missing_falls_back_to_path() {
         let db = Database::new(":memory:").await.unwrap();
         let ws = db
-            .get_or_create_project_directory("/tmp/ws2", None)
+            .get_or_create_workspace("/tmp/ws2", None)
             .await
             .unwrap();
         let result = inject_workspace_background(&db, Some(ws.id), "msg").await;
@@ -1427,7 +1427,7 @@ mod tests {
     async fn test_inject_step_context_injects_expected_artifacts() {
         let db = Database::new(":memory:").await.unwrap();
         let ws = db
-            .get_or_create_project_directory("/tmp/ws_054", None)
+            .get_or_create_workspace("/tmp/ws_054", None)
             .await
             .unwrap();
         let loop_model = db
@@ -1550,7 +1550,7 @@ mod tests {
     async fn test_inject_step_context_degrades_per_field_on_json_error() {
         let db = Database::new(":memory:").await.unwrap();
         let ws = db
-            .get_or_create_project_directory("/tmp/ws_054_deg", None)
+            .get_or_create_workspace("/tmp/ws_054_deg", None)
             .await
             .unwrap();
         let loop_model = db

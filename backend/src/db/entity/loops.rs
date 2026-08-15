@@ -12,10 +12,10 @@ pub struct Model {
     pub name: String,
     #[sea_orm(default_value = "")]
     pub description: String,
-    /// Loop 所属的工作空间目录路径（对应 project_directories.path）。
+    /// Loop 所属的工作空间目录路径（对应 workspaces.path）。
     /// path 不唯一，筛选只用 workspace_id；path 只用于 cwd/worktree。
     pub workspace_path: Option<String>,
-    /// Loop 所属的工作空间 ID（关联 project_directories.id）。
+    /// Loop 所属的工作空间 ID（关联 workspaces.id）。
     pub workspace_id: Option<i64>,
     /// enabled | paused
     #[sea_orm(default_value = "paused")]

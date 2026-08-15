@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Drawer, Form, Input, Select, Switch, Button, Tag, Typography, Divider, Empty, Popconfirm } from 'antd';
 import { SaveOutlined, PlusOutlined, DeleteOutlined, MessageOutlined, LockOutlined, SettingOutlined } from '@ant-design/icons';
-import type { AgentBot, ProjectDirectory } from '@/utils/database';
+import type { AgentBot, Workspace } from '@/utils/database';
 import * as db from '@/utils/database';
 import type { WhitelistEntry, FeishuPushLevel } from '@/utils/database/bots';
 
@@ -11,7 +11,7 @@ const { Option } = Select;
 interface AssistantConfigDrawerProps {
   open: boolean;
   bot: AgentBot | null;
-  workspaces: ProjectDirectory[];
+  workspaces: Workspace[];
   onClose: () => void;
   onChanged: () => void;
 }

@@ -1,6 +1,6 @@
 //! Git Worktree 服务（issue #643）
 //!
-//! 在项目目录级托管 git worktree 的完整生命周期。
+//! 在工作空间级托管 git worktree 的完整生命周期。
 //! 由 ntd（而不是 Claude Code 自身）负责：
 //!   1. 执行前：若目录不是 git 仓库则 `git init`；然后 `git worktree add` 一个 worktree
 //!   2. 执行中：把 worktree 路径回写到 execution_record（仅记录，不影响子进程）
@@ -31,7 +31,7 @@ use wait_timeout::ChildExt;
 /// 远高于 `git rev-parse` / `worktree add` 等轻量子命令的常态耗时。
 const GIT_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// 在项目目录下创建 worktree 的相对目录名（issue #643 规范要求）。
+/// 在工作空间下创建 worktree 的相对目录名（issue #643 规范要求）。
 ///
 /// 选 `.worktrees` 而不是 `worktrees` 是因为以 `.` 开头会被常见工具识别为"本地临时目录"，
 /// 减少误提交风险；同时 ntd 启动时也会确保该目录在 `.gitignore` 里。
@@ -41,8 +41,8 @@ pub const WORKTREE_ROOT_DIR: &str = ".worktrees";
 pub enum WorktreeError {
     #[error("git is not installed or not in PATH: {0}")]
     GitUnavailable(String),
-    #[error("project directory does not exist: {0}")]
-    ProjectDirMissing(String),
+    #[error("workspace directory does not exist: {0}")]
+    WorkspaceDirMissing(String),
     #[error("`git {cmd}` failed in {dir}: {stderr}")]
     GitCommandFailed {
         cmd: String,
@@ -161,7 +161,7 @@ impl WorktreeService {
     pub fn ensure_git_repo(&self, project_path: &str) -> Result<(), WorktreeError> {
         let p = Path::new(project_path);
         if !p.exists() {
-            return Err(WorktreeError::ProjectDirMissing(project_path.to_string()));
+            return Err(WorktreeError::WorkspaceDirMissing(project_path.to_string()));
         }
 
         // 用 `git rev-parse --git-dir` 探测：返回成功即表示已是 git 仓库，
@@ -517,12 +517,12 @@ mod tests {
             .expect("existing repo should not error");
     }
 
-    /// 目录不存在时返回 ProjectDirMissing。
+    /// 目录不存在时返回 WorkspaceDirMissing。
     #[test]
     fn test_ensure_git_repo_missing_dir_errors() {
         let svc = WorktreeService::new();
         let res = svc.ensure_git_repo("/this/path/should/not/exist/ntd-test-643");
-        assert!(matches!(res, Err(WorktreeError::ProjectDirMissing(_))));
+        assert!(matches!(res, Err(WorktreeError::WorkspaceDirMissing(_))));
     }
 
     /// 非 git 目录会自动 init。

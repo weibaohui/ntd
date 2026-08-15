@@ -4,14 +4,14 @@ use crate::db::entity::feishu_project_bindings;
 use crate::db::execution::ExecutionRecordQuery;
 use crate::models::ExecutionRecord;
 
-/// A binding between a Feishu chat and a project directory.
+/// A binding between a Feishu chat and a workspace.
 #[derive(Debug, Clone)]
 pub struct FeishuProjectBinding {
     pub id: i64,
     pub bot_id: i64,
     pub chat_id: String,
     pub chat_type: String,
-    pub project_dir_id: i64,
+    pub workspace_id: i64,
     pub todo_id: i64,
     pub session_id: Option<String>,
     pub latest_record_id: Option<i64>,
@@ -23,7 +23,7 @@ pub struct FeishuProjectBinding {
 }
 
 impl Database {
-    /// 创建飞书聊天与项目目录的绑定记录
+    /// 创建飞书聊天与工作空间的绑定记录
     ///
     /// # 业务场景
     /// 1. Web UI 创建待绑定记录（chat_id="__pending__"），等待飞书侧 /bind 补齐
@@ -37,7 +37,7 @@ impl Database {
         bot_id: i64,
         chat_id: &str,
         chat_type: &str,
-        project_dir_id: i64,
+        workspace_id: i64,
         todo_id: i64,
     ) -> Result<i64, sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();
@@ -45,7 +45,7 @@ impl Database {
             bot_id: ActiveValue::Set(bot_id),
             chat_id: ActiveValue::Set(chat_id.to_string()),
             chat_type: ActiveValue::Set(chat_type.to_string()),
-            project_dir_id: ActiveValue::Set(project_dir_id),
+            workspace_id: ActiveValue::Set(workspace_id),
             todo_id: ActiveValue::Set(todo_id),
             session_id: ActiveValue::Set(None),
             latest_record_id: ActiveValue::Set(None),
@@ -248,7 +248,7 @@ impl Database {
             bot_id: m.bot_id,
             chat_id: m.chat_id,
             chat_type: m.chat_type,
-            project_dir_id: m.project_dir_id,
+            workspace_id: m.workspace_id,
             todo_id: m.todo_id,
             session_id: m.session_id,
             latest_record_id: m.latest_record_id,

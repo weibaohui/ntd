@@ -5,11 +5,11 @@ use sea_orm::{ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, QueryFilt
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
-use crate::db::entity::project_directories;
+use crate::db::entity::workspaces;
 use crate::db::Database;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProjectDirectory {
+pub struct Workspace {
     pub id: i64,
     pub path: String,
     pub name: Option<String>,
@@ -26,15 +26,15 @@ pub struct ProjectDirectory {
 }
 
 impl Database {
-    pub async fn get_project_directories(&self) -> Result<Vec<ProjectDirectory>, sea_orm::DbErr> {
-        let models = project_directories::Entity::find()
-            .order_by_asc(project_directories::Column::Path)
+    pub async fn get_workspaces(&self) -> Result<Vec<Workspace>, sea_orm::DbErr> {
+        let models = workspaces::Entity::find()
+            .order_by_asc(workspaces::Column::Path)
             .all(&self.conn)
             .await?;
 
         Ok(models
             .into_iter()
-            .map(|m| ProjectDirectory {
+            .map(|m| Workspace {
                 id: m.id,
                 path: m.path,
                 name: m.name,
@@ -46,7 +46,7 @@ impl Database {
             .collect())
     }
 
-    pub async fn create_project_directory(
+    pub async fn create_workspace(
         &self,
         path: &str,
         name: Option<&str>,
@@ -54,7 +54,7 @@ impl Database {
         auto_cleanup: bool,
     ) -> Result<i64, sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();
-        let am = project_directories::ActiveModel {
+        let am = workspaces::ActiveModel {
             path: ActiveValue::Set(path.to_string()),
             name: ActiveValue::Set(name.map(|s| s.to_string())),
             created_at: ActiveValue::Set(Some(now.clone())),
@@ -70,13 +70,13 @@ impl Database {
         Ok(inserted.id)
     }
 
-    /// 更新项目目录字段。
+    /// 更新工作空间字段。
     /// - `name=None` 表示"不修改名称"（与 `get_or_create` 的语义保持一致），
     ///   实现用 `ActiveValue::Unchanged` 跳过 name 列；handler 层负责把空字符串 trim 拒绝。
     /// - `name=Some(s)` 直接覆盖当前名称。
     /// - `git_worktree_enabled` / `auto_cleanup` 是 issue #643 新增的可选修改项；
     ///   传入 None 时跳过对应列，传入 Some(bool) 时写入新值。
-    pub async fn update_project_directory(
+    pub async fn update_workspace(
         &self,
         id: i64,
         name: Option<&str>,
@@ -86,7 +86,7 @@ impl Database {
         let now = crate::models::utc_timestamp();
         // 用 match 把 Option<&str> 直接落到三种语义：None=Unchanged, Some("")=仍 Unchanged
         // （handler 已拒绝空串，这里再做一次兜底），Some(non-empty)=Set。避免出现「Set(None) 把列写成 NULL」的反直觉行为。
-        let mut am = project_directories::ActiveModel {
+        let mut am = workspaces::ActiveModel {
             id: ActiveValue::Unchanged(id),
             updated_at: ActiveValue::Set(Some(now)),
             ..Default::default()
@@ -109,23 +109,23 @@ impl Database {
         self.exec_update(am).await
     }
 
-    pub async fn delete_project_directory(&self, id: i64) -> Result<(), sea_orm::DbErr> {
-        project_directories::Entity::delete_by_id(id)
+    pub async fn delete_workspace(&self, id: i64) -> Result<(), sea_orm::DbErr> {
+        workspaces::Entity::delete_by_id(id)
             .exec(&self.conn)
             .await
             .map(|_| ())
     }
 
-    pub async fn get_project_directory_by_path(
+    pub async fn get_workspace_by_path(
         &self,
         path: &str,
-    ) -> Result<Option<ProjectDirectory>, sea_orm::DbErr> {
-        let model = project_directories::Entity::find()
-            .filter(project_directories::Column::Path.eq(path))
+    ) -> Result<Option<Workspace>, sea_orm::DbErr> {
+        let model = workspaces::Entity::find()
+            .filter(workspaces::Column::Path.eq(path))
             .one(&self.conn)
             .await?;
 
-        Ok(model.map(|m| ProjectDirectory {
+        Ok(model.map(|m| Workspace {
             id: m.id,
             path: m.path,
             name: m.name,
@@ -136,15 +136,15 @@ impl Database {
         }))
     }
 
-    pub async fn get_project_directory_by_id(
+    pub async fn get_workspace_by_id(
         &self,
         id: i64,
-    ) -> Result<Option<ProjectDirectory>, sea_orm::DbErr> {
-        let model = project_directories::Entity::find_by_id(id)
+    ) -> Result<Option<Workspace>, sea_orm::DbErr> {
+        let model = workspaces::Entity::find_by_id(id)
             .one(&self.conn)
             .await?;
 
-        Ok(model.map(|m| ProjectDirectory {
+        Ok(model.map(|m| Workspace {
             id: m.id,
             path: m.path,
             name: m.name,
@@ -162,20 +162,20 @@ impl Database {
     ///
     /// issue #643 备注：worktree 开关属于"执行策略"，本接口不修改它们——`get_or_create`
     /// 主要被 Todo 创建路径调用，新目录登记时不应自动开启 worktree。
-    pub async fn get_or_create_project_directory(
+    pub async fn get_or_create_workspace(
         &self,
         path: &str,
         name: Option<&str>,
-    ) -> Result<ProjectDirectory, sea_orm::DbErr> {
-        if let Some(existing) = self.get_project_directory_by_path(path).await? {
+    ) -> Result<Workspace, sea_orm::DbErr> {
+        if let Some(existing) = self.get_workspace_by_path(path).await? {
             // name=None 时是 no-op：不应被解读为"清空名称"，仅保持现有值不变。
             // name=Some 且与现有名称不同时才触发更新，兼容"先有路径、后补名称"的使用路径。
             if let Some(new_name) = name {
                 if existing.name.as_deref() != Some(new_name) {
-                    self.update_project_directory(existing.id, Some(new_name), None, None)
+                    self.update_workspace(existing.id, Some(new_name), None, None)
                         .await?;
                     return self
-                        .get_project_directory_by_id(existing.id)
+                        .get_workspace_by_id(existing.id)
                         .await?
                         .ok_or_else(|| {
                             sea_orm::DbErr::Custom("Directory disappeared after rename".into())
@@ -185,10 +185,10 @@ impl Database {
             return Ok(existing);
         }
 
-        match self.create_project_directory(path, name, false, false).await {
+        match self.create_workspace(path, name, false, false).await {
             Ok(id) => {
                 // 创建成功后从数据库查询以获取准确的时间戳
-                self.get_project_directory_by_id(id)
+                self.get_workspace_by_id(id)
                     .await?
                     .ok_or_else(|| sea_orm::DbErr::Custom("Failed to retrieve created directory".into()))
             }
@@ -196,15 +196,15 @@ impl Database {
                 // 如果是唯一约束冲突，说明另一个请求已经创建了该目录，重试查询
                 if is_unique_constraint_error(&e) {
                     let existing = self
-                        .get_project_directory_by_path(path)
+                        .get_workspace_by_path(path)
                         .await?
                         .ok_or_else(|| sea_orm::DbErr::Custom("Directory disappeared after conflict".into()))?;
                     if let Some(new_name) = name {
                         if existing.name.as_deref() != Some(new_name) {
-                            self.update_project_directory(existing.id, Some(new_name), None, None)
+                            self.update_workspace(existing.id, Some(new_name), None, None)
                                 .await?;
                             return self
-                                .get_project_directory_by_id(existing.id)
+                                .get_workspace_by_id(existing.id)
                                 .await?
                                 .ok_or_else(|| {
                                     sea_orm::DbErr::Custom("Directory disappeared after rename".into())
@@ -258,7 +258,7 @@ impl Database {
         let lock = executor_session_lock(workspace_id);
         let _guard = lock.lock().await;
 
-        let dir = project_directories::Entity::find_by_id(workspace_id)
+        let dir = workspaces::Entity::find_by_id(workspace_id)
             .one(&self.conn)
             .await?;
 
@@ -296,10 +296,10 @@ impl Database {
         let _guard = lock.lock().await;
 
         // 读取现有记录
-        let dir = project_directories::Entity::find_by_id(workspace_id)
+        let dir = workspaces::Entity::find_by_id(workspace_id)
             .one(&self.conn)
             .await?
-            .ok_or_else(|| sea_orm::DbErr::RecordNotFound("project directory not found".into()))?;
+            .ok_or_else(|| sea_orm::DbErr::RecordNotFound("workspace not found".into()))?;
 
         // 解析现有 JSON
         let mut sessions: HashMap<String, Option<String>> =
@@ -311,7 +311,7 @@ impl Database {
 
         // 序列化并写回
         let now = crate::models::utc_timestamp();
-        let am = project_directories::ActiveModel {
+        let am = workspaces::ActiveModel {
             id: ActiveValue::Unchanged(dir.id),
             executor_sessions: ActiveValue::Set(Some(serde_json::to_string(&sessions).unwrap_or_default())),
             updated_at: ActiveValue::Set(Some(now)),

@@ -59,6 +59,8 @@ mod v91;
 mod v92;
 /// v93：todos.updated_at 排序索引（093 优化专项：列表 ORDER BY 不再全表扫 + filesort）。
 mod v93;
+/// v94：project_directories 表/列重命名为 workspace（104 命名统一重构）。
+mod v94;
 
 pub use v2_v5::read_applied_versions;
 pub use v2_v5::drop_column_if_exists;
@@ -192,6 +194,9 @@ pub(super) fn all_migrations() -> Vec<Box<dyn Migration>> {
         // V93 在 V92 之后：todos.updated_at 排序索引；配套 hours 过滤参数化后
         // 列表查询「排序 + 时间窗」都走该索引 range scan。
         Box::new(v93::V93AddTodosUpdatedAtIndex),
+        // V94 在 V93 之后：project_directories 表/列重命名为 workspace（104 命名统一重构）。
+        // 旧迁移里对 project_directories 的引用保持历史原样，只有本迁移负责 RENAME。
+        Box::new(v94::V94RenameProjectDirectoriesToWorkspaces),
     ]
 }
 

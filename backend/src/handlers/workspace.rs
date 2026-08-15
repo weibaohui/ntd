@@ -7,14 +7,14 @@ use super::{ApiJson, AppState};
 use crate::models::ApiResponse;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CreateProjectDirectoryRequest {
+pub struct CreateWorkspaceRequest {
     pub path: String,
     // 项目名称必填，Todo 选择目录时按名称展示
     pub name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct UpdateProjectDirectoryRequest {
+pub struct UpdateWorkspaceRequest {
     /// 修改后的名称（可选）。语义与开关字段保持一致：
     /// - `None` / 缺省：跳过名称列（PATCH 风格），便于客户端只更新开关字段。
     /// - `Some("")`：由 handler 拒绝。
@@ -32,18 +32,18 @@ pub struct UpdateProjectDirectoryRequest {
     pub auto_cleanup: Option<bool>,
 }
 
-pub async fn list_project_directories(
+pub async fn list_workspaces(
     State(state): State<AppState>,
-) -> Result<ApiResponse<Vec<crate::db::project_directory::ProjectDirectory>>, super::AppError> {
-    let directories = state.db.get_project_directories().await?;
+) -> Result<ApiResponse<Vec<crate::db::workspace::Workspace>>, super::AppError> {
+    let directories = state.db.get_workspaces().await?;
     Ok(ApiResponse::ok(directories))
 }
 
-pub async fn create_project_directory(
+pub async fn create_workspace(
     State(state): State<AppState>,
-    ApiJson(req): ApiJson<CreateProjectDirectoryRequest>,
-) -> Result<ApiResponse<crate::db::project_directory::ProjectDirectory>, super::AppError> {
-    // 路径和名称都必填：项目目录是用户按"项目"维度组织 Todo 的核心维度，
+    ApiJson(req): ApiJson<CreateWorkspaceRequest>,
+) -> Result<ApiResponse<crate::db::workspace::Workspace>, super::AppError> {
+    // 路径和名称都必填：工作空间是用户按"项目"维度组织 Todo 的核心维度，
     // 缺一项就无法在 Todo 侧按名称识别目录。
     let path = req.path.trim();
     if path.is_empty() {
@@ -56,15 +56,15 @@ pub async fn create_project_directory(
     let directory = state
         .db
         // path 已是 &str（trim 返回 &str），auto-deref 会处理，无需额外 &
-        .get_or_create_project_directory(path, Some(name))
+        .get_or_create_workspace(path, Some(name))
         .await?;
     Ok(ApiResponse::ok(directory))
 }
 
-pub async fn update_project_directory(
+pub async fn update_workspace(
     State(state): State<AppState>,
     axum::extract::Path(id): axum::extract::Path<i64>,
-    ApiJson(req): ApiJson<UpdateProjectDirectoryRequest>,
+    ApiJson(req): ApiJson<UpdateWorkspaceRequest>,
 ) -> Result<ApiResponse<()>, super::AppError> {
     // name 现在是 Option<String>，PATCH 语义下 None 表示"不修改名称"。
     // 但显式传空串仍然算非法（避免误把名称写成空），这里只对 Some("") 做拒绝。
@@ -81,27 +81,27 @@ pub async fn update_project_directory(
     // issue #643: 即使前端没传 worktree 字段也允许请求继续，老客户端 PUT 不会 400。
     state
         .db
-        .update_project_directory(id, name_arg, req.git_worktree_enabled, req.auto_cleanup)
+        .update_workspace(id, name_arg, req.git_worktree_enabled, req.auto_cleanup)
         .await?;
     Ok(ApiResponse::ok(()))
 }
 
-pub async fn delete_project_directory(
+pub async fn delete_workspace(
     State(state): State<AppState>,
     axum::extract::Path(id): axum::extract::Path<i64>,
 ) -> Result<ApiResponse<()>, super::AppError> {
-    state.db.delete_project_directory(id).await?;
+    state.db.delete_workspace(id).await?;
     Ok(ApiResponse::ok(()))
 }
 
-/// API v1 路由：项目目录相关端点。
+/// API v1 路由：工作空间相关端点。
 ///
 /// 将 /api 前缀替换为 /api/v1，参数模式与旧路由保持一致。
 /// 全路径注册，不与外层 router 嵌套（flat 结构）。
 pub fn v1_routes() -> Router<AppState> {
     Router::new()
-        .route("/api/v1/project-directories", get(list_project_directories))
-        .route("/api/v1/project-directories", post(create_project_directory))
-        .route("/api/v1/project-directories/{id}", put(update_project_directory))
-        .route("/api/v1/project-directories/{id}", delete(delete_project_directory))
+        .route("/api/v1/workspaces", get(list_workspaces))
+        .route("/api/v1/workspaces", post(create_workspace))
+        .route("/api/v1/workspaces/{id}", put(update_workspace))
+        .route("/api/v1/workspaces/{id}", delete(delete_workspace))
 }

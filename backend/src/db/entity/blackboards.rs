@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i64,
-    /// 工作空间 ID（唯一），关联 project_directories(id)
+    /// 工作空间 ID（唯一），关联 workspaces(id)
     pub workspace_id: i64,
     /// 黑板 Markdown 内容
     #[sea_orm(column_type = "Text")]

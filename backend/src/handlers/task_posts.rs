@@ -268,13 +268,13 @@ fn truncate_chars(s: &str, max_chars: usize) -> String {
     t
 }
 
-/// 按 workspace_id 反查项目目录；查不到或失败返回空串（执行器降级用默认 workspace）。
+/// 按 workspace_id 反查工作空间；查不到或失败返回空串（执行器降级用默认 workspace）。
 /// 任务表不存 workspace_path，必须经此查 workspace 表补齐执行所需的真实路径。
 ///
 /// 入参只取 `db`（不耦合 AppState）：需求 092 P2 的自动接力在 completion 路径触发，那边
 /// 只有 Arc<Database>、无 AppState；拆参后人工 @ 触发与自动接力共用同一份路径解析。
 async fn resolve_ws_path(db: &Database, ws_id: i64) -> String {
-    db.get_project_directory_by_id(ws_id)
+    db.get_workspace_by_id(ws_id)
         .await
         .ok()
         .flatten()
@@ -301,7 +301,7 @@ async fn trigger_discussion_execution(
     let executor_name = first_executor(mentions);
     let expert_name = first_expert(mentions);
     let ws_id = task.workspace_id.unwrap_or(1);
-    // 任务表不存 workspace_path，按 workspace_id 反查项目目录取真实路径（执行需要）。
+    // 任务表不存 workspace_path，按 workspace_id 反查工作空间取真实路径（执行需要）。
     let ws_path = resolve_ws_path(state.db.as_ref(), ws_id).await;
     let title = format!("讨论触发 @{}", agent_author(mentions));
     let todo_id = state

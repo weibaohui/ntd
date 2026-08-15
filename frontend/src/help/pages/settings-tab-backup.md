@@ -45,7 +45,7 @@ classDiagram
     tags: Tag[]
     experts: ExpertMetadata[]
     skills: SkillMeta[]
-    workspaces: ProjectDirectory[]
+    workspaces: Workspace[]
   }
   class ImportItem {
     key: number

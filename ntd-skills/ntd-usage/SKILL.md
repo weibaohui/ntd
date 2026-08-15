@@ -52,7 +52,7 @@ ntd 不是"另一个 Todo 工具"，它是**让 AI 替你做任务的操作系�
 | "我想看看上周完成了什么" | 用 `ntd todo list --status completed` 回顾 |
 | "帮我部署服务到生产" | 创建 todo → 用 `--param` 传参 → 执行 |
 | "帮我分析这段日志" | 创建 todo → 附带详细 prompt → 执行 |
-| "帮我 review 代码变更" | 创建 todo → 指定执行器 → 在项目目录启用 Git Worktree 开关再执行 |
+| "帮我 review 代码变更" | 创建 todo → 指定执行器 → 在工作空间启用 Git Worktree 开关再执行 |
 
 ### ❌ 不应该用 ntd 的场景（直接回答/执行）
 
@@ -164,19 +164,19 @@ ntd 不是"另一个 Todo 工具"，它是**让 AI 替你做任务的操作系�
 
 ### 工作空间（workspace）怎么指定
 
-ntd 不再接受用路径指定工作空间——同一个目录路径在 `project_directories` 表里可能不唯一，传 path 会带来歧义。CLI 和前端一律用 **`workspace_id`（即 `project_directories.id`）** 作为唯一键。
+ntd 不再接受用路径指定工作空间——同一个目录路径在 `workspaces` 表里可能不唯一，传 path 会带来歧义。CLI 和前端一律用 **`workspace_id`（即 `workspaces.id`）** 作为唯一键。
 
 `ntd workspace` 子命令用来在 CLI 侧消费工作空间，不必切前端 UI：
 
 | 想做的事 | 怎么做 |
 |----------|--------|
-| 注册一个新工作空间 | `ntd workspace create -p /path/to/project -n "my-project"`（path + name 必填，worktree / auto_cleanup 开关默认关，需要时用前端「项目目录」面板再编辑） |
+| 注册一个新工作空间 | `ntd workspace create -p /path/to/project -n "my-project"`（path + name 必填，worktree / auto_cleanup 开关默认关，需要时用前端「工作空间」面板再编辑） |
 | 查看已有工作空间列表 | `ntd workspace list`（配合 `--output raw --fields "id,name,path"` 可直接拿到 id 清单供脚本 parse） |
 | 创建 todo 时指定工作空间 | `ntd todo create "<标题>" --executor <执行器> --workspace-id <N>`（**必填**，漏传会报 `--workspace-id is required`） |
 | 更新 todo 的工作空间 | `ntd todo update <id> --workspace-id <N>` |
 | 按 workspace 过滤 loop | `ntd loop list --workspace-id <N>` |
 
-**为什么 `workspace create` 不带 worktree 开关**：注册动作的意图是「登记一个项目目录」，worktree / auto_cleanup 属于后续执行策略编辑，强行在 create 弹窗里加这两个字段会增加一次性负担。注册完后用前端「项目目录」面板的 Switch 编辑即可。
+**为什么 `workspace create` 不带 worktree 开关**：注册动作的意图是「登记一个工作空间」，worktree / auto_cleanup 属于后续执行策略编辑，强行在 create 弹窗里加这两个字段会增加一次性负担。注册完后用前端「工作空间」面板的 Switch 编辑即可。
 
 ---
 
@@ -246,7 +246,7 @@ ntd task posts --workspace-id 1 --task 42 list
 # 3. 基于全貌给出可直接回复的结论（Markdown）——结论由 ntd 自动回帖，不要自己发帖
 ```
 
-> `--workspace-id <N>` 即 `project_directories.id`，用 `ntd workspace list` 查；它是 **workspace-scoped 命令，必填**（漏传会报 `--workspace-id is required`）。
+> `--workspace-id <N>` 即 `workspaces.id`，用 `ntd workspace list` 查；它是 **workspace-scoped 命令，必填**（漏传会报 `--workspace-id is required`）。
 
 **小提示**：精简输出加 `--output raw`（须放在命令前，如 `ntd --output raw task posts --workspace-id <N> --task <id> list`）。注意 `--fields` 只对**单条**命令（`task view` / `posts get`）按字段精简有效，对**列表**（`items` 数组）不递归——别对 `list` 加 `--fields`。
 

@@ -2,7 +2,7 @@ use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
-#[sea_orm(table_name = "project_directories")]
+#[sea_orm(table_name = "workspaces")]
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i64,
@@ -11,7 +11,7 @@ pub struct Model {
     pub name: Option<String>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
-    /// issue #643: 项目目录级开关，开启后 ntd 在该目录下执行 Todo 时自动创建 git worktree。
+    /// issue #643: 工作空间级开关，开启后 ntd 在该目录下执行 Todo 时自动创建 git worktree。
     /// 默认 false，旧库通过迁移加列后保持 false，对存量行为零影响。
     #[sea_orm(default)]
     pub git_worktree_enabled: bool,

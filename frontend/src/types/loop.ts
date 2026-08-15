@@ -16,8 +16,8 @@ export interface LoopDto {
   name: string;
   description: string;
   /**
-   * 工作空间 ID（project_directories.id），唯一键。
-   * 组件间统一传 id，path 不再上送 API；前端展示用 project_directories.name/path 自行查询。
+   * 工作空间 ID（workspaces.id），唯一键。
+   * 组件间统一传 id，path 不再上送 API；前端展示用 workspaces.name/path 自行查询。
    */
   workspace_id: number | null;
   status: string;
@@ -150,7 +150,7 @@ export interface LoopDetail {
   id: number;
   name: string;
   description: string;
-  /** 工作空间 ID（project_directories.id，唯一键）。组件间统一以 id 传递，path 不再上送。 */
+  /** 工作空间 ID（workspaces.id，唯一键）。组件间统一以 id 传递，path 不再上送。 */
   workspace_id: number | null;
   status: string;
   /** 标签 ID 列表（单选，复用 Todo 的标签体系） */
@@ -181,7 +181,7 @@ export interface LoopListItem {
   id: number;
   name: string;
   description: string;
-  /** 工作空间 ID（project_directories.id，唯一键）。组件间统一以 id 传递，path 不再上送。 */
+  /** 工作空间 ID（workspaces.id，唯一键）。组件间统一以 id 传递，path 不再上送。 */
   workspace_id: number | null;
   status: string;
   /** 标签 ID 列表（单选，复用 Todo 的标签体系） */

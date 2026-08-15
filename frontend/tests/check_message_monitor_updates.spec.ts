@@ -8,7 +8,7 @@ import { test, expect } from '@playwright/test';
 const BASE = 'http://localhost:18088';
 
 // 查「首个含消息数据的工作空间名」：消息页按 workspace 隔离且依赖该空间的 Bot，
-// dev 库 menuitem 顺序按 project_directories 而非 id（当前首项「便利贴项目」=ws3 无 Bot/消息），
+// dev 库 menuitem 顺序按 workspaces 而非 id（当前首项「便利贴项目」=ws3 无 Bot/消息），
 // 盲取首个 menuitem 会落到空空间导致列表 0 卡。故先查 message-stats 找 total_messages>0 的空间名。
 async function pickWorkspaceWithMessages(
   page: import('@playwright/test').Page,
@@ -30,7 +30,7 @@ async function gotoMessages(page: import('@playwright/test').Page) {
   await page.getByRole('button', { name: '消息', exact: true }).click();
   // 打开工作空间切换下拉，选一个有消息数据的空间（见 pickWorkspaceWithMessages 注释）。
   await page.getByRole('button', { name: '切换工作空间' }).click();
-  const dirsResp = await page.request.get(`${BASE}/api/v1/project-directories`);
+  const dirsResp = await page.request.get(`${BASE}/api/v1/workspaces`);
   const wsName = await pickWorkspaceWithMessages(page, (await dirsResp.json()).data || []);
   // dev 库可能无任何空间含消息数据，此时整组用例无意义，跳过而非误报失败。
   test.skip(!wsName, 'dev 库无含消息数据的工作空间，跳过');

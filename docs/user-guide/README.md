@@ -23,7 +23,7 @@
 | 标签管理 | [settings/tags.md](settings/tags.md) | 标签 CRUD |
 | 消息 | [settings/messages-feishu.md](settings/messages-feishu.md) | Bot 绑定、群白名单、推送、历史消息 |
 | Session 管理 | [settings/sessions.md](settings/sessions.md) | 跨执行器会话 |
-| 项目目录 | [settings/project-directories.md](settings/project-directories.md) | workspace 白名单 |
+| 工作空间 | [settings/workspaces.md](settings/workspaces.md) | workspace 白名单 |
 | 模板管理 | [settings/templates.md](settings/templates.md) | 本地模板 + 远程订阅 |
 | 备份与恢复 | [settings/backup-and-restore.md](settings/backup-and-restore.md) | 数据库 / Todo / Skills 三类备份 |
 | Skills 管理 | [settings/skills.md](settings/skills.md) | 总览 / 对比分析 / 同步管理 / 调用追踪 4 个子视图 |

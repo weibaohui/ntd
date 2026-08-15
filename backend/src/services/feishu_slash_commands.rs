@@ -113,7 +113,7 @@ impl SlashCommandHandler {
             _ => (channel.to_string(), "chat_id"),
         };
 
-        let directories = db.get_project_directories().await.unwrap_or_default();
+        let directories = db.get_workspaces().await.unwrap_or_default();
         if directories.is_empty() {
             FeishuApiClient::send_text(
                 credentials,
@@ -121,7 +121,7 @@ impl SlashCommandHandler {
                 bot_id,
                 &receive_id,
                 receive_id_type,
-                "📂 暂无已注册的项目目录。\n\n请在 Web 设置页「项目目录」中添加，或使用 /bind <名称> 绑定一个项目（首次使用会自动创建）。",
+                "📂 暂无已注册的工作空间。\n\n请在 Web 设置页「工作空间」中添加，或使用 /bind <名称> 绑定一个项目（首次使用会自动创建）。",
             )
             .await;
         } else {
@@ -132,7 +132,7 @@ impl SlashCommandHandler {
                     format!("• {}  →  {}", name, d.path)
                 })
                 .collect();
-            lines.insert(0, format!("📂 已注册的项目目录（共 {} 个）：", directories.len()));
+            lines.insert(0, format!("📂 已注册的工作空间（共 {} 个）：", directories.len()));
             lines.push(String::new());
             lines.push("💡 使用 /bind <名称> 绑定到本项目聊天".to_string());
             FeishuApiClient::send_text(
@@ -613,7 +613,7 @@ impl SlashCommandHandler {
             None => vec![],
         };
         let workspaces = db
-            .get_project_directories()
+            .get_workspaces()
             .await
             .ok()
             .unwrap_or_default()

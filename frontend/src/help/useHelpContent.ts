@@ -56,7 +56,7 @@ export function viewToPageId(view: View, hasDetail: boolean): string {
   if (view === 'experts') return 'settings-experts';
   if (view === 'executors') return 'settings-executors';
   if (view === 'bots') return 'settings-bots';
-  if (view === 'projectDirectories') return 'settings-pd';
+  if (view === 'workspaces') return 'settings-pd';
   if (view === 'settings') return 'settings-more';
   // 单形态视图直接用 view 名作为 pageId
   return view;

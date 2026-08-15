@@ -61,7 +61,7 @@ async fn find_or_create_wiki_todo(
 
     // 未找到，自动创建：用内置默认 prompt 兜底，后续由配置同步覆盖
     let dir = db
-        .get_project_directory_by_id(workspace_id)
+        .get_workspace_by_id(workspace_id)
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?
         .ok_or_else(|| AppError::BadRequest(format!("工作空间 {} 不存在", workspace_id)))?;
@@ -460,7 +460,7 @@ pub struct WikiChatResponse {
 ///
 /// 设计参考：feishu_listener 的「executor 默认响应」模式（message_debounce.rs 的
 /// handle_default_response_executor），把触发源从飞书消息换成 HTTP 请求，
-/// 把 cwd 从 project_directories.path 换成 wiki 目录，把结果回送方式从
+/// 把 cwd 从 workspaces.path 换成 wiki 目录，把结果回送方式从
 /// ExecEvent::DirectCardMessage 改成直接返回值。
 ///
 /// 不创建 Todo、不创建 execution_record、不持久化聊天历史、非流式一次性返回。

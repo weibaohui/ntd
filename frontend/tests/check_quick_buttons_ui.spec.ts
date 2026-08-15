@@ -57,7 +57,7 @@ async function findResumablePostUrl(request: APIRequestContext): Promise<string 
 }
 
 // 锁定 SPA 当前工作空间为 ws1（测试种子数据所在）。
-// dev 库 project_directories[0] 是 id=3（便利贴项目），SPA 启动时 useApp 会把工作空间
+// dev 库 workspaces[0] 是 id=3（便利贴项目），SPA 启动时 useApp 会把工作空间
 // 默认成 dirs[0]；若不显式锁定，帖子页按 ws3 拉取会话数据，找不到本测试在 ws1 找到的
 // resumable 记录，ReplyInput（及快捷话术条）就不渲染，导致后续 waitFor 全部超时。
 // addInitScript 在页面首次脚本执行前注入 localStorage，保证 useTodoContext 的
