@@ -104,6 +104,22 @@ pub(crate) fn format_record_time(started_at: &str) -> String {
             CardActionHandler::patch_rendered_card(context, msg, &card).await;
             return true;
         }
+        // nav:/tasks <page> - 任务分页（每页 10；104 新增，与 todos/loops 同形态）。
+        if let Some(page_arg) = action.strip_prefix("nav:/tasks") {
+            let page = page_arg.trim().parse::<usize>().unwrap_or(1).max(1);
+            let state = SlashCommandHandler::assemble_help_card_state(context.ctx, context.db, context.bot_id, "task", page).await;
+            let card = build_help_console_card(&state);
+            CardActionHandler::patch_rendered_card(context, msg, &card).await;
+            return true;
+        }
+        // nav:/processes <page> - 工艺分页（每页 10；104 新增，工艺页纯查看）。
+        if let Some(page_arg) = action.strip_prefix("nav:/processes") {
+            let page = page_arg.trim().parse::<usize>().unwrap_or(1).max(1);
+            let state = SlashCommandHandler::assemble_help_card_state(context.ctx, context.db, context.bot_id, "process", page).await;
+            let card = build_help_console_card(&state);
+            CardActionHandler::patch_rendered_card(context, msg, &card).await;
+            return true;
+        }
         false
     }
 
@@ -127,6 +143,7 @@ pub(crate) fn format_record_time(started_at: &str) -> String {
             CardAction::Bind(workspace_id) => CardActionHandler::act_bind(context, *workspace_id).await,
             CardAction::RunTodo(todo_id) => CardActionHandler::act_run_todo(context, msg, *todo_id).await,
             CardAction::RunLoop(loop_id) => CardActionHandler::act_run_loop(context, msg, *loop_id).await,
+            CardAction::RunTask(task_id) => CardActionHandler::act_run_task(context, msg, *task_id).await,
             CardAction::SetExecutor(name) => CardActionHandler::act_set_executor(context, name).await,
         }
     }
@@ -137,6 +154,7 @@ pub(crate) fn format_record_time(started_at: &str) -> String {
             CardAction::Bind(_) | CardAction::Push(_) | CardAction::SetExecutor(_) => "workspace",
             CardAction::RunTodo(_) => "todo",
             CardAction::RunLoop(_) => "loop",
+            CardAction::RunTask(_) => "task",
             _ => "status",
         }
     }
@@ -325,6 +343,62 @@ pub(crate) fn format_record_time(started_at: &str) -> String {
         ActionOutcome { success: true, message: format!("已触发环路「{name}」") }
     }
 
+    /// 触发任务再执行（104 新增）：复用任务的 requirement 描述，经任务绑定的环路重跑一次。
+    /// 仅环路模式任务可执行——委派任务走讨论区 @处理人 接力，卡片不提供触发入口。
+    pub(crate) async fn act_run_task(context: &ListenerMessageContext<'_>, msg: &ChannelMessage, task_id: i64) -> ActionOutcome {
+        let Some(runner) = context.debounce.loop_runner() else {
+            return ActionOutcome { success: false, message: "环路执行器未就绪".to_string() };
+        };
+        let (receive_id, receive_id_type) = CardActionHandler::resolve_receive_target(msg);
+        let workspace_id = context.db.get_agent_bot_workspace_id(context.bot_id).await.ok().flatten();
+        let task = match context.db.get_task(task_id).await {
+            Ok(Some(t)) => t,
+            _ => return ActionOutcome { success: false, message: format!("任务 #{task_id} 不存在") },
+        };
+        // 校验任务属于 bot 当前 workspace，防止旧卡片跨 workspace 触发（与 act_run_todo 同口径）
+        if task.workspace_id != workspace_id {
+            return ActionOutcome {
+                success: false,
+                message: format!("任务 #{task_id} 不属于当前工作空间，无法执行"),
+            };
+        }
+        // 只允许环路模式执行：委派任务与无环路任务没有卡片侧可触发的执行路径
+        if task.execution_mode != "loop" {
+            return ActionOutcome {
+                success: false,
+                message: format!("任务 #{task_id} 是委派任务，请到 Web 端讨论区执行"),
+            };
+        }
+        let Some(loop_id) = task.loop_id else {
+            return ActionOutcome {
+                success: false,
+                message: format!("任务 #{task_id} 未关联环路，无法执行"),
+            };
+        };
+        // meta 口径与 Web 端 dispatch_manual_with_meta 一致（requirement + source），
+        // 飞书层没有 loop_trigger_dispatcher，LoopRunner::spawn_run 是等价触发路径。
+        let meta = serde_json::json!({ "requirement": task.description, "source": "task" });
+        let exec_id = runner.clone().spawn_run(
+            loop_id,
+            None,
+            "feishu_card",
+            meta,
+            Some(context.bot_id),
+            Some(receive_id.to_string()),
+            Some(receive_id_type.to_string()),
+        );
+        // 把新执行绑定回任务，让任务详情页的执行记录能挂到该任务；
+        // 绑定失败只 warn——执行已触发，回滚执行比留一条未绑定的记录代价更大。
+        if let Err(e) = context.db.update_loop_execution_task_id(exec_id, task_id).await {
+            tracing::warn!(
+                "[feishu:{}] 绑定 loop_execution {} 到任务 {} 失败: {}",
+                context.bot_id, exec_id, task_id, e
+            );
+        }
+        let title = task.title;
+        ActionOutcome { success: true, message: format!("已触发任务「{title}」") }
+    }
+
     /// 把当前 workspace 的「默认响应执行器」设为指定 executor：
     /// 既写 workspace_settings.default_response_executor，又把 default_response_type 改为 "executor"。
     /// 只写 executor 字段而不改 type 是有 bug 的——dispatch_default_response 按 default_response_type
@@ -460,6 +534,7 @@ pub(crate) fn format_record_time(started_at: &str) -> String {
             "bind" => CardAction::Bind(arg?.parse().ok()?),
             "runtodo" => CardAction::RunTodo(arg?.parse().ok()?),
             "runloop" => CardAction::RunLoop(arg?.parse().ok()?),
+            "runtask" => CardAction::RunTask(arg?.parse().ok()?),
             _ => return None,
         })
     }
@@ -507,12 +582,13 @@ mod tests {
     #[test]
     pub(crate) fn test_parse_card_action_variants() {
         use super::CardAction;
-        // 各 verb 正常解析（bind/runtodo/runloop 参数是 i64）
+        // 各 verb 正常解析（bind/runtodo/runloop/runtask 参数是 i64）
         assert_eq!(CardActionHandler::parse_card_action("act:/stop"), Some(CardAction::Stop));
         assert_eq!(CardActionHandler::parse_card_action("act:/new"), Some(CardAction::New));
         assert_eq!(CardActionHandler::parse_card_action("act:/bind 5"), Some(CardAction::Bind(5)));
         assert_eq!(CardActionHandler::parse_card_action("act:/runtodo 10"), Some(CardAction::RunTodo(10)));
         assert_eq!(CardActionHandler::parse_card_action("act:/runloop 20"), Some(CardAction::RunLoop(20)));
+        assert_eq!(CardActionHandler::parse_card_action("act:/runtask 30"), Some(CardAction::RunTask(30)));
         assert_eq!(
             CardActionHandler::parse_card_action("act:/push result_only"),
             Some(CardAction::Push("result_only".to_string()))
@@ -520,12 +596,24 @@ mod tests {
         // 缺参数 → None
         assert_eq!(CardActionHandler::parse_card_action("act:/bind"), None);
         assert_eq!(CardActionHandler::parse_card_action("act:/runtodo"), None);
+        assert_eq!(CardActionHandler::parse_card_action("act:/runtask"), None);
         assert_eq!(CardActionHandler::parse_card_action("act:/push"), None);
         // 非 i64 参数 / 未知 verb / 非 act 前缀 → None
         assert_eq!(CardActionHandler::parse_card_action("act:/bind abc"), None);
+        assert_eq!(CardActionHandler::parse_card_action("act:/runtask abc"), None);
         assert_eq!(CardActionHandler::parse_card_action("act:/unknown"), None);
         assert_eq!(CardActionHandler::parse_card_action("nav:/help task"), None);
         assert_eq!(CardActionHandler::parse_card_action("cmd:/new"), None);
+    }
+
+    /// 动作 → 刷新目标 Tab：RunTask 回任务页，与 RunTodo/RunLoop 口径一致。
+    #[test]
+    pub(crate) fn test_action_target_group_runtask_returns_task() {
+        use super::CardAction;
+        assert_eq!(CardActionHandler::action_target_group(&CardAction::RunTask(30)), "task");
+        assert_eq!(CardActionHandler::action_target_group(&CardAction::RunTodo(10)), "todo");
+        assert_eq!(CardActionHandler::action_target_group(&CardAction::RunLoop(20)), "loop");
+        assert_eq!(CardActionHandler::action_target_group(&CardAction::Stop), "status");
     }
 
     #[test]

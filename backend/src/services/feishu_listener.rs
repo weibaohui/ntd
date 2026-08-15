@@ -68,6 +68,8 @@ pub(crate) enum CardAction {
     RunTodo(i64),
     /// 触发环路，参数为 loop_id
     RunLoop(i64),
+    /// 触发任务再执行（104 新增），参数为 task_id；仅环路模式任务可执行
+    RunTask(i64),
     /// 设置推送级别，参数为 disabled/result_only/all
     Push(String),
     /// 设置默认执行器，参数为执行器名（ExecutorType::as_str）
