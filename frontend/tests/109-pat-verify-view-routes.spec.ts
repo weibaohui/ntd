@@ -42,6 +42,22 @@ test.describe('109 列表形态直达路由', () => {
     await expect(page.locator('.ant-table').first()).toBeVisible();
   });
 
+  test('事项：localStorage 记忆为 list 时 /#/todos?view=card 仍强制卡片形态', async ({ page }) => {
+    // 测试目的（review 修复用例）：URL ?view=card 必须压过 localStorage 记忆。
+    // 曾因 allowed 集合漏了 'card' 导致该场景回退到 localStorage（显示列表而非卡片）。
+    // 预置 localStorage 记忆为 list：仅 URL 参数被正确识别为 card 时才会选中「卡片视图」。
+    await page.addInitScript(() => {
+      localStorage.setItem('ntd_items_view', 'list');
+    });
+    await page.goto(`${BASE}/#/todos?view=card`);
+    await page.waitForTimeout(ROUTE_SETTLE_MS);
+
+    // Segmented 应选中「卡片视图」（桌面端 title），且不渲染列表 table
+    const toggle = page.getByTestId('todo-center-view-toggle');
+    await expect(toggle).toBeVisible();
+    await expect(toggle.locator('.ant-segmented-item-selected .ant-segmented-item-label')).toHaveAttribute('title', '卡片视图');
+  });
+
   test('事项：切到「执行监控」形态后 URL 同步 ?view=running', async ({ page }) => {
     // 测试目的：用户切换形态 → URL 被 replaceUrl 更新为 ?view=running，可分享直达
     await page.goto(`${BASE}/#/todos`);

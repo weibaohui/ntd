@@ -153,8 +153,10 @@ export function TodoListPage({
 
   // 视图模式：URL ?view= 优先（直达指定形态），无参数/非法值回退 localStorage 记忆。
   // storedView 只在挂载时读一次：URL 变化走 listView 同步，localStorage 只作无参数兜底。
+  // 注意 allowed 必须包含全部三种形态（含默认 card）：否则 localStorage 记忆为 list/running 时，
+  // ?view=card 会被误判非法而无法强制卡片形态（review 修复）。
   const [storedView] = useState<'card' | 'list' | 'running'>(readInitialView);
-  const viewMode = pickListView(listView, ['list', 'running'], storedView) as 'card' | 'list' | 'running';
+  const viewMode = pickListView(listView, ['card', 'list', 'running'], storedView) as 'card' | 'list' | 'running';
   // 统一搜索词：卡片/列表两种形态共用一个搜索框
   const [searchKeyword, setSearchKeyword] = useState('');
   // 刷新信号：每次点击刷新按钮自增，传递给 TodoCenterCardView 触发重新加载

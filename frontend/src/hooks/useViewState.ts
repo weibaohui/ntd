@@ -317,7 +317,9 @@ export function buildHashUrl(view: View, opts?: NavOpts): string {
     }
     const params = new URLSearchParams();
     if (typeof opts?.tab === 'string' && opts.tab.trim()) params.set('tab', opts.tab);
-    if (typeof opts?.view === 'string' && opts.view.trim()) params.set('view', opts.view);
+    // trim 后写入：与 todos/loops 的 appendListView 口径一致，避免「未 trim 值进 URL、
+    // syncFromHash 又 trim 复原」导致不同 useViewState 实例的 listView 短暂不一致（review 修复）。
+    if (typeof opts?.view === 'string' && opts.view.trim()) params.set('view', opts.view.trim());
     const qs = params.toString();
     return qs ? `#/tasks?${qs}` : `#/tasks`;
   }
@@ -347,7 +349,8 @@ export function buildHashUrl(view: View, opts?: NavOpts): string {
   // 避免编辑器 URL 上挂着与编辑无关的形态参数；list/缺省（列表态）才追加。
   if (view === 'processes' && opts?.processMode !== 'new' && opts?.processMode !== 'edit'
     && typeof opts?.view === 'string' && opts.view.trim()) {
-    params.set('view', opts.view);
+    // trim 后写入：与 appendListView/tasks 分支口径一致（review 修复）。
+    params.set('view', opts.view.trim());
   }
   const qs = params.toString();
   return qs ? `#${path}?${qs}` : `#${path}`;

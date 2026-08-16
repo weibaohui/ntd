@@ -94,6 +94,14 @@ describe('buildHashUrl 109 列表形态 ?view= 参数', () => {
     expect(buildHashUrl('tasks', { id: 5, tab: 'discussion' })).toBe('#/tasks/5?tab=discussion');
   });
 
+  it('test_buildHashUrl_view_param_is_trimmed', () => {
+    // review 修复：四视图的 ?view= 写入前统一 trim（与 appendListView 口径一致），
+    // 避免调用方误传 ' card ' 时 URL 携带空格、不同实例 listView 不一致
+    expect(buildHashUrl('tasks', { view: ' card ' })).toBe('#/tasks?view=card');
+    expect(buildHashUrl('todos', { view: ' list ' })).toBe('#/todos?view=list');
+    expect(buildHashUrl('processes', { view: ' mine ' })).toBe('#/processes?view=mine');
+  });
+
   it('test_buildHashUrl_processes_view_appends_query', () => {
     // 工艺「我的/模板」范围直达：/#/processes?view=template；
     // 编辑器态（new/edit）不携带形态参数，避免编辑器 URL 挂着无关 query

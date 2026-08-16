@@ -23,7 +23,7 @@ pub struct AuthStatus {
 pub struct VerifyResult {
     /// 账号登录名（GitCode /user 的 login 字段，分享 prompt 的 {owner} 口径）。
     pub username: String,
-    /// 显示名（可能为空字符串，前端展示时回退 username）。
+    /// 显示名；上游缺失时等于 username（build_git_user 兜底，前端无需再判空）。
     pub name: String,
 }
 
