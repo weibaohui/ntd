@@ -31,7 +31,7 @@ pub(crate) fn send_event(tx: &broadcast::Sender<ExecEvent>, event: ExecEvent) {
 
 /// 根据执行器类型创建对应的 EventPipeline（含专用提取器）
 ///
-/// pub(crate) 是为了让 message_debounce.rs 中的 executor 默认响应路径也能复用
+/// pub(crate) 是为了让 message_debounce.rs 中的管家聊天路径也能复用
 /// 同一套 pipeline 创建逻辑，避免每个调用方各自硬编码 executor 类型 → 提取器映射。
 pub(crate) fn create_pipeline_for_executor(executor: &dyn CodeExecutor) -> Option<EventPipeline> {
     // 093-B4：13 臂 match 已收敛进注册表——ExecutorDef.create_extractor 工厂指针。
@@ -46,7 +46,7 @@ pub(crate) fn create_pipeline_for_executor(executor: &dyn CodeExecutor) -> Optio
 /// workspace_id：执行所在的工作空间 ID，用于 FeishuPushService 按 workspace 隔离推送目标，
 /// 必须贯穿到每个事件发送路径，否则推送服务无法匹配到对应的推送目标。
 ///
-/// pub(crate) 是为了让 message_debounce.rs 中的 executor 默认响应路径在 finalize
+/// pub(crate) 是为了让 message_debounce.rs 中的管家聊天路径在 finalize
 /// pipeline 时也能复用同一套事件发送逻辑。
 pub(crate) fn emit_broadcast_event(
     event: &ExecutionEvent,
@@ -72,7 +72,7 @@ pub(crate) fn emit_broadcast_event(
 /// workspace_id：执行所在的工作空间 ID，用于 FeishuPushService 按 workspace 隔离推送目标，
 /// 必须贯穿到每个事件发送路径，否则推送服务无法匹配到对应的推送目标。
 ///
-/// pub(crate) 是为了让 message_debounce.rs 中的 executor 默认响应路径复用同一套解析逻辑，
+/// pub(crate) 是为了让 message_debounce.rs 中的管家聊天路径复用同一套解析逻辑，
 /// 确保 executor 直连执行与 todo 执行产生完全相同格式的事件。
 pub(crate) fn parse_and_broadcast(
     pipeline: &mut EventPipeline,

@@ -300,7 +300,7 @@ pub struct WikiChatRequest {
 ///
 /// 用户通过自然语言与 Wiki 交流：后端直接 spawn 执行器在 wiki 目录运行，
 /// 执行结果通过 HTTP 响应一次性返回（非流式、不创建 Todo、不持久化记录）。
-/// 设计参考：feishu_listener 的「executor 默认响应」模式，把触发源从飞书消息换成 HTTP POST。
+/// 设计参考：feishu_listener 的「管家聊天」模式（108 前称 executor 默认响应），把触发源从飞书消息换成 HTTP POST。
 pub async fn chat_with_wiki(
     State(state): State<AppState>,
     Path(workspace_id): Path<i64>,
