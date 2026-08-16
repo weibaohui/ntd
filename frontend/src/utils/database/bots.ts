@@ -55,10 +55,9 @@ export interface UpdateWorkspaceSlashCommandParams {
 
 export interface WorkspaceSettings {
   workspace_id: number;
-  default_response_type: 'todo' | 'loop' | 'executor';
-  default_response_todo_id: number | null;
-  default_response_loop_id: number | null;
-  default_response_executor: string | null;
+  // 空间管家（108）：专家名（空=纯执行器聊天）+ 执行器（空=未配置管家）
+  butler_expert_name: string | null;
+  butler_executor: string | null;
   // 工作空间级共识 prompt（需求 022）：该 workspace 下所有 todo 执行时作为前置 prompt 注入。
   // null 表示未配置；空串 "" 表示显式清空。
   system_prompt: string | null;
@@ -70,10 +69,9 @@ export interface WorkspaceSettings {
 }
 
 export interface UpdateWorkspaceSettingsParams {
-  default_response_type?: 'todo' | 'loop' | 'executor';
-  default_response_todo_id?: number;
-  default_response_loop_id?: number;
-  default_response_executor?: string;
+  // 空间管家（108）：传值（含空串=清空）覆写，不传保持原值。
+  butler_expert_name?: string;
+  butler_executor?: string;
   // 工作空间级共识 prompt：传入则覆写，不传则保持原值。
   // 用户清空时前端传空串 ""。
   system_prompt?: string;

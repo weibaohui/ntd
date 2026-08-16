@@ -15,6 +15,7 @@ import type { UseRunningRecordsReturn } from '@/hooks/useRunningRecords';
 const triggerTypeMap: Record<string, string> = {
   manual: '手动',
   slash_command: '斜杠命令',
+  butler_chat: '空间管家',
   default_response: '默认响应',
   scheduler: '定时',
 };

@@ -6,6 +6,7 @@ const { Text } = Typography;
 
 const processedTypeLabel = (type: string | null): string => {
   const map: Record<string, string> = {
+    'butler_chat': '空间管家',
     'default_response': '默认响应-事项',
     'default_response_executor': '默认响应-执行器',
     'default_response_loop': '默认响应-环路',

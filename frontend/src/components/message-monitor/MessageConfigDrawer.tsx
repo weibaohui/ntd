@@ -1,6 +1,6 @@
 import { Drawer, Divider } from 'antd';
 import { WorkspaceSlashCommandsPanel } from '@/components/settings/workspace/WorkspaceSlashCommandsPanel';
-import { DefaultResponseConfigPanel } from '@/components/settings/workspace/DefaultResponseConfigPanel';
+import { WorkspaceSettingsPanel } from '@/components/settings/workspace/WorkspaceSettingsPanel';
 
 interface MessageConfigDrawerProps {
   open: boolean;
@@ -31,8 +31,8 @@ export function MessageConfigDrawer({ open, workspaceId, onClose, onChanged }: M
         <Divider style={{ margin: '16px 0' }} />
 
         <div style={{ marginBottom: 16 }}>
-          <h4 style={{ margin: '0 0 12px', fontSize: 14, fontWeight: 500 }}>默认响应规则</h4>
-          <DefaultResponseConfigPanel
+          <h4 style={{ margin: '0 0 12px', fontSize: 14, fontWeight: 500 }}>空间管家</h4>
+          <WorkspaceSettingsPanel
             workspaceId={workspaceId}
             onChanged={onChanged}
           />

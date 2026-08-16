@@ -18,6 +18,7 @@ const TRIGGER_LABEL: Record<string, string> = {
   feishu_message: '飞书消息',
   feishu_command: '飞书命令',
   feishu_card: '飞书卡片',
+  slash_command: '斜杠命令',
   default_response: '默认响应',
   todo_completed: '事项完成',
   todo_state_changed: '状态变更',

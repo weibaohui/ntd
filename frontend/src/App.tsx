@@ -35,7 +35,6 @@ const AssistantManagementPage = lazy(() => import('@/components/assistant-manage
 const WikiViewPage = lazy(() => import('@/components/WikiViewPage').then(m => ({ default: m.WikiViewPage })));
 import { ExecutionPanel } from './components/ExecutionPanel';
 import { TodoDrawer } from './components/TodoDrawer';
-import { SmartCreateModal } from './components/SmartCreateModal';
 import { QuickCaptureModal } from './components/QuickCaptureModal';
 import { LeftRail, type LeftRailKey } from './components/shell/LeftRail';
 import { MobileHeader } from './components/shell/MobileHeader';
@@ -45,9 +44,7 @@ import { HelpPage } from '@/help/HelpPage';
 import { viewToPageId, findHelpPage } from '@/help/useHelpContent';
 
 import { EXECUTION_PANEL, LEFT_RAIL_WIDTH } from './constants';
-import * as db from './utils/database';
 import { loadDefaultExecutor } from '@/utils/executors';
-import type { Config } from './types';
 import zhCN from 'antd/locale/zh_CN';
 import './App.css';
 
@@ -79,7 +76,6 @@ function AppContent() {
   // 028：列表页 onEditTodo 触发时设置 editingTodo，TodoDrawer 切到编辑模式（todo != null）
   // 新建模式（顶部「新建」按钮）时 editingTodo 保持 null，TodoDrawer 走创建分支
   const [editingTodo, setEditingTodo] = useState<import('@/types').Todo | null>(null);
-  const [smartCreateOpen, setSmartCreateOpen] = useState(false);
   const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
   // 帮助弹窗开关 + 初始选中 pageId：由 LeftRail 帮助按钮触发，关闭即全部关闭
   const [helpModalOpen, setHelpModalOpen] = useState(false);
@@ -102,7 +98,6 @@ function AppContent() {
       return true;
     }
   });
-  const [appConfig, setAppConfig] = useState<Config | null>(null);
   // 028：loopDetailId 已从 URL path 段派生，不再需要 selectedLoopId React state
   const [loopUpdateCount, setLoopUpdateCount] = useState(0);
   // 刷新回调：触发 loopUpdateCount 递增，LoopListPage/LoopDetailPage 通过 useEffect 监听该值自动重载
@@ -154,9 +149,6 @@ function AppContent() {
     : 0;
 
   useEffect(() => {
-    db.getConfig().then(setAppConfig).catch(() => {
-      // 配置加载失败时使用默认值，非关键路径不阻塞主流程
-    });
     // 启动时加载默认执行器配置，供创建 todo、快速捕获等场景使用
     loadDefaultExecutor().catch(() => {
       // 加载失败时内部会回退到常量值，这里静默处理
@@ -230,11 +222,6 @@ function AppContent() {
     clearSelection();
     pushUrl('processes', { guid: templateGuid });
   }, [clearSelection, pushUrl]);
-
-  const handleSmartCreateSubmitted = () => {
-    // 056：全局 todos 桶已删除，创建成功后只需通知列表页重拉当前页
-    window.dispatchEvent(new Event(TODO_LIST_REFRESH_EVENT));
-  };
 
   const handleShowView = useCallback((view: View) => {
     clearSelection();
@@ -528,17 +515,6 @@ function AppContent() {
           }
         }}
         defaultWorkspaceId={state.selectedWorkspace}
-      />
-
-      {/* Smart Create Modal */}
-      <SmartCreateModal
-        open={smartCreateOpen}
-        onClose={() => setSmartCreateOpen(false)}
-        isMobile={isMobile}
-        config={appConfig}
-        workspaceId={state.selectedWorkspace}
-        onGoToSettings={() => handleShowView('settings')}
-        onSubmitted={handleSmartCreateSubmitted}
       />
 
       {/* Quick Capture Modal */}

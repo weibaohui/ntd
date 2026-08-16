@@ -128,6 +128,7 @@ export const TRIGGER_LABELS: Record<string, string> = {
   manual: '手动',
   cron: '定时',
   slash_command: '命令',
+  butler_chat: '空间管家',
   default_response: '默认回复',
 };
 
@@ -136,6 +137,7 @@ export const TRIGGER_COLORS: Record<string, string> = {
   manual: '#3b82f6',
   cron: '#8b5cf6',
   slash_command: '#f59e0b',
+  butler_chat: '#ec4899',
   default_response: '#22c55e',
 };
 
