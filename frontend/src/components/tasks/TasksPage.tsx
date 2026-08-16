@@ -23,7 +23,8 @@ import { CreateTaskModal } from '@/components/tasks/CreateTaskModal';
 import { TaskDetailPanel } from '@/components/tasks/TaskDetailPanel';
 import bundledApi from '@/api/bundled';
 import { listLoops } from '@/utils/database/loops';
-import { useViewState } from '@/hooks/useViewState';
+// 109：列表形态直达路由——useViewState 提供 listView（URL ?view= 原文）。
+import { useViewState, pickListView } from '@/hooks/useViewState';
 import type { LoopLite, TaskItem, TasksViewMode } from '@/components/tasks/constants';
 import { TASKS_VIEW_STORAGE_KEY } from '@/components/tasks/constants';
 
@@ -71,11 +72,15 @@ export function TasksPage({ workspaceId }: TasksPageProps) {
   // 因为 wsId 在 API 调用路径中是必填项，1 是开发环境默认工作空间。
   const wsId = workspaceId ?? 1;
 
-  // 视图路由：useViewState 提供 pushUrl/replaceUrl，用于驱动 URL hash。
-  const { pushUrl, replaceUrl } = useViewState();
+  // 视图路由：useViewState 提供 pushUrl/replaceUrl，用于驱动 URL hash；
+  // listView 是 URL ?view= 原文（列表形态直达路由）。
+  const { pushUrl, replaceUrl, listView } = useViewState();
 
-  // 视图模式：list/kanban/card，持久化到 localStorage。
-  const [viewMode, setViewMode] = useState<TasksViewMode>(readInitialView);
+  // 视图模式：URL ?view= 优先（直达指定形态），无参数/非法值回退 localStorage 记忆。
+  // storedView 只在挂载时读一次：URL 变化走 listView 同步，localStorage 只作无参数兜底。
+  const [storedView] = useState<TasksViewMode>(readInitialView);
+  // 泛型版 pickListView 由 allowed/fallback 推导 TasksViewMode，无需 as 断言
+  const viewMode: TasksViewMode = pickListView(listView, ['list', 'kanban', 'card'], storedView);
 
   // 任务列表数据（三态视图共享）。
   const [tasks, setTasks] = useState<TaskItem[]>([]);
@@ -108,10 +113,10 @@ export function TasksPage({ workspaceId }: TasksPageProps) {
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
 
-  // 切换视图时同步持久化。
+  // 切换视图：写 localStorage 兜底 + replaceUrl 同步 URL（?view=），使形态可直达/分享。
   const handleViewChange = (mode: TasksViewMode) => {
-    setViewMode(mode);
     persistView(mode);
+    replaceUrl('tasks', { view: mode });
   };
 
   // 拉取任务列表。
@@ -160,15 +165,15 @@ export function TasksPage({ workspaceId }: TasksPageProps) {
   const handleSelectTask = useCallback(
     (taskId: number | null, tab?: string) => {
       if (taskId == null) {
-        // 返回列表：replaceUrl 避免详情页占历史栈。
-        replaceUrl('tasks', {});
+        // 返回列表：replaceUrl 避免详情页占历史栈；带 view 参数保持 URL 显式表达当前形态。
+        replaceUrl('tasks', { view: viewMode });
         setSelectedTaskId(null);
       } else {
         pushUrl('tasks', { id: taskId, tab });
         setSelectedTaskId(taskId);
       }
     },
-    [pushUrl, replaceUrl],
+    [pushUrl, replaceUrl, viewMode],
   );
 
   // 新建任务 Modal 提交后回调：关闭 Modal + 刷新列表。

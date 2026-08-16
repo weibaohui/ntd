@@ -18,6 +18,15 @@ pub struct AuthStatus {
     pub configured: bool,
 }
 
+/// PAT 验证响应：PAT 所属账号的用户名（证明令牌当前可用）。
+#[derive(Debug, Serialize)]
+pub struct VerifyResult {
+    /// 账号登录名（GitCode /user 的 login 字段，分享 prompt 的 {owner} 口径）。
+    pub username: String,
+    /// 显示名；上游缺失时等于 username（build_git_user 兜底，前端无需再判空）。
+    pub name: String,
+}
+
 /// 保存 PAT 请求体。
 #[derive(Deserialize)]
 pub struct PatRequest {
@@ -40,6 +49,23 @@ pub async fn auth_status() -> ApiResponse<AuthStatus> {
     ApiResponse::ok(AuthStatus {
         configured: pat::load().is_some(),
     })
+}
+
+/// `GET /api/v1/contribution/verify`：验证已保存 PAT 并返回所属账号用户名。
+///
+/// 与保存时验证的区别：保存验证只确认「能过认证」，这里把 `/user` 响应的
+/// login 解析出来返回给前端展示，让用户肉眼确认 PAT 归属（验证入口在设置页）。
+pub async fn verify() -> Result<ApiResponse<VerifyResult>, AppError> {
+    // 未配置 PAT 时没有可验证对象，直接 400 提示先保存，避免对空凭据发起远程调用。
+    let cred = pat::load().ok_or_else(|| AppError::BadRequest("尚未配置 PAT".to_string()))?;
+    // 校验错误按原因分类映射：PAT 无效→400，网络/上游故障→500（避免误报诱导轮换令牌）。
+    let user = gitcode::fetch_user(&cred.pat)
+        .await
+        .map_err(map_verify_error)?;
+    Ok(ApiResponse::ok(VerifyResult {
+        username: user.username,
+        name: user.name,
+    }))
 }
 
 /// `POST /api/v1/contribution/pat`：验证并保存 PAT。
@@ -99,6 +125,7 @@ fn map_verify_error(err: gitcode::VerifyError) -> AppError {
 pub fn contribution_routes() -> Router<AppState> {
     Router::new()
         .route("/api/v1/contribution/auth/status", get(auth_status))
+        .route("/api/v1/contribution/verify", get(verify))
         .route("/api/v1/contribution/pat", post(save_pat))
         .route("/api/v1/contribution/logout", post(logout))
 }

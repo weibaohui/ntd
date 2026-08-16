@@ -18,6 +18,8 @@ import * as db from '@/utils/database';
 // 执行态（进度/统计推送）变化不再触发本组件重渲染。
 import { useTodos } from '@/hooks/useTodoContext';
 import { useIsMobile } from '@/hooks/useIsMobile';
+// 109：列表形态直达路由——useViewState 提供 listView（URL ?view= 原文）与 replaceUrl。
+import { useViewState, pickListView } from '@/hooks/useViewState';
 import { TODO_LIST_REFRESH_EVENT } from '@/constants';
 import { PageCard } from '@/components/common/PageCard';
 import { TodoCenterCardView } from '@/components/TodoCenterCardView';
@@ -31,7 +33,7 @@ import {
 } from './TodoListPageParts';
 import type { TodoCenterItem } from '@/types';
 
-/** localStorage 键：记住用户上次选的卡片/列表形态。 */
+/** localStorage 键：记住用户上次选的卡片/列表形态（URL 无 ?view= 参数时的兜底）。 */
 const VIEW_STORAGE_KEY = 'ntd_items_view';
 
 /** 读取持久化的视图模式，默认卡片（设计文档：默认卡片式事项中心）。 */
@@ -146,9 +148,16 @@ export function TodoListPage({
   const { state } = useTodos();
   const workspaceId = state.selectedWorkspace;
   const isMobile = useIsMobile();
+  // 109：listView 是 URL ?view= 原文（四个列表视图共用）；切换形态时用 replaceUrl 写回 URL。
+  const { listView, replaceUrl } = useViewState();
 
-  // 视图模式：默认卡片，用户切到列表后下次仍记住
-  const [viewMode, setViewMode] = useState<'card' | 'list' | 'running'>(readInitialView);
+  // 视图模式：URL ?view= 优先（直达指定形态），无参数/非法值回退 localStorage 记忆。
+  // storedView 只在挂载时读一次：URL 变化走 listView 同步，localStorage 只作无参数兜底。
+  // 注意 allowed 必须包含全部三种形态（含默认 card）：否则 localStorage 记忆为 list/running 时，
+  // ?view=card 会被误判非法而无法强制卡片形态（review 修复）。
+  const [storedView] = useState<'card' | 'list' | 'running'>(readInitialView);
+  // 泛型版 pickListView 由 allowed/fallback 推导联合类型，无需 as 断言
+  const viewMode = pickListView(listView, ['card', 'list', 'running'], storedView);
   // 统一搜索词：卡片/列表两种形态共用一个搜索框
   const [searchKeyword, setSearchKeyword] = useState('');
   // 刷新信号：每次点击刷新按钮自增，传递给 TodoCenterCardView 触发重新加载
@@ -160,11 +169,12 @@ export function TodoListPage({
   // 行操作 + 带参执行 Modal（已拆到 TodoListPageParts）
   const rowActions = useTodoRowActions({ workspaceId, onReload: reload });
 
-  // 持久化视图模式
+  // 持久化视图模式：写 localStorage 兜底 + replaceUrl 同步 URL（?view=），
+  // 使当前形态可分享/直达；replaceUrl 不膨胀浏览器历史栈（后退不逐次回退形态切换）。
   const handleViewChange = useCallback((m: 'card' | 'list' | 'running') => {
-    setViewMode(m);
     try { localStorage.setItem(VIEW_STORAGE_KEY, m); } catch { /* 静默降级 */ }
-  }, []);
+    replaceUrl('todos', { view: m });
+  }, [replaceUrl]);
 
   // 顶部刷新按钮：列表形态触发 reload，卡片形态刷新 key 驱动 TodoCenterCardView
   const handleReload = useCallback(() => {

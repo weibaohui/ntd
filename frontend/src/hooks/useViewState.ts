@@ -202,6 +202,29 @@ function getInitialProcessGuid(): string | null {
 }
 
 /**
+ * 109：从 hash query 解析列表形态参数（`?view=` 原文，不校验合法性）。
+ * 四个列表视图（todos/loops/tasks/processes）共用；合法性由各页面用
+ * `pickListView` 按视图值域校验，非法值一律回退 localStorage 记忆。
+ */
+function getInitialListView(): string | null {
+  const params = getHashSearchParams();
+  const view = params.get('view');
+  return view && view.trim() ? view.trim() : null;
+}
+
+/**
+ * 109：在「URL 形态参数」与「localStorage 记忆」之间选择实际形态。
+ * - raw 合法（在 allowed 内）→ 用 raw（URL 直达优先）；
+ * - raw 为 null/非法 → 回退 fallback（localStorage 记忆），保持旧行为。
+ * 抽成纯函数供四个列表页面共用，避免各写各的 includes 校验漂移。
+ * 泛型化让 T 由 allowed/fallback 字面量联合推导：调用点无需 as 断言，
+ * 且 allowed 写入不在 T 值域内的成员时编译期即报错（review 修复）。
+ */
+export function pickListView<T extends string>(raw: string | null, allowed: readonly T[], fallback: T): T {
+  return raw && (allowed as readonly string[]).includes(raw) ? (raw as T) : fallback;
+}
+
+/**
  * 029：从 hash query 解析工艺编辑器模式。
  * - `'new'` / `'edit'` → 对应编辑器态
  * - 缺失或非法值 → `'list'`（默认列表页）
@@ -230,6 +253,13 @@ interface NavOpts {
   /** postBack='task' 时返回的目标任务 id。 */
   postBackTaskId?: number | null;
   tab?: string | null;
+  /**
+   * 109：列表形态参数（仅 todos/loops/tasks/processes 四个列表视图生效）。
+   * 值域随视图而异：todos=card|list|running、loops=list|kanban、
+   * tasks=list|kanban|card、processes=mine|template。
+   * 用独立 query key `view`，与 `tab`/`processMode` 互不冲突。
+   */
+  view?: string | null;
   workspace?: number | null;
   slug?: string | null;
   file?: string | null;
@@ -250,6 +280,9 @@ interface NavOpts {
  * 构造 hash URL。
  * - todos/loops 用 path 段（/todos、/todos/:id、/todos/:id/posts/:rid、/loops、/loops/:id）
  * - 其他视图用 query 参数（与 028 之前一致）
+ *
+ * 109：四个列表视图（todos/loops/tasks/processes）支持 `?view=` 列表形态参数，
+ * 直达指定形态展示；详情/帖子页不携带该参数（形态只对列表页有意义）。
  */
 export function buildHashUrl(view: View, opts?: NavOpts): string {
   // 事项命名空间：path 段驱动
@@ -266,23 +299,31 @@ export function buildHashUrl(view: View, opts?: NavOpts): string {
     if (opts?.id != null) {
       return `#/todos/${opts.id}`;
     }
-    return `#/todos`;
+    // 列表页：带形态参数 → `#/todos?view=list` 直达指定形态（109）
+    return appendListView(`#/todos`, opts?.view);
   }
   // 环路命名空间：path 段驱动
   if (view === 'loops') {
     if (opts?.id != null) {
       return `#/loops/${opts.id}`;
     }
-    return `#/loops`;
+    return appendListView(`#/loops`, opts?.view);
   }
   // 任务命名空间：path 段驱动，与 todos/loops 一致。
   // 支持 ?tab= query：帖子页返回任务-讨论 tab 时据此恢复 Tabs 选中态（对齐 Settings 页模式）。
+  // 109：列表页额外支持 ?view= 形态参数；详情页只带 tab，不带 view。
   if (view === 'tasks') {
     if (opts?.id != null) {
       const qs = typeof opts.tab === 'string' && opts.tab.trim() ? `?tab=${opts.tab}` : '';
       return `#/tasks/${opts.id}${qs}`;
     }
-    return `#/tasks`;
+    const params = new URLSearchParams();
+    if (typeof opts?.tab === 'string' && opts.tab.trim()) params.set('tab', opts.tab);
+    // trim 后写入：与 todos/loops 的 appendListView 口径一致，避免「未 trim 值进 URL、
+    // syncFromHash 又 trim 复原」导致不同 useViewState 实例的 listView 短暂不一致（review 修复）。
+    if (typeof opts?.view === 'string' && opts.view.trim()) params.set('view', opts.view.trim());
+    const qs = params.toString();
+    return qs ? `#/tasks?${qs}` : `#/tasks`;
   }
   // 其他视图保持 query 参数风格
   const path = `/${view}`;
@@ -306,8 +347,24 @@ export function buildHashUrl(view: View, opts?: NavOpts): string {
   if (view === 'processes' && opts?.processMode && opts.processMode !== 'list') {
     params.set('processMode', opts.processMode);
   }
+  // 109：工艺列表形态参数（mine|template）。编辑器态（new/edit）不携带，
+  // 避免编辑器 URL 上挂着与编辑无关的形态参数；list/缺省（列表态）才追加。
+  if (view === 'processes' && opts?.processMode !== 'new' && opts?.processMode !== 'edit'
+    && typeof opts?.view === 'string' && opts.view.trim()) {
+    // trim 后写入：与 appendListView/tasks 分支口径一致（review 修复）。
+    params.set('view', opts.view.trim());
+  }
   const qs = params.toString();
   return qs ? `#${path}?${qs}` : `#${path}`;
+}
+
+/**
+ * 109：给列表页基础 URL 追加 `?view=` 形态参数（todos/loops 用）。
+ * 无参数/空白参数返回原 URL，避免生成 `#/todos?` 这类带空 query 的 URL。
+ */
+function appendListView(base: string, view?: string | null): string {
+  if (typeof view !== 'string' || !view.trim()) return base;
+  return `${base}?view=${encodeURIComponent(view.trim())}`;
 }
 
 const VIEW_TO_NAV_KEY: Record<View, string> = {
@@ -353,6 +410,9 @@ export function useViewState() {
   const [wikiSlug, setWikiSlug] = useState<string | null>(getInitialWikiSlug);
   const [blackboardFile, setBlackboardFile] = useState<string | null>(getInitialBlackboardFile);
   const [processGuid, setProcessGuid] = useState<string | null>(getInitialProcessGuid);
+  // 109：列表形态参数（?view= 原文）。四个列表视图的页面据此直达指定形态；
+  // 与 localStorage 的关系：URL 优先，无参数/非法值回退 localStorage（页面侧 pickListView）。
+  const [listView, setListView] = useState<string | null>(getInitialListView);
   // 029：工艺编辑器模式。list（默认）= 列表页，new/edit = 编辑器态。
   // 与 processGuid 配套：edit 模式下 processGuid 指向被编辑的工艺 guid（040 起按 guid 寻址）。
   const [processMode, setProcessMode] = useState<'list' | 'new' | 'edit'>(getInitialProcessMode);
@@ -361,7 +421,7 @@ export function useViewState() {
   const setters = {
     setActiveView, setTodoDetailId, setLoopDetailId, setTaskDetailId, setPostRecordId,
     setPostBackFrom, setPostBackTaskId,
-    setActiveTab, setWikiSlug, setBlackboardFile, setProcessGuid, setProcessMode,
+    setActiveTab, setWikiSlug, setBlackboardFile, setProcessGuid, setProcessMode, setListView,
   };
 
   const pushUrl = useCallback((view: View, opts?: NavOpts) => {
@@ -463,6 +523,9 @@ export function useViewState() {
     wikiSlug,
     blackboardFile,
     processGuid,
+    // 109：列表形态参数（?view= 原文）。仅 todos/loops/tasks/processes 四个列表视图消费，
+    // 其他视图恒为 null；页面用 pickListView(raw, allowed, localStorageFallback) 得出实际形态。
+    listView,
     // 029：工艺编辑器模式。list（默认）= 列表页，new/edit = 编辑器态。
     // ProcessPage 根据 mode 分流：list 渲染列表，new/edit 渲染 ProcessEditor。
     processMode,
@@ -495,12 +558,13 @@ function syncStateFromOptions(
     setBlackboardFile: (f: string | null) => void;
     setProcessGuid: (g: string | null) => void;
     setProcessMode: (m: 'list' | 'new' | 'edit') => void;
+    setListView: (v: string | null) => void;
   },
 ): void {
   const {
     setActiveView, setTodoDetailId, setLoopDetailId, setTaskDetailId, setPostRecordId,
     setPostBackFrom, setPostBackTaskId,
-    setActiveTab, setWikiSlug, setBlackboardFile, setProcessGuid, setProcessMode,
+    setActiveTab, setWikiSlug, setBlackboardFile, setProcessGuid, setProcessMode, setListView,
   } = setters;
   setActiveView(view);
   // todos: id+recordId 表示帖子页；仅 id 表示详情；都没有表示列表
@@ -518,6 +582,11 @@ function syncStateFromOptions(
   // 029：工艺编辑器模式仅在 processes view 下生效，其他 view 一律 fallback 到 'list'。
   // 避免跨视图串台：如 /#/dashboard?processMode=new 不应让 dashboard 渲染编辑器。
   setProcessMode(view === 'processes' ? (opts?.processMode ?? 'list') : 'list');
+  // 109：列表形态参数仅在四个列表视图下同步，其他视图一律清空，
+  // 避免跨视图串台（如 /#/dashboard?view=list 不应影响 dashboard）。
+  setListView(view === 'todos' || view === 'loops' || view === 'tasks' || view === 'processes'
+    ? (opts?.view ?? null)
+    : null);
 }
 
 /**
@@ -538,6 +607,7 @@ function syncFromHash(setters: {
   setBlackboardFile: (f: string | null) => void;
   setProcessGuid: (g: string | null) => void;
   setProcessMode: (m: 'list' | 'new' | 'edit') => void;
+  setListView: (v: string | null) => void;
 }): void {
   const segments = getHashPathSegments();
   const view = parseViewFromSegments(segments);
@@ -550,6 +620,9 @@ function syncFromHash(setters: {
   const rawProcessMode = params.get('processMode');
   const processMode: 'list' | 'new' | 'edit' =
     rawProcessMode === 'new' || rawProcessMode === 'edit' ? rawProcessMode : 'list';
+  // 109：列表形态参数原文（合法性由页面侧 pickListView 校验）。
+  const rawView = params.get('view');
+  const listView = rawView && rawView.trim() ? rawView.trim() : null;
 
   setters.setActiveView(view);
   // todos/loops/tasks 详情 id 仅在对应 view 下提取，避免跨视图串台
@@ -569,4 +642,8 @@ function syncFromHash(setters: {
   setters.setProcessGuid(view === 'processes' ? (guid || null) : null);
   // 029：工艺编辑器模式仅在 processes view 下生效，其他 view 即使带 ?processMode=new 也忽略。
   setters.setProcessMode(view === 'processes' ? processMode : 'list');
+  // 109：列表形态参数仅在四个列表视图下生效，其他 view 即使带 ?view= 也忽略（避免跨视图串台）。
+  setters.setListView(view === 'todos' || view === 'loops' || view === 'tasks' || view === 'processes'
+    ? listView
+    : null);
 }
