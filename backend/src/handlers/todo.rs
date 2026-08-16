@@ -918,8 +918,6 @@ pub fn v1_routes() -> Router<AppState> {
     Router::new()
         // 列表 + 创建：工作空间维度
         .route("/", get(get_todos_v1).post(create_todo_v1))
-        // 智能创建（AI 辅助新建并执行，复用 execution 域的 smart-create handler）
-        .route("/smart", post(super::execution::v1_smart_create_handler))
         // 事项中心（驱动视图五分类）
         .route("/center", get(get_todo_center_v1))
         // 056 轻量接口：ids / count / brief（静态段，axum 优先于 /{id} 匹配）

@@ -156,7 +156,7 @@ impl SlashCommandHandler {
     ///
     /// 支持两种场景：
     /// 1. 项目绑定场景：清除绑定的 todo/loop 会话
-    /// 2. 私聊默认响应执行器场景：清除默认执行器的会话
+    /// 2. 空间管家场景（108）：清除管家执行器的会话
     pub(crate) async fn handle_new(context: FeishuCommandContext<'_>) {
         let FeishuCommandContext {
             db,
@@ -219,7 +219,7 @@ impl SlashCommandHandler {
                 return;
             }
             Ok(None) => {
-                // 没有绑定项目，尝试私聊默认响应执行器场景
+                // 没有绑定项目，尝试空间管家场景
             }
             Err(e) => {
                 tracing::error!("[feishu:{}] /new query binding failed: {e}", bot_id);
@@ -239,7 +239,7 @@ impl SlashCommandHandler {
             }
         }
 
-        // 私聊默认响应执行器场景：获取 workspace 和默认执行器配置
+        // 空间管家场景：获取 workspace 和管家执行器配置
         let workspace_id = match db.get_agent_bot_workspace_id(bot_id).await {
             Ok(Some(wid)) => wid,
             Ok(None) => {
@@ -276,7 +276,7 @@ impl SlashCommandHandler {
             }
         };
 
-        // 获取 workspace 设置，判断默认响应类型
+        // 获取 workspace 设置，读取管家配置（108：默认响应类型拦截已随机制退役删除）
         let settings = match crate::db::workspace_setting::get_workspace_settings(db, workspace_id).await {
             Ok(Some(s)) => s,
             Ok(None) => {
@@ -286,7 +286,7 @@ impl SlashCommandHandler {
                     bot_id,
                     &receive_id,
                     receive_id_type,
-                    "📭 当前未配置默认响应，无法使用 /new。",
+                    "📭 尚未配置空间管家，无可清空的会话。",
                 )
                 .await;
                 if let Some(rid) = reaction_id {
@@ -312,25 +312,22 @@ impl SlashCommandHandler {
             }
         };
 
-        // 只处理 executor 类型的默认响应
-        if settings.default_response_type != "executor" {
+        // 未配置管家（含空串）→ 没有可清空的会话，直接提示
+        let Some(executor_name) = settings.butler_executor.filter(|e| !e.is_empty()) else {
             FeishuApiClient::send_text(
                 credentials,
                 token_manager,
                 bot_id,
                 &receive_id,
                 receive_id_type,
-                "📭 当前默认响应类型不是执行器，无法使用 /new 清空会话。",
+                "📭 尚未配置空间管家，无可清空的会话。",
             )
             .await;
             if let Some(rid) = reaction_id {
                 FeishuApiClient::delete_reaction(credentials, token_manager, bot_id, message_id, rid).await;
             }
             return;
-        }
-
-        let executor_name = settings.default_response_executor
-            .unwrap_or_else(|| "claudecode".to_string());
+        };
 
         // 清空执行器 session：设置为 None
         if let Err(e) = db.set_executor_session(workspace_id, &executor_name, None).await {
@@ -640,7 +637,7 @@ impl SlashCommandHandler {
     }
 
     /// 加载执行器选项排（104 从 assemble_help_card_state 抽出）：
-    /// 已注册执行器 + 标记当前 workspace 配的默认执行器，供工作空间页渲染按钮排。
+    /// 已注册执行器 + 标记当前 workspace 配的管家执行器，供工作空间页渲染按钮排。
     /// current_executor 传空串表示无 workspace 摘要，此时全部不标记。
     pub(crate) async fn load_executor_options(
         ctx: &ServiceContext,
@@ -659,15 +656,16 @@ impl SlashCommandHandler {
             .collect()
     }
 
-    /// 当前 workspace 摘要（名 + 默认执行器）。
+    /// 当前 workspace 摘要（名 + 管家执行器，108）。
     pub(crate) async fn build_workspace_summary(db: &Database, workspace_id: i64) -> Option<WorkspaceSummary> {
         let name = db.get_workspace_name_by_id(workspace_id).await.ok().flatten()?;
         let executor = crate::db::workspace_setting::get_workspace_settings(db, workspace_id)
             .await
             .ok()
             .flatten()
-            .and_then(|s| s.default_response_executor)
-            .unwrap_or_else(|| "claudecode".to_string());
+            .and_then(|s| s.butler_executor)
+            .filter(|e| !e.is_empty())
+            .unwrap_or_else(|| "未配置管家".to_string());
         Some(WorkspaceSummary { id: workspace_id, name, executor })
     }
 

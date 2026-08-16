@@ -492,8 +492,8 @@ pub const CONSOLIDATED_SCHEMA: &[&str] = &[
     r#"CREATE TABLE workspace_settings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 workspace_id INTEGER NOT NULL UNIQUE,
-                default_response_todo_id INTEGER, updated_at TEXT
-            , default_response_type TEXT, default_response_loop_id INTEGER, default_response_executor TEXT, system_prompt TEXT, delegate_max_rounds INTEGER)"#,
+                updated_at TEXT
+            , system_prompt TEXT, delegate_max_rounds INTEGER, butler_expert_name TEXT, butler_executor TEXT)"#,
     r#"CREATE TABLE workspace_slash_commands (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 workspace_id INTEGER NOT NULL,

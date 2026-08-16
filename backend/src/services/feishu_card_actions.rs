@@ -143,14 +143,14 @@ pub(crate) fn format_record_time(started_at: &str) -> String {
             CardAction::RunTodo(todo_id) => CardActionHandler::act_run_todo(context, msg, *todo_id).await,
             CardAction::RunLoop(loop_id) => CardActionHandler::act_run_loop(context, msg, *loop_id).await,
             CardAction::RunTask(task_id) => CardActionHandler::act_run_task(context, msg, *task_id).await,
-            CardAction::SetExecutor(name) => CardActionHandler::act_set_executor(context, name).await,
+            CardAction::SetButlerExecutor(name) => CardActionHandler::act_set_butler_executor(context, name).await,
         }
     }
 
     /// act 动作执行后刷新到的目标 Tab。
     pub(crate) fn action_target_group(action: &CardAction) -> &'static str {
         match action {
-            CardAction::Bind(_) | CardAction::Push(_) | CardAction::SetExecutor(_) => "workspace",
+            CardAction::Bind(_) | CardAction::Push(_) | CardAction::SetButlerExecutor(_) => "workspace",
             CardAction::RunTodo(_) => "todo",
             CardAction::RunLoop(_) => "loop",
             CardAction::RunTask(_) => "task",
@@ -158,33 +158,12 @@ pub(crate) fn format_record_time(started_at: &str) -> String {
         }
     }
 
-    /// bot 所属 workspace 的默认执行器（如 dev 的 pi）。
-    pub(crate) async fn workspace_default_executor(db: &Database, bot_id: i64) -> Option<String> {
+    /// bot 所属 workspace 的管家执行器（如 dev 的 pi）。
+    /// 返回 None 表示未配置管家（含空串），调用方按「管家不可用」处理。
+    pub(crate) async fn workspace_butler_executor(db: &Database, bot_id: i64) -> Option<String> {
         let wid = db.get_agent_bot_workspace_id(bot_id).await.ok().flatten()?;
         let settings = crate::db::workspace_setting::get_workspace_settings(db, wid).await.ok().flatten()?;
-        settings.default_response_executor
-    }
-
-    /// auto-seed：确保 workspace 的 default_response_type=executor。
-    /// 移除 binding 路径后 chat 全走 default_response，只 executor 分支可靠回复；切换 workspace 时兜底。
-    pub(crate) async fn ensure_default_response_executor(db: &Database, workspace_id: i64) {
-        let existing = crate::db::workspace_setting::get_workspace_settings(db, workspace_id).await.ok().flatten();
-        let need_seed = existing.as_ref().map(|s| s.default_response_type != "executor").unwrap_or(true);
-        if need_seed {
-            // executor 用该 workspace 已配的（若有），否则 None（dispatch 时兜底 claudecode）
-            let executor = existing.and_then(|s| s.default_response_executor);
-            let _ = crate::db::workspace_setting::upsert_workspace_settings(
-                db,
-                workspace_id,
-                Some("executor".to_string()),
-                None,
-                None,
-                executor,
-                // 飞书 listener 仅切 default_response，不动 workspace 共识 prompt
-                None,
-            )
-            .await;
-        }
+        settings.butler_executor.filter(|e| !e.is_empty())
     }
 
     /// 设置推送级别（直接设值，不走 /feishupush 循环）。
@@ -195,12 +174,13 @@ pub(crate) fn format_record_time(started_at: &str) -> String {
         }
     }
 
-    /// 开启新会话：清当前 workspace 默认执行器的 session。
+    /// 开启新会话：清当前 workspace 管家执行器的 session（108：session 键是 (workspace, 执行器)，
+    /// 未配置管家时清兜底 claudecode 的 session——清了不存在的 session 无害）。
     pub(crate) async fn act_new(context: &ListenerMessageContext<'_>) -> ActionOutcome {
         let Some(wid) = context.db.get_agent_bot_workspace_id(context.bot_id).await.ok().flatten() else {
             return ActionOutcome { success: false, message: "未设置工作空间".to_string() };
         };
-        let executor = CardActionHandler::workspace_default_executor(context.db, context.bot_id)
+        let executor = CardActionHandler::workspace_butler_executor(context.db, context.bot_id)
             .await
             .unwrap_or_else(|| "claudecode".to_string());
         match context.db.set_executor_session(wid, &executor, None).await {
@@ -232,7 +212,8 @@ pub(crate) fn format_record_time(started_at: &str) -> String {
         }
     }
 
-    /// 切换工作空间：级联清旧 binding + 改 agent_bot.workspace_id + auto-seed default_response。
+    /// 切换工作空间：级联清旧 binding + 改 agent_bot.workspace_id。
+    /// 108 起不再 auto-seed 默认响应——管家配置属于工作空间自身数据，切换不触碰。
     pub(crate) async fn act_bind(context: &ListenerMessageContext<'_>, workspace_id: i64) -> ActionOutcome {
         let bot_id = context.bot_id;
         // 级联（对齐 move_bot_to_workspace）：删 pending binding / disable 旧 binding
@@ -248,8 +229,6 @@ pub(crate) fn format_record_time(started_at: &str) -> String {
         if let Err(e) = context.db.update_agent_bot_workspace_id(bot_id, workspace_id).await {
             return ActionOutcome { success: false, message: format!("切换工作空间失败：{e}") };
         }
-        // auto-seed default_response_type=executor，确保切完后 chat 消息有回复
-        CardActionHandler::ensure_default_response_executor(context.db, workspace_id).await;
         let name = context
             .db
             .get_workspace_name_by_id(workspace_id)
@@ -424,16 +403,15 @@ pub(crate) fn format_record_time(started_at: &str) -> String {
         }
     }
 
-    /// 把当前 workspace 的「默认响应执行器」设为指定 executor：
-    /// 既写 workspace_settings.default_response_executor，又把 default_response_type 改为 "executor"。
-    /// 只写 executor 字段而不改 type 是有 bug 的——dispatch_default_response 按 default_response_type
-    /// 分发，type 仍是 todo/loop 时点了「默认响应执行器」按钮也不会真的切到执行器，所以两字段必须同改。
+    /// 把当前 workspace 的「管家执行器」设为指定 executor（108）。
+    /// 只写 workspace_settings.butler_executor 单字段——默认响应机制已退役，
+    /// 管家执行器是唯一消费该字段的通路，不再有 type 联动。
     /// executor 名必须是已注册的（ExecutorType::as_str），否则视为无效拒绝写入。
-    pub(crate) async fn act_set_executor(context: &ListenerMessageContext<'_>, executor_name: &str) -> ActionOutcome {
+    pub(crate) async fn act_set_butler_executor(context: &ListenerMessageContext<'_>, executor_name: &str) -> ActionOutcome {
         let Some(wid) = context.db.get_agent_bot_workspace_id(context.bot_id).await.ok().flatten() else {
             return ActionOutcome { success: false, message: "未设置工作空间".to_string() };
         };
-        // 校验 executor 已注册，避免把无效名写进 settings 让下次 dispatch 失败
+        // 校验 executor 已注册，避免把无效名写进 settings 让管家通路下次执行失败
         let registered: Vec<String> = CardActionHandler::registered_executor_names(context).await;
         if !registered.iter().any(|s| s == executor_name) {
             return ActionOutcome {
@@ -441,27 +419,23 @@ pub(crate) fn format_record_time(started_at: &str) -> String {
                 message: format!("执行器 {executor_name} 未注册（可用：{}）", registered.join(", ")),
             };
         }
-        // type 与 executor 同改：type=executor 让 dispatch 走执行器分支，executor 字段指定具体执行器。
-        // todo_id/loop_id 传 None 表示不动旧值——切回 todo/loop 时这些旧值还有用，不在这里清。
+        // 管家专家 / 共识 prompt 传 None 不动旧值——本动作只管执行器一个关注点。
         match crate::db::workspace_setting::upsert_workspace_settings(
             context.db,
             wid,
-            Some("executor".to_string()),
-            None,
             None,
             Some(executor_name.to_string()),
-            // 仅切默认执行器，不动 workspace 共识 prompt
             None,
         )
         .await
         {
-            Ok(_) => ActionOutcome { success: true, message: format!("默认响应执行器已设为 {executor_name}") },
+            Ok(_) => ActionOutcome { success: true, message: format!("管家执行器已设为 {executor_name}") },
             Err(e) => ActionOutcome { success: false, message: format!("设置失败：{e}") },
         }
     }
 
     /// 从 executor_registry 拉出所有已注册执行器名（ExecutorType::as_str），返回 Vec<String>。
-    /// 抽出来一是让 act_set_executor 更短，二是注册名查询本身也是可复用的小步骤。
+    /// 抽出来一是让 act_set_butler_executor 更短，二是注册名查询本身也是可复用的小步骤。
     pub(crate) async fn registered_executor_names(context: &ListenerMessageContext<'_>) -> Vec<String> {
         context
             .ctx
@@ -555,7 +529,7 @@ pub(crate) fn format_record_time(started_at: &str) -> String {
             "stop" => CardAction::Stop,
             "new" => CardAction::New,
             "push" => CardAction::Push(arg?.to_string()),
-            "setexecutor" => CardAction::SetExecutor(arg?.to_string()),
+            "setbutlerexecutor" => CardAction::SetButlerExecutor(arg?.to_string()),
             "bind" => CardAction::Bind(arg?.parse().ok()?),
             "runtodo" => CardAction::RunTodo(arg?.parse().ok()?),
             "runloop" => CardAction::RunLoop(arg?.parse().ok()?),
