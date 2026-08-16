@@ -1473,6 +1473,24 @@ mod tests {
         assert!(!json.contains("点按钮原地操作"), "底部 note 已删除，不应再出现");
     }
 
+    /// 管家执行器按钮排的空列表边界：available_executors 为空时显示占位文案，
+    /// 且不生成任何 act:/setbutlerexecutor 动作（无按钮可点，避免点击空值）。
+    #[test]
+    fn test_build_help_console_card_workspace_butler_executor_empty_list() {
+        let state = HelpCardState {
+            current_group: "workspace".to_string(),
+            workspace: Some(WorkspaceSummary { id: 1, name: "my-app".to_string(), executor: "pi".to_string() }),
+            available_executors: vec![],
+            ..Default::default()
+        };
+        let json = render_card_map(&build_help_console_card(&state), "sk").to_string();
+        assert!(json.contains("暂无已注册执行器"), "空列表应显示占位文案");
+        assert!(
+            !json.contains("act:/setbutlerexecutor"),
+            "空列表不应生成管家执行器按钮动作"
+        );
+    }
+
     /// 底部 note 删除对所有 Tab 生效：状态页也不应再出现旧 note 文案。
     #[test]
     fn test_build_help_console_card_status_page_note_removed() {

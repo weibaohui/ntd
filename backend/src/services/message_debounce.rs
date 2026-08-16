@@ -2118,21 +2118,21 @@ mod butler_expert_tests {
 
     /// workspace_id 为 None（如历史遗留消息）→ None，不查库
     #[tokio::test]
-    async fn test_load_butler_expert_none_workspace() {
+    async fn test_load_butler_expert_name_none_workspace() {
         let db = Database::new(":memory:").await.unwrap();
         assert_eq!(load_butler_expert_name(&db, None).await, None);
     }
 
     /// 工作空间没有 settings 行 → None
     #[tokio::test]
-    async fn test_load_butler_expert_no_settings_row() {
+    async fn test_load_butler_expert_name_no_settings_row() {
         let db = Database::new(":memory:").await.unwrap();
         assert_eq!(load_butler_expert_name(&db, Some(1)).await, None);
     }
 
     /// 配置了非空专家名 → Some(原名)
     #[tokio::test]
-    async fn test_load_butler_expert_configured() {
+    async fn test_load_butler_expert_name_configured() {
         let db = Database::new(":memory:").await.unwrap();
         crate::db::workspace_setting::upsert_workspace_settings(
             &db,
@@ -2151,7 +2151,7 @@ mod butler_expert_tests {
 
     /// 空串 = 显式清空，与 NULL 同等视为未配置 → None
     #[tokio::test]
-    async fn test_load_butler_expert_empty_string_is_unconfigured() {
+    async fn test_load_butler_expert_name_empty_string_is_unconfigured() {
         let db = Database::new(":memory:").await.unwrap();
         crate::db::workspace_setting::upsert_workspace_settings(
             &db,

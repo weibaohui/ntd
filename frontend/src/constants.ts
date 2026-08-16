@@ -123,7 +123,9 @@ export const STATUS_LABELS: Record<string, string> = {
   failed: '失败',
 };
 
-/** 触发类型标签 */
+/** 触发类型标签（执行记录详情等处共用）。
+ *  butler_chat 是 108 起非斜杠消息的现行 trigger_type；
+ *  default_response 为 108 前历史值——DB 存量记录仍用它，标签保留做历史展示。 */
 export const TRIGGER_LABELS: Record<string, string> = {
   manual: '手动',
   cron: '定时',
@@ -132,7 +134,8 @@ export const TRIGGER_LABELS: Record<string, string> = {
   default_response: '默认回复',
 };
 
-/** 触发类型颜色（独立于 STATUS_COLORS，值碰巧相同但语义不同） */
+/** 触发类型颜色（独立于 STATUS_COLORS，值碰巧相同但语义不同）。
+ *  与 TRIGGER_LABELS 同键共用：粉色 #ec4899 与历史执行器聊天色系区分。 */
 export const TRIGGER_COLORS: Record<string, string> = {
   manual: '#3b82f6',
   cron: '#8b5cf6',

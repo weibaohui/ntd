@@ -11,6 +11,8 @@ import { useTodos } from '@/hooks/useTodoContext';
 import { CardShell } from './CardShell';
 
 // trigger_type 枚举值 → 中文,提升可读性;未知值原样回退。
+// 环路执行历史触发类型 → 标签。键集与本卡数据源（环路执行记录 trigger_type）对齐；
+// 未知类型由消费处回退显示原字符串，此处不需要兜底键。
 const TRIGGER_LABEL: Record<string, string> = {
   manual: '手动',
   cron: '定时',
@@ -18,7 +20,9 @@ const TRIGGER_LABEL: Record<string, string> = {
   feishu_message: '飞书消息',
   feishu_command: '飞书命令',
   feishu_card: '飞书卡片',
+  // 斜杠命令触发是 108 后环路唯一的消息侧入口（斜杠规则显式触发）
   slash_command: '斜杠命令',
+  // 108 前的历史触发类型，存量环路记录展示用
   default_response: '默认响应',
   todo_completed: '事项完成',
   todo_state_changed: '状态变更',

@@ -489,6 +489,9 @@ pub const CONSOLIDATED_SCHEMA: &[&str] = &[
             cost REAL NOT NULL DEFAULT 0.0,
             FOREIGN KEY (daily_stat_id) REFERENCES usage_daily_stats(id) ON DELETE CASCADE
         )"#,
+    // workspace_settings：默认响应四列（default_response_*，108 前旧机制）不进全新安装的
+    // consolidated schema——V95 已在升级路径删除它们，新库直接落最终态（管家两列）。
+    // butler_expert_name / butler_executor 为 NULL 表示未配置（空串同义，见 entity 注释）。
     r#"CREATE TABLE workspace_settings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 workspace_id INTEGER NOT NULL UNIQUE,

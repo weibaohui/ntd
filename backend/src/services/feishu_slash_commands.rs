@@ -657,8 +657,15 @@ impl SlashCommandHandler {
     }
 
     /// 当前 workspace 摘要（名 + 管家执行器，108）。
+    ///
+    /// 管家执行器展示语义：无设置行 / 字段 NULL / 空串 / DB 读取失败统一显示
+    /// 「未配置管家」。读取失败与显式空值同口径是有意的——这是控制台卡片上的
+    /// 一行展示文案而非路由判据（路由判据在 feishu_listener::resolve_butler_executor，
+    /// 失败时走提示分支），为展示文案区分错误态只会让卡片渲染出非预期文案，
+    /// 降级为「未配置」既不误导用户也不阻断卡片刷新。
     pub(crate) async fn build_workspace_summary(db: &Database, workspace_id: i64) -> Option<WorkspaceSummary> {
         let name = db.get_workspace_name_by_id(workspace_id).await.ok().flatten()?;
+        // 读失败（ok() 吞掉 Err）与空值同走「未配置管家」占位，理由见函数注释
         let executor = crate::db::workspace_setting::get_workspace_settings(db, workspace_id)
             .await
             .ok()

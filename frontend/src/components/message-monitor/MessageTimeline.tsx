@@ -114,9 +114,7 @@ export function MessageTimeline({
           ]}
         />
 
-        {/* 处理类型：value 是语义关键字，后端用 processed_type LIKE '%关键字%' 落到具体类型。
-            slash→斜杠命令(slash_command/slash_command_loop)、butler→空间管家(butler_chat)、
-            loop→环路(*_loop)、executor→执行器（108 前的历史值 default_response_executor）。 */}
+        {/* 处理类型：value 是语义关键字，后端用 processed_type LIKE '%关键字%' 落到具体类型。 */}
         <Select
           size="small"
           placeholder="处理类型"
@@ -125,9 +123,14 @@ export function MessageTimeline({
           onChange={(v: string) => { onProcessedTypeChange(v === 'all' ? undefined : v); onPageChange(1, pageSize); }}
           options={[
             { value: 'all', label: '全部类型' },
+            // 匹配 slash_command / slash_command_loop（斜杠规则显式触发）
             { value: 'slash', label: '斜杠命令' },
+            // 匹配 butler_chat：108 起非斜杠消息的现行处理类型
             { value: 'butler', label: '空间管家' },
+            // 匹配 *_loop：包含斜杠环路与 108 前的默认响应环路历史值
             { value: 'loop', label: '环路' },
+            // 匹配 default_response_executor（108 前历史值）——现行执行器聊天是
+            // butler_chat，归入「空间管家」；本项仅为查询旧库存量消息保留
             { value: 'executor', label: '执行器(历史)' },
           ]}
         />

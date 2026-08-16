@@ -130,7 +130,7 @@ mod tests {
 
     /// 创建时传入 system_prompt，再读取能拿到相同值。
     #[tokio::test]
-    async fn test_upsert_with_system_prompt() {
+    async fn test_upsert_workspace_settings_with_system_prompt() {
         let db = Database::new(":memory:").await.unwrap();
         let prompt = "## 工作空间共识\n- 产物目录：./target";
         upsert_workspace_settings(&db, 1, None, None, Some(prompt.to_string()))
@@ -142,7 +142,7 @@ mod tests {
 
     /// 已存在 system_prompt，再次 upsert 传 None 时旧值保持不变。
     #[tokio::test]
-    async fn test_upsert_none_system_prompt_keeps_old() {
+    async fn test_upsert_workspace_settings_none_system_prompt_keeps_old() {
         let db = Database::new(":memory:").await.unwrap();
         let prompt = "原有共识";
         // 第一次写入 prompt
@@ -160,7 +160,7 @@ mod tests {
 
     /// 显式传空串 Some("") 覆写原 prompt。
     #[tokio::test]
-    async fn test_upsert_empty_string_clears_prompt() {
+    async fn test_upsert_workspace_settings_empty_string_clears_prompt() {
         let db = Database::new(":memory:").await.unwrap();
         // 先写入非空 prompt
         upsert_workspace_settings(&db, 1, None, None, Some("共识".to_string()))

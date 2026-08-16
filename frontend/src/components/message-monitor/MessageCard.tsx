@@ -22,6 +22,8 @@ const processedTypeLabel = (type: string | null): string => {
 
 const processedTypeColor = (type: string | null): string => {
   const map: Record<string, string> = {
+    // butler_chat 沿用 purple：与历史 default_response_executor（同为执行器直聊）视觉连续，
+    // 用户看旧消息/新消息不需要重新建立颜色心智
     'butler_chat': 'purple',
     'default_response': 'default',
     'default_response_executor': 'purple',

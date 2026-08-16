@@ -130,6 +130,7 @@ pub(crate) fn format_record_time(started_at: &str) -> String {
     }
 
     /// 按 CardAction 分发到具体执行函数。
+    /// 每个 act_* 返回 ActionOutcome（成功/失败 + 用户可读文案），不在此层吞错误。
     pub(crate) async fn run_card_action(
         context: &ListenerMessageContext<'_>,
         msg: &ChannelMessage,
@@ -140,14 +141,17 @@ pub(crate) fn format_record_time(started_at: &str) -> String {
             CardAction::New => CardActionHandler::act_new(context).await,
             CardAction::Stop => CardActionHandler::act_stop(context).await,
             CardAction::Bind(workspace_id) => CardActionHandler::act_bind(context, *workspace_id).await,
+            // RunTodo/RunLoop/RunTask 需要回信给点击者，多传 msg 用于解析 receive target
             CardAction::RunTodo(todo_id) => CardActionHandler::act_run_todo(context, msg, *todo_id).await,
             CardAction::RunLoop(loop_id) => CardActionHandler::act_run_loop(context, msg, *loop_id).await,
             CardAction::RunTask(task_id) => CardActionHandler::act_run_task(context, msg, *task_id).await,
+            // 管家执行器切换只改配置不执行任务，无需回信目标
             CardAction::SetButlerExecutor(name) => CardActionHandler::act_set_butler_executor(context, name).await,
         }
     }
 
     /// act 动作执行后刷新到的目标 Tab。
+    /// 设置类动作（绑定/推送/管家执行器）结果落在工作空间页，执行类动作回到各自列表页。
     pub(crate) fn action_target_group(action: &CardAction) -> &'static str {
         match action {
             CardAction::Bind(_) | CardAction::Push(_) | CardAction::SetButlerExecutor(_) => "workspace",
@@ -161,8 +165,11 @@ pub(crate) fn format_record_time(started_at: &str) -> String {
     /// bot 所属 workspace 的管家执行器（如 dev 的 pi）。
     /// 返回 None 表示未配置管家（含空串），调用方按「管家不可用」处理。
     pub(crate) async fn workspace_butler_executor(db: &Database, bot_id: i64) -> Option<String> {
+        // bot → workspace 两跳查询；任一跳失败/缺行都折成 None——
+        // 卡片动作读配置属于展示辅助，不因 DB 抖动报错中断，未配置语义足够。
         let wid = db.get_agent_bot_workspace_id(bot_id).await.ok().flatten()?;
         let settings = crate::db::workspace_setting::get_workspace_settings(db, wid).await.ok().flatten()?;
+        // 空串与 NULL 同义（前端清空选择时写空串）：显式过滤，避免把 "" 当执行器名用
         settings.butler_executor.filter(|e| !e.is_empty())
     }
 
@@ -180,9 +187,12 @@ pub(crate) fn format_record_time(started_at: &str) -> String {
         let Some(wid) = context.db.get_agent_bot_workspace_id(context.bot_id).await.ok().flatten() else {
             return ActionOutcome { success: false, message: "未设置工作空间".to_string() };
         };
+        // 未配置管家时兜底 claudecode：与 handle_butler_chat 的默认执行器口径一致，
+        // 用户在配置管家前也能用 /new 清掉历史遗留会话
         let executor = CardActionHandler::workspace_butler_executor(context.db, context.bot_id)
             .await
             .unwrap_or_else(|| "claudecode".to_string());
+        // set (wid, executor, None)：None 即清除该键，下次对话从全新 session 开始
         match context.db.set_executor_session(wid, &executor, None).await {
             Ok(_) => ActionOutcome { success: true, message: "已开启新会话".to_string() },
             Err(e) => ActionOutcome { success: false, message: format!("失败：{e}") },
@@ -419,7 +429,9 @@ pub(crate) fn format_record_time(started_at: &str) -> String {
                 message: format!("执行器 {executor_name} 未注册（可用：{}）", registered.join(", ")),
             };
         }
-        // 管家专家 / 共识 prompt 传 None 不动旧值——本动作只管执行器一个关注点。
+        // 管家专家 / 共识 prompt 传 None 不动旧值——本动作只管执行器一个关注点，
+        // 换执行器不应顺带清掉用户精心配的专家与共识。
+        // 校验通过才写：upsert 的 Some(executor_name) 覆写 butler_executor 单字段。
         match crate::db::workspace_setting::upsert_workspace_settings(
             context.db,
             wid,
@@ -529,6 +541,8 @@ pub(crate) fn format_record_time(started_at: &str) -> String {
             "stop" => CardAction::Stop,
             "new" => CardAction::New,
             "push" => CardAction::Push(arg?.to_string()),
+            // arg? 无参数即 None：拒绝「设执行器但没给名字」的残缺动作，
+            // 与上面 push 同一口径——带参 verb 缺参一律不落库。
             // "setexecutor" 是 108 前的旧 verb：历史控制台卡片上的按钮仍可点，
             // 别名保留一代，避免旧卡片按钮变死按钮。
             "setbutlerexecutor" | "setexecutor" => CardAction::SetButlerExecutor(arg?.to_string()),
@@ -609,6 +623,8 @@ mod tests {
         assert_eq!(CardActionHandler::parse_card_action("act:/runtodo"), None);
         assert_eq!(CardActionHandler::parse_card_action("act:/runtask"), None);
         assert_eq!(CardActionHandler::parse_card_action("act:/push"), None);
+        // setbutlerexecutor 缺参数同样拒绝：没有执行器名的设置请求无法落库，必须 None
+        assert_eq!(CardActionHandler::parse_card_action("act:/setbutlerexecutor"), None);
         // 非 i64 参数 / 未知 verb / 非 act 前缀 → None
         assert_eq!(CardActionHandler::parse_card_action("act:/bind abc"), None);
         assert_eq!(CardActionHandler::parse_card_action("act:/runtask abc"), None);

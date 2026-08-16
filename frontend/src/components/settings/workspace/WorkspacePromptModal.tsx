@@ -23,7 +23,8 @@ export function WorkspacePromptModal({ open, workspaceId, workspaceName, onClose
     if (!open) return;
     db.getWorkspaceSettings(workspaceId)
       .then(s => {
-        // null 视作空串让 TextArea 显示空，与 WorkspaceSettingsPanel 保持一致
+        // null（未配置）视作空串：TextArea 的受控值必须是 string，
+        // 传 null 会退化为非受控组件并触发 antd 警告
         form.setFieldsValue({ system_prompt: s.system_prompt ?? '' });
       })
       .catch((err: any) => message.error('加载工作空间设置失败: ' + (err?.message || String(err))));

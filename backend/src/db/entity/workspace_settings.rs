@@ -17,7 +17,9 @@ pub struct Model {
     /// 空串 "" 表示显式清空（语义同 None，保留写入侧「清空」与「不动」的区分）。
     pub butler_expert_name: Option<String>,
     /// 空间管家的执行器类型（如 claudecode / pi）。
-    /// None 表示未配置管家：未命中斜杠命令的消息收到配置引导提示，不执行任何东西。
+    /// None 或空串 "" 都表示未配置管家（前端清空选择时提交空串）：
+    /// 未命中斜杠命令的消息收到配置引导提示，不执行任何东西。
+    /// 下游读取方统一按「空=未配置」过滤（resolve_butler_executor / workspace_butler_executor）。
     pub butler_executor: Option<String>,
     /// 工作空间级共识 prompt（需求 022）。
     /// 该 workspace 下任意 todo 执行时，适配层把这段 prompt 拼到 message 最前面，

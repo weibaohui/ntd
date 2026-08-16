@@ -91,6 +91,40 @@ mod tests {
             .ok()
     }
 
+    /// 断言列存在/不存在：把 table_has_column 的 Result 解包成 bool，
+    /// 让测试主体的断言读起来是一句话而非四行样板。
+    async fn column_exists(db: &Database, table: &str, col: &str) -> bool {
+        table_has_column(db, table, col)
+            .await
+            .expect("table_has_column must succeed")
+    }
+
+    /// 断言管家两列就位 + 四个默认响应旧列消失——升级后的 schema 形状检查。
+    /// 抽出来是因为「列在/列不在」是纯形状断言，混在主测试里会淹没数据承接这条主线。
+    async fn assert_schema_shape_after_v95(db: &Database) {
+        // 管家两列就位
+        assert!(
+            column_exists(db, "workspace_settings", "butler_expert_name").await,
+            "butler_expert_name 列应已新增"
+        );
+        assert!(
+            column_exists(db, "workspace_settings", "butler_executor").await,
+            "butler_executor 列应已新增"
+        );
+        // 四个默认响应列全部消失
+        for col in [
+            "default_response_type",
+            "default_response_todo_id",
+            "default_response_loop_id",
+            "default_response_executor",
+        ] {
+            assert!(
+                !column_exists(db, "workspace_settings", col).await,
+                "旧列 {col} 应已删除"
+            );
+        }
+    }
+
     /// 老库升级回归：v94 态库（默认响应四列齐全 + default_response_executor 有值）
     /// 跑 V95 后：butler_executor 承接旧值、两个管家列存在、四个默认响应列消失。
     /// 这是 108 的数据安全底线——承接保证已配置执行器的工作空间升级后行为不断档。
@@ -113,19 +147,8 @@ mod tests {
 
         V95WorkspaceButler.up(&db).await.expect("V95 must succeed");
 
-        // 管家两列就位
-        assert!(
-            table_has_column(&db, "workspace_settings", "butler_expert_name")
-                .await
-                .expect("table_has_column must succeed"),
-            "butler_expert_name 列应已新增"
-        );
-        assert!(
-            table_has_column(&db, "workspace_settings", "butler_executor")
-                .await
-                .expect("table_has_column must succeed"),
-            "butler_executor 列应已新增"
-        );
+        // schema 形状：管家两列在、旧四列消失
+        assert_schema_shape_after_v95(&db).await;
         // 旧默认执行器值承接到管家执行器
         assert_eq!(
             query_text(&db, "SELECT butler_executor FROM workspace_settings WHERE workspace_id = 9").await,
@@ -138,20 +161,6 @@ mod tests {
             Some("共识保留".to_string()),
             "system_prompt 存量数据必须原样保留"
         );
-        // 四个默认响应列全部消失
-        for col in [
-            "default_response_type",
-            "default_response_todo_id",
-            "default_response_loop_id",
-            "default_response_executor",
-        ] {
-            assert!(
-                !table_has_column(&db, "workspace_settings", col)
-                    .await
-                    .expect("table_has_column must succeed"),
-                "旧列 {col} 应已删除"
-            );
-        }
     }
 
     /// 承接不覆盖新值：butler_executor 已有值时（如升级前人工写过），
