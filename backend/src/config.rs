@@ -682,7 +682,7 @@ mod tests {
         let restored: Config = serde_yaml::from_str(&yaml).unwrap();
         assert_eq!(restored.port, 1234);
         assert!(restored.db_path.contains(".ntd/data.db"));
-        // slash_command_rules 和 default_response_todo_id 已迁移到数据库表
+        // slash_command_rules 已迁移到数据库表；default_response_todo_id 随默认响应机制退役（108）
     }
 
     #[test]

@@ -43,7 +43,7 @@ pub(crate) fn format_record_time(started_at: &str) -> String {
 
         // cmd: 前缀 - 把卡片点击转成命令执行。
         // 构造一条虚拟命令消息复用 handle_message 的完整分发链路（内置命令 try_route_builtin_command
-        // + 自定义规则 route_slash_or_default_response），与用户在会话里手动发送该命令效果一致。
+        // + 自定义规则/空间管家 route_slash_or_butler），与用户在会话里手动发送该命令效果一致。
         if let Some(cmd_text) = CardActionHandler::parse_card_command(action) {
             tracing::info!(
                 "[feishu:{}] card cmd → redispatch as message: {:?}",
