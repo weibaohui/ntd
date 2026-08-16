@@ -55,7 +55,7 @@ export interface UpdateWorkspaceSlashCommandParams {
 
 export interface WorkspaceSettings {
   workspace_id: number;
-  // 空间管家（108）：专家名（空=纯执行器聊天）+ 执行器（空=未配置管家）
+  // 聊天直连（108 修订）：专家名（仅群聊注入，空=群聊无专家人设）+ 执行器（单聊/群聊共用，空=未配置）
   butler_expert_name: string | null;
   butler_executor: string | null;
   // 工作空间级共识 prompt（需求 022）：该 workspace 下所有 todo 执行时作为前置 prompt 注入。
@@ -69,7 +69,7 @@ export interface WorkspaceSettings {
 }
 
 export interface UpdateWorkspaceSettingsParams {
-  // 空间管家（108）：传值（含空串=清空）覆写，不传保持原值。
+  // 聊天直连（108 修订）：传值（含空串=清空）覆写，不传保持原值。
   butler_expert_name?: string;
   butler_executor?: string;
   // 工作空间级共识 prompt：传入则覆写，不传则保持原值。

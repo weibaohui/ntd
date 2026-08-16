@@ -156,7 +156,7 @@ impl SlashCommandHandler {
     ///
     /// 支持两种场景：
     /// 1. 项目绑定场景：清除绑定的 todo/loop 会话
-    /// 2. 空间管家场景（108）：清除管家执行器的会话
+    /// 2. 聊天直连场景（108 修订）：清除对话执行器的会话
     pub(crate) async fn handle_new(context: FeishuCommandContext<'_>) {
         let FeishuCommandContext {
             db,
@@ -219,7 +219,7 @@ impl SlashCommandHandler {
                 return;
             }
             Ok(None) => {
-                // 没有绑定项目，尝试空间管家场景
+                // 没有绑定项目，尝试聊天直连场景
             }
             Err(e) => {
                 tracing::error!("[feishu:{}] /new query binding failed: {e}", bot_id);
@@ -239,7 +239,7 @@ impl SlashCommandHandler {
             }
         }
 
-        // 空间管家场景：获取 workspace 和管家执行器配置
+        // 聊天直连场景：获取 workspace 和对话执行器配置
         let workspace_id = match db.get_agent_bot_workspace_id(bot_id).await {
             Ok(Some(wid)) => wid,
             Ok(None) => {
@@ -286,7 +286,7 @@ impl SlashCommandHandler {
                     bot_id,
                     &receive_id,
                     receive_id_type,
-                    "📭 尚未配置空间管家，无可清空的会话。",
+                    "📭 尚未配置对话执行器，无可清空的会话。",
                 )
                 .await;
                 if let Some(rid) = reaction_id {
@@ -312,7 +312,7 @@ impl SlashCommandHandler {
             }
         };
 
-        // 未配置管家（含空串）→ 没有可清空的会话，直接提示
+        // 未配置对话执行器（含空串）→ 没有可清空的会话，直接提示
         let Some(executor_name) = settings.butler_executor.filter(|e| !e.is_empty()) else {
             FeishuApiClient::send_text(
                 credentials,
@@ -320,7 +320,7 @@ impl SlashCommandHandler {
                 bot_id,
                 &receive_id,
                 receive_id_type,
-                "📭 尚未配置空间管家，无可清空的会话。",
+                "📭 尚未配置对话执行器，无可清空的会话。",
             )
             .await;
             if let Some(rid) = reaction_id {
@@ -329,8 +329,10 @@ impl SlashCommandHandler {
             return;
         };
 
-        // 清空执行器 session：设置为 None
-        if let Err(e) = db.set_executor_session(workspace_id, &executor_name, None).await {
+        // 清空执行器 session（110：按 chat 维度清——/new 在哪个会话里发就清哪个维度的
+        // session，单聊 /new 不误伤群聊管家会话，反之亦然）：设置为 None
+        let scope = crate::db::workspace::ExecutorSessionScope::from_chat_type(chat_type);
+        if let Err(e) = db.set_executor_session(workspace_id, &executor_name, scope, None).await {
             tracing::error!("[feishu:{}] /new clear executor session failed: {e}", bot_id);
             FeishuApiClient::send_text(
                 credentials,
@@ -348,10 +350,11 @@ impl SlashCommandHandler {
         }
 
         tracing::info!(
-            "[feishu:{}] /new command: cleared executor session for {}, workspace={}",
+            "[feishu:{}] /new command: cleared executor session for {}, workspace={}, scope={:?}",
             bot_id,
             executor_name,
-            workspace_id
+            workspace_id,
+            scope
         );
         FeishuApiClient::send_text(
             credentials,
@@ -656,23 +659,23 @@ impl SlashCommandHandler {
             .collect()
     }
 
-    /// 当前 workspace 摘要（名 + 管家执行器，108）。
+    /// 当前 workspace 摘要（名 + 对话执行器，108 修订）。
     ///
-    /// 管家执行器展示语义：无设置行 / 字段 NULL / 空串 / DB 读取失败统一显示
-    /// 「未配置管家」。读取失败与显式空值同口径是有意的——这是控制台卡片上的
+    /// 对话执行器展示语义：无设置行 / 字段 NULL / 空串 / DB 读取失败统一显示
+    /// 「未配置」。读取失败与显式空值同口径是有意的——这是控制台卡片上的
     /// 一行展示文案而非路由判据（路由判据在 feishu_listener::resolve_butler_executor，
     /// 失败时走提示分支），为展示文案区分错误态只会让卡片渲染出非预期文案，
     /// 降级为「未配置」既不误导用户也不阻断卡片刷新。
     pub(crate) async fn build_workspace_summary(db: &Database, workspace_id: i64) -> Option<WorkspaceSummary> {
         let name = db.get_workspace_name_by_id(workspace_id).await.ok().flatten()?;
-        // 读失败（ok() 吞掉 Err）与空值同走「未配置管家」占位，理由见函数注释
+        // 读失败（ok() 吞掉 Err）与空值同走「未配置」占位，理由见函数注释
         let executor = crate::db::workspace_setting::get_workspace_settings(db, workspace_id)
             .await
             .ok()
             .flatten()
             .and_then(|s| s.butler_executor)
             .filter(|e| !e.is_empty())
-            .unwrap_or_else(|| "未配置管家".to_string());
+            .unwrap_or_else(|| "未配置".to_string());
         Some(WorkspaceSummary { id: workspace_id, name, executor })
     }
 

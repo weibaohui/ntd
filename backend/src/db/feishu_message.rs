@@ -212,8 +212,8 @@ impl Database {
             );
         }
 
-        // 按处理类型类别筛选：前端传语义关键字(slash/butler/loop 等)，后端用包含匹配落到具体 processed_type。
-        // slash→slash_command(+loop)、butler→butler_chat、loop→*_loop；
+        // 按处理类型类别筛选：前端传语义关键字(slash/butler/dm/loop 等)，后端用包含匹配落到具体 processed_type。
+        // slash→slash_command(+loop)、butler→butler_chat（群聊管家）、dm→dm_chat（单聊直聊）、loop→*_loop；
         // 历史值 default_response*（108 前产生）仍可按原文匹配。
         // 同样转义防通配符(虽来自固定下拉，保持一致并防御直接调 API 的任意输入)。
         if let Some(pt) = processed_type {

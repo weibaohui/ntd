@@ -81,7 +81,7 @@ pub enum ExecEvent {
         review_status: String,
     },
     /// 私聊直达卡片消息：消息经 executor 处理后直接把结果发回飞书，不存储执行记录。
-    /// 用于空间管家聊天（butler_chat）场景（开始/结束/错误等关键节点）。
+    /// 用于聊天直连（dm_chat 单聊直聊 / butler_chat 群聊管家）场景（开始/结束/错误等关键节点）。
     DirectCardMessage {
         /// Feishu bot_id
         bot_id: i64,

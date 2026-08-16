@@ -562,17 +562,17 @@ pub struct HelpCardState {
     pub page: usize,
     /// 所有工作空间（工作空间页切换用）
     pub workspaces: Vec<WorkspaceItem>,
-    /// 已注册的可用执行器列表（工作空间页切换管家执行器用）。
+    /// 已注册的可用执行器列表（工作空间页切换对话执行器用）。
     /// listener 从 executor_registry.list_executors() 拉出，卡片层只读渲染成按钮排。
     pub available_executors: Vec<ExecutorOption>,
 }
 
-/// 可选执行器项（工作空间页「管家执行器」按钮排）。
+/// 可选执行器项（工作空间页「对话执行器」按钮排）。
 #[derive(Debug, Clone)]
 pub struct ExecutorOption {
     /// 执行器名（ExecutorType::as_str，如 "pi" / "claudecode"）
     pub name: String,
-    /// 是否为当前工作空间已配的管家执行器（primary 高亮）
+    /// 是否为当前工作空间已配的对话执行器（primary 高亮）
     pub is_current: bool,
 }
 
@@ -796,7 +796,7 @@ fn pagination_buttons(kind: &str, page: usize, total_pages: usize) -> Vec<CardBu
     nav_btns
 }
 
-/// 工作空间页：当前工作空间 + 列表[切换] + 管家执行器按钮排 + 推送级别 3 按钮。
+/// 工作空间页：当前工作空间 + 列表[切换] + 对话执行器按钮排 + 推送级别 3 按钮。
 fn build_workspace_page(mut builder: CardBuilder, state: &HelpCardState) -> CardBuilder {
     builder = builder.markdown(&match &state.workspace {
         Some(w) => format!("**当前工作空间** {}（执行器 {}）", w.name, w.executor),
@@ -812,9 +812,9 @@ fn build_workspace_page(mut builder: CardBuilder, state: &HelpCardState) -> Card
         );
     }
     builder = builder.divider();
-    // 管家执行器选择（108）：换行列出所有已注册执行器，当前配的 primary 高亮，
-    // 点击即设为该 workspace 的管家执行器（写 workspace_settings.butler_executor 单字段）。
-    builder = builder.markdown("**管家执行器**");
+    // 对话执行器选择（108 修订：单聊直聊/群聊管家共用）：换行列出所有已注册执行器，
+    // 当前配的 primary 高亮，点击即设（写 workspace_settings.butler_executor 单字段）。
+    builder = builder.markdown("**对话执行器**");
     if state.available_executors.is_empty() {
         builder = builder.markdown("_暂无已注册执行器_");
     } else {
@@ -1445,7 +1445,7 @@ mod tests {
         assert!(json.contains("pi"), "应显示执行器");
     }
 
-    /// 工作空间页「管家执行器」按钮排（108）：默认响应机制退役后文案为「管家执行器」，
+    /// 工作空间页「对话执行器」按钮排（108 修订）：文案为「对话执行器」（单聊/群聊共用），
     /// available_executors 非空时每个执行器渲染成 act:/setbutlerexecutor 按钮，当前配的 primary 高亮。
     /// 底部 note「💡 直接发消息即可让 AI 执行任务」已删除，断言其不出现在任何页。
     #[test]
@@ -1461,7 +1461,7 @@ mod tests {
         };
         let json = render_card_map(&build_help_console_card(&state), "sk").to_string();
         // 新文案落地
-        assert!(json.contains("管家执行器"), "应使用新文案「管家执行器」");
+        assert!(json.contains("对话执行器"), "应使用新文案「对话执行器」");
         // 旧文案不应残留——默认响应机制已退役，两处旧词都必须消失
         assert!(!json.contains("默认响应执行器"), "旧文案「默认响应执行器」应已移除");
         assert!(!json.contains("**默认执行器**"), "旧文案「默认执行器」段落标题应已移除");
@@ -1473,7 +1473,7 @@ mod tests {
         assert!(!json.contains("点按钮原地操作"), "底部 note 已删除，不应再出现");
     }
 
-    /// 管家执行器按钮排的空列表边界：available_executors 为空时显示占位文案，
+    /// 对话执行器按钮排的空列表边界：available_executors 为空时显示占位文案，
     /// 且不生成任何 act:/setbutlerexecutor 动作（无按钮可点，避免点击空值）。
     #[test]
     fn test_build_help_console_card_workspace_butler_executor_empty_list() {
@@ -1487,7 +1487,7 @@ mod tests {
         assert!(json.contains("暂无已注册执行器"), "空列表应显示占位文案");
         assert!(
             !json.contains("act:/setbutlerexecutor"),
-            "空列表不应生成管家执行器按钮动作"
+            "空列表不应生成对话执行器按钮动作"
         );
     }
 

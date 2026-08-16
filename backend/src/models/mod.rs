@@ -728,9 +728,11 @@ mod placeholder_tests {
     }
 
     #[test]
-    fn test_build_trigger_params_butler_chat() {
+    fn test_build_trigger_params_chat() {
+        // 108 修订：非斜杠消息返回中性 "chat"——dm/butler 的区分由
+        // debounce_push_butler_chat 按 chat_type 落值，本函数只标记「非斜杠」
         let (trigger_type, params) = build_trigger_params("hello world");
-        assert_eq!(trigger_type, "butler_chat");
+        assert_eq!(trigger_type, "chat");
         assert_eq!(params.get("content"), Some(&"hello world".to_string()));
         assert_eq!(params.get("message"), Some(&"hello world".to_string()));
         assert_eq!(params.get("raw_message"), Some(&"hello world".to_string()));
@@ -740,7 +742,7 @@ mod placeholder_tests {
     #[test]
     fn test_build_trigger_params_slash_only_no_body() {
         let (trigger_type, params) = build_trigger_params("/help");
-        assert_eq!(trigger_type, "butler_chat");
+        assert_eq!(trigger_type, "chat");
         assert_eq!(params.get("content"), Some(&"/help".to_string()));
         assert_eq!(params.get("message"), Some(&"/help".to_string()));
         assert!(params.get("slash_command").is_none());
