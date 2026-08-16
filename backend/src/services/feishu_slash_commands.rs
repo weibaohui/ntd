@@ -329,8 +329,10 @@ impl SlashCommandHandler {
             return;
         };
 
-        // 清空执行器 session：设置为 None
-        if let Err(e) = db.set_executor_session(workspace_id, &executor_name, None).await {
+        // 清空执行器 session（110：按 chat 维度清——/new 在哪个会话里发就清哪个维度的
+        // session，单聊 /new 不误伤群聊管家会话，反之亦然）：设置为 None
+        let scope = crate::db::workspace::ExecutorSessionScope::from_chat_type(chat_type);
+        if let Err(e) = db.set_executor_session(workspace_id, &executor_name, scope, None).await {
             tracing::error!("[feishu:{}] /new clear executor session failed: {e}", bot_id);
             FeishuApiClient::send_text(
                 credentials,
@@ -348,10 +350,11 @@ impl SlashCommandHandler {
         }
 
         tracing::info!(
-            "[feishu:{}] /new command: cleared executor session for {}, workspace={}",
+            "[feishu:{}] /new command: cleared executor session for {}, workspace={}, scope={:?}",
             bot_id,
             executor_name,
-            workspace_id
+            workspace_id,
+            scope
         );
         FeishuApiClient::send_text(
             credentials,

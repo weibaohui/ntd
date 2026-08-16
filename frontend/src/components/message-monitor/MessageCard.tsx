@@ -26,6 +26,9 @@ const processedTypeColor = (type: string | null): string => {
     // butler_chat 沿用 purple：与历史 default_response_executor（同为执行器直聊）视觉连续，
     // 用户看旧消息/新消息不需要重新建立颜色心智
     'butler_chat': 'purple',
+    // dm_chat（108 修订：单聊纯直聊）同属执行器直聊族，用 blue 与群聊 purple 区分——
+    // 单聊/群聊是两种对话场景，颜色区分让消息流里一眼可辨
+    'dm_chat': 'blue',
     'default_response': 'default',
     'default_response_executor': 'purple',
     'default_response_loop': 'cyan',

@@ -616,6 +616,7 @@ impl MessageDebounce {
                     resolved.resume_session_id.clone(),
                     // 专家注入判据：仅群聊注入，单聊恒 None（纯执行器对话）
                     if msg.chat_type == "group" { msg.workspace_id } else { None },
+                    // chat_type 由 handler 派生 session scope 与日志标签（110 修订）
                     &msg.chat_type,
                 )
                 .await
@@ -1191,11 +1192,13 @@ async fn resolve_executor_instance(
 /// 阶段③：确定本次执行使用的 session_id。
 ///
 /// 优先用调用方传入的 resume_session_id（绑定 todo 场景）；否则从 DB 读 workspace
-/// 已保存的 session（私聊多轮对话 resume）。DB 读失败只记日志不致命——降级为新会话。
+/// 已保存的 session（按 chat 维度隔离，110 修订：单聊/群聊互不串扰）。
+/// DB 读失败只记日志不致命——降级为新会话。
 async fn resolve_executor_session(
     db: &Arc<Database>,
     workspace_id: Option<i64>,
     executor_type: &str,
+    scope: crate::db::workspace::ExecutorSessionScope,
     resume_session_id: Option<String>,
 ) -> Option<String> {
     // 调用方显式传入的优先：绑定 todo 等「指明要 resume 某 session」的场景
@@ -1204,7 +1207,7 @@ async fn resolve_executor_session(
     }
     // 否则查 workspace 级别的保存 session；4 个分支全部非致命，最坏降级为 None（新会话）
     let wid = workspace_id?;
-    match db.get_executor_session(wid, executor_type).await {
+    match db.get_executor_session(wid, executor_type, scope).await {
         // 用 Some(&sid) 复刻原实现的日志格式（原日志打印 session_id = Some(sid)）
         Ok(Some(Some(sid))) => {
             tracing::info!(
@@ -1268,12 +1271,14 @@ async fn resolve_direct_output(
 ///
 /// best-effort：提取不到 / 保存失败都只记日志——session 持久化不影响主流程结果。
 /// 调用方仅在 status.success() 时调用。
+/// scope（110 修订）：session 按 chat 维度隔离存储，单聊/群聊互不串扰。
 async fn persist_executor_session(
     db: &Arc<Database>,
     executor: &Arc<dyn crate::adapters::CodeExecutor>,
     logs: &[ParsedLogEntry],
     workspace_id: Option<i64>,
     executor_type: &str,
+    scope: crate::db::workspace::ExecutorSessionScope,
 ) {
     // 没有 workspace_id 无法持久化（session 绑定在 workspace 维度）
     let Some(wid) = workspace_id else {
@@ -1286,13 +1291,14 @@ async fn persist_executor_session(
         return;
     };
     tracing::info!(
-        "[debounce] extracted session_id={} for executor={}, saving to DB",
+        "[debounce] extracted session_id={} for executor={} (scope={:?}), saving to DB",
         new_session_id,
-        executor_type
+        executor_type,
+        scope
     );
-    // 保存失败只 warn：下次私聊会重新开 session，体验退化为非 resume，不阻塞主流程
+    // 保存失败只 warn：下次会重新开 session，体验退化为非 resume，不阻塞主流程
     if let Err(e) = db
-        .set_executor_session(wid, executor_type, Some(new_session_id))
+        .set_executor_session(wid, executor_type, scope, Some(new_session_id))
         .await
     {
         tracing::warn!("[debounce] 保存 executor session 失败: {:?}", e);
@@ -1419,9 +1425,14 @@ impl MessageDebounce {
         // 与 workspace_id 分开传是因为两者语义不同——执行器运行目录用 workspace_id，
         // 专家注入开关用本参数，单聊两者恰好一个 Some 一个 None。
         expert_workspace_id: Option<i64>,
-        // 日志标识用：群聊 "butler_chat" / 单聊 "dm_chat"，便于在 tracing 里区分通路。
-        trigger_label: &str,
+        // 消息来源 chat_type（"p2p"/"group"）：session scope（110 单聊/群聊会话隔离）、
+        // 日志通路标签（dm_chat/butler_chat）都由它派生——一个来源派生两个用途，
+        // 避免调用方分别传 scope/label 两个可漂移参数（review 修复）。
+        chat_type: &str,
     ) -> Result<crate::executor_service::ExecutionResult, Option<String>> {
+        // 派生量集中在此：scope 驱动 session 读写隔离，label 仅用于 tracing 前缀
+        let session_scope = crate::db::workspace::ExecutorSessionScope::from_chat_type(chat_type);
+        let trigger_label = if chat_type == "p2p" { "dm_chat" } else { "butler_chat" };
         let executor_type = executor_type.unwrap_or("claudecode");
 
         // 统一的飞书回复出口：开始/结束/错误三类消息都走 DirectCardMessage，
@@ -1444,7 +1455,7 @@ impl MessageDebounce {
         let executor =
             resolve_executor_instance(executor_registry, executor_type, &send_msg).await?;
         let session_id =
-            resolve_executor_session(db, workspace_id, executor_type, resume_session_id.clone())
+            resolve_executor_session(db, workspace_id, executor_type, session_scope, resume_session_id.clone())
                 .await;
 
         tracing::info!(
@@ -1554,7 +1565,7 @@ impl MessageDebounce {
 
         // ⑧ 成功时持久化 session（best-effort，失败只 warn）
         if outcome.success {
-            persist_executor_session(db, &executor, &logs, workspace_id, executor_type).await;
+            persist_executor_session(db, &executor, &logs, workspace_id, executor_type, session_scope).await;
         }
 
         Ok(crate::executor_service::ExecutionResult {

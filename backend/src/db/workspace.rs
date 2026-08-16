@@ -240,13 +240,54 @@ fn executor_session_lock(workspace_id: i64) -> Arc<Mutex<()>> {
         .clone()
 }
 
+/// session 存储的 chat 维度（110 修订）：单聊与群聊各自独立的会话上下文。
+///
+/// 背景：session 键原本只有 (workspace, executor)，单聊与群聊互相 resume 对方的
+/// 会话——110 把单聊（纯直聊）/群聊（管家+专家人设）语义分家后，两种上下文
+/// 互串会造成专家人设污染单聊裸会话（或反之），故按 chat scope 分键存储。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutorSessionScope {
+    /// 单聊（dm_chat）：用户与执行器的一对一对话
+    Dm,
+    /// 群聊（butler_chat）：群聊管家对话
+    Group,
+}
+
+impl ExecutorSessionScope {
+    /// 从消息 chat_type 解析：p2p→Dm，其余（含未知类型兜底）→Group——
+    /// 与 FeishuListener::chat_trigger_type 的分流口径保持一致，
+    /// 避免 session 键与 trigger_type 落在两个不同的维度上。
+    pub fn from_chat_type(chat_type: &str) -> Self {
+        if chat_type == "p2p" { Self::Dm } else { Self::Group }
+    }
+
+    /// JSON map 的键前缀：`dm`/`group`，拼上执行器名成复合键（如 `dm:pi`）。
+    /// 选冒号分隔是因为执行器名不含冒号（ExecutorType::as_str 是 ASCII 标识符），
+    /// 不存在歧义碰撞。
+    fn key_prefix(self) -> &'static str {
+        match self {
+            Self::Dm => "dm",
+            Self::Group => "group",
+        }
+    }
+
+    /// 拼 JSON 复合键
+    fn scoped_key(self, executor: &str) -> String {
+        format!("{}:{}", self.key_prefix(), executor)
+    }
+}
+
 impl Database {
-    /// 获取指定工作空间指定执行器的私聊会话 session_id。
+    /// 获取指定工作空间指定执行器在指定 chat 维度的会话 session_id。
     ///
     /// 返回值：
     /// - `Ok(None)`：工作空间不存在
-    /// - `Ok(Some(None))`：工作空间存在但该执行器没有 session
-    /// - `Ok(Some(Some(sid)))`：工作空间存在且该执行器有 session
+    /// - `Ok(Some(None))`：工作空间存在但该维度执行器没有 session
+    /// - `Ok(Some(Some(sid)))`：有 session
+    ///
+    /// 兼容：110 前的存量 JSON 键是裸执行器名（无 scope 前缀）。scoped 键缺失时
+    /// 回退读裸键——升级后单聊继续 resume 原会话（110 前会话主体是单聊直聊），
+    /// 群聊首次会开新会话，无需数据迁移。
     ///
     /// 并发安全：持 per-workspace 互斥锁，与 set_executor_session 互斥，
     /// 防止并发请求读取到过期的 session_id。
@@ -254,6 +295,7 @@ impl Database {
         &self,
         workspace_id: i64,
         executor: &str,
+        scope: ExecutorSessionScope,
     ) -> Result<Option<Option<String>>, sea_orm::DbErr> {
         let lock = executor_session_lock(workspace_id);
         let _guard = lock.lock().await;
@@ -267,20 +309,27 @@ impl Database {
             None => return Ok(None),
         };
 
-        // 解析 JSON 获取对应执行器的 session
+        // 解析 JSON 获取对应维度的 session
         let sessions: HashMap<String, Option<String>> =
             serde_json::from_str(sessions_json.as_deref().unwrap_or("{}"))
             .unwrap_or_default();
 
-        Ok(sessions.get(executor).cloned())
+        // scoped 键优先；缺失时回退裸键（110 前存量，见函数注释兼容说明）
+        Ok(sessions
+            .get(&scope.scoped_key(executor))
+            .or_else(|| sessions.get(executor))
+            .cloned())
     }
 
-    /// 更新指定工作空间指定执行器的私聊会话 session_id。
+    /// 更新指定工作空间指定执行器在指定 chat 维度的会话 session_id。
     ///
     /// 流程：
     /// 1. 读取现有 sessions JSON
-    /// 2. 更新对应执行器的 session
+    /// 2. 清同执行器裸键（110 前存量）+ 写 scoped 复合键
     /// 3. 写回数据库
+    ///
+    /// 顺手清裸键：首次写入即完成该执行器的键迁移，避免裸键残留导致
+    /// 后续读取回退到旧会话。remove 忽略不存在的情况（首次写入无裸键可清）。
     ///
     /// 并发安全：持 per-workspace 互斥锁，与 get_executor_session 互斥，
     /// 防止并发请求的 session_id 互相覆盖。
@@ -288,6 +337,7 @@ impl Database {
         &self,
         workspace_id: i64,
         executor: &str,
+        scope: ExecutorSessionScope,
         session_id: Option<String>,
     ) -> Result<(), sea_orm::DbErr> {
         // 持 per-workspace 互斥锁串行化「读-改-写」，与 get_executor_session 互斥。
@@ -306,8 +356,9 @@ impl Database {
             serde_json::from_str(dir.executor_sessions.as_deref().unwrap_or("{}"))
             .unwrap_or_default();
 
-        // 更新该执行器的 session
-        sessions.insert(executor.to_string(), session_id);
+        // 键迁移：清裸键 + 写 scoped 键（理由见函数注释）
+        sessions.remove(executor);
+        sessions.insert(scope.scoped_key(executor), session_id);
 
         // 序列化并写回
         let now = crate::models::utc_timestamp();
@@ -325,4 +376,139 @@ impl Database {
 fn is_unique_constraint_error(err: &sea_orm::DbErr) -> bool {
     let err_str = format!("{:?}", err);
     err_str.contains("UNIQUE constraint failed")
+}
+
+#[cfg(test)]
+// session 读写走真实 SQLite（:memory:），断言 JSON 键迁移与维度隔离的真实行为；
+// 测试断言用 expect 直接失败即可，与项目内其他 DB 测试的豁免口径一致。
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod executor_session_tests {
+    //! 验证 110 修订的 session chat 维度隔离：
+    //! 单聊（Dm）与群聊（Group）各自独立读写互不串扰；旧裸键回退兼容；写时键迁移。
+
+    use super::ExecutorSessionScope;
+    use crate::db::Database;
+
+    /// 建 workspace 并返回 id（每个用例独立库独立行，避免相互影响）
+    async fn new_workspace(db: &Database) -> i64 {
+        db.create_workspace("/tmp/ws-test", Some("ws"), false, false)
+            .await
+            .expect("create workspace must succeed")
+    }
+
+    /// 核心行为：单聊与群聊 session 互相隔离——写群聊不影响单聊读，反之亦然。
+    /// 这是 110 修复的目标（原实现单聊群聊共用一键，专家人设上下文互串）。
+    #[tokio::test]
+    async fn test_executor_session_dm_and_group_are_isolated() {
+        let db = Database::new(":memory:").await.unwrap();
+        let wid = new_workspace(&db).await;
+
+        // 单聊写入 session-a
+        db.set_executor_session(wid, "pi", ExecutorSessionScope::Dm, Some("ses-dm".to_string()))
+            .await
+            .unwrap();
+        // 群聊写入 session-b（同执行器！）
+        db.set_executor_session(wid, "pi", ExecutorSessionScope::Group, Some("ses-group".to_string()))
+            .await
+            .unwrap();
+
+        // 各读各的：互不串扰
+        assert_eq!(
+            db.get_executor_session(wid, "pi", ExecutorSessionScope::Dm).await.unwrap(),
+            Some(Some("ses-dm".to_string())),
+            "单聊维度应读到单聊 session，不被群聊写入覆盖"
+        );
+        assert_eq!(
+            db.get_executor_session(wid, "pi", ExecutorSessionScope::Group).await.unwrap(),
+            Some(Some("ses-group".to_string())),
+            "群聊维度应读到群聊 session，不被单聊写入覆盖"
+        );
+    }
+
+    /// 清空只影响本维度：群聊 /new 不误伤单聊会话（用户在群里点新会话，私聊上下文保留）。
+    #[tokio::test]
+    async fn test_executor_session_clear_is_scoped() {
+        let db = Database::new(":memory:").await.unwrap();
+        let wid = new_workspace(&db).await;
+        db.set_executor_session(wid, "pi", ExecutorSessionScope::Dm, Some("ses-dm".to_string()))
+            .await
+            .unwrap();
+        db.set_executor_session(wid, "pi", ExecutorSessionScope::Group, Some("ses-group".to_string()))
+            .await
+            .unwrap();
+
+        // 清群聊维度
+        db.set_executor_session(wid, "pi", ExecutorSessionScope::Group, None)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            db.get_executor_session(wid, "pi", ExecutorSessionScope::Group).await.unwrap(),
+            Some(None),
+            "群聊维度应已清空"
+        );
+        assert_eq!(
+            db.get_executor_session(wid, "pi", ExecutorSessionScope::Dm).await.unwrap(),
+            Some(Some("ses-dm".to_string())),
+            "单聊维度不受群聊清空影响"
+        );
+    }
+
+    /// 兼容：110 前存量 JSON 键是裸执行器名。scoped 键缺失时回退读裸键——
+    /// 升级后单聊（110 前会话的主体）继续 resume 原会话，不断档。
+    /// 直接用 SQL 铺裸键数据，模拟旧版本写入的存量。
+    #[tokio::test]
+    async fn test_executor_session_falls_back_to_legacy_bare_key() {
+        let db = Database::new(":memory:").await.unwrap();
+        let wid = new_workspace(&db).await;
+        // 模拟 110 前 set 写下的裸键 JSON
+        db.exec(&format!(
+            "UPDATE workspaces SET executor_sessions = '{{\"pi\": \"ses-legacy\"}}' WHERE id = {wid}"
+        ))
+        .await
+        .unwrap();
+
+        // scoped 键缺失 → 回退裸键（两个维度都回退：读侧无法判断旧会话属于哪边，
+        // 单聊是旧会话主体，群聊首次读也拿到它只是开一次带上下文的会话，无害）
+        assert_eq!(
+            db.get_executor_session(wid, "pi", ExecutorSessionScope::Dm).await.unwrap(),
+            Some(Some("ses-legacy".to_string())),
+            "scoped 键缺失时应回退读裸键（110 前存量）"
+        );
+    }
+
+    /// 键迁移：首次 scoped 写入顺手清掉裸键——避免后续读取永远回退到旧会话。
+    #[tokio::test]
+    async fn test_executor_session_write_migrates_legacy_bare_key() {
+        let db = Database::new(":memory:").await.unwrap();
+        let wid = new_workspace(&db).await;
+        db.exec(&format!(
+            "UPDATE workspaces SET executor_sessions = '{{\"pi\": \"ses-legacy\"}}' WHERE id = {wid}"
+        ))
+        .await
+        .unwrap();
+
+        // scoped 写入新 session
+        db.set_executor_session(wid, "pi", ExecutorSessionScope::Dm, Some("ses-new".to_string()))
+            .await
+            .unwrap();
+
+        // 裸键已被清：群聊维度读不到 legacy。返回 None（而非 Some(None)）——
+        // group:pi 键从未写入、裸键已删，两个 get 都落空；None 语义即「无 session」，
+        // 调用方（resolve_executor_session）对 None 与 Some(None) 同样降级为新会话
+        assert_eq!(
+            db.get_executor_session(wid, "pi", ExecutorSessionScope::Group).await.unwrap(),
+            None,
+            "scoped 写入后裸键应被迁移清除，群聊维度不应回退到旧会话"
+        );
+    }
+
+    /// from_chat_type 与 chat_trigger_type 分流口径一致：p2p→Dm，其余→Group。
+    #[test]
+    fn test_executor_session_scope_from_chat_type() {
+        assert_eq!(ExecutorSessionScope::from_chat_type("p2p"), ExecutorSessionScope::Dm);
+        assert_eq!(ExecutorSessionScope::from_chat_type("group"), ExecutorSessionScope::Group);
+        // 未知类型兜底群聊，与 listener 的 chat_trigger_type 同口径
+        assert_eq!(ExecutorSessionScope::from_chat_type("unknown"), ExecutorSessionScope::Group);
+    }
 }

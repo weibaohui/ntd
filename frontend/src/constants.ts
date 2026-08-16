@@ -136,12 +136,14 @@ export const TRIGGER_LABELS: Record<string, string> = {
 };
 
 /** 触发类型颜色（独立于 STATUS_COLORS，值碰巧相同但语义不同）。
- *  与 TRIGGER_LABELS 同键共用：粉色 #ec4899 与历史执行器聊天色系区分。 */
+ *  与 TRIGGER_LABELS 同键共用：粉色 #ec4899 与历史执行器聊天色系区分；
+ *  蓝色 #3b82f6 单聊直聊（dm_chat 当前不落 execution_records，键为防御性对齐 labels）。 */
 export const TRIGGER_COLORS: Record<string, string> = {
   manual: '#3b82f6',
   cron: '#8b5cf6',
   slash_command: '#f59e0b',
   butler_chat: '#ec4899',
+  dm_chat: '#3b82f6',
   default_response: '#22c55e',
 };
 

@@ -138,7 +138,8 @@ pub(crate) fn format_record_time(started_at: &str) -> String {
     ) -> ActionOutcome {
         match action {
             CardAction::Push(level) => CardActionHandler::act_push(context, level).await,
-            CardAction::New => CardActionHandler::act_new(context).await,
+            // New 需要 msg 推断会话维度（110：session 按 dm/group 隔离，清对应维度）
+            CardAction::New => CardActionHandler::act_new(context, msg).await,
             CardAction::Stop => CardActionHandler::act_stop(context).await,
             CardAction::Bind(workspace_id) => CardActionHandler::act_bind(context, *workspace_id).await,
             // RunTodo/RunLoop/RunTask 需要回信给点击者，多传 msg 用于解析 receive target
@@ -181,9 +182,12 @@ pub(crate) fn format_record_time(started_at: &str) -> String {
         }
     }
 
-    /// 开启新会话：清当前 workspace 对话执行器的 session（108：session 键是 (workspace, 执行器)，
-    /// 未配置管家时清兜底 claudecode 的 session——清了不存在的 session 无害）。
-    pub(crate) async fn act_new(context: &ListenerMessageContext<'_>) -> ActionOutcome {
+    /// 开启新会话：清当前 workspace 对话执行器的 session（110：session 键是
+    /// (workspace, 执行器, chat 维度)，未配置管家时清兜底 claudecode 的 session——
+    /// 清了不存在的 session 无害）。
+    /// scope 由卡片回调消息推断：channel 非空=群聊（与 resolve_receive_target 同口径），
+    /// 帮助卡片的「新会话」按钮在哪类会话里点就清哪个维度的 session。
+    pub(crate) async fn act_new(context: &ListenerMessageContext<'_>, msg: &ChannelMessage) -> ActionOutcome {
         let Some(wid) = context.db.get_agent_bot_workspace_id(context.bot_id).await.ok().flatten() else {
             return ActionOutcome { success: false, message: "未设置工作空间".to_string() };
         };
@@ -192,8 +196,15 @@ pub(crate) fn format_record_time(started_at: &str) -> String {
         let executor = CardActionHandler::workspace_butler_executor(context.db, context.bot_id)
             .await
             .unwrap_or_else(|| "claudecode".to_string());
-        // set (wid, executor, None)：None 即清除该键，下次对话从全新 session 开始
-        match context.db.set_executor_session(wid, &executor, None).await {
+        // 卡片回调的 chat_type 是 "card_callback" 而非 p2p/group，无法直接喂
+        // from_chat_type——按 resolve_receive_target 的口径从 channel 推断会话类型
+        let scope = if msg.channel.is_empty() {
+            crate::db::workspace::ExecutorSessionScope::Dm
+        } else {
+            crate::db::workspace::ExecutorSessionScope::Group
+        };
+        // set (wid, executor, scope, None)：None 即清除该维度键，下次对话从全新 session 开始
+        match context.db.set_executor_session(wid, &executor, scope, None).await {
             Ok(_) => ActionOutcome { success: true, message: "已开启新会话".to_string() },
             Err(e) => ActionOutcome { success: false, message: format!("失败：{e}") },
         }
