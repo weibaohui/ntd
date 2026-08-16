@@ -19,7 +19,8 @@ import { CreateProcessMetaModal } from '@/components/process/CreateProcessMetaMo
 import { ShareToRepoButton, toHomePath } from '@/components/settings/contribute/ShareToRepoButton';
 import { buildProcessContributePrompt } from '@/components/settings/contribute/contributePrompts';
 // 029：pushUrl 用于"创建工艺"按钮导航到编辑器路由（/#/processes?processMode=new）。
-import { useViewState } from '@/hooks/useViewState';
+// 109：listView/replaceUrl 用于「我的/模板」形态直达路由（?view=mine|template）。
+import { useViewState, pickListView } from '@/hooks/useViewState';
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -66,9 +67,7 @@ interface ProcessPageProps {
 
 export function ProcessPage({ workspaceId, onOpenLoop, processGuid, processMode = 'list' }: ProcessPageProps) {
   // 029：顶层分流，避免在 if return 后写 useState 造成条件 hooks。
-  // 列表态走现有逻辑（ProcessListView），编辑器态走占位（M3-M6 填实 ProcessEditor）。
-  // pushUrl 从 useViewState 取，用于"创建工艺"按钮导航到编辑器路由。
-  const { pushUrl } = useViewState();
+  // 列表态走 ProcessListView（内部自取 useViewState），编辑器态走 ProcessEditor/占位。
   // M3：edit 模式接真实 ProcessEditor，new 模式留占位给 M6
   if (processMode === 'edit' && processGuid) {
     return <ProcessEditor processGuid={processGuid} />;
@@ -76,7 +75,8 @@ export function ProcessPage({ workspaceId, onOpenLoop, processGuid, processMode 
   if (processMode === 'new') {
     return <ProcessEditorPlaceholder mode="new" name={null} />;
   }
-  return <ProcessListView workspaceId={workspaceId} onOpenLoop={onOpenLoop} processGuid={processGuid} pushUrl={pushUrl} />;
+  // 109：ProcessListView 内部自行取 useViewState（pushUrl/listView/replaceUrl），不再由父级注入。
+  return <ProcessListView workspaceId={workspaceId} onOpenLoop={onOpenLoop} processGuid={processGuid} />;
 }
 
 /**
@@ -108,8 +108,10 @@ function ProcessEditorPlaceholder({ mode, name }: { mode: 'new' | 'edit'; name: 
  *
  * 保留原有的工艺模板库列表、查看详情、安装为 Loop 等功能。
  * 029 新增：接收 pushUrl 用于"创建工艺"按钮导航到编辑器路由。
+ * 109：scope（我的/模板）改为 URL ?view= 优先 + localStorage 兜底，支持形态直达。
  */
-function ProcessListView({ workspaceId, onOpenLoop, processGuid, pushUrl }: Omit<ProcessPageProps, 'processMode'> & { pushUrl: (view: any, opts?: any) => void }) {
+function ProcessListView({ workspaceId, onOpenLoop, processGuid }: Omit<ProcessPageProps, 'processMode'>) {
+  const { pushUrl, listView, replaceUrl } = useViewState();
   const [processes, setProcesses] = useState<ProcessTemplate[]>([]);
   const [loading, setLoading] = useState(false);
   const [detail, setDetail] = useState<ProcessTemplateDetail | null>(null);
@@ -125,8 +127,10 @@ function ProcessListView({ workspaceId, onOpenLoop, processGuid, pushUrl }: Omit
   const [upgradingLoopId, setUpgradingLoopId] = useState<number | null>(null);
   // M6：新建工艺元信息 Modal 开关
   const [createModalOpen, setCreateModalOpen] = useState(false);
-  // 039：「我的/模板」视图范围，初始值从 localStorage 恢复（持久化用户上次选择）。
-  const [scope, setScope] = useState<ProcessScope>(readInitialScope);
+  // 039：「我的/模板」视图范围：URL ?view= 优先（直达指定范围），无参数/非法值
+  // 回退 localStorage 记忆（持久化用户上次选择）。storedScope 只在挂载时读一次。
+  const [storedScope] = useState<ProcessScope>(readInitialScope);
+  const scope = pickListView(listView, ['mine', 'template'], storedScope) as ProcessScope;
 
   const load = async () => {
     setLoading(true);
@@ -147,8 +151,7 @@ function ProcessListView({ workspaceId, onOpenLoop, processGuid, pushUrl }: Omit
     load();
   }, [scope]);
 
-  // 切换视图时持久化到 localStorage，刷新/重进页面后保持上次选择；
-  // 存储失败（隐私模式）静默忽略——视图切换本身不受影响，只是不记忆。
+  // 切换视图：写 localStorage 兜底 + replaceUrl 同步 URL（?view=），使范围可直达/分享。
   const handleScopeChange = (value: string | number) => {
     const next = value === 'template' ? 'template' : 'mine';
     try {
@@ -156,7 +159,7 @@ function ProcessListView({ workspaceId, onOpenLoop, processGuid, pushUrl }: Omit
     } catch {
       // 忽略持久化失败
     }
-    setScope(next);
+    replaceUrl('processes', { view: next });
   };
 
   const handleSearch = async (value: string) => {
@@ -391,11 +394,13 @@ function ProcessListView({ workspaceId, onOpenLoop, processGuid, pushUrl }: Omit
     >
 
       {/* 039：「我的/模板」视图切换，独占一行置于搜索栏上方；
-          用 Segmented 而非 Tabs 是因项目内同列表视图切换均用 Segmented（SkillsPanel 等），视觉更轻量。 */}
+          用 Segmented 而非 Tabs 是因项目内同列表视图切换均用 Segmented（SkillsPanel 等），视觉更轻量。
+          109：形态受 URL ?view= 驱动（mine|template），testid 供 Playwright 验证直达形态。 */}
       <div style={{ marginBottom: 12 }}>
         <Segmented<ProcessScope>
           value={scope}
           onChange={handleScopeChange}
+          data-testid="process-scope-toggle"
           options={[
             { label: '我的', value: 'mine' },
             { label: '模板', value: 'template' },

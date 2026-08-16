@@ -63,8 +63,9 @@ test.describe('028 列表详情独立路由', () => {
     await toggle.getByTitle('列表').click();
     await page.waitForTimeout(ROUTE_SETTLE_MS);
 
-    // URL 仍是列表（切形态不改变 URL）
-    await expect(page).toHaveURL(/\/#\/todos$/);
+    // 109 起：切换形态会把 ?view=list 写回 URL（replaceUrl，可直达/分享），
+    // 不再要求「切形态不改变 URL」——URL 带形态参数即列表形态的显式表达
+    await expect(page).toHaveURL(/\/#\/todos\?view=list$/);
 
     // Ant Design Table 应可见
     await expect(page.locator('.ant-table').first()).toBeVisible();
@@ -201,8 +202,8 @@ test.describe('028 列表详情独立路由', () => {
     await page.goBack();
     await page.waitForTimeout(ROUTE_SETTLE_MS);
 
-    // 应回到列表 URL
-    await expect(page).toHaveURL(/\/#\/todos$/);
+    // 应回到列表 URL（109 起形态参数随历史条目保留：无参数=localStorage 兜底，带参数=显式形态）
+    await expect(page).toHaveURL(/\/#\/todos(\?view=list)?$/);
   });
 
   test('事项卡片墙：点击卡片跳转到 /#/todos/:id（如有数据）', async ({ page }) => {

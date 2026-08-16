@@ -4,7 +4,13 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, App, Button, Form, Input, Popconfirm, Space, Tabs, Tag, Typography } from 'antd';
-import { getContributionAuthStatus, logoutContribution, saveContributionPat } from '@/utils/database/contribution';
+import { CheckCircleOutlined } from '@ant-design/icons';
+import {
+  getContributionAuthStatus,
+  logoutContribution,
+  saveContributionPat,
+  verifyContributionPat,
+} from '@/utils/database/contribution';
 
 /** 设置页「第三方授权」Tab 的 key：SettingsPage 用它注册 tab，ContributeButton 用它跳转。 */
 export const THIRD_PARTY_SETTINGS_TAB = 'thirdParty';
@@ -28,8 +34,9 @@ export function ThirdPartyPanel() {
 }
 
 /**
- * GitCode PAT 管理表单：填写 / 保存 / 清空。
+ * GitCode PAT 管理表单：填写 / 保存 / 验证 / 清空。
  * 保存走后端验证接口（调 GitCode /user 确认有效后才落盘），
+ * 「验证」读取已保存 PAT 获取用户名，证明令牌当前可用；
  * 清空是破坏性操作，用 Popconfirm 二次确认，未配置时禁用。
  */
 function GitCodePatTab() {
@@ -39,6 +46,10 @@ function GitCodePatTab() {
   const [configured, setConfigured] = useState<boolean | null>(null);
   const [saving, setSaving] = useState(false);
   const [clearing, setClearing] = useState(false);
+  // 验证态：null=未验证过，'verifying'=验证中，其余为已成功验证的账号信息（含用户名）。
+  // 与 configured 分开管理：PAT 保存/清空后应清空旧验证结果，避免展示过期身份。
+  const [verifyResult, setVerifyResult] = useState<{ username: string; name: string } | null>(null);
+  const [verifying, setVerifying] = useState(false);
 
   // 拉取当前配置态：进入面板即查一次，保存/清空成功后刷新。
   const loadStatus = useCallback(async () => {
@@ -77,12 +88,28 @@ function GitCodePatTab() {
     }
   };
 
-  // 清空 PAT：调后端清除本地文件；成功后刷新配置态。
+  // 验证已保存的 PAT：后端读本地 PAT 调 GitCode /user，返回用户名即证明令牌可用。
+  // 失败不区分「无效/网络」在展示层细化——错误信息由后端按原因分类返回，直接透出。
+  const handleVerify = async () => {
+    setVerifying(true);
+    setVerifyResult(null);
+    try {
+      const result = await verifyContributionPat();
+      setVerifyResult(result);
+    } catch (err: any) {
+      message.error('PAT 验证失败: ' + (err?.message || String(err)));
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  // 清空 PAT：调后端清除本地文件；成功后刷新配置态并清空旧验证结果。
   const handleClear = async () => {
     setClearing(true);
     try {
       await logoutContribution();
       message.success('已清除 PAT');
+      setVerifyResult(null);
       await loadStatus();
     } catch (err: any) {
       message.error('清除 PAT 失败: ' + (err?.message || String(err)));
@@ -109,6 +136,29 @@ function GitCodePatTab() {
             <Tag color="green">已配置</Tag>
           ) : (
             <Tag>未配置</Tag>
+          )}
+          {/* 验证按钮：仅已配置态有意义（未配置时没有可验证的 PAT）。
+              验证结果以行内 Tag 呈现，让「PAT 当前可用 + 归属账号」一眼可辨。 */}
+          {configured === true && (
+            <>
+              <Button
+                size="small"
+                icon={<CheckCircleOutlined />}
+                loading={verifying}
+                onClick={handleVerify}
+                style={{ marginLeft: 12 }}
+              >
+                验证
+              </Button>
+              {verifyResult && !verifying && (
+                <Tag color="green" style={{ marginLeft: 8 }}>
+                  验证通过：@{verifyResult.username}
+                  {verifyResult.name && verifyResult.name !== verifyResult.username
+                    ? `（${verifyResult.name}）`
+                    : ''}
+                </Tag>
+              )}
+            </>
           )}
         </div>
 
@@ -152,7 +202,7 @@ function GitCodePatTab() {
         </Space>
 
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          生成 PAT 请前往 GitCode「个人设置 → 访问令牌」。创建 PR 的完整链路（fork、建分支、写文件、建 PR）需要仓库读写与 PR 相关权限，请务必勾选相应权限后再保存，否则 AI 执行时会因权限不足失败。
+          生成 PAT 请前往 GitCode「个人设置 → 访问令牌」。创建 PR 的完整链路（fork、建分支、写文件、建 PR）需要仓库读写与 PR 相关权限，请务必勾选相应权限后再保存，否则 AI 执行时会因权限不足失败。保存后可点击「验证」确认令牌当前可用，并查看其归属账号。
         </Typography.Text>
       </Space>
     </div>

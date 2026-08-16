@@ -20,7 +20,8 @@ import { PageCard } from '@/components/common/PageCard';
 import { WorkspaceLoopConfigPage } from '@/components/settings/workspace/WorkspaceLoopConfigPage';
 // LoopKanban：环路执行历史看板（8 列），kanban 视图复用。
 import { LoopKanban } from '@/components/loop-kanban';
-import { useViewState } from '@/hooks/useViewState';
+// 109：列表形态直达路由——useViewState 提供 listView（URL ?view= 原文）与 replaceUrl。
+import { useViewState, pickListView } from '@/hooks/useViewState';
 import { LoopListView } from './LoopListView';
 import {
   LoopListHeader,
@@ -29,7 +30,7 @@ import {
 } from './LoopListPageParts';
 import type { LoopListItem } from '@/types/loop';
 
-/** localStorage 键：记住用户上次选的列表/看板形态。 */
+/** localStorage 键：记住用户上次选的列表/看板形态（URL 无 ?view= 参数时的兜底）。 */
 const VIEW_STORAGE_KEY = 'ntd_loops_view';
 
 /** 读取持久化的视图模式，默认列表（环路管理默认 table）。 */
@@ -94,10 +95,13 @@ export function LoopListPage({
 }: LoopListPageProps) {
   const { state } = useTodos();
   const workspaceId = state.selectedWorkspace;
-  const { pushUrl } = useViewState();
+  // 109：pushUrl 用于看板点事项跳详情；listView 是 URL ?view= 原文；replaceUrl 用于形态写回。
+  const { pushUrl, listView, replaceUrl } = useViewState();
   const [searchKeyword, setSearchKeyword] = useState('');
-  // 视图模式：list 定义 table / kanban 执行历史看板（维度不同，切换会换数据对象）。
-  const [viewMode, setViewMode] = useState<'list' | 'kanban'>(readInitialView);
+  // 视图模式：URL ?view= 优先（直达指定形态），无参数/非法值回退 localStorage 记忆。
+  // storedView 只在挂载时读一次：URL 变化走 listView 同步，localStorage 只作无参数兜底。
+  const [storedView] = useState<'list' | 'kanban'>(readInitialView);
+  const viewMode = pickListView(listView, ['list', 'kanban'], storedView) as 'list' | 'kanban';
   // kanban 态时间窗：LoopKanban 受控，由本层下推 hours。
   const [hours, setHours] = useState(24);
 
@@ -105,9 +109,10 @@ export function LoopListPage({
   const { items, loading, reload } = useLoopListData(workspaceId, loopUpdateCount);
 
   const handleViewChange = useCallback((m: 'list' | 'kanban') => {
-    setViewMode(m);
+    // 写 localStorage 兜底 + replaceUrl 同步 URL（?view=），使形态可直达/分享。
     try { localStorage.setItem(VIEW_STORAGE_KEY, m); } catch { /* 静默降级 */ }
-  }, []);
+    replaceUrl('loops', { view: m });
+  }, [replaceUrl]);
 
   // kanban 态执行轨迹流程图点事项标题 → 跳事项详情。
   const handleOpenTodo = useCallback((todoId: number) => {
