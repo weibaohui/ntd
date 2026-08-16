@@ -422,7 +422,6 @@ impl Database {
     }
 
     /// 复制单个 todo 到目标工作空间并返回新 todo_id。
-    /// 同时复制 tag 关联。
     async fn copy_todo_to_workspace(&self, todo_id: i64, target_workspace_id: i64, target_workspace: &str) -> Result<Option<i64>, sea_orm::DbErr> {
         use crate::db::entity::todos;
         use sea_orm::ColumnTrait;
@@ -461,20 +460,6 @@ impl Database {
         };
         let inserted = am.insert(&self.conn).await?;
         let new_id = inserted.id;
-
-        // 复制 tag 关联
-        use crate::db::entity::todo_tags;
-        let old_tags = todo_tags::Entity::find()
-            .filter(todo_tags::Column::TodoId.eq(todo_id))
-            .all(&self.conn)
-            .await?;
-        for t in old_tags {
-            let tag_am = todo_tags::ActiveModel {
-                todo_id: ActiveValue::Set(new_id),
-                tag_id: ActiveValue::Set(t.tag_id),
-            };
-            tag_am.insert(&self.conn).await?;
-        }
 
         Ok(Some(new_id))
     }

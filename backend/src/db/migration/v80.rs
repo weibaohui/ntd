@@ -228,25 +228,19 @@ async fn cascade_delete_manual_loops(db: &Database) -> Result<(), sea_orm::DbErr
                     format!("DELETE FROM loop_triggers WHERE loop_id IN ({id_list})"),
                 ))
                 .await?;
-                // 7) 标签关联
-                txn.execute(Statement::from_string(
-                    DbBackend::Sqlite,
-                    format!("DELETE FROM loop_tags WHERE loop_id IN ({id_list})"),
-                ))
-                .await?;
-                // 8) 环节定义
+                // 7) 环节定义
                 txn.execute(Statement::from_string(
                     DbBackend::Sqlite,
                     format!("DELETE FROM loop_steps WHERE loop_id IN ({id_list})"),
                 ))
                 .await?;
-                // 9) 阶段定义
+                // 8) 阶段定义
                 txn.execute(Statement::from_string(
                     DbBackend::Sqlite,
                     format!("DELETE FROM loop_phases WHERE loop_id IN ({id_list})"),
                 ))
                 .await?;
-                // 10) 环路主表：最后删，保证上面子表清理时还能按 loop_id 定位
+                // 9) 环路主表：最后删，保证上面子表清理时还能按 loop_id 定位
                 txn.execute(Statement::from_string(
                     DbBackend::Sqlite,
                     format!("DELETE FROM loops WHERE id IN ({id_list})"),

@@ -8,7 +8,7 @@
 
 页面用 `PageCard` 包裹 `LoopDetailPanel`，顶部标题 `环路 #id` + 标题右侧「返回列表」按钮 + `extra` 右上角删除按钮。删除按钮上下文由 `LoopDetailPanel` 通过 `onActionsReady` 回调上报就绪标志位（避免 `hideTitleRow=true` 隐藏内层标题行时按钮连带消失）。操作回调拆到 `useLoopDetailActions` hook，完成后经 `onLoopChanged` 通知父组件递增 `loopUpdateCount`，联动刷新 `LoopListPage`。
 
-详情数据由 `LoopDetailPanel` 内部 `reload` 拉取：调用 `dbLoops.getLoop(workspaceId, loopId)`，后端走 `GET /api/v1/workspaces/{ws}/loops/{id}` → `get_loop_v1` handler → `workspace_guard::verify_loop_belongs_to_ws` 校验归属 → `db.load_loop_full(id)`（含 steps/todo_map）+ `db.get_loop_tag_ids(id)` + `db.get_process_template_by_id` 注入来源工艺名/guid/version。面板还预加载 `dbLoops.listExecutions(..., {page:1,limit:1})` 取执行历史总数供折叠标签展示，并用 `latestLoopIdRef` 防切换竞态丢弃 stale 响应。
+详情数据由 `LoopDetailPanel` 内部 `reload` 拉取：调用 `dbLoops.getLoop(workspaceId, loopId)`，后端走 `GET /api/v1/workspaces/{ws}/loops/{id}` → `get_loop_v1` handler → `workspace_guard::verify_loop_belongs_to_ws` 校验归属 → `db.load_loop_full(id)`（含 steps/todo_map）+ `db.get_process_template_by_id` 注入来源工艺名/guid/version。面板还预加载 `dbLoops.listExecutions(..., {page:1,limit:1})` 取执行历史总数供折叠展示，并用 `latestLoopIdRef` 防切换竞态丢弃 stale 响应。
 
 ## 页面级数据流总图
 
@@ -23,8 +23,8 @@ flowchart LR
   RL --> API["GET /api/v1/workspaces/{ws}/loops/{id}"]
   API --> H1[get_loop_v1 handler]
   H1 --> GUARD[workspace_guard verify_loop_belongs_to_ws]
-  H1 --> DAO["db.load_loop_full(id) + get_loop_tag_ids + get_process_template_by_id"]
-  DAO --> DB[(loops/loop_steps/loop_tags/process_templates 表)]
+  H1 --> DAO["db.load_loop_full(id) + get_process_template_by_id"]
+  DAO --> DB[(loops/loop_steps/process_templates 表)]
   H1 --> RT[ApiResponse ok LoopDetail]
   RT --> PAN --> SE[LoopStepsPanel DAG 只读]
   PAN --> EX[LoopExecutionsPanel 执行历史折叠]

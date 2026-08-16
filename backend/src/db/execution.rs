@@ -1041,42 +1041,38 @@ impl Database {
     ) -> Result<crate::db::dashboard::RawDashboardStats, sea_orm::DbErr> {
         let base = self.fetch_dashboard_base_stats(ctx).await?;
         let dist = self
-            .fetch_dashboard_distribution_stats(ctx, &base.executor_todo_counts, &base.tags)
+            .fetch_dashboard_distribution_stats(ctx, &base.executor_todo_counts)
             .await?;
         Ok(crate::db::dashboard::assemble_raw_dashboard_stats(base, dist))
     }
 
-    /// 第一轮并行查询：todo 状态、execution 总体、executor todo 计数、tags 列表。
+    /// 第一轮并行查询：todo 状态、execution 总体、executor todo 计数。
     async fn fetch_dashboard_base_stats(
         &self,
         ctx: &crate::db::dashboard::DashboardQueryContext<'_>,
     ) -> Result<crate::db::dashboard::BaseStats, sea_orm::DbErr> {
-        let (todo_stats, execution_overall, executor_todo_counts, tags) = tokio::try_join!(
+        let (todo_stats, execution_overall, executor_todo_counts) = tokio::try_join!(
             crate::db::dashboard::fetch_todo_stats(ctx),
             crate::db::dashboard::fetch_execution_overall(ctx),
             crate::db::dashboard::fetch_executor_todo_counts(ctx),
-            self.get_tags(),
         )?;
         Ok(crate::db::dashboard::BaseStats {
             todo_stats,
             execution_overall,
             executor_todo_counts,
-            tags,
         })
     }
 
-    /// 第二轮并行查询：11 个独立分布查询 + tag_distribution 派生查询。
+    /// 第二轮并行查询：10 个独立分布查询。
     ///
-    /// 依赖第一轮的 `executor_todo_counts` 和 `tags`：前者用于
-    /// `fetch_executor_distribution`，后者用于 `fetch_tag_distribution`。
+    /// 依赖第一轮的 `executor_todo_counts`：用于 `fetch_executor_distribution`。
     async fn fetch_dashboard_distribution_stats(
         &self,
         ctx: &crate::db::dashboard::DashboardQueryContext<'_>,
         executor_todo_counts: &std::collections::HashMap<String, i64>,
-        tags: &[crate::models::Tag],
     ) -> Result<crate::db::dashboard::DistributionStats, sea_orm::DbErr> {
         let heatmap_limit = 366; // 闰年最多366天
-        // 第一步：11 个独立 GROUP BY 查询并行执行
+        // 第一步：10 个独立 GROUP BY 查询并行执行
         let (
             executor_distribution,
             model_distribution,
@@ -1088,7 +1084,6 @@ impl Database {
             execution_change,
             success_rate_change,
             cost_change,
-            tag_todo_counts,
         ) = tokio::try_join!(
             crate::db::dashboard::fetch_executor_distribution(ctx, executor_todo_counts),
             crate::db::dashboard::fetch_model_distribution(ctx),
@@ -1100,13 +1095,8 @@ impl Database {
             crate::db::dashboard::fetch_execution_change(ctx),
             crate::db::dashboard::fetch_success_rate_change(ctx),
             crate::db::dashboard::fetch_cost_change(ctx),
-            crate::db::dashboard::fetch_tag_todo_counts(ctx),
         )?;
 
-        // 第二步：派生 tag_distribution（依赖 tags + tag_todo_counts）
-        let tag_distribution = crate::db::dashboard::fetch_tag_distribution(
-            ctx, tags, &tag_todo_counts,
-        ).await?;
         Ok(crate::db::dashboard::DistributionStats {
             executor_distribution,
             model_distribution,
@@ -1118,7 +1108,6 @@ impl Database {
             execution_change,
             success_rate_change,
             cost_change,
-            tag_distribution,
         })
     }
 

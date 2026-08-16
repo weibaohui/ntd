@@ -284,12 +284,6 @@ pub const CONSOLIDATED_SCHEMA: &[&str] = &[
         enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT, phase_id INTEGER REFERENCES loop_phases(id) ON DELETE SET NULL, expected_artifacts TEXT NOT NULL DEFAULT '[]', gate_config TEXT NOT NULL DEFAULT '[]', max_rework INTEGER NOT NULL DEFAULT 3, skill_names TEXT NOT NULL DEFAULT '[]', expert_name TEXT, review_prompt TEXT, step_template_refs TEXT NOT NULL DEFAULT '[]',
         FOREIGN KEY (loop_id) REFERENCES loops(id) ON DELETE CASCADE,
         FOREIGN KEY (todo_id) REFERENCES todos(id) ON DELETE RESTRICT)"#,
-    r#"CREATE TABLE loop_tags (
-                loop_id INTEGER NOT NULL, tag_id INTEGER NOT NULL,
-                PRIMARY KEY (loop_id, tag_id),
-                FOREIGN KEY (loop_id) REFERENCES loops(id) ON DELETE CASCADE,
-                FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
-            )"#,
     r#"CREATE TABLE loops (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL, description TEXT DEFAULT '',
@@ -344,12 +338,6 @@ pub const CONSOLIDATED_SCHEMA: &[&str] = &[
             invoked_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now', 'utc')),
             FOREIGN KEY (todo_id) REFERENCES todos(id) ON DELETE CASCADE
         )"#,
-    r#"CREATE TABLE step_tags (
-                step_id INTEGER NOT NULL, tag_id INTEGER NOT NULL,
-                PRIMARY KEY (step_id, tag_id),
-                FOREIGN KEY (step_id) REFERENCES steps(id) ON DELETE CASCADE,
-                FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
-            )"#,
     r#"CREATE TABLE steps (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 title TEXT NOT NULL,
@@ -369,12 +357,6 @@ pub const CONSOLIDATED_SCHEMA: &[&str] = &[
             data_type TEXT NOT NULL,
             details TEXT,
             error_message TEXT,
-            created_at TEXT
-        )"#,
-    r#"CREATE TABLE tags (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE,
-            color TEXT DEFAULT '#1890ff',
             created_at TEXT
         )"#,
     r#"CREATE TABLE task_posts (
@@ -407,13 +389,6 @@ pub const CONSOLIDATED_SCHEMA: &[&str] = &[
             created_at TEXT,
             updated_at TEXT
         , execution_mode TEXT NOT NULL DEFAULT 'loop', assignee_kind TEXT, assignee_name TEXT, auto_continue INTEGER NOT NULL DEFAULT 0, continue_rounds INTEGER NOT NULL DEFAULT 0, delegate_max_rounds INTEGER)"#,
-    r#"CREATE TABLE todo_tags (
-            todo_id INTEGER,
-            tag_id INTEGER,
-            PRIMARY KEY (todo_id, tag_id),
-            FOREIGN KEY (todo_id) REFERENCES todos(id) ON DELETE CASCADE,
-            FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
-        )"#,
     r#"CREATE TABLE todo_templates (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
@@ -548,7 +523,6 @@ pub const CONSOLIDATED_SCHEMA: &[&str] = &[
     r#"CREATE INDEX idx_loop_steps_loop_id ON loop_steps(loop_id)"#,
     r#"CREATE INDEX idx_loop_steps_loop_order ON loop_steps(loop_id, order_index)"#,
     r#"CREATE INDEX idx_loop_steps_todo_id ON loop_steps(todo_id)"#,
-    r#"CREATE INDEX idx_loop_tags_loop_id ON loop_tags(loop_id)"#,
     r#"CREATE INDEX idx_loops_process_template_id ON loops(process_template_id)"#,
     r#"CREATE INDEX idx_loops_status ON loops(status)"#,
     r#"CREATE INDEX idx_loops_updated_at ON loops(updated_at DESC)"#,
@@ -562,14 +536,12 @@ pub const CONSOLIDATED_SCHEMA: &[&str] = &[
     r#"CREATE INDEX idx_skill_invocations_invoked_at ON skill_invocations(invoked_at)"#,
     r#"CREATE INDEX idx_skill_invocations_skill_name ON skill_invocations(skill_name)"#,
     r#"CREATE INDEX idx_skill_invocations_todo_id ON skill_invocations(todo_id)"#,
-    r#"CREATE INDEX idx_step_tags_step_id ON step_tags(step_id)"#,
     r#"CREATE INDEX idx_steps_source_todo ON steps(source_todo_id)"#,
     r#"CREATE INDEX idx_sync_records_created_at ON sync_records(created_at DESC)"#,
     r#"CREATE INDEX idx_task_posts_source_execution_id ON task_posts(source_execution_id)"#,
     r#"CREATE INDEX idx_task_posts_task_id ON task_posts(task_id)"#,
     r#"CREATE INDEX idx_task_posts_task_parent ON task_posts(task_id, parent_post_id, id)"#,
     r#"CREATE INDEX idx_tasks_workspace_id ON tasks(workspace_id)"#,
-    r#"CREATE INDEX idx_todo_tags_todo_id ON todo_tags(todo_id)"#,
     r#"CREATE UNIQUE INDEX idx_todos_action_type_key_workspace ON todos (action_type, action_key, workspace_id) WHERE action_type IS NOT NULL AND action_key IS NOT NULL"#,
     r#"CREATE INDEX idx_todos_archived_at ON todos(archived_at)"#,
     r#"CREATE INDEX idx_todos_deleted_at ON todos(deleted_at)"#,

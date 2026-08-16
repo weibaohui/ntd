@@ -15,7 +15,7 @@ use std::io::Write;
 
 
 use crate::handlers::{AppError, AppState};
-use crate::models::{ApiResponse, BackupData, TagBackup, TodoBackup, utc_timestamp};
+use crate::models::{ApiResponse, BackupData, TodoBackup, utc_timestamp};
 use crate::db::Database;
 use crate::services::usage_stats::UsageStatsService;
 
@@ -142,12 +142,10 @@ fn cleanup_old_zip_backups(dir: &PathBuf, keep: usize) {
 pub async fn export_backup(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, AppError> {
-    let tags = state.db.get_tag_backups().await?;
     let todos = state.db.get_todo_backups().await?;
     let data = BackupData {
         version: "1.0".to_string(),
         created_at: utc_timestamp(),
-        tags,
         todos,
     };
     let yaml = serde_yaml::to_string(&data).map_err(|e| AppError::Internal(e.to_string()))?;
@@ -174,15 +172,9 @@ pub async fn export_selected(
     if todos.is_empty() {
         return Err(AppError::BadRequest("No todos found for given IDs".to_string()));
     }
-    // Collect unique tag names from valid todos and query tags by name
-    let tag_names: std::collections::HashSet<&str> = todos.iter()
-        .flat_map(|t| t.tag_names.iter().map(|s| s.as_str()))
-        .collect();
-    let tags = state.db.get_tag_backups_by_names(&tag_names.into_iter().collect::<Vec<_>>()).await?;
     let data = BackupData {
         version: "1.0".to_string(),
         created_at: utc_timestamp(),
-        tags,
         todos,
     };
     let yaml = serde_yaml::to_string(&data).map_err(|e| AppError::Internal(e.to_string()))?;
@@ -206,15 +198,14 @@ pub async fn import_backup(
         return Err(AppError::BadRequest("Backup contains no todos".to_string()));
     }
 
-    state.db.import_backup(&data.tags, &data.todos).await
+    state.db.import_backup(&data.todos).await
         .map_err(|e| AppError::Internal(format!("Import failed, data unchanged: {}", e)))?;
 
-    Ok(ApiResponse::ok(format!("Imported {} todos and {} tags", data.todos.len(), data.tags.len())))
+    Ok(ApiResponse::ok(format!("Imported {} todos", data.todos.len())))
 }
 
 #[derive(Deserialize)]
 pub struct MergeRequest {
-    pub tags: Vec<TagBackup>,
     pub todos: Vec<TodoBackup>,
     /// 目标工作空间 ID；为空时保持备份文件中的 workspace_id（如有），否则留空
     #[serde(default)]
@@ -237,7 +228,7 @@ pub async fn merge_backup(
         }
     }
 
-    let (created, updated) = state.db.merge_backup(&req.tags, &req.todos, req.workspace_id).await
+    let (created, updated) = state.db.merge_backup(&req.todos, req.workspace_id).await
         .map_err(|e| AppError::Internal(format!("Merge failed: {}", e)))?;
 
     Ok(ApiResponse::ok(format!("新建 {} 项，覆盖 {} 项", created, updated)))
@@ -857,12 +848,10 @@ pub async fn trigger_todo_backup(
     let backup_path_display = backup_path.display().to_string();
 
     // 获取 Todo 数据
-    let tags = state.db.get_tag_backups().await?;
     let todos = state.db.get_todo_backups().await?;
     let data = BackupData {
         version: "1.0".to_string(),
         created_at: utc_timestamp(),
-        tags,
         todos,
     };
     let yaml = serde_yaml::to_string(&data).map_err(|e| AppError::Internal(e.to_string()))?;
@@ -1023,15 +1012,12 @@ async fn perform_todo_backup_async(db: &std::sync::Arc<crate::db::Database>, max
     .map_err(|e| format!("Task join error: {}", e))??;
 
     // Get Todo data
-    let tags = db.get_tag_backups().await
-        .map_err(|e| format!("Failed to get tag backups: {}", e))?;
     let todos = db.get_todo_backups().await
         .map_err(|e| format!("Failed to get todo backups: {}", e))?;
 
     let data = BackupData {
         version: "1.0".to_string(),
         created_at: utc_timestamp(),
-        tags,
         todos,
     };
     let yaml = serde_yaml::to_string(&data)

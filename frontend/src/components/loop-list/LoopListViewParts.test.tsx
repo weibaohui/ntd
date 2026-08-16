@@ -23,7 +23,6 @@ function makeLoop(): LoopListItem {
     description: '',
     workspace_id: 1,
     status: 'enabled',
-    tag_ids: [],
     created_at: null,
     updated_at: null,
     step_count: 0,

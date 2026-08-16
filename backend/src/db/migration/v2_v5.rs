@@ -1285,7 +1285,7 @@ pub async fn drop_column_if_exists(
 // V16  LoopStepExecutionSnapshot - loop_step_executions 快照列
 // V17  ConsolidateReviewInstanceTodos - 去重评审实例
 // V18  LoopHumanReview    - 人工评审字段
-// V19  StepLoopTags       - 标签关联表
+// V19  StepLoopTags       - 标签关联表（标签功能已随 111 移除）
 // V23  DropTodoHooks      - 删除 hooks/source_hook_id 列
 // V24  RenameLoopStepsStepIdToTodoId - 重建 loop_steps 修正 FK
 // V26  DisableAutoReview  - 禁用普通事项自动评审

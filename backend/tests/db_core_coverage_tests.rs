@@ -1,16 +1,14 @@
 //! 后端核心 DB 模块的补充单元测试（Issue #681: 提升后端测试用例覆盖度）。
 //!
 //! 选型依据：
-//! - 这些模块（tag / sync_record / agent_bot / executor_config 的大部分函数）
+//! - 这些模块（sync_record / agent_bot / executor_config 的大部分函数）
 //!   在主仓里只有 db/mod.rs 的"烟雾测试"覆盖度，但每个函数都直接对应核心功能：
-//!   tag 用于 Todo 分类，sync_record 用于云同步历史，agent_bot 用于飞书机器人接入，
+//!   sync_record 用于云同步历史，agent_bot 用于飞书机器人接入，
 //!   executor_config 是执行器注册表的真实来源。
 //! - 在 issue #681 的语境下，"有意义的测试"= 覆盖 CRUD 主路径 + 边界（空表、
 //!   重复插入、级联删除、字段级 update、过滤查询） + 排序/分页契约。
 //!
 //! 段落总览：
-//! - tag 模块：创建/查询/删除/重命名、find_tag_by_name、todo-tag 多对多、
-//!   set_todo_tags 事务语义。
 //! - sync_record 模块：分页、总数、清空、按 id 倒序的稳定性。
 //! - agent_bot 模块：CRUD、get_agent_bot、update_agent_bot_config、
 //!   feishu 类型自动生成 p2p/group response config 的级联效果。
@@ -21,188 +19,13 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 use ntd::config::ExecutorPaths;
 use ntd::db::Database;
-use ntd::db::entity::{executors, feishu_response_config, tags, todo_tags};
+use ntd::db::entity::{executors, feishu_response_config};
 use sea_orm::{ActiveValue, ColumnTrait, EntityTrait, QueryFilter};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 // 共用的内存数据库初始化函数：与 db/mod.rs 内置测试保持一致。
 async fn setup_db() -> Database {
     Database::new(":memory:").await.unwrap()
-}
-
-// =====================================================================
-// Tag 模块测试
-// =====================================================================
-
-#[cfg(test)]
-mod tag_tests {
-    use super::*;
-
-    /// 验证 create_tag → get_tags → find_tag_by_name → delete_tag 主链路：
-    ///   1) get_tags 返回按 name 升序；
-    ///   2) find_tag_by_name 找到对应 id；
-    ///   3) delete_tag 后无法再查到。
-    #[tokio::test]
-    async fn test_tag_crud_main_path() {
-        let db = setup_db().await;
-        // 故意插入乱序名字，验证按 name 升序排列的契约。
-        let id_zeta = db.create_tag("zeta", "#ff0000").await.unwrap();
-        let id_alpha = db.create_tag("alpha", "#00ff00").await.unwrap();
-
-        let tags = db.get_tags().await.unwrap();
-        assert_eq!(tags.len(), 2);
-        assert_eq!(tags[0].name, "alpha", "应按 name 升序");
-        assert_eq!(tags[0].id, id_alpha);
-        assert_eq!(tags[1].name, "zeta");
-        assert_eq!(tags[1].id, id_zeta);
-
-        // find_tag_by_name 精确匹配
-        assert_eq!(db.find_tag_by_name("alpha").await.unwrap(), Some(id_alpha));
-        assert_eq!(db.find_tag_by_name("ghost").await.unwrap(), None);
-
-        // 删除后不应再查到
-        db.delete_tag(id_alpha).await.unwrap();
-        assert_eq!(db.find_tag_by_name("alpha").await.unwrap(), None);
-        assert_eq!(db.get_tags().await.unwrap().len(), 1);
-    }
-
-    /// tag 与 todo 的多对多关系：
-    ///   add_todo_tag 重复调用是幂等的；set_todo_tags 会先清空再重建集合。
-    /// 选用先 add 再 set 的组合：这是前端表单"打标签 → 整体提交"的真实场景。
-    /// 通过 db._conn_raw() + todo_tags Entity 直查关联表来真正断言事务级语义,
-    /// 而非仅看 add_todo_tag / set_todo_tags 的返回 Ok。
-    #[tokio::test]
-    async fn test_todo_tag_associations_and_set_replaces() {
-        let db = setup_db().await;
-        let todo_id = db.create_todo("t1", "").await.unwrap();
-        let tag_a = db.create_tag("bug", "#f00").await.unwrap();
-        let tag_b = db.create_tag("feature", "#0f0").await.unwrap();
-        let tag_c = db.create_tag("chore", "#00f").await.unwrap();
-
-        // 查 todo_tags 表的辅助函数：避免每处都重复写 Entity::find().filter
-        let fetch_linked = |todo_id: i64| {
-            let db = &db;
-            async move {
-                todo_tags::Entity::find()
-                    .filter(todo_tags::Column::TodoId.eq(todo_id))
-                    .all(db._conn_raw())
-                    .await
-                    .unwrap()
-            }
-        };
-
-        // 重复 add 同一个 (todo,tag) 必须幂等 —— 不能让主键冲突冒泡成 DbErr
-        db.add_todo_tag(todo_id, tag_a).await.unwrap();
-        db.add_todo_tag(todo_id, tag_a).await.unwrap();
-        db.add_todo_tag(todo_id, tag_b).await.unwrap();
-        let links = fetch_linked(todo_id).await;
-        assert_eq!(links.len(), 2, "add_todo_tag 幂等后应有 2 条关联");
-        let linked_ids: HashSet<i64> = links.iter().map(|l| l.tag_id).collect();
-        assert_eq!(linked_ids, HashSet::from([tag_a, tag_b]));
-
-        // set_todo_tags 把 todo 的关联整体替换为 {tag_a, tag_c}
-        //   tag_b 应当消失；tag_a 保留；tag_c 新增。
-        db.set_todo_tags(todo_id, &[tag_a, tag_c]).await.unwrap();
-        let links = fetch_linked(todo_id).await;
-        assert_eq!(links.len(), 2, "set_todo_tags 替换后应有 2 条关联");
-        let linked_ids: HashSet<i64> = links.iter().map(|l| l.tag_id).collect();
-        assert_eq!(
-            linked_ids,
-            HashSet::from([tag_a, tag_c]),
-            "tag_b 应当消失,tag_c 应当新增"
-        );
-
-        // set_todo_tags([]) 验证清空分支 —— 事务级语义,直接查表
-        db.set_todo_tags(todo_id, &[]).await.unwrap();
-        let links = fetch_linked(todo_id).await;
-        assert!(
-            links.is_empty(),
-            "set_todo_tags(empty) 必须清空关联 —— 前端'取消所有标签'依赖这条"
-        );
-
-        // 再次 add 应当成功 —— 没有残留旧关联就不会撞 UNIQUE
-        db.add_todo_tag(todo_id, tag_b).await.unwrap();
-        let links = fetch_linked(todo_id).await;
-        assert_eq!(links.len(), 1);
-        assert_eq!(links[0].tag_id, tag_b);
-    }
-
-    /// get_tag_backups 是云同步 export 用的接口；颜色为空时回退到空串,
-    /// 不能 panic。云同步客户端依赖这个字段非 null 才能序列化为合法 JSON。
-    #[tokio::test]
-    async fn test_get_tag_backups_handles_null_color() {
-        let db = setup_db().await;
-        // 直插一行 color=NULL 的 tag,模拟历史脏数据：
-        // create_tag 永远会包成 Some(...),所以这里走 entity 层用 ActiveValue::Set(None)
-        // 才能真正覆盖 get_tag_backups 的 unwrap_or_default 分支。
-        // 注意列有 DEFAULT '#1890ff',用 ActiveValue::NotSet 会被默认值填上而不是 NULL。
-        tags::Entity::insert(tags::ActiveModel {
-            name: ActiveValue::Set("legacy".to_string()),
-            color: ActiveValue::Set(None),
-            ..Default::default()
-        })
-        .exec(db._conn_raw())
-        .await
-        .unwrap();
-
-        let backups = db.get_tag_backups().await.unwrap();
-        assert_eq!(backups.len(), 1);
-        assert_eq!(backups[0].name, "legacy");
-        // color 是 String,不应当是 None —— 即使 DB 里是 NULL 也得给空串兜底
-        assert_eq!(backups[0].color, "");
-    }
-
-    /// get_tags 的 NULL-color 分支：与 get_tag_backups 共用同一段
-    /// `m.color.unwrap_or_default()` 的 NULL 兜底逻辑（见 backend/src/db/tag.rs），
-    /// 单独覆盖 get_tags 路径,避免某天只改其中一处忘了另一处。
-    /// PR #682 评审 CRITICAL #2 指出：原 test_tag_crud_main_path 走 create_tag
-    /// 永远走 Some(color) 分支,NULL 路径到不了;改用 ActiveValue::Set(None) 直插
-    /// 才是真正覆盖 NULL 兜底的写法。
-    #[tokio::test]
-    async fn test_get_tags_handles_null_color() {
-        let db = setup_db().await;
-        // 正常色 + NULL 色 各插一条,确认两条都被读到、且 NULL 那条返回空串而非 None/panic
-        db.create_tag("painted", "#aabbcc").await.unwrap();
-        tags::Entity::insert(tags::ActiveModel {
-            name: ActiveValue::Set("legacy".to_string()),
-            color: ActiveValue::Set(None),
-            ..Default::default()
-        })
-        .exec(db._conn_raw())
-        .await
-        .unwrap();
-
-        let tags_out = db.get_tags().await.unwrap();
-        assert_eq!(tags_out.len(), 2, "正常色与 NULL 色 tag 都应被读到");
-
-        let legacy = tags_out
-            .iter()
-            .find(|t| t.name == "legacy")
-            .expect("NULL 色 legacy tag 必须在返回列表里");
-        // 与 get_tag_backups 行为一致：NULL → 空串,而非 None / panic
-        assert_eq!(legacy.color, "", "get_tags 必须给 NULL color 兜底成空串");
-
-        let painted = tags_out
-            .iter()
-            .find(|t| t.name == "painted")
-            .expect("正常色 painted tag 必须在返回列表里");
-        assert_eq!(painted.color, "#aabbcc", "正常色必须原样保留");
-    }
-
-    /// get_tag_backups 的"正常路径"对照：create_tag 写 Some(color) 时,
-    /// 颜色必须原样保留。如果某天被改成 unwrap_or("#000") 这类默认值,
-    /// 仅靠 NULL → "" 那条测试是检测不出来的。
-    #[tokio::test]
-    async fn test_get_tag_backups_preserves_normal_color() {
-        let db = setup_db().await;
-        db.create_tag("normal", "#abc123").await.unwrap();
-
-        let backups = db.get_tag_backups().await.unwrap();
-        assert_eq!(backups.len(), 1);
-        assert_eq!(backups[0].name, "normal");
-        // 正常路径: 颜色原样保留,不是空串,也不是默认值
-        assert_eq!(backups[0].color, "#abc123");
-    }
 }
 
 // =====================================================================
@@ -253,7 +76,7 @@ mod sync_record_tests {
     #[tokio::test]
     async fn test_sync_records_zero_limit_returns_empty() {
         let db = setup_db().await;
-        db.create_sync_record("download", "overwrite", "failed", "tags", None, Some("net error"))
+        db.create_sync_record("download", "overwrite", "failed", "todos", None, Some("net error"))
             .await
             .unwrap();
         let result = db.get_sync_records(0, 0).await.unwrap();
@@ -270,7 +93,7 @@ mod sync_record_tests {
         db.create_sync_record("upload", "skip", "success", "todos", None, None)
             .await
             .unwrap();
-        db.create_sync_record("download", "merge", "success", "tags", None, None)
+        db.create_sync_record("download", "merge", "success", "todos", None, None)
             .await
             .unwrap();
         assert_eq!(db.count_sync_records().await.unwrap(), 2);

@@ -47,7 +47,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 //
 // 056（决策 2a）：全局 todos 桶已删除，启动不再预拉任何 todo——
 // 列表页自己按页拉取，单条详情走 useTodoById。
-// 这里只加载 tags（全量，基数小）与决定初始 workspace。
+// 这里只决定初始 workspace。
 
 function DataLoader() {
   const { dispatch: todoDispatch } = useTodos();
@@ -66,9 +66,7 @@ function DataLoader() {
             ? remembered
             : (dirs[0]?.id ?? null);
 
-        // 2. 只拉 tags（全量，基数小）；初始 workspace 同步进选择态
-        const tags = await db.getAllTags();
-        todoDispatch({ type: 'SET_TAGS', payload: tags });
+        // 初始 workspace 同步进选择态
         if (initialId != null && initialId !== state.selectedWorkspace) {
           todoDispatch({ type: 'SELECT_WORKSPACE', payload: initialId });
         }
@@ -109,9 +107,8 @@ export function useApp() {
   const dispatch = useCallback((action: TodoAction | ExecutionAction | UIAction | LogsAction) => {
     const t = action.type;
     if (
-      t === 'SET_TAGS' || t === 'SELECT_TODO' ||
-      t === 'SELECT_TAG' || t === 'SELECT_WORKSPACE' ||
-      t === 'ADD_TAG' || t === 'DELETE_TAG'
+      t === 'SELECT_TODO' ||
+      t === 'SELECT_WORKSPACE'
     ) {
       todoDispatch(action);
     } else if (
@@ -136,7 +133,6 @@ export function useApp() {
   const clearSelection = useCallback(() => {
     // workspace 是一级筛选：不再自动清除，用户希望切换视图时保持选择
     todoDispatch({ type: 'SELECT_TODO', payload: null });
-    todoDispatch({ type: 'SELECT_TAG', payload: null });
   }, [todoDispatch]);
 
   return useMemo(() => ({ state, dispatch, clearSelection }), [state, dispatch, clearSelection]);

@@ -3,7 +3,6 @@ import { Tabs, Form, message } from 'antd';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import {
   SettingOutlined,
-  TagOutlined,
   SaveOutlined,
   FileTextOutlined,
   InfoCircleOutlined,
@@ -12,14 +11,10 @@ import {
   SafetyCertificateOutlined,
 } from '@ant-design/icons';
 import { PageCard } from '@/components/common/PageCard';
-// 093：本组件只消费 todo 域状态，用细粒度 useTodos 替代合并版 useApp，
-// 执行态（进度/统计推送）变化不再触发本组件重渲染。
-import { useTodos } from '@/hooks/useTodoContext';
 import { useViewState } from '@/hooks/useViewState';
 import * as db from '@/utils/database';
 import type { Config, SlashCommandRule } from '@/types';
 import { SystemSettingsPanel } from './settings/SystemSettingsPanel';
-import { TagsPanel } from './settings/TagsPanel';
 import { BackupPanel } from './settings/BackupPanel';
 import { TemplatesPanel } from './settings/TemplatesPanel';
 import { AboutPanel } from './settings/AboutPanel';
@@ -31,8 +26,6 @@ import { DEFAULT_EXECUTION_TIMEOUT_SECS } from '@/constants';
 
 /** 设置页，负责加载并保存系统配置以及各类管理面板。 */
 export function SettingsPage() {
-  const { state, dispatch } = useTodos();
-  const { tags } = state;
   const isMobile = useIsMobile();
 
   const [configForm] = Form.useForm();
@@ -111,7 +104,7 @@ export function SettingsPage() {
   };
 
   // Tab 顺序说明：
-  // 1. 系统设置、界面显示、标签管理 → 基础配置优先
+  // 1. 系统设置、界面显示 → 基础配置优先
   // 2. 事项模板 → 项目相关
   // 3. 备份与恢复 → 数据安全
   // 4. 云端同步、第三方授权 → 外部集成
@@ -136,11 +129,6 @@ export function SettingsPage() {
       key: 'interface',
       label: <span><DesktopOutlined style={{ marginRight: 6 }} />界面显示</span>,
       children: <InterfaceDisplayPanel />,
-    },
-    {
-      key: 'tags',
-      label: <span><TagOutlined style={{ marginRight: 6 }} />标签管理</span>,
-      children: <TagsPanel tags={tags} dispatch={dispatch} />,
     },
     {
       key: 'templates',

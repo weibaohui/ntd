@@ -1018,7 +1018,6 @@ fn make_backup(title: &str, workspace_id: Option<i64>) -> TodoBackup {
         executor: None,
         scheduler_enabled: false,
         scheduler_config: None,
-        tag_names: vec![],
         workspace_path: None,
         worktree: None,
         action_type: None,
@@ -1042,7 +1041,7 @@ async fn test_merge_backup_target_workspace_overrides_backup_value() {
         .unwrap();
 
     let backup = make_backup("t1", Some(dir_a));
-    let (created, updated) = db.merge_backup(&[], &[backup], Some(dir_b)).await.unwrap();
+    let (created, updated) = db.merge_backup(&[backup], Some(dir_b)).await.unwrap();
     assert_eq!(created, 1);
     assert_eq!(updated, 0);
 
@@ -1070,7 +1069,7 @@ async fn test_merge_backup_none_target_falls_back_to_backup_workspace() {
         .unwrap();
 
     let backup = make_backup("t1", Some(dir_a));
-    let (created, _) = db.merge_backup(&[], &[backup], None).await.unwrap();
+    let (created, _) = db.merge_backup(&[backup], None).await.unwrap();
     assert_eq!(created, 1);
 
     let todo = db
@@ -1106,7 +1105,7 @@ async fn test_merge_backup_does_not_hijack_cross_workspace_same_title() {
 
     // 导入同名备份到 B
     let backup = make_backup("dup", Some(dir_b));
-    let (created, updated) = db.merge_backup(&[], &[backup], Some(dir_b)).await.unwrap();
+    let (created, updated) = db.merge_backup(&[backup], Some(dir_b)).await.unwrap();
     // 应在 B 新建，而非覆盖 A 里那条
     assert_eq!(created, 1);
     assert_eq!(updated, 0);
@@ -1131,7 +1130,7 @@ async fn test_merge_backup_drops_dangling_backup_workspace_id() {
     let dangling_id = dir_a + 999;
 
     let backup = make_backup("t1", Some(dangling_id));
-    let (created, _) = db.merge_backup(&[], &[backup], None).await.unwrap();
+    let (created, _) = db.merge_backup(&[backup], None).await.unwrap();
     assert_eq!(created, 1);
 
     // workspace_id 降级为未分配哨兵 0，workspace_path 为空

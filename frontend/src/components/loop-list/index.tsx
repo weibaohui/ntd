@@ -190,7 +190,6 @@ export function LoopListPage({
       <LoopListView
         items={filteredItems}
         loading={loading}
-        tags={state.tags}
         onSelectLoop={onSelectLoop}
         onDelete={handleDelete}
         onToggleStatus={handleToggleStatus}

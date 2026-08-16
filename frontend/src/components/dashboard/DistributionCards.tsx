@@ -1,5 +1,5 @@
 import { Card, Empty } from 'antd';
-import { BarChartOutlined, ThunderboltOutlined, TagOutlined } from '@ant-design/icons';
+import { BarChartOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { CompactRow } from './CompactRow';
 import { MODEL_COLORS } from './constants';
 import { getExecutorOption } from '@/types';
@@ -86,49 +86,6 @@ export function ExecutorDurationCard({ stats }: BaseCardProps) {
         })
       ) : (
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无数据" />
-      )}
-    </Card>
-  );
-}
-
-export function TagChartCard({ stats }: BaseCardProps) {
-  const tagData = stats?.tag_distribution ?? [];
-  const tagMax = Math.max(...tagData.map((t) => t.count), 1);
-
-  return (
-    <Card
-      title={<div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><TagOutlined /><span>标签分布</span></div>}
-      className="dashboard-card" style={{ borderRadius: 12 }}
-      styles={{ body: { padding: '8px 16px' } }}
-    >
-      {tagData.length > 0 ? (
-        tagData.map((t) => {
-          const execRate = t.execution_count > 0 ? ((t.success_count / t.execution_count) * 100).toFixed(0) : '0';
-          return (
-            <CompactRow
-              key={t.tag_id}
-              name={t.tag_name}
-              value={<span style={{ fontSize: 18, fontWeight: 700, color: t.tag_color }}>{t.count}</span>}
-              color={t.tag_color}
-              barPct={(t.count / tagMax) * 100}
-              sub={
-                <span>
-                  执行 <strong style={{ color: 'var(--color-text)' }}>{t.execution_count}</strong> 次
-                  <span style={{ margin: '0 6px' }}>·</span>
-                  成功率 <strong style={{ color: '#22c55e' }}>{execRate}%</strong>
-                  {t.total_cost_usd > 0 && (
-                    <>
-                      <span style={{ margin: '0 6px' }}>·</span>
-                      <span style={{ color: '#f59e0b', fontWeight: 600 }}>${Math.round(t.total_cost_usd)}</span>
-                    </>
-                  )}
-                </span>
-              }
-            />
-          );
-        })
-      ) : (
-        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无标签数据" />
       )}
     </Card>
   );

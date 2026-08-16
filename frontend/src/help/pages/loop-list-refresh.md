@@ -32,7 +32,6 @@ flowchart TD
   DBL -->|"unwrap"| API["api.get /api/v1/workspaces/{ws}/loops"]
   API -->|"HTTP"| H1["list_loops_v1"]
   H1 --> DAO["db.list_loops_with_counts"]
-  H1 -->|"批量"| TAG["db.get_loop_tag_ids_batch"]
   H1 -->|"批量"| TPL["db.get_process_templates_by_ids"]
   LD -->|"effect 依赖 reload loopUpdateCount"| UE["useEffect reload"]
 ```
@@ -52,7 +51,6 @@ classDiagram
     +id: number
     +name: string
     +status: string
-    +tag_ids: number[]
     +step_count: number
     +pending_approval_count: number
     +last_execution_status: string

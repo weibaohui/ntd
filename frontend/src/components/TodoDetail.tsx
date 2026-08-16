@@ -487,7 +487,6 @@ export function TodoDetail({ hideTitleRow = false, onOpenPost, onActionsReady }:
       <TodoDrawer
         open={todoDrawerOpen}
         todo={selectedTodo}
-        tags={state.tags}
         onClose={() => setTodoDrawerOpen(false)}
         onSaved={() => {
           // 抽屉保存可能修改多个字段（标题/prompt/执行器/调度等），

@@ -5,7 +5,6 @@
 //! - `GET /{id}`                          详情
 //! - `DELETE /{id}`                       删除（级联清环节/执行记录）
 //! - `PUT /{id}/status`                   启停
-//! - `PUT /{id}/tags`                     标签
 //! - `GET /{id}/executions`               运行历史（分页）
 //! - `GET /{id}/executions/{eid}`         单次执行详情（含待审批门禁 id）
 //! - `GET /stats`                         workspace 聚合统计
@@ -27,7 +26,7 @@ use crate::models::{
     ApiResponse, BatchCopyLoopWorkspaceRequest, BatchUpdateLoopWorkspaceRequest,
     BatchWorkspaceResult, LoopDetail, LoopDto, LoopExecutionDetail, LoopExecutionDto,
     LoopExecutionTokenSummary, GateResultDto, LoopListItem, LoopStepExecutionDto,
-    UpdateLoopStatusRequest, UpdateTagsRequest,
+    UpdateLoopStatusRequest,
 };
 
 // 默认分页：列表类接口未显式传 limit 时的兜底值，与历史行为一致。
@@ -66,10 +65,8 @@ pub async fn list_loops_v1(
 ) -> Result<impl IntoResponse, AppError> {
     let rows = state.db.list_loops_with_counts(Some(ws_id)).await?;
     let items: Vec<LoopListItem> = rows.into_iter().map(Into::into).collect();
-    let loop_ids: Vec<i64> = items.iter().map(|item| item.loop_.id).collect();
-    let tag_map = state.db.get_loop_tag_ids_batch(&loop_ids).await?;
     // 列表「工艺名称」列需要来源模板的 display_name/name/guid；版本快照已在 loops 行自动带出。
-    // 与 tags 同走「批量查 + 注入」：去重后一次取回，避免逐 loop N+1。
+    // 批量查 + 注入：去重后一次取回，避免逐 loop N+1。
     let template_ids: Vec<i64> = items
         .iter()
         .filter_map(|item| item.loop_.process_template_id)
@@ -86,15 +83,14 @@ pub async fn list_loops_v1(
     let results: Vec<LoopListItem> = items
         .into_iter()
         .map(|item| {
-            let tag_ids = tag_map.get(&item.loop_.id).cloned().unwrap_or_default();
             // 无 process_template_id 或模板已被删除时传 None：字段保持缺省不序列化。
             let tpl = item
                 .loop_
                 .process_template_id
                 .and_then(|tid| template_map.get(&tid).cloned());
             // with_process_template 定义在 LoopDto 上（注入 display_name/name/guid），
-            // LoopListItem 只是 flatten 包装，因此先 with_tags 再就地改 loop_ 字段。
-            let mut tagged = item.with_tags(tag_ids);
+            // LoopListItem 只是 flatten 包装，直接就地改 loop_ 字段。
+            let mut tagged = item;
             tagged.loop_ = tagged.loop_.with_process_template(tpl);
             tagged
         })
@@ -111,9 +107,7 @@ pub async fn get_loop_v1(
     workspace_guard::verify_loop_belongs_to_ws(&state.db, id, _ws_id).await?;
     let view = state.db.load_loop_full(id).await?
         .ok_or(AppError::NotFound)?;
-    let tag_ids = state.db.get_loop_tag_ids(id).await?;
     let mut detail = LoopDetail::from(view);
-    detail.loop_ = detail.loop_.with_tags(tag_ids);
     // 注入来源工艺模板名称：详情页「来源工艺」面包屑需要显示名，
     // 仅当环路是工艺实例化产物时才查一次模板表，普通环路零额外查询。
     let process_meta = match detail.loop_.process_template_id {
@@ -148,25 +142,7 @@ pub async fn update_loop_status_v1(
     workspace_guard::verify_loop_belongs_to_ws(&state.db, id, _ws_id).await?;
     state.db.update_loop_status(id, &req.status).await?;
     let updated = state.db.get_loop(id).await?.ok_or(AppError::NotFound)?;
-    let tag_ids = state.db.get_loop_tag_ids(id).await?;
-    Ok(ApiResponse::ok(LoopDto::from(updated).with_tags(tag_ids)))
-}
-
-/// PUT /{id}/tags (nested) — replace tags
-pub async fn update_loop_tags_v1(
-    State(state): State<AppState>,
-    Path((_ws_id, id)): Path<(i64, i64)>,
-    Json(req): Json<UpdateTagsRequest>,
-) -> Result<impl IntoResponse, AppError> {
-    // V1 隔离：校验 loop 属于路径 workspace（verify 已含存在性校验）
-    workspace_guard::verify_loop_belongs_to_ws(&state.db, id, _ws_id).await?;
-    if req.tag_ids.len() > 1 {
-        return Err(AppError::BadRequest("环路只能选择一个标签".to_string()));
-    }
-    state.db.set_loop_tags(id, &req.tag_ids).await?;
-    let updated = state.db.get_loop(id).await?.ok_or(AppError::NotFound)?;
-    let tag_ids = state.db.get_loop_tag_ids(id).await?;
-    Ok(ApiResponse::ok(LoopDto::from(updated).with_tags(tag_ids)))
+    Ok(ApiResponse::ok(LoopDto::from(updated)))
 }
 
 /// 批量把 usage token 字段填进多个 step DTO。
@@ -504,7 +480,6 @@ pub fn v1_routes() -> axum::Router<AppState> {
         .route("/batch-delete", post(batch_delete_loops_v1))
         .route("/{id}", get(get_loop_v1).delete(delete_loop_v1))
         .route("/{id}/status", put(update_loop_status_v1))
-        .route("/{id}/tags", put(update_loop_tags_v1))
         .route("/{id}/executions", get(list_executions_v1))
         .route("/{id}/executions/{eid}", get(get_execution_v1))
 }

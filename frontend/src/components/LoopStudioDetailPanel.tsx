@@ -32,8 +32,6 @@ interface LoopDetailPanelProps {
   loopId: number;
   /** 当前工作空间 ID（v1 路由 workspace-scoped，loop 查询必需） */
   workspaceId: number | null;
-  /** 可用标签列表（复用 Todo 的标签体系） */
-  tags: Array<{ id: number; name: string; color: string }>;
   onDelete: () => void;
   onToggleStatus: () => void;
   onChanged: () => void;
@@ -53,7 +51,6 @@ interface LoopDetailPanelProps {
 export function LoopDetailPanel({
   loopId,
   workspaceId,
-  tags,
   onDelete,
   onToggleStatus,
   onChanged,
@@ -137,12 +134,10 @@ export function LoopDetailPanel({
     <div className="loop-detail-panel detail-panel" style={{ padding: 'var(--space-xl)' }}>
       {!hideTitleRow && (
         <>
-          {/* Header: 标签色条 + 标题 + 删除按钮（044：触发/复制/导出/编辑已下线） */}
+          {/* Header: 色条 + 标题 + 删除按钮（044：触发/复制/导出/编辑已下线） */}
           <div className="loop-detail-header" style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-            {(() => {
-              const tag = tags.find(t => detail.tag_ids?.includes(t.id));
-              return <span style={{ width: 4, height: 24, background: tag?.color || '#722ed1', borderRadius: 2 }} />;
-            })()}
+            {/* 环路标识色条：标签体系已移除，固定使用环路主题色保持视觉锚点。 */}
+            <span style={{ width: 4, height: 24, background: '#722ed1', borderRadius: 2 }} />
             <h2 style={{ margin: 0, fontSize: 18, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--color-text, #0f172a)' }}>
               {detail.name}
             </h2>

@@ -12,12 +12,11 @@ interface ExecutionsTabProps {
   stats: DashboardStats | null;
   loading: boolean;
   totalTodos: number;
-  tagsLength: number;
 }
 
-export function ExecutionsTab({ stats, loading, totalTodos, tagsLength }: ExecutionsTabProps) {
+export function ExecutionsTab({ stats, loading, totalTodos }: ExecutionsTabProps) {
   const panels: PanelItem[] = [
-    { key: 'exec-stats', render: () => <ExecStatsCard stats={stats} loading={loading} tagsLength={tagsLength} /> },
+    { key: 'exec-stats', render: () => <ExecStatsCard stats={stats} loading={loading} /> },
     { key: 'status-chart', render: () => <StatusChartCard stats={stats} totalTodos={totalTodos} /> },
     { key: 'executor-chart', render: () => <ExecutorChartCard stats={stats} /> },
     { key: 'executor-duration', render: () => <ExecutorDurationCard stats={stats} /> },

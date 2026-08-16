@@ -109,7 +109,6 @@ export function QuickCaptureModal({
       const todo = await db.createTodo(
         title,
         trimmed,
-        [],
         workspaceId,
         undefined,
         undefined,
@@ -169,7 +168,6 @@ export function QuickCaptureModal({
       const todo = await db.createTodo(
         title,
         trimmed,
-        [],
         workspaceId,
         undefined,
         undefined,

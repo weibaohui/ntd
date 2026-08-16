@@ -7,8 +7,8 @@ use serde_json::Value;
 
 use crate::db::workspace::Workspace;
 use crate::models::{
-    ClientResponse, CreateTagRequest, CreateTodoRequest, DashboardStats,
-    ExecutionRecord, ExecutionRecordsPage, ExecutionSummary, Tag, Todo, ExecuteRequest, LoopDto,
+    ClientResponse, CreateTodoRequest, DashboardStats,
+    ExecutionRecord, ExecutionRecordsPage, ExecutionSummary, Todo, ExecuteRequest, LoopDto,
 };
 use crate::cli::client::ApiClient;
 use crate::config;
@@ -80,11 +80,6 @@ pub enum Commands {
     Loop {
         #[command(subcommand)]
         action: LoopAction,
-    },
-    /// Tag management
-    Tag {
-        #[command(subcommand)]
-        action: TagAction,
     },
     /// Global statistics
     Stats {
@@ -264,10 +259,6 @@ pub enum TodoAction {
         #[arg(short = 'w', long = "workspace-id")]
         workspace_id: i64,
 
-        /// Tag IDs (comma-separated)
-        #[arg(long)]
-        tags: Option<String>,
-
         /// Schedule (cron expression, e.g. "*/30 * * * *")
         #[arg(long)]
         schedule: Option<String>,
@@ -281,10 +272,6 @@ pub enum TodoAction {
         /// Filter by status
         #[arg(long)]
         status: Option<String>,
-
-        /// Filter by tag ID
-        #[arg(long)]
-        tag: Option<i64>,
 
         /// Show only running todos
         #[arg(long)]
@@ -336,10 +323,6 @@ pub enum TodoAction {
         /// New executor type
         #[arg(long)]
         executor: Option<String>,
-
-        /// New tag IDs (comma-separated)
-        #[arg(long)]
-        tags: Option<String>,
 
         /// Schedule (cron expression)
         #[arg(long)]
@@ -445,26 +428,6 @@ pub enum ExecutionAction {
         /// Optional message to send (defaults to todo prompt)
         #[arg(short, long)]
         message: Option<String>,
-    },
-}
-
-#[derive(Debug, Clone, Subcommand)]
-pub enum TagAction {
-    /// List all tags
-    List,
-    /// Create a new tag
-    Create {
-        /// Tag name
-        name: String,
-
-        /// Tag color (hex)
-        #[arg(short, long, default_value = "#1890ff")]
-        color: String,
-    },
-    /// Delete a tag
-    Delete {
-        /// Tag ID
-        id: i64,
     },
 }
 
@@ -725,13 +688,6 @@ fn read_prompt_from_file(file: &Option<String>) -> Result<String> {
     }
 }
 
-fn parse_tags(tags: &Option<String>) -> Vec<i64> {
-    match tags {
-        Some(s) => s.split(',').filter_map(|s| s.trim().parse().ok()).collect(),
-        None => Vec::new(),
-    }
-}
-
 fn parse_key_value(s: &str) -> Result<(String, String), String> {
     let parts: Vec<&str> = s.splitn(2, '=').collect();
     if parts.len() != 2 {
@@ -782,7 +738,6 @@ pub async fn run_command(cli: &Cli) -> Result<()> {
     match &cli.command {
         Commands::Todo { action } => handle_todo(&client, action, &cli.output, &cli.fields).await?,
         Commands::Loop { action } => handle_loop(&client, action, &cli.output, &cli.fields).await?,
-        Commands::Tag { action } => handle_tag(&client, action, &cli.output, &cli.fields).await?,
         Commands::Stats { } => handle_stats(&client, &cli.output, &cli.fields).await?,
         Commands::Blackboard { action } => handle_blackboard(&client, action, &cli.output, &cli.fields).await?,
         Commands::Workspace { action } => handle_workspace(&client, action, &cli.output, &cli.fields).await?,
@@ -802,7 +757,7 @@ async fn handle_todo(
     fields: &Option<String>,
 ) -> Result<()> {
     match action {
-        TodoAction::Create { title, prompt, file, stdin, executor, workspace_id, tags, schedule } => {
+        TodoAction::Create { title, prompt, file, stdin, executor, workspace_id, schedule } => {
             // workspace_id 现在是必填（i64，不再 Option），从 clap 直接拿；
             // stdin 模式下若 JSON 也带 workspace_id，以命令行参数为准（更显式）。
             let ws_id = *workspace_id;
@@ -813,10 +768,6 @@ async fn handle_todo(
                     .unwrap_or_else(|_| CreateTodoRequest {
                         title: value.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                         prompt: value.get("prompt").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                        tag_ids: value.get("tag_ids")
-                            .and_then(|v| v.as_array())
-                            .map(|arr| arr.iter().filter_map(|v| v.as_i64()).collect())
-                            .unwrap_or_default(),
                         executor: value.get("executor").and_then(|v| v.as_str()).map(|s| s.to_string()),
                         expert_name: value.get("expert_name").and_then(|v| v.as_str()).map(|s| s.to_string()),
                         scheduler_enabled: None,
@@ -843,7 +794,6 @@ async fn handle_todo(
                 CreateTodoRequest {
                     title,
                     prompt: prompt_content,
-                    tag_ids: parse_tags(tags),
                     executor: executor.clone(),
                     expert_name: None,
                     scheduler_enabled: None,
@@ -873,9 +823,9 @@ async fn handle_todo(
             let resp: ClientResponse<Todo> = client.post(&path, &req).await?;
             print_response(&resp, output, fields)?;
         }
-        TodoAction::List { workspace_id, status, tag, running, search } => {
+        TodoAction::List { workspace_id, status, running, search } => {
             // 056：GET /todos 响应改为分页结构 { items, total, page, page_size }。
-            // CLI 的 --status/--tag/--running/--search 均为客户端过滤（后端不认识这些参数），
+            // CLI 的 --status/--running/--search 均为客户端过滤（后端不认识这些参数），
             // 因此需要拉齐所有页再过滤，否则只能看到第一页的过滤结果。
             let mut all_todos: Vec<Todo> = Vec::new();
             let mut page = 1i64;
@@ -898,15 +848,12 @@ async fn handle_todo(
                 page += 1;
             }
 
-            // 客户端过滤：status/tag/running 后端本就不支持（原实现发出去但被忽略），
+            // 客户端过滤：status/running 后端本就不支持（原实现发出去但被忽略），
             // 056 补齐为真正的客户端过滤，行为与参数文档一致。
             let filtered: Vec<Todo> = all_todos
                 .into_iter()
                 .filter(|t| {
                     status.as_deref().map_or(true, |s| t.status.as_str() == s)
-                })
-                .filter(|t| {
-                    tag.map_or(true, |tid| t.tag_ids.contains(&tid))
                 })
                 .filter(|t| !*running || t.status.as_str() == "running")
                 .filter(|t| {
@@ -927,7 +874,7 @@ async fn handle_todo(
             let resp: ClientResponse<Todo> = client.get(&path).await?;
             print_response(&resp, output, fields)?;
         }
-        TodoAction::Update { id, workspace_id, title, prompt, file, stdin, status, executor, tags, schedule } => {
+        TodoAction::Update { id, workspace_id, title, prompt, file, stdin, status, executor, schedule } => {
             let mut req = if *stdin {
                 read_stdin_json()?
             } else {
@@ -949,10 +896,6 @@ async fn handle_todo(
             if let Some(p) = prompt { req["prompt"] = p.clone().into(); }
             if let Some(s) = status { req["status"] = s.clone().into(); }
             if let Some(e) = executor { req["executor"] = e.clone().into(); }
-            if let Some(t) = tags {
-                let tag_ids: Vec<i64> = t.split(',').filter_map(|s| s.trim().parse().ok()).collect();
-                req["tag_ids"] = tag_ids.into();
-            }
             if let Some(s) = schedule {
                 req["scheduler_enabled"] = (!s.is_empty()).into();
                 req["scheduler_config"] = if s.is_empty() { Value::Null } else { s.clone().into() };
@@ -1037,41 +980,6 @@ async fn handle_execution(
             // v1: POST /workspaces/{ws}/executions/{id}/resume
             let path = format!("{}/executions/{}/resume", ws_prefix(*workspace_id), id);
             let resp: ClientResponse<Value> = client.post(&path, &req).await?;
-            print_response(&resp, output, fields)?;
-        }
-    }
-    Ok(())
-}
-
-// ============== Tag Handlers ==============
-// Tag 是全局资源（无 workspace_id 列），v1 路由直接挂 /api/v1/tags，
-// 不嵌 workspace 前缀；client.rs 会自动补 /api/v1。
-
-async fn handle_tag(
-    client: &ApiClient,
-    action: &TagAction,
-    output: &OutputFormat,
-    fields: &Option<String>,
-) -> Result<()> {
-    match action {
-        TagAction::List => {
-            // v1: GET /tags（axum 在 nest("/api/v1/tags") + .route("/") 下，
-            // 无尾斜杠的 /api/v1/tags 也能命中根路由）
-            let resp: ClientResponse<Vec<Tag>> = client.get("/tags").await?;
-            print_response(&resp, output, fields)?;
-        }
-        TagAction::Create { name, color } => {
-            let req = CreateTagRequest {
-                name: name.clone(),
-                color: color.clone(),
-            };
-            // v1: POST /tags（全局资源）
-            let resp: ClientResponse<Tag> = client.post("/tags", &req).await?;
-            print_response(&resp, output, fields)?;
-        }
-        TagAction::Delete { id } => {
-            // v1: DELETE /tags/{id}
-            let resp: ClientResponse<()> = client.delete(&format!("/tags/{}", id)).await?;
             print_response(&resp, output, fields)?;
         }
     }

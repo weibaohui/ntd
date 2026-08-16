@@ -83,8 +83,6 @@ ntd 是一个 AI 驱动的任务引擎，采用 Rust 后端 + React 前端 + 多
 - **todos 表**（主表）：id, title, prompt, status, executor, workspace_id, schedule, acceptance_criteria, expert_name, created_at, updated_at, archived_at
   - TodoStatus 枚举：pending/running/completed/failed/pending_approval
   - smart_create 走 `default_response_todo_id`
-- **todo_tags 表**：Todo ↔ Tag 多对多（id, todo_id FK, tag_id FK）
-- **tags 表**：标签字典（id, name, workspace_id, color）
 - **todo_templates 表**：Todo 模板（id, name, prompt, executor, default_params, workspace_id）
 
 ### 3.2 域 2：环路执行（Loop）
@@ -108,7 +106,7 @@ ntd 是一个 AI 驱动的任务引擎，采用 Rust 后端 + React 前端 + 多
 - **execution_logs 表**：执行日志（id, record_id, stream_type, content, sequence, created_at）
 - **feishu_* 系列表**（6 张）：feishu_messages, feishu_history_chats, feishu_group_whitelist, feishu_push_targets, feishu_project_bindings, feishu_response_config
 - **workspace_* 表**：project_directories, workspace_settings, workspace_slash_commands, review_templates
-- **其他辅助表**：usage_stats, agent_bots, quick_buttons, usage_executor_daily, usage_model_breakdown, sync_records, executors, loop_tags
+- **其他辅助表**：usage_stats, agent_bots, quick_buttons, usage_executor_daily, usage_model_breakdown, sync_records, executors
 
 ### 3.5 跨域外键引用
 
@@ -312,7 +310,7 @@ ntd 是一个 AI 驱动的任务引擎，采用 Rust 后端 + React 前端 + 多
 
 ### 后端入口与路由
 
-- `backend/src/main.rs`：CLI 命令枚举（Commands），Server/Todo/Loop/Process/Tag/Stats/Daemon/Skills 子命令
+- `backend/src/main.rs`：CLI 命令枚举（Commands），Server/Todo/Loop/Process/Stats/Daemon/Skills 子命令
 - `backend/src/lib.rs`：模块导出（adapters/cli/config/daemon/db/executor_service/...）
 - `backend/src/handlers/mod.rs`：Router 路由注册（1125 行），mount_v1_domain_routes
 

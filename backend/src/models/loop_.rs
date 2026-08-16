@@ -215,16 +215,6 @@ impl From<LoopListRow> for LoopListItem {
     }
 }
 
-impl LoopListItem {
-    /// 在 handler 已完成关联表查询后注入标签，避免列表行转换隐式依赖数据库访问。
-    /// 不放入 `From<LoopListRow>` 是因为标签信息需要额外跨表查询，
-    /// 由 handler 在操作事务边界外统一获取后注入。
-    pub fn with_tags(mut self, tag_ids: Vec<i64>) -> Self {
-        self.loop_ = self.loop_.with_tags(tag_ids);
-        self
-    }
-}
-
 /// Loop 全局聚合统计(供 dashboard「自动化」Tab 用)。
 ///
 /// 一次聚合所有 loop 的规模/成功率/触发器分布/Token,避免前端逐 loop 拉取造成的 N+1。
@@ -302,9 +292,6 @@ pub struct LoopDto {
     /// 前端展示用 workspaces.name，避免长路径重复上送。
     pub workspace_id: Option<i64>,
     pub status: String,
-    /// 标签 ID 列表（单选，复用 Todo 的标签体系）
-    #[serde(default)]
-    pub tag_ids: Vec<i64>,
     pub limits_config: String,
     /// 异常处理提示词快照（工艺定义）；NULL=未配置异常处理。需求 035。
     pub abnormal_handler_prompt: Option<String>,
@@ -337,14 +324,13 @@ impl From<loops::Model> for LoopDto {
             description: m.description,
             workspace_id: m.workspace_id,
             status: m.status,
-            tag_ids: vec![],
             limits_config: m.limits_config,
             abnormal_handler_prompt: m.abnormal_handler_prompt,
             abnormal_handler_trigger_on: m.abnormal_handler_trigger_on,
             process_template_id: m.process_template_id,
             process_template_version: m.process_template_version,
             // 模板名称属跨表关联数据，不在 ORM 转换时隐式查询；
-            // 由 handler 通过 with_process_template 在事务边界外注入（与 with_tags 同模式）。
+            // 由 handler 通过 with_process_template 在事务边界外注入。
             process_template_name: None,
             process_template_guid: None,
             process_template_display_name: None,
@@ -355,14 +341,6 @@ impl From<loops::Model> for LoopDto {
 }
 
 impl LoopDto {
-    /// 将外部查询到的标签关联附加到基础 DTO，保持 `From<loops::Model>` 只做纯字段映射。
-    /// 标签属于跨表关联数据，不应在 ORM 模型转换时隐式查询，
-    /// 由 handler 使用此方法在查询事务边界外手动注入。
-    pub fn with_tags(mut self, tag_ids: Vec<i64>) -> Self {
-        self.tag_ids = tag_ids;
-        self
-    }
-
     /// 注入来源工艺模板的名称信息（环路详情「来源工艺」面包屑用）。
     /// None 表示该环路非工艺实例化（或模板已被删除），字段保持缺省不序列化。
     pub fn with_process_template(mut self, meta: Option<process_templates::Model>) -> Self {

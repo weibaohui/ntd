@@ -27,8 +27,6 @@ interface LoopDetailPageProps {
   loopId: number;
   /** 当前工作空间 id（v1 路由必需）。 */
   workspaceId?: number | null;
-  /** 全量标签集（详情面板渲染 Tag 用）。 */
-  tags: Array<{ id: number; name: string; color: string }>;
   /** 返回列表：调用方用 history.back() 或 replaceUrl('loops')。 */
   onBack: () => void;
   /** 点击「来源工艺」跳转工艺详情；未注入时不可点击。 */
@@ -53,7 +51,6 @@ interface LoopDetailPageProps {
 export function LoopDetailPage({
   loopId,
   workspaceId,
-  tags,
   onBack,
   onOpenProcess,
   onSelectTodo,
@@ -112,7 +109,6 @@ export function LoopDetailPage({
       <LoopDetailPanel
         loopId={loopId}
         workspaceId={workspaceId ?? null}
-        tags={tags}
         // 外层 PageCard 已渲染标题行（标题 + 返回按钮 + 删除按钮），内层隐藏避免重复头部
         hideTitleRow
         onDelete={handleDeleteWithBack}

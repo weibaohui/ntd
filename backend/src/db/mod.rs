@@ -73,7 +73,7 @@ pub struct Database {
 }
 
 impl Database {
-    /// 暴露内部连接，仅供集成测试绕过 create_tag / create_todo 等包装函数直接构造边界数据（如 NULL color）使用。
+    /// 暴露内部连接，仅供集成测试绕过 create_todo 等包装函数直接构造边界数据使用。
     /// 生产代码不应该调用 —— 业务逻辑统一走 db 下的领域方法。
     ///
     /// 加 `#[doc(hidden)]` + 改名 `_raw` 后缀是为了让 IDE 自动补全里
@@ -406,7 +406,6 @@ mod todo;
 pub use todo::{SchedulerUpdate, TODO_TYPE_ABNORMAL_HANDLER, TodoCenterPageData, TodoCenterPageQuery, TodoUpdate};
 pub mod execution;
 pub(super) mod dashboard;
-mod tag;
 pub use execution::{LatestExecutionSummary, NewExecutionRecord};
 mod agent_bot;
 mod executor_config;
@@ -769,27 +768,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_tag_created_at_is_utc() {
-        let db = setup_db().await;
-        let before = truncate_seconds(Utc::now());
-        let id = db.create_tag("urgent", "#ff0000").await.unwrap();
-        let after = truncate_seconds(Utc::now());
-
-        let tag = db
-            .get_tags()
-            .await
-            .unwrap()
-            .into_iter()
-            .find(|t| t.id == id)
-            .unwrap();
-        let created = truncate_seconds(parse_utc(&tag.created_at));
-
-        assert!(created >= before);
-        assert!(created <= after);
-        assert!(tag.created_at.ends_with('Z'));
-    }
-
-    #[tokio::test]
     async fn test_execution_record_started_at_is_utc() {
         let db = setup_db().await;
         let todo_id = db.create_todo("Test", "Desc").await.unwrap();
@@ -1021,109 +999,6 @@ mod tests {
         assert_eq!(scheduled.len(), 1);
         assert_eq!(scheduled[0].id, id1);
         assert!(scheduled.iter().all(|t| t.id != id2));
-    }
-
-    #[tokio::test]
-    async fn test_todo_with_tag_ids() {
-        let db = setup_db().await;
-        let tag_id = db.create_tag("urgent", "#ff0000").await.unwrap();
-        let todo_id = db.create_todo("Test", "Prompt").await.unwrap();
-        db.add_todo_tag(todo_id, tag_id).await.unwrap();
-        let todo = db.get_todo(todo_id).await.unwrap().unwrap();
-        assert_eq!(todo.tag_ids, vec![tag_id]);
-    }
-
-    // ===== Tag CRUD tests =====
-
-    #[tokio::test]
-    async fn test_create_and_get_tag() {
-        let db = setup_db().await;
-        let id = db.create_tag("urgent", "#ff0000").await.unwrap();
-        let tags = db.get_tags().await.unwrap();
-        let tag = tags.iter().find(|t| t.id == id).unwrap();
-        assert_eq!(tag.name, "urgent");
-        assert_eq!(tag.color, "#ff0000");
-    }
-
-    #[tokio::test]
-    async fn test_get_tags_ordered_by_name() {
-        let db = setup_db().await;
-        db.create_tag("zebra", "#000").await.unwrap();
-        db.create_tag("apple", "#fff").await.unwrap();
-        db.create_tag("mango", "#aaa").await.unwrap();
-        let tags = db.get_tags().await.unwrap();
-        assert_eq!(tags[0].name, "apple");
-        assert_eq!(tags[1].name, "mango");
-        assert_eq!(tags[2].name, "zebra");
-    }
-
-    #[tokio::test]
-    async fn test_delete_tag() {
-        let db = setup_db().await;
-        let id = db.create_tag("temp", "#000").await.unwrap();
-        db.delete_tag(id).await.unwrap();
-        let tags = db.get_tags().await.unwrap();
-        assert!(tags.iter().all(|t| t.id != id));
-    }
-
-    #[tokio::test]
-    async fn test_add_todo_tag() {
-        let db = setup_db().await;
-        let todo_id = db.create_todo("Test", "Prompt").await.unwrap();
-        let tag_id = db.create_tag("urgent", "#ff0000").await.unwrap();
-        db.add_todo_tag(todo_id, tag_id).await.unwrap();
-        let todo = db.get_todo(todo_id).await.unwrap().unwrap();
-        assert_eq!(todo.tag_ids, vec![tag_id]);
-    }
-
-    #[tokio::test]
-    async fn test_add_todo_tag_duplicate_ignored() {
-        let db = setup_db().await;
-        let todo_id = db.create_todo("Test", "Prompt").await.unwrap();
-        let tag_id = db.create_tag("urgent", "#ff0000").await.unwrap();
-        db.add_todo_tag(todo_id, tag_id).await.unwrap();
-        db.add_todo_tag(todo_id, tag_id).await.unwrap(); // should not panic
-        let todo = db.get_todo(todo_id).await.unwrap().unwrap();
-        assert_eq!(todo.tag_ids, vec![tag_id]);
-    }
-
-    #[tokio::test]
-    async fn test_set_todo_tags_replace_all() {
-        let db = setup_db().await;
-        let todo_id = db.create_todo("Test", "Prompt").await.unwrap();
-        let tag1 = db.create_tag("a", "#000").await.unwrap();
-        let tag2 = db.create_tag("b", "#fff").await.unwrap();
-        let tag3 = db.create_tag("c", "#aaa").await.unwrap();
-        db.add_todo_tag(todo_id, tag1).await.unwrap();
-        db.set_todo_tags(todo_id, &[tag2, tag3]).await.unwrap();
-        let todo = db.get_todo(todo_id).await.unwrap().unwrap();
-        assert_eq!(todo.tag_ids.len(), 2);
-        assert!(todo.tag_ids.contains(&tag2));
-        assert!(todo.tag_ids.contains(&tag3));
-        assert!(!todo.tag_ids.contains(&tag1));
-    }
-
-    #[tokio::test]
-    async fn test_set_todo_tags_empty_clears_all() {
-        let db = setup_db().await;
-        let todo_id = db.create_todo("Test", "Prompt").await.unwrap();
-        let tag_id = db.create_tag("urgent", "#ff0000").await.unwrap();
-        db.add_todo_tag(todo_id, tag_id).await.unwrap();
-        db.set_todo_tags(todo_id, &[]).await.unwrap();
-        let todo = db.get_todo(todo_id).await.unwrap().unwrap();
-        assert!(todo.tag_ids.is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_delete_todo_cascades_tags() {
-        let db = setup_db().await;
-        let todo_id = db.create_todo("Test", "Prompt").await.unwrap();
-        let tag_id = db.create_tag("urgent", "#ff0000").await.unwrap();
-        db.add_todo_tag(todo_id, tag_id).await.unwrap();
-        db.delete_todo(todo_id).await.unwrap();
-        // tag should still exist but association should be gone
-        let tags = db.get_tags().await.unwrap();
-        assert!(tags.iter().any(|t| t.id == tag_id));
     }
 
     // ===== Execution record tests =====

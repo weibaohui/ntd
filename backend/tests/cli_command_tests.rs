@@ -57,21 +57,6 @@ mod todo_create_command_tests {
     }
 
     #[test]
-    fn test_todo_create_with_tags() {
-        // v1: --workspace-id 必填
-        let cli =
-            Cli::try_parse_from(["ntd", "todo", "create", "-w", "1", "Task", "--tags", "1,2,3"]).unwrap();
-        match cli.command {
-            Commands::Todo {
-                action: TodoAction::Create { tags, .. },
-            } => {
-                assert_eq!(tags, Some("1,2,3".to_string()));
-            }
-            _ => panic!("Expected Todo::Create with tags"),
-        }
-    }
-
-    #[test]
     fn test_todo_create_with_workspace() {
         // v1: --workspace-id 必填（不再是可选 filter）
         let cli =
@@ -203,14 +188,12 @@ mod todo_list_command_tests {
                     TodoAction::List {
                         workspace_id,
                         status,
-                        tag,
                         running,
                         search,
                     },
             } => {
                 assert_eq!(workspace_id, 1);
                 assert!(status.is_none());
-                assert!(tag.is_none());
                 assert!(!running);
                 assert!(search.is_none());
             }
@@ -229,20 +212,6 @@ mod todo_list_command_tests {
                 assert_eq!(status, Some("completed".to_string()));
             }
             _ => panic!("Expected Todo::List with status"),
-        }
-    }
-
-    #[test]
-    fn test_todo_list_with_tag_filter() {
-        // v1: --workspace-id 必填
-        let cli = Cli::try_parse_from(["ntd", "todo", "list", "--workspace-id", "1", "--tag", "3"]).unwrap();
-        match cli.command {
-            Commands::Todo {
-                action: TodoAction::List { tag, .. },
-            } => {
-                assert_eq!(tag, Some(3));
-            }
-            _ => panic!("Expected Todo::List with tag"),
         }
     }
 
@@ -285,8 +254,6 @@ mod todo_list_command_tests {
             "1",
             "--status",
             "pending",
-            "--tag",
-            "1",
             "--running",
             "--search",
             "bug",
@@ -297,14 +264,12 @@ mod todo_list_command_tests {
                 action:
                     TodoAction::List {
                         status,
-                        tag,
                         running,
                         search,
                         ..
                     },
             } => {
                 assert_eq!(status, Some("pending".to_string()));
-                assert_eq!(tag, Some(1));
                 assert!(running);
                 assert_eq!(search, Some("bug".to_string()));
             }
@@ -529,63 +494,6 @@ mod cron_validation_tests {
     }
 }
 
-#[cfg(test)]
-mod tag_command_tests {
-    use clap::Parser;
-    use ntd::cli::{Cli, Commands, TagAction};
-
-    #[test]
-    fn test_tag_list_parsing() {
-        let cli = Cli::try_parse_from(["ntd", "tag", "list"]).unwrap();
-        match cli.command {
-            Commands::Tag {
-                action: TagAction::List,
-            } => {}
-            _ => panic!("Expected Tag::List"),
-        }
-    }
-
-    #[test]
-    fn test_tag_create_parsing() {
-        let cli = Cli::try_parse_from(["ntd", "tag", "create", "Bugfix", "-c", "#ff0000"]).unwrap();
-        match cli.command {
-            Commands::Tag {
-                action: TagAction::Create { name, color },
-            } => {
-                assert_eq!(name, "Bugfix");
-                assert_eq!(color, "#ff0000");
-            }
-            _ => panic!("Expected Tag::Create"),
-        }
-    }
-
-    #[test]
-    fn test_tag_create_default_color() {
-        let cli = Cli::try_parse_from(["ntd", "tag", "create", "Feature"]).unwrap();
-        match cli.command {
-            Commands::Tag {
-                action: TagAction::Create { name, color },
-            } => {
-                assert_eq!(name, "Feature");
-                assert_eq!(color, "#1890ff");
-            }
-            _ => panic!("Expected Tag::Create with default color"),
-        }
-    }
-
-    #[test]
-    fn test_tag_delete_parsing() {
-        let cli = Cli::try_parse_from(["ntd", "tag", "delete", "5"]).unwrap();
-        match cli.command {
-            Commands::Tag {
-                action: TagAction::Delete { id },
-            } => {
-                assert_eq!(id, 5);
-            }
-            _ => panic!("Expected Tag::Delete"),
-        }
-    }
-}
 
 #[cfg(test)]
 mod combined_options_tests {

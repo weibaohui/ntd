@@ -22,8 +22,7 @@ flowchart LR
   API --> H1[list_loops_v1 handler]
   H1 --> DAO["db.list_loops_with_counts(Some(ws_id))"]
   DAO --> DB[(loops 表 + loop_steps/loop_executions/loop_step_executions 子查询聚合)]
-  DAO --> H2[get_loop_tag_ids_batch 批量注入标签]
-  H1 --> H3[get_process_templates_by_ids 注入工艺名/guid]
+  DAO --> H2[get_process_templates_by_ids 注入工艺名/guid]
   H1 --> RT[ApiResponse ok Vec LoopListItem]
   RT --> H --> LLP
   LLP --> HDR[LoopListHeader 搜索/配置/刷新]

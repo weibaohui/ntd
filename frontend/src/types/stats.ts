@@ -13,19 +13,6 @@ export interface ExecutorCount {
   total_cost_usd: number;
 }
 
-export interface TagCount {
-  tag_id: number;
-  tag_name: string;
-  tag_color: string;
-  count: number;
-  execution_count: number;
-  success_count: number;
-  failed_count: number;
-  total_input_tokens: number;
-  total_output_tokens: number;
-  total_cost_usd: number;
-}
-
 export interface ModelCount {
   model: string;
   count: number;
@@ -80,7 +67,6 @@ export interface DashboardStats {
   running_todos: number;
   completed_todos: number;
   failed_todos: number;
-  total_tags: number;
   scheduled_todos: number;
   total_executions: number;
   success_executions: number;
@@ -92,7 +78,6 @@ export interface DashboardStats {
   total_cost_usd: number;
   avg_duration_ms: number;
   executor_distribution: ExecutorCount[];
-  tag_distribution: TagCount[];
   model_distribution: ModelCount[];
   daily_executions: DailyExecution[];
   daily_token_stats: DailyTokenStats[];
@@ -328,7 +313,6 @@ export interface RecentCompletedTodo {
   title: string;
   prompt: string | null;
   executor: string | null;
-  tag_ids: number[];
   /** 所属工作空间（056 补充：纪念板据此反查项目名，免去前端按 id 二次查询）。 */
   workspace_id?: number | null;
   completed_at: string;

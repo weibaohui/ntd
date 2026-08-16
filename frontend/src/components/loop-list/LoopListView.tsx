@@ -15,7 +15,6 @@ import { Table } from 'antd';
 import { useTodos } from '@/hooks/useTodoContext';
 import { useBatchActions } from '@/components/todo-list/useBatchActions';
 import { useResizableColumns } from '@/hooks/useResizableColumns';
-import type { Tag as TagType } from '@/types';
 import type { LoopListItem } from '@/types/loop';
 import {
   buildColumns,
@@ -28,8 +27,6 @@ interface LoopListViewProps {
   items: LoopListItem[];
   /** 加载态：传入 true 时 table 显示 loading 蒙层。 */
   loading: boolean;
-  /** 全量标签集（渲染 Tag 列用）。 */
-  tags: TagType[];
   /** 当前行点击跳转：由父组件 pushUrl('loops', { id })。 */
   onSelectLoop: (id: number) => void;
   /** 单行删除入口（菜单「删除」）。 */
@@ -52,7 +49,6 @@ interface LoopListViewProps {
 export function LoopListView({
   items,
   loading,
-  tags,
   onSelectLoop,
   onDelete,
   onToggleStatus,
@@ -79,11 +75,10 @@ export function LoopListView({
 
   // 列定义：抽为独立 useMemo，避免每次渲染重建（已拆到 buildColumns）
   const rawColumns = useMemo(() => buildColumns({
-    tags,
     onSelectLoop,
     onDelete,
     onToggleStatus,
-  }), [tags, onSelectLoop, onDelete, onToggleStatus]);
+  }), [onSelectLoop, onDelete, onToggleStatus]);
   // 054：注入可拖拽列宽 + 受控排序 + localStorage 持久化。
   const { columns, tableProps } = useResizableColumns('loops', rawColumns);
 

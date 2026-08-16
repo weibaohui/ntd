@@ -233,7 +233,6 @@ export const HELP_PAGES: HelpPage[] = [
     features: [
       { id: 'settings-tab-system', title: '系统设置 Tab', docFile: 'settings-tab-system.md' },
       { id: 'settings-tab-interface', title: '界面显示 Tab', docFile: 'settings-tab-interface.md' },
-      { id: 'settings-tab-tags', title: '标签管理 Tab', docFile: 'settings-tab-tags.md' },
       { id: 'settings-tab-templates', title: '模板管理 Tab', docFile: 'settings-tab-templates.md' },
       { id: 'settings-tab-backup', title: '备份与恢复 Tab', docFile: 'settings-tab-backup.md' },
       { id: 'settings-tab-cloud-sync', title: '云端同步 Tab', docFile: 'settings-tab-cloud-sync.md' },

@@ -73,9 +73,9 @@
 
 ```
 本地 SQLite
-   │ get_todos() + get_tags() 序列化
+   │ get_todos() 序列化
    ▼
-CloudSyncData { version:1.0, todos, tags: [], skills: [] }
+CloudSyncData { version:1.0, todos, skills: [] }
    │ serde_yaml 序列化为 YAML literal block
    ▼
 POST {server_url}/api/v1/sync/push
@@ -92,7 +92,7 @@ POST {server_url}/api/v1/sync/push
 云端返回 YAML { success, summary: { new, overwritten, ... } }
 ```
 
-> 当前**推送流只包含 todos**（参见 `backend/src/handlers/sync.rs::local_todos_to_cloud`：`tags: vec![]` / `skills: vec![]`硬编码为空）。tag / skill同步**尚未实现**，不要把 tag / skill改动推送到云端。
+> 当前**推送流只包含 todos**（参见 `backend/src/handlers/sync.rs::local_todos_to_cloud`：`skills: vec![]`硬编码为空）。skill 同步**尚未实现**，不要把 skill 改动推送到云端。
 
 
 ---

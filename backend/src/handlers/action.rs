@@ -273,8 +273,6 @@ pub fn v1_routes() -> Router<AppState> {
         .route("/api/v1/workspaces/{ws}/wiki/chat", post(super::blackboard::chat_with_wiki))
         .nest("/api/v1/agent-bots", super::agent_bot::v1_bot_routes())
         .nest("/api/v1/workspaces/{ws}", super::agent_bot::v1_workspace_routes())
-        // tag 为全局资源（无 workspace_id 列），不嵌套 workspace，直接挂 /api/v1/tags
-        .nest("/api/v1/tags", super::tag::v1_routes())
 }
 
 #[cfg(test)]

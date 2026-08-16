@@ -56,11 +56,6 @@ enum Commands {
         #[command(subcommand)]
         action: cli::LoopAction,
     },
-    /// Tag management
-    Tag {
-        #[command(subcommand)]
-        action: cli::TagAction,
-    },
     /// Global statistics
     Stats {
         // Dashboard 为全局运营视图，不再依赖 workspace_id。
@@ -250,10 +245,6 @@ async fn main() {
             dispatch_subcommand(&cli, cli::Commands::Loop { action: action.clone() }).await;
             return;
         }
-        Some(Commands::Tag { action }) => {
-            dispatch_subcommand(&cli, cli::Commands::Tag { action: action.clone() }).await;
-            return;
-        }
         Some(Commands::Stats { }) => {
             // Dashboard 为全局运营视图，不再带 workspace_id。
             dispatch_subcommand(&cli, cli::Commands::Stats { }).await;
@@ -346,7 +337,7 @@ fn fail_on<T>(result: anyhow::Result<T>) -> T {
     }
 }
 
-/// Dispatch a CLI subcommand (Todo/Tag/Stats) with unified error handling.
+/// Dispatch a CLI subcommand (Todo/Stats) with unified error handling.
 async fn dispatch_subcommand(cli: &Cli, command: cli::Commands) {
     let sub_cli = cli::Cli {
         server: cli.server.clone(),

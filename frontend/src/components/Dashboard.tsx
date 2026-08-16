@@ -45,12 +45,12 @@ type DashboardTabKey = (typeof DASHBOARD_TABS)[number];
 type IconType = ComponentType<{ style?: CSSProperties }>;
 
 export function Dashboard() {
-  // 093：todo 域（tags）与执行域（runningTasks）分开订阅——Dashboard 真实需要两域，
+  // 093：执行域（runningTasks）单独订阅——Dashboard 真实需要执行域，
   // 但不再订阅与本组件无关的 uiState；antd 的 App.useApp() 是 message API，与本 hook 无关。
   const { state: todoState } = useTodos();
   const { state: execState } = useExecution();
   const { message } = App.useApp();
-  const { tags } = todoState;
+
   const { runningTasks } = execState;
   const { activeTab, pushUrl } = useViewState();
   // Dashboard 是全局运营视图，不依赖当前选中的 workspace；
@@ -207,7 +207,7 @@ export function Dashboard() {
     {
       key: 'executions',
       label: renderLabel(ThunderboltOutlined, '执行', '执行'),
-      children: <ExecutionsTab stats={stats} loading={loading} totalTodos={totalTodos} tagsLength={tags.length} />,
+      children: <ExecutionsTab stats={stats} loading={loading} totalTodos={totalTodos} />,
     },
     {
       key: 'cost',

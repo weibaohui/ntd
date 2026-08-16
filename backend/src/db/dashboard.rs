@@ -12,7 +12,7 @@ use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
 use crate::models::{
     DailyExecution, DailyTokenStats, ExecutionRecord,
-    ExecutorCount, ExecutorDuration, ModelCacheStat, ModelCount, TagCount,
+    ExecutorCount, ExecutorDuration, ModelCacheStat, ModelCount,
     TriggerTypeCount, LeaderboardItem,
 };
 
@@ -29,7 +29,6 @@ pub(super) struct RawDashboardStats {
     pub completed_todos: i64,
     pub failed_todos: i64,
     pub scheduled_todos: i64,
-    pub total_tags: i64,
     // Execution overall
     pub total_executions: i64,
     pub success_executions: i64,
@@ -43,7 +42,6 @@ pub(super) struct RawDashboardStats {
     pub duration_count: u64,
     // Distributions
     pub executor_distribution: Vec<ExecutorCount>,
-    pub tag_distribution: Vec<TagCount>,
     pub model_distribution: Vec<ModelCount>,
     pub trigger_type_distribution: Vec<TriggerTypeCount>,
     pub executor_duration_stats: Vec<ExecutorDuration>,
@@ -68,8 +66,6 @@ pub(super) struct BaseStats {
     pub execution_overall: (i64, i64, i64, u64, u64, u64, u64, f64, u64, u64),
     /// 每个 executor 对应的 todo 数量
     pub executor_todo_counts: std::collections::HashMap<String, i64>,
-    /// 全部 tag 列表（用于派生 tag_distribution）
-    pub tags: Vec<crate::models::Tag>,
 }
 
 /// 第二轮并行查询的产出（`fetch_dashboard_distribution_stats` 的返回类型）。
@@ -86,7 +82,6 @@ pub(super) struct DistributionStats {
     pub execution_change: (i64, Option<f64>),
     pub success_rate_change: Option<f64>,
     pub cost_change: Option<f64>,
-    pub tag_distribution: Vec<TagCount>,
 }
 
 /// Dashboard 派生指标（基于 `RawDashboardStats` 的纯函数计算结果）。
@@ -148,7 +143,6 @@ pub(super) fn assemble_raw_dashboard_stats(base: BaseStats, dist: DistributionSt
         completed_todos,
         failed_todos,
         scheduled_todos,
-        total_tags: base.tags.len() as i64,
         total_executions,
         success_executions,
         failed_executions,
@@ -160,7 +154,6 @@ pub(super) fn assemble_raw_dashboard_stats(base: BaseStats, dist: DistributionSt
         total_duration,
         duration_count,
         executor_distribution: dist.executor_distribution,
-        tag_distribution: dist.tag_distribution,
         model_distribution: dist.model_distribution,
         trigger_type_distribution: dist.trigger_type_distribution,
         executor_duration_stats: dist.executor_duration_stats,
@@ -192,7 +185,6 @@ pub(super) fn assemble_dashboard_response(
         running_todos: raw.running_todos,
         completed_todos: raw.completed_todos,
         failed_todos: raw.failed_todos,
-        total_tags: raw.total_tags,
         scheduled_todos: raw.scheduled_todos,
         total_executions: raw.total_executions,
         success_executions: raw.success_executions,
@@ -204,7 +196,6 @@ pub(super) fn assemble_dashboard_response(
         total_cost_usd: raw.total_cost,
         avg_duration_ms: derived.avg_duration_ms,
         executor_distribution: raw.executor_distribution,
-        tag_distribution: raw.tag_distribution,
         model_distribution: raw.model_distribution,
         daily_executions: raw.daily_executions,
         daily_token_stats: raw.daily_token_stats,
@@ -609,69 +600,6 @@ pub(super) async fn fetch_daily_stats(
     Ok((daily_executions, daily_token_stats))
 }
 
-/// 查询标签分布。
-pub(super) async fn fetch_tag_distribution(
-    ctx: &DashboardQueryContext<'_>,
-    tags: &[crate::models::Tag],
-    tag_todo_counts: &HashMap<i64, i64>,
-) -> Result<Vec<TagCount>, sea_orm::DbErr> {
-    let sql = "SELECT \
-        tt.tag_id, \
-        COUNT(*) as execution_count, \
-        COALESCE(SUM(CASE WHEN er.status = 'success' THEN 1 ELSE 0 END), 0) as success_count, \
-        COALESCE(SUM(CASE WHEN er.status = 'failed' THEN 1 ELSE 0 END), 0) as failed_count, \
-        COALESCE(SUM(COALESCE(json_extract(er.usage, '$.input_tokens'), 0)), 0) as input_tokens, \
-        COALESCE(SUM(COALESCE(json_extract(er.usage, '$.output_tokens'), 0)), 0) as output_tokens, \
-        COALESCE(SUM(COALESCE(json_extract(er.usage, '$.total_cost_usd'), 0.0)), 0.0) as cost \
-        FROM execution_records er \
-        INNER JOIN todo_tags tt ON tt.todo_id = er.todo_id \
-        WHERE er.todo_id IS NOT NULL AND er.started_at >= ? \
-        GROUP BY tt.tag_id";
-
-    let tag_rows = ctx.conn
-        .query_all(ctx.stmt_with_time_cutoff(sql))
-        .await?;
-
-    let mut tag_exec_stats: HashMap<i64, (i64, i64, i64, u64, u64, f64)> = HashMap::new();
-    for row in tag_rows {
-        let tag_id: i64 = row.try_get_by("tag_id").unwrap_or(0);
-        let ec: i64 = row.try_get_by("execution_count").unwrap_or(0);
-        let sc: i64 = row.try_get_by("success_count").unwrap_or(0);
-        let fc: i64 = row.try_get_by("failed_count").unwrap_or(0);
-        let it: i64 = row.try_get_by("input_tokens").unwrap_or(0);
-        let ot: i64 = row.try_get_by("output_tokens").unwrap_or(0);
-        let cost: f64 = row.try_get_by("cost").unwrap_or(0.0);
-        tag_exec_stats.insert(tag_id, (ec, sc, fc, it as u64, ot as u64, cost));
-    }
-
-    let mut distribution: Vec<TagCount> = tags
-        .iter()
-        .filter_map(|t| {
-            let todo_count = *tag_todo_counts.get(&t.id).unwrap_or(&0);
-            if todo_count == 0 { return None; }
-            let (ec, sc, fc, it, ot, cost) = tag_exec_stats
-                .get(&t.id)
-                .copied()
-                .unwrap_or((0, 0, 0, 0, 0, 0.0));
-            Some(TagCount {
-                tag_id: t.id,
-                tag_name: t.name.clone(),
-                tag_color: t.color.clone(),
-                count: todo_count,
-                execution_count: ec,
-                success_count: sc,
-                failed_count: fc,
-                total_input_tokens: it,
-                total_output_tokens: ot,
-                total_cost_usd: cost,
-            })
-        })
-        .collect();
-    // 降序：用 Reverse 包装 key，等价于 b.x.cmp(&a.x)，但避开 unnecessary_sort_by 告警。
-    distribution.sort_by_key(|b| std::cmp::Reverse(b.execution_count));
-    Ok(distribution)
-}
-
 /// 查询最近 10 条执行记录（轻量字段）。
 pub(super) async fn fetch_recent_executions(
     ctx: &DashboardQueryContext<'_>,
@@ -892,23 +820,6 @@ pub fn find_top_model(model_distribution: &[ModelCount]) -> (Option<String>, Opt
     }
 }
 
-/// 查询 todo_tags 表，得到 (tag_id -> todo_count) 映射。
-pub(super) async fn fetch_tag_todo_counts(
-    ctx: &DashboardQueryContext<'_>,
-) -> Result<HashMap<i64, i64>, sea_orm::DbErr> {
-    let sql = "SELECT tag_id, COUNT(*) as todo_count FROM todo_tags GROUP BY tag_id";
-    let rows = ctx.conn
-        .query_all(Statement::from_string(ctx.backend, sql.to_string()))
-        .await?;
-    Ok(rows.into_iter()
-        .filter_map(|row| {
-            let tag_id: i64 = row.try_get_by("tag_id").ok()?;
-            let count: i64 = row.try_get_by("todo_count").ok()?;
-            Some((tag_id, count))
-        })
-        .collect())
-}
-
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
 mod tests {
@@ -932,12 +843,12 @@ mod tests {
     fn make_raw(total_duration: u64, duration_count: u64, daily: Vec<DailyExecution>, models: Vec<ModelCount>) -> RawDashboardStats {
         RawDashboardStats {
             total_todos: 0, pending_todos: 0, running_todos: 0, completed_todos: 0, failed_todos: 0,
-            scheduled_todos: 0, total_tags: 0,
+            scheduled_todos: 0,
             total_executions: 0, success_executions: 0, failed_executions: 0,
             total_input_tokens: 0, total_output_tokens: 0,
             total_cache_read_tokens: 0, total_cache_creation_tokens: 0,
             total_cost: 0.0, total_duration, duration_count,
-            executor_distribution: vec![], tag_distribution: vec![], model_distribution: models,
+            executor_distribution: vec![], model_distribution: models,
             trigger_type_distribution: vec![], executor_duration_stats: vec![], model_cache_stats: vec![],
             daily_executions: daily,
             daily_token_stats: vec![],

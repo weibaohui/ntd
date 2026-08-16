@@ -532,7 +532,6 @@ mod tests {
             status: crate::models::TodoStatus::Pending,
             created_at: Default::default(),
             updated_at: Default::default(),
-            tag_ids: Vec::new(),
             executor: None,
             scheduler_enabled: false,
             scheduler_config: None,

@@ -1,6 +1,6 @@
 //! Todo 域数据模型（096-W4-2：从 models/mod.rs 按域拆分，逐字搬迁零改动）。
 //!
-//! 含：TodoStatus / Todo / ComputedBucket / TodoCenter 分页族 / Tag / 各请求 DTO /
+//! 含：TodoStatus / Todo / ComputedBucket / TodoCenter 分页族 / 各请求 DTO /
 //! TodoTemplate 族 / 备份导出 DTO / 伪 ID 工具族 / prompt 占位符工具。
 //! 经 `models::mod` 的 `pub use todo::*` 聚合，外部引用路径不变。
 
@@ -62,8 +62,6 @@ pub struct Todo {
     pub status: TodoStatus,
     pub created_at: String,
     pub updated_at: String,
-    #[serde(default)]
-    pub tag_ids: Vec<i64>,
     #[serde(default)]
     pub executor: Option<String>,
     #[serde(default)]
@@ -267,9 +265,6 @@ pub struct TodoBrief {
     /// 所属工作空间（拖拽/归属展示用，小字段）
     #[serde(default)]
     pub workspace_id: Option<i64>,
-    /// 标签 id 列表（看板标签徽章用；批量查询补算，不逐行 N+1）
-    #[serde(default)]
-    pub tag_ids: Vec<i64>,
     /// prompt 是否非空（看板「展开 prompt」区块的显示开关，不必传输 prompt 本体）
     #[serde(default)]
     pub has_prompt: bool,
@@ -302,14 +297,6 @@ pub struct LoopRefSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Tag {
-    pub id: i64,
-    pub name: String,
-    pub color: String,
-    pub created_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TodoItem {
     pub id: Option<String>,
     pub content: String,
@@ -321,8 +308,6 @@ pub struct TodoItem {
 pub struct CreateTodoRequest {
     pub title: String,
     pub prompt: String,
-    #[serde(default)]
-    pub tag_ids: Vec<i64>,
     #[serde(default)]
     pub executor: Option<String>,
     #[serde(default)]
@@ -401,11 +386,6 @@ pub struct UpdateTodoRequest {
     pub model: Option<String>,
 }
 
-#[derive(Deserialize, Serialize)]
-pub struct UpdateTagsRequest {
-    pub tag_ids: Vec<i64>,
-}
-
 /// `PUT /api/todos/{id}/webhook` 请求体：开启/关闭事件驱动。
 ///
 /// 扁平具名路由（设计文档），与 `PUT /api/todos/{id}/scheduler` 对称，
@@ -413,12 +393,6 @@ pub struct UpdateTagsRequest {
 #[derive(Deserialize, Serialize)]
 pub struct UpdateWebhookRequest {
     pub webhook_enabled: bool,
-}
-
-#[derive(Deserialize, Serialize)]
-pub struct CreateTagRequest {
-    pub name: String,
-    pub color: String,
 }
 
 #[derive(Deserialize)]
@@ -507,7 +481,6 @@ pub struct RecentCompletedTodo {
     pub title: String,
     pub prompt: Option<String>,
     pub executor: Option<String>,
-    pub tag_ids: Vec<i64>,
     /// 所属工作空间（056 补充：纪念板据此反查项目名，免去前端按 id 二次查询）
     #[serde(default)]
     pub workspace_id: Option<i64>,
@@ -563,14 +536,7 @@ pub struct UpdateTemplateRequest {
 pub struct BackupData {
     pub version: String,
     pub created_at: String,
-    pub tags: Vec<TagBackup>,
     pub todos: Vec<TodoBackup>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TagBackup {
-    pub name: String,
-    pub color: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -581,7 +547,6 @@ pub struct TodoBackup {
     pub executor: Option<String>,
     pub scheduler_enabled: bool,
     pub scheduler_config: Option<String>,
-    pub tag_names: Vec<String>,
     pub workspace_path: Option<String>,
     pub worktree: Option<String>,
     pub action_type: Option<String>,
@@ -626,7 +591,7 @@ impl TodoBackup {
 }
 
 /// 伪ID类型前缀
-const PSEUDO_ID_PREFIXES: &[&str] = &["loop", "todo", "step", "trigger", "template", "tag"];
+const PSEUDO_ID_PREFIXES: &[&str] = &["loop", "todo", "step", "trigger", "template"];
 
 /// 生成伪ID: "@{prefix}_{index}"
 pub fn generate_pseudo_id(prefix: &str, index: usize) -> String {
@@ -634,7 +599,7 @@ pub fn generate_pseudo_id(prefix: &str, index: usize) -> String {
 }
 
 /// 校验伪ID格式是否合法
-/// 格式: ^@(loop|todo|step|trigger|template|tag)_\d+$
+/// 格式: ^@(loop|todo|step|trigger|template)_\d+$
 pub fn validate_pseudo_id(id: &str) -> bool {
     // 必须以 @ 开头
     if !id.starts_with('@') {

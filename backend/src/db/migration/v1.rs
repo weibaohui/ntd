@@ -39,9 +39,9 @@ impl Migration for V1InitialSchema {
 //      兼容列按所属表分组调用,避免 26 条 ALTER 把单个函数撑爆。
 //
 // 执行顺序(保持与重构前完全一致):
-//   - 先建稳定核心表 (todos / tags / execution_records / skill_invocations)
+//   - 先建稳定核心表 (todos / execution_records / skill_invocations)
 //   - 建高频过滤索引(依赖以上表已存在)
-//   - 建 UTC 触发器(依赖 todos / tags 表已存在)
+//   - 建 UTC 触发器(依赖 todos 表已存在)
 //   - 建功能模块表(agent_bots / feishu_* / executors / project_directories /
 //     todo_templates / usage_* / sync_records)
 //   - 最后追加历史兼容列(仅在旧库缺列时才生效)
@@ -49,7 +49,6 @@ impl Migration for V1InitialSchema {
 /// v1 初始 schema 的总编排入口。每个子函数职责单一、≤ 30 行。
 async fn v1_initial_schema(db: &Database) -> Result<(), sea_orm::DbErr> {
     create_todos_table(db).await?;
-    create_tags_tables(db).await?;
     create_execution_tables(db).await?;
     create_execution_logs_table(db).await?;
     create_skill_invocations_table(db).await?;
@@ -102,29 +101,6 @@ async fn create_todos_table(db: &Database) -> Result<(), sea_orm::DbErr> {
             workspace TEXT,
             webhook_enabled INTEGER NOT NULL DEFAULT 0,
             kind TEXT NOT NULL DEFAULT 'item'
-        )",
-    )
-    .await
-}
-
-/// 标签表 + 多对多关联表(todo_tags)。
-async fn create_tags_tables(db: &Database) -> Result<(), sea_orm::DbErr> {
-    db.exec(
-        "CREATE TABLE IF NOT EXISTS tags (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE,
-            color TEXT DEFAULT '#1890ff',
-            created_at TEXT
-        )",
-    )
-    .await?;
-    db.exec(
-        "CREATE TABLE IF NOT EXISTS todo_tags (
-            todo_id INTEGER,
-            tag_id INTEGER,
-            PRIMARY KEY (todo_id, tag_id),
-            FOREIGN KEY (todo_id) REFERENCES todos(id) ON DELETE CASCADE,
-            FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
         )",
     )
     .await
@@ -191,12 +167,11 @@ async fn create_skill_invocations_table(db: &Database) -> Result<(), sea_orm::Db
     .await
 }
 
-/// 高频过滤索引(todos / todo_tags / execution_records / skill_invocations)。
+/// 高频过滤索引(todos / execution_records / skill_invocations)。
 async fn create_high_frequency_indexes(db: &Database) -> Result<(), sea_orm::DbErr> {
     db.exec("CREATE INDEX IF NOT EXISTS idx_todos_deleted_at ON todos(deleted_at)").await?;
     db.exec("CREATE INDEX IF NOT EXISTS idx_todos_status ON todos(status)").await?;
     db.exec("CREATE INDEX IF NOT EXISTS idx_todos_task_id ON todos(task_id)").await?;
-    db.exec("CREATE INDEX IF NOT EXISTS idx_todo_tags_todo_id ON todo_tags(todo_id)").await?;
     db.exec("CREATE INDEX IF NOT EXISTS idx_execution_records_todo_id ON execution_records(todo_id)").await?;
     db.exec("CREATE INDEX IF NOT EXISTS idx_execution_records_task_id ON execution_records(task_id)").await?;
     db.exec("CREATE INDEX IF NOT EXISTS idx_execution_records_pid ON execution_records(pid)").await?;
@@ -229,16 +204,9 @@ async fn create_utc_triggers(db: &Database) -> Result<(), sea_orm::DbErr> {
              UPDATE todos SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', 'utc') WHERE rowid = new.rowid;
          END",
     )
-    .await?;
-    db.exec(
-        "CREATE TRIGGER IF NOT EXISTS set_tags_created_at_utc AFTER INSERT ON tags
-         WHEN new.created_at IS NULL OR new.created_at = ''
-         BEGIN
-             UPDATE tags SET created_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', 'utc') WHERE rowid = new.rowid;
-         END",
-    )
     .await
 }
+
 
 /// agent_bots 表 + 旧库缺 `config` 列时追加。
 async fn create_agent_bots_table(db: &Database) -> Result<(), sea_orm::DbErr> {
