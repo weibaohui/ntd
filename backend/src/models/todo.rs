@@ -422,13 +422,6 @@ pub struct CreateTagRequest {
 }
 
 #[derive(Deserialize)]
-pub struct SmartCreateRequest {
-    pub content: String,
-    /// 工作空间 ID（用于查询该工作空间的默认响应 Todo）
-    pub workspace_id: i64,
-}
-
-#[derive(Deserialize)]
 pub struct TodoIdQuery {
     #[serde(default)]
     pub todo_id: Option<i64>,
@@ -697,12 +690,11 @@ pub fn replace_placeholders(text: &str, params: &std::collections::HashMap<Strin
 }
 
 /// Build standard trigger params from message content.
-/// This unifies how params are constructed across slash commands, default responses,
-/// and other trigger types.
+/// This unifies how params are constructed across slash commands and butler chat.
 ///
 /// Returns (trigger_type, params):
 /// - For slash commands (content starts with '/'): trigger_type = "slash_command"
-/// - For other messages: trigger_type = "default_response"
+/// - For other messages: trigger_type = "butler_chat"（108：非斜杠消息统一走空间管家）
 ///
 /// Standard params always include:
 /// - `content`: the message body
@@ -733,5 +725,5 @@ pub fn build_trigger_params(content: &str) -> (String, std::collections::HashMap
     params.insert("content".to_string(), trimmed.to_string());
     params.insert("message".to_string(), trimmed.to_string());
     params.insert("raw_message".to_string(), trimmed.to_string());
-    ("default_response".to_string(), params)
+    ("butler_chat".to_string(), params)
 }

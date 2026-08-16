@@ -3,7 +3,8 @@ use serde::{Deserialize, Serialize};
 
 /// 工作空间设置表：存储每个工作空间的独立配置
 ///
-/// 存储默认响应配置，支持三种类型：todo、loop、executor。
+/// 空间管家配置（108）：未命中斜杠命令的消息交给管家处理——
+/// 管家 = 一个专家（人设与规则）+ 一个执行器（实际干活的进程）。
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
 #[sea_orm(table_name = "workspace_settings")]
 pub struct Model {
@@ -11,14 +12,15 @@ pub struct Model {
     pub id: i64,
     /// 工作空间 ID（唯一）
     pub workspace_id: i64,
-    /// 默认响应类型：'todo' | 'loop' | 'executor'
-    pub default_response_type: String,
-    /// 默认响应 Todo ID（type='todo' 时使用）
-    pub default_response_todo_id: Option<i64>,
-    /// 默认响应 Loop ID（type='loop' 时使用）
-    pub default_response_loop_id: Option<i64>,
-    /// 默认响应执行器类型（type='executor' 时使用）
-    pub default_response_executor: Option<String>,
+    /// 空间管家的专家名（对应 ExpertIndexManager 中的专家 name，不是 id）。
+    /// None 表示未配置管家专家：管家通路退化为纯执行器聊天（无专家 prompt 注入）；
+    /// 空串 "" 表示显式清空（语义同 None，保留写入侧「清空」与「不动」的区分）。
+    pub butler_expert_name: Option<String>,
+    /// 空间管家的执行器类型（如 claudecode / pi）。
+    /// None 或空串 "" 都表示未配置管家（前端清空选择时提交空串）：
+    /// 未命中斜杠命令的消息收到配置引导提示，不执行任何东西。
+    /// 下游读取方统一按「空=未配置」过滤（resolve_butler_executor / workspace_butler_executor）。
+    pub butler_executor: Option<String>,
     /// 工作空间级共识 prompt（需求 022）。
     /// 该 workspace 下任意 todo 执行时，适配层把这段 prompt 拼到 message 最前面，
     /// 内容包括产物目录、认证信息、基本文件路径等共识信息。

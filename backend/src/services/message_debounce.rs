@@ -144,7 +144,7 @@ impl QueuePop {
 pub struct MessageDebounce {
     entries: Arc<DashMap<(i64, String), DebounceEntry>>,
     ctx: ServiceContext,
-    /// Loop Runner，用于处理 default_response_loop 类型的消息
+    /// Loop Runner，用于处理 slash_command_loop 类型（斜杠规则触发环路）的消息
     loop_runner: Option<Arc<crate::services::loop_runner::LoopRunner>>,
     /// 私聊串行队列：按 (bot_id, workspace_id, sender) 维度缓存等待执行的消息
     /// 当某维度已有执行器在运行时，新消息入队而非并行执行
@@ -515,7 +515,7 @@ impl MessageDebounce {
         }
     }
 
-    /// 构造 todo 执行请求（_ 分支：普通默认响应或斜杠命令）。
+    /// 构造 todo 执行请求（_ 分支：斜杠命令触发的 todo 执行）。
     ///
     /// 抽出来让 dispatch_execution 的 _ 分支保持简短；clone Arc 引用是因为
     /// RunTodoExecutionRequest 需要 owned，而同一批依赖在 drain 循环里要复用。
@@ -580,9 +580,10 @@ impl MessageDebounce {
         blackboard_debouncer: &Arc<crate::services::blackboard_debouncer::BlackboardDebouncer>,
     ) -> Result<crate::executor_service::ExecutionResult, Option<String>> {
         match msg.trigger_type.as_str() {
-            "default_response_loop" | "slash_command_loop" => {
+            // 108：default_response_loop 已随默认响应机制退役，环路只能由斜杠规则显式触发
+            "slash_command_loop" => {
                 let (rid, rtype) = Self::feishu_reply_target(msg);
-                Self::handle_default_response_loop(
+                Self::handle_slash_command_loop(
                     db.clone(),
                     loop_runner.clone(),
                     msg.todo_id,
@@ -593,13 +594,15 @@ impl MessageDebounce {
                 )
                 .await
             }
-            "default_response_executor" => {
+            // 108：空间管家聊天（原 default_response_executor 的继任者）
+            "butler_chat" => {
                 let (rid, rtype) = Self::feishu_reply_target(msg);
-                Self::handle_default_response_executor(
+                Self::handle_butler_chat(
                     db,
                     executor_registry,
                     task_manager,
                     config,
+                    expert_manager,
                     tx,
                     msg.bot_id,
                     rid,
@@ -802,7 +805,7 @@ pub fn merge_pending_messages(messages: &[PendingMessage]) -> String {
 // 执行器直接响应的反馈消息格式化 + 超时运行辅助
 // ============================================================================
 //
-// `handle_default_response_executor` 原先把"等子进程退出"和"发飞书消息"耦合在一起，
+// `handle_butler_chat`（原 handle_default_response_executor）原先把"等子进程退出"和"发飞书消息"耦合在一起，
 // 且用 `wait_with_output()` 无超时地等——provider 挂起时整条 debounce 任务永久卡死，
 // 用户侧表现为"发了消息毫无反馈"。这一组纯函数/小函数把可测的逻辑抽出来：
 // 三类反馈消息（开始/错误/空结束）的格式 + 带超时地运行子进程并在超时时 kill 回收。
@@ -868,7 +871,7 @@ fn executor_empty_end_message(executor_type: &str) -> String {
 /// 成功时统一返回简洁的结束标志（"✅ <执行器名称> 处理完成"），不再重复输出
 /// result_text 或 stdout（过程消息已通过 DirectStreamMessage 实时推送，避免重复）。
 /// 失败时返回错误消息 + 输出片段，方便诊断问题。
-/// 把这段决策从 `handle_default_response_executor` 主体抽成纯函数，是为了能直接单测
+/// 把这段决策从 `handle_butler_chat` 主体抽成纯函数，是为了能直接单测
 /// 非零退出 + 多字节中文 stdout 的截断行为——原来内联时 `&stdout[..1500]` 按字节切片，
 /// 落在中文中间会 panic，反而把"执行器非零退出"变成 debounce 任务崩溃。
 /// 096-W4-6 起入参从 `&ExitStatus` 改为 success + exit_code 两个标量：
@@ -1059,7 +1062,7 @@ fn emit_direct_stream(
 }
 
 // ============================================================================
-// handle_default_response_executor 的阶段拆分（ADR-005 / H2）
+// handle_butler_chat（原 handle_default_response_executor）的阶段拆分（ADR-005 / H2）
 // ============================================================================
 //
 // 这组 async 函数把原 280 行编排体（命中 CLAUDE.md「多 return 路径 + 副作用混杂」
@@ -1073,7 +1076,7 @@ fn emit_direct_stream(
 /// 用极大 duration 表达「永不超时」，与 todo pipeline 的 `timeout_enabled = v > 0` 对齐）。
 fn read_execution_timeout_secs(config: &Arc<std::sync::RwLock<crate::config::Config>>) -> u64 {
     // 锁中毒=有线程 panic 过，但配置值本身仍可读：恢复内部守卫降级读取，
-    // 不让一次无关 panic 击穿飞书默认响应链路（生产代码禁 expect，见禁止清单 #1）
+    // 不让一次无关 panic 击穿飞书管家聊天链路（生产代码禁 expect，见禁止清单 #1）
     config
         .read()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -1291,13 +1294,32 @@ async fn persist_executor_session(
 }
 
 // ============================================================================
-// 默认响应处理器：处理 loop 和 executor 类型的默认响应
+// 斜杠规则与空间管家处理器：环路触发（slash_command_loop）与管家聊天（butler_chat）
 // ============================================================================
 
+/// 读取工作空间的管家专家名（108）。
+///
+/// 返回 None 的三种情况——无 workspace_id / 未配置（含空串）/ DB 读取失败——
+/// 对调用方同等含义「不注入专家 prompt」。DB 失败静默降级是有意的：
+/// 专家注入是增强能力，不应因一次读取抖动阻断管家聊天主流程；
+/// warn 日志保留排查线索。
+async fn load_butler_expert_name(db: &Database, workspace_id: Option<i64>) -> Option<String> {
+    let wid = workspace_id?;
+    crate::db::workspace_setting::get_workspace_settings(db, wid)
+        .await
+        .map_err(|e| {
+            tracing::warn!("[debounce] load butler expert for workspace {} failed: {}", wid, e)
+        })
+        .ok()
+        .flatten()
+        .and_then(|s| s.butler_expert_name)
+        .filter(|name| !name.is_empty())
+}
+
 impl MessageDebounce {
-    /// 处理默认响应类型为 loop 的情况
+    /// 处理斜杠命令规则触发的环路（108 起环路唯一的消息侧入口）
     /// 直接通过 LoopRunner 触发环路执行（fire-and-forget）
-    async fn handle_default_response_loop(
+    async fn handle_slash_command_loop(
         db: Arc<Database>,
         loop_runner: Option<Arc<crate::services::loop_runner::LoopRunner>>,
         loop_id: i64,
@@ -1327,7 +1349,7 @@ impl MessageDebounce {
 
         // 构建 trigger_meta
         let meta = serde_json::json!({
-            "source": "default_response",
+            "source": "slash_command",
             "message": message,
         });
 
@@ -1341,7 +1363,7 @@ impl MessageDebounce {
         let execution_id = runner.spawn_run(
             loop_id,
             None, // trigger_id
-            "default_response",
+            "slash_command",
             meta,
             feishu_bot_id,
             feishu_receive_id,
@@ -1354,7 +1376,7 @@ impl MessageDebounce {
         }
 
         tracing::info!(
-            "[debounce] triggered loop {} as default response, execution_id={}",
+            "[debounce] triggered loop {} via slash command, execution_id={}",
             loop_id,
             execution_id
         );
@@ -1365,14 +1387,15 @@ impl MessageDebounce {
         })
     }
 
-    /// 处理默认响应类型为 executor 的情况
+    /// 处理空间管家聊天（butler_chat）：执行器对话 + 管家专家 prompt 注入（108）
     /// 直接调用执行器进行交互，不创建执行记录
     #[allow(clippy::too_many_arguments)] // 参数来自上游 handler 的独立数据源，合并为 struct 增加认知负担
-    async fn handle_default_response_executor(
+    async fn handle_butler_chat(
         db: &Arc<Database>,
         executor_registry: &Arc<crate::adapters::ExecutorRegistry>,
         _task_manager: &Arc<TaskManager>,
         config: &Arc<std::sync::RwLock<crate::config::Config>>,
+        expert_manager: &Arc<crate::expert::ExpertIndexManager>,
         tx: &broadcast::Sender<ExecEvent>,
         bot_id: i64,
         receive_id: String,
@@ -1423,7 +1446,9 @@ impl MessageDebounce {
         let task_id = format!("executor-{}-{}", executor_type, uuid::Uuid::new_v4());
         // spawn 前发"开始处理"回执（原实现 spawn 成功后才发；session 把 spawn 失败也收进
         // 一次调用，回执提前到调用前——spawn 失败分支紧随其后发错误提示，用户不会误解为
-        // "已在处理"，时序差异仅在失败场景多收一条开始提示）
+        // "已在处理"，时序差异仅在失败场景多收一条开始提示）。
+        // 回执展示用户原文（而非注入管家 prompt 后的文本）：专家规则属于内部实现，
+        // 不应刷屏暴露给用户。
         send_msg(executor_start_message(executor_type, message));
         let direct_output_info =
             resolve_direct_output(db, bot_id, receive_id.clone(), receive_id_type).await;
@@ -1431,10 +1456,22 @@ impl MessageDebounce {
         let mut pipeline = log_capture::create_pipeline_for_executor(executor.as_ref())
             .unwrap_or_else(|| EventPipeline::new(executor.executor_type().as_str()));
         let mut logs: Vec<ParsedLogEntry> = Vec::new();
+        // 管家专家注入（108）：执行时现读 workspace_settings 的 butler_expert_name，
+        // 配置变更立即生效且 PendingMessage 结构零改动；专家未配置/已卸载/读取失败时
+        // inject 原样返回（静默回退），管家退化为纯执行器聊天，不阻断主流程。
+        // 注入对象是 debounce 合并后的整段消息（多条合并为一次执行，只注入一次），
+        // 且只进入发给执行器的文本——上面的开始回执与日志展示的都是用户原文。
+        let butler_expert = load_butler_expert_name(db, workspace_id).await;
+        let exec_message = crate::expert::inject_expert_message(
+            expert_manager,
+            butler_expert.as_deref(),
+            message,
+            "butler chat: ",
+        );
         let outcome = DirectExecutorSession::spawn_and_stream(
             SessionSpawnConfig {
                 executor: executor.clone(),
-                message: message.to_string(),
+                message: exec_message,
                 cwd: PathBuf::from(&workspace_path),
                 session_id: session_id.clone(),
                 timeout_secs,
@@ -1587,11 +1624,11 @@ mod merge_pending_messages_tests {
     }
 }
 
-/// 飞书默认响应执行器的反馈消息格式化与超时运行逻辑测试。
+/// 飞书管家聊天（butler_chat）的反馈消息格式化与超时运行逻辑测试。
 ///
-/// 这组测试覆盖 `handle_default_response_executor` 里抽出来的纯逻辑：
+/// 这组测试覆盖 `handle_butler_chat` 里抽出来的纯逻辑：
 /// 三类飞书反馈消息（开始/错误/空结束）的格式，以及带超时地运行子进程
-/// 并在超时时 kill 回收的行为。把 I/O 隔在 `handle_default_response_executor`
+/// 并在超时时 kill 回收的行为。把 I/O 隔在 `handle_butler_chat`
 /// 主体里，这里只测可复现的纯函数 + 用 `echo`/`sleep` 真进程验证超时分支。
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::useless_vec, clippy::redundant_pattern_matching, clippy::redundant_clone, clippy::len_zero, clippy::bool_assert_comparison, clippy::unnecessary_get_then_check, clippy::doc_lazy_continuation, clippy::clone_on_copy, clippy::print_stdout, clippy::needless_pass_by_value, clippy::sliced_string_as_bytes, clippy::manual_map, clippy::collapsible_match, clippy::question_mark)]
@@ -2067,5 +2104,64 @@ mod p2p_queue_tests {
             other => panic!("取完后应 Drained，得到 {:?}", other),
         }
         assert!(!queue.contains_key(&key), "全部 drain 后条目应被清理");
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod butler_expert_tests {
+    //! 验证管家专家名的读取口径（108）：
+    //! 无 workspace / 无配置行 / 空串 / DB 失败统一返回 None（不注入），
+    //! 只有显式配置了非空专家名才返回 Some。
+    use super::load_butler_expert_name;
+    use crate::db::Database;
+
+    /// workspace_id 为 None（如历史遗留消息）→ None，不查库
+    #[tokio::test]
+    async fn test_load_butler_expert_name_none_workspace() {
+        let db = Database::new(":memory:").await.unwrap();
+        assert_eq!(load_butler_expert_name(&db, None).await, None);
+    }
+
+    /// 工作空间没有 settings 行 → None
+    #[tokio::test]
+    async fn test_load_butler_expert_name_no_settings_row() {
+        let db = Database::new(":memory:").await.unwrap();
+        assert_eq!(load_butler_expert_name(&db, Some(1)).await, None);
+    }
+
+    /// 配置了非空专家名 → Some(原名)
+    #[tokio::test]
+    async fn test_load_butler_expert_name_configured() {
+        let db = Database::new(":memory:").await.unwrap();
+        crate::db::workspace_setting::upsert_workspace_settings(
+            &db,
+            1,
+            Some("workspace-butler".to_string()),
+            Some("claudecode".to_string()),
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            load_butler_expert_name(&db, Some(1)).await,
+            Some("workspace-butler".to_string())
+        );
+    }
+
+    /// 空串 = 显式清空，与 NULL 同等视为未配置 → None
+    #[tokio::test]
+    async fn test_load_butler_expert_name_empty_string_is_unconfigured() {
+        let db = Database::new(":memory:").await.unwrap();
+        crate::db::workspace_setting::upsert_workspace_settings(
+            &db,
+            1,
+            Some(String::new()),
+            Some("claudecode".to_string()),
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(load_butler_expert_name(&db, Some(1)).await, None);
     }
 }

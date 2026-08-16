@@ -12,7 +12,6 @@ export interface Config {
   db_path: string;
   log_level: string;
   slash_command_rules?: SlashCommandRule[];
-  default_response_todo_id?: number | null;
   history_message_max_age_secs?: number;
   max_concurrent_todos?: number;
   execution_timeout_secs?: number;

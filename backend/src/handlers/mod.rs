@@ -509,7 +509,7 @@ async fn build_app_state(
     ws_broadcast::spawn_ws_forwarder(&tx, ws_tx.clone());
 
     // feishu_listener 按引用传入避免 clone 整个 Arc；函数内部只 clone 内部字段
-    spawn_feishu_history_fetcher(ctx.clone(), db.clone(), &feishu_listener, debounce.clone());
+    spawn_feishu_history_fetcher(ctx.clone(), db.clone(), &feishu_listener);
     ensure_default_review_template_blocking(&db);
 
     // 黑板防抖器初始化，启动 flush 监听器（监听 channel，收到消息后执行 LLM 更新黑板）。
@@ -636,14 +636,12 @@ fn spawn_feishu_history_fetcher(
     db: Arc<Database>,
     // feishu_listener 仅用于提取 token_manager 和 bot_credentials，按引用传入后 clone Arc 字段
     feishu_listener: &Arc<FeishuListener>,
-    debounce: Arc<crate::services::message_debounce::MessageDebounce>,
 ) {
     use crate::services::feishu_history_fetcher::FeishuHistoryFetcher;
     let fetcher = Arc::new(FeishuHistoryFetcher::new(
         ctx,
         feishu_listener.token_manager.clone(),
         feishu_listener.bot_credentials.clone(),
-        debounce,
     ));
     let db_for_fetcher = db;
     tokio::spawn(async move {

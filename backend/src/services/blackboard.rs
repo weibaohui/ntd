@@ -458,8 +458,8 @@ pub struct WikiChatResponse {
 
 /// 执行一次 Wiki 对话：spawn 执行器在 wiki 目录运行，返回解析后的结果文本。
 ///
-/// 设计参考：feishu_listener 的「executor 默认响应」模式（message_debounce.rs 的
-/// handle_default_response_executor），把触发源从飞书消息换成 HTTP 请求，
+/// 设计参考：feishu_listener 的「管家聊天」模式（message_debounce.rs 的
+/// handle_butler_chat，108 前称 executor 默认响应），把触发源从飞书消息换成 HTTP 请求，
 /// 把 cwd 从 workspaces.path 换成 wiki 目录，把结果回送方式从
 /// ExecEvent::DirectCardMessage 改成直接返回值。
 ///

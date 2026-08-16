@@ -72,8 +72,8 @@ pub(crate) enum CardAction {
     RunTask(i64),
     /// 设置推送级别，参数为 disabled/result_only/all
     Push(String),
-    /// 设置默认执行器，参数为执行器名（ExecutorType::as_str）
-    SetExecutor(String),
+    /// 设置管家执行器，参数为执行器名（ExecutorType::as_str）
+    SetButlerExecutor(String),
 }
 
 
@@ -265,8 +265,8 @@ impl FeishuListener {
         if Self::try_route_builtin_command(&context, msg, &prep).await { return; }
         if Self::should_skip_for_message_filters(&context, msg, &prep).await { return; }
         // 阶段4/5（pending binding 晋升 / project binding 路由）已废弃：
-        // 一个 bot 一个工作空间，chat 消息全走 default_response（阶段6）。
-        Self::route_slash_or_default_response(&context, msg, &prep).await;
+        // 一个 bot 一个工作空间，chat 消息全走阶段6（斜杠规则 或 空间管家）。
+        Self::route_slash_or_butler(&context, msg, &prep).await;
         Self::log_echo_reply(context.bot_id, msg, prep.chat_type, context.bot_config);
         Self::cleanup_reaction(&context, msg, prep.reaction_id.as_deref()).await;
     }
@@ -457,22 +457,23 @@ impl FeishuListener {
         ).await;
     }
 
-    /// 阶段 6：兜底路由（自定义斜杠命令规则 或 默认回复 todo）
-    pub(crate) async fn route_slash_or_default_response(
+    /// 阶段 6：斜杠精确匹配 或 空间管家（108：不再有默认响应兜底）
+    pub(crate) async fn route_slash_or_butler(
         context: &ListenerMessageContext<'_>,
         msg: &ChannelMessage,
         prep: &MessagePrep<'_>,
     ) {
-        // 是斜杠命令 → 走规则匹配；规则没命中再降级到默认回复
+        // 是斜杠命令 → 走规则精确匹配；未命中规则的消息（含未知 /xxx）与普通
+        // 消息同路：全部交给空间管家，由管家 AI 自主决定下一步，不做任何硬编码降级。
         if let Some(command_ctx) = Self::parse_slash_command(prep.content) {
             Self::dispatch_slash_command(context, msg, prep, &command_ctx).await;
         } else {
-            Self::dispatch_default_response(context, msg, prep).await;
+            Self::dispatch_butler_chat(context, msg, prep).await;
         }
     }
 
-    /// 阶段 6a：自定义斜杠命令规则匹配 + debounce push
-    /// 没匹配上规则时降级到默认回复，避免静默丢消息
+    /// 阶段 6a：自定义斜杠命令规则精确匹配 + debounce push
+    /// 规则未命中 / workspace 异常时转空间管家——斜杠命令没有兜底执行。
     async fn dispatch_slash_command(
         context: &ListenerMessageContext<'_>,
         msg: &ChannelMessage,
@@ -483,19 +484,19 @@ impl FeishuListener {
         let workspace_id = match context.db.get_agent_bot_workspace_id(context.bot_id).await {
             Ok(Some(id)) => id,
             Ok(None) => {
-                tracing::warn!("bot {} has no workspace_id, skipping slash command", context.bot_id);
-                return Self::dispatch_default_response(context, msg, prep).await;
+                tracing::warn!("bot {} has no workspace_id, routing slash command to butler", context.bot_id);
+                return Self::dispatch_butler_chat(context, msg, prep).await;
             }
             Err(e) => {
                 tracing::error!("failed to get workspace_id for bot {}: {}", context.bot_id, e);
-                return Self::dispatch_default_response(context, msg, prep).await;
+                return Self::dispatch_butler_chat(context, msg, prep).await;
             }
         };
 
         let matched_rule = Self::find_slash_rule(context.db, workspace_id, command_ctx.command).await;
         let Some(rule) = matched_rule else {
-            // 没匹配上规则 → 走默认回复路径，保持向后兼容
-            return Self::dispatch_default_response(context, msg, prep).await;
+            // 未命中规则：消息原文（含 /xxx）交给管家，管家可追问或按闲聊处理
+            return Self::dispatch_butler_chat(context, msg, prep).await;
         };
 
         // 根据 command_type 分发到 todo 或 loop 处理
@@ -608,136 +609,107 @@ impl FeishuListener {
         });
     }
 
-    /// 阶段 6b：默认回复——根据工作空间配置的响应类型分发
-    /// todo 拉取失败时降级用空 prompt，避免整条消息被吞掉
-    async fn dispatch_default_response(
+    /// 阶段 6b：空间管家——所有未命中斜杠命令的消息的统一出口（108）。
+    ///
+    /// 已配置管家（butler_executor 非空）→ 推 butler_chat 消息进 debounce，
+    /// 由执行器聊天通路注入管家专家 prompt 后与用户对话；
+    /// 未配置 → 回复配置引导提示。提示不是兜底执行：不触发任何 todo/loop/执行器。
+    async fn dispatch_butler_chat(
         context: &ListenerMessageContext<'_>,
         msg: &ChannelMessage,
         prep: &MessagePrep<'_>,
     ) {
         tracing::debug!(
-            "[feishu:{}] dispatch_default_response: content={:?}, chat_type={}",
+            "[feishu:{}] dispatch_butler_chat: content={:?}, chat_type={}",
             context.bot_id, prep.content, prep.chat_type
         );
-        // 从数据库获取 bot 的 workspace_id，然后查询 workspace 设置
-        let workspace_id = match context.db.get_agent_bot_workspace_id(context.bot_id).await {
-            Ok(Some(id)) => id,
-            Ok(None) => {
-                tracing::warn!("bot {} has no workspace_id, skipping default response", context.bot_id);
-                return;
-            }
-            Err(e) => {
-                tracing::error!("failed to get workspace_id for bot {}: {}", context.bot_id, e);
-                return;
-            }
-        };
-
-        // 读取工作空间的完整默认响应配置
-        let settings = crate::db::workspace_setting::get_workspace_settings(context.db, workspace_id)
-            .await
-            .ok()
-            .flatten();
-
-        let Some(settings) = settings else {
-            tracing::info!(
-                "[feishu:{}] no workspace settings found for workspace {}, skipping default response",
-                context.bot_id, workspace_id
-            );
-            return;
-        };
         // 空消息不触发任何响应
         if prep.content.is_empty() {
             return;
         }
+        // 管家配置挂在工作空间上：bot 未绑定工作空间时无法路由，
+        // 提示用户先完成绑定（提示本身不执行任何任务）。
+        let workspace_id = match context.db.get_agent_bot_workspace_id(context.bot_id).await {
+            Ok(Some(id)) => id,
+            Ok(None) => {
+                tracing::warn!("bot {} has no workspace_id, cannot route to butler", context.bot_id);
+                return Self::reply_butler_hint(context, msg, prep.chat_type, "⚠️ 本 bot 尚未绑定工作空间，请先在 ntd 中完成绑定。").await;
+            }
+            Err(e) => {
+                tracing::error!("failed to get workspace_id for bot {}: {}", context.bot_id, e);
+                return Self::reply_butler_hint(context, msg, prep.chat_type, "⚠️ 查询工作空间失败，请稍后重试。").await;
+            }
+        };
 
-        // 根据 default_response_type 分发到不同的处理路径
-        match settings.default_response_type.as_str() {
-            "executor" => {
-                // 执行器类型：直接调用执行器交互（不存储执行记录）
-                let executor = settings.default_response_executor.clone()
-                    .unwrap_or_else(|| "claudecode".to_string());
-                Self::debounce_push_executor_default(
-                    context.debounce,
-                    context.bot_id,
-                    msg,
-                    prep.chat_type,
-                    &executor,
-                    prep.content,
-                    Some(workspace_id),
-                    prep.is_mention,
-                );
-            }
-            "loop" => {
-                // 环路类型：触发环路执行
-                let Some(loop_id) = settings.default_response_loop_id else { return };
-                Self::debounce_push_loop_default(
-                    context.debounce,
-                    context.bot_id,
-                    msg,
-                    prep.chat_type,
-                    loop_id,
-                    prep.content,
-                    Some(workspace_id),
-                    prep.is_mention,
-                );
-            }
-            _ => {
-                // todo 类型（默认值）：通过 todo 执行
-                let Some(todo_id) = settings.default_response_todo_id else { return };
-                let todo_prompt = context.db.get_todo(todo_id).await
-                    .ok().flatten().map(|t| t.prompt).unwrap_or_default();
-                let (_, params) = build_trigger_params(prep.content);
-                Self::debounce_push_default(
-                    context.debounce, context.bot_id, msg, prep.chat_type,
-                    todo_id, todo_prompt, prep.content, params, Some(workspace_id),
-                    prep.is_mention,
-                );
-            }
+        // 读取工作空间的管家配置；DB 失败与「无配置」对用户同等表现为未配置提示，
+        // 但日志里区分出来便于排查。
+        let settings = crate::db::workspace_setting::get_workspace_settings(context.db, workspace_id)
+            .await
+            .map_err(|e| tracing::warn!("[feishu:{}] read workspace settings failed: {}", context.bot_id, e))
+            .ok()
+            .flatten();
+        let butler_executor = Self::resolve_butler_executor(settings);
+
+        match butler_executor {
+            Some(executor) => Self::debounce_push_butler_chat(
+                context.debounce,
+                context.bot_id,
+                msg,
+                prep.chat_type,
+                &executor,
+                prep.content,
+                Some(workspace_id),
+                prep.is_mention,
+            ),
+            None => Self::reply_butler_hint(
+                context,
+                msg,
+                prep.chat_type,
+                "🤖 本工作空间尚未配置空间管家，请在工作空间设置中选择管家专家与执行器。",
+            ).await,
         }
     }
 
-    /// 阶段 6b-i：把默认回复消息塞进 debounce
+    /// 从工作空间设置解析管家执行器：无设置行 / 字段 NULL / 空串统一视为未配置。
+    /// 抽成纯函数便于单测——dispatch_butler_chat 的「提示 vs 推管家」分支全挂在这个
+    /// 解析结果上，是管家通路的唯一判据。
+    fn resolve_butler_executor(
+        settings: Option<crate::db::entity::workspace_settings::Model>,
+    ) -> Option<String> {
+        settings?.butler_executor.filter(|e| !e.is_empty())
+    }
+
+    /// 阶段 6b 的提示回复出口：按 chat_type 解析 receive target 后发文本。
+    /// 仅用于「无法路由到管家」的引导场景，本身不执行任何任务。
+    async fn reply_butler_hint(
+        context: &ListenerMessageContext<'_>,
+        msg: &ChannelMessage,
+        chat_type: &str,
+        text: &str,
+    ) {
+        let (receive_id, receive_id_type) = match chat_type {
+            "p2p" => (msg.sender.clone(), "open_id"),
+            _ => (msg.channel.clone(), "chat_id"),
+        };
+        FeishuApiClient::send_text(
+            context.credentials,
+            context.token_manager,
+            context.bot_id,
+            &receive_id,
+            receive_id_type,
+            text,
+        )
+        .await;
+    }
+
+    /// 阶段 6b-i：把管家聊天消息塞进 debounce
     #[allow(clippy::too_many_arguments)] // 参数来自上游 handler 的独立数据源，合并为 struct 增加认知负担
-    fn debounce_push_default(
+    fn debounce_push_butler_chat(
         debounce: &Arc<MessageDebounce>,
         bot_id: i64,
         msg: &ChannelMessage,
         chat_type: &str,
-        todo_id: i64,
-        todo_prompt: String,
-        content: &str,
-        params: std::collections::HashMap<String, String>,
-        workspace_id: Option<i64>,
-        immediate: bool,
-    ) {
-        debounce.push(PendingMessage {
-            bot_id,
-            chat_id: msg.channel.clone(),
-            chat_type: chat_type.to_string(),
-            sender: msg.sender.clone(),
-            content: content.to_string(),
-            todo_id,
-            todo_prompt,
-            executor: None,
-            trigger_type: "default_response".to_string(),
-            params: Some(params),
-            message_id: Some(msg.id.clone()),
-            resume_session_id: None,
-            resume_message: None,
-            immediate,
-            binding_id: None,
-            workspace_id,
-        });
-    }
-
-    /// 阶段 6b-ii：把默认响应为 executor 类型的消息塞进 debounce
-    #[allow(clippy::too_many_arguments)]
-    fn debounce_push_executor_default(
-        debounce: &Arc<MessageDebounce>,
-        bot_id: i64,
-        msg: &ChannelMessage,
-        chat_type: &str,
-        executor: &str,
+        butler_executor: &str,
         content: &str,
         workspace_id: Option<i64>,
         immediate: bool,
@@ -748,47 +720,15 @@ impl FeishuListener {
             chat_type: chat_type.to_string(),
             sender: msg.sender.clone(),
             content: content.to_string(),
-            todo_id: 0, // executor 类型不使用 todo_id
+            todo_id: 0, // 管家聊天不绑定 todo
             todo_prompt: String::new(),
-            executor: Some(executor.to_string()),
-            trigger_type: "default_response_executor".to_string(),
+            executor: Some(butler_executor.to_string()),
+            trigger_type: "butler_chat".to_string(),
             params: None,
             message_id: Some(msg.id.clone()),
             resume_session_id: None,
-            immediate,
             resume_message: None,
-            binding_id: None,
-            workspace_id,
-        });
-    }
-
-    /// 阶段 6b-iii：把默认响应为 loop 类型的消息塞进 debounce
-    #[allow(clippy::too_many_arguments)]
-    fn debounce_push_loop_default(
-        debounce: &Arc<MessageDebounce>,
-        bot_id: i64,
-        msg: &ChannelMessage,
-        chat_type: &str,
-        loop_id: i64,
-        content: &str,
-        workspace_id: Option<i64>,
-        immediate: bool,
-    ) {
-        debounce.push(PendingMessage {
-            bot_id,
-            chat_id: msg.channel.clone(),
-            chat_type: chat_type.to_string(),
-            sender: msg.sender.clone(),
-            content: content.to_string(),
-            todo_id: loop_id, // 复用 todo_id 字段存储 loop_id
-            todo_prompt: String::new(), // 环路不使用 todo_prompt
-            executor: None,
-            trigger_type: "default_response_loop".to_string(),
-            params: None,
-            message_id: Some(msg.id.clone()),
             immediate,
-            resume_session_id: None,
-            resume_message: None,
             binding_id: None,
             workspace_id,
         });
@@ -945,6 +885,52 @@ mod tests {
         };
         assert!(!FeishuListener::is_message_allowed("group", false, &cfg));
         assert!(FeishuListener::is_message_allowed("group", true, &cfg));
+    }
+
+    /// 管家执行器解析的构造辅助：只需关心 butler_executor 一个字段，其余给默认值
+    fn settings_with_butler(butler_executor: Option<String>) -> crate::db::entity::workspace_settings::Model {
+        crate::db::entity::workspace_settings::Model {
+            id: 1,
+            workspace_id: 1,
+            butler_expert_name: None,
+            butler_executor,
+            system_prompt: None,
+            delegate_max_rounds: None,
+            updated_at: None,
+        }
+    }
+
+    /// 无设置行 → None（走未配置提示分支）
+    #[test]
+    fn test_resolve_butler_executor_no_settings_row() {
+        assert_eq!(FeishuListener::resolve_butler_executor(None), None);
+    }
+
+    /// 字段 NULL → None
+    #[test]
+    fn test_resolve_butler_executor_null_field() {
+        assert_eq!(
+            FeishuListener::resolve_butler_executor(Some(settings_with_butler(None))),
+            None
+        );
+    }
+
+    /// 空串 = 显式清空，与 NULL 同义 → None
+    #[test]
+    fn test_resolve_butler_executor_empty_string_is_unconfigured() {
+        assert_eq!(
+            FeishuListener::resolve_butler_executor(Some(settings_with_butler(Some(String::new())))),
+            None
+        );
+    }
+
+    /// 已配置 → Some(原名)
+    #[test]
+    fn test_resolve_butler_executor_configured() {
+        assert_eq!(
+            FeishuListener::resolve_butler_executor(Some(settings_with_butler(Some("pi".to_string())))),
+            Some("pi".to_string())
+        );
     }
 
     #[tokio::test]

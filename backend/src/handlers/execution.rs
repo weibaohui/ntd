@@ -10,7 +10,7 @@ use crate::executor_service::{
 use crate::handlers::{workspace_guard, ApiJson, AppError, AppState};
 use crate::models::{
     ApiResponse, DashboardStats, ExecuteRequest, ExecutionLogsPage, ExecutionRecordsPage,
-    ExecutionStatus, ExecutionSummary, SmartCreateRequest, TodoIdQuery,
+    ExecutionStatus, ExecutionSummary, TodoIdQuery,
 };
 
 /// 统一启动一条 Todo 执行，供手动执行、消息路由等入口复用。
@@ -747,114 +747,6 @@ pub async fn v1_get_running_board(
     }))
 }
 
-/// v1 变体：从 Path 获取 workspace_id，不再依赖请求体中的 workspace_id 字段。
-pub async fn v1_smart_create_handler(
-    State(state): State<AppState>,
-    Path(ws_id): Path<i64>,
-    ApiJson(req): ApiJson<SmartCreateRequest>,
-) -> Result<ApiResponse<serde_json::Value>, AppError> {
-    let content = req.content.trim();
-    if content.is_empty() {
-        return Err(AppError::BadRequest("内容不能为空".to_string()));
-    }
-
-    // v1 使用 Path 中的 workspace_id 而非请求体内的 workspace_id 字段
-    let workspace_settings = crate::db::workspace_setting::get_workspace_settings(&state.db, ws_id).await?
-        .ok_or_else(|| AppError::BadRequest(format!("工作空间 #{} 不存在", ws_id)))?;
-
-    let todo_id = workspace_settings.default_response_todo_id
-        .ok_or_else(|| AppError::BadRequest("尚未配置默认响应 Todo，请先在工作空间设置中配置".to_string()))?;
-
-    // 验证 Todo 存在且属于当前 workspace：settings 表本身没有外键约束保证
-    // default_response_todo_id 与 workspace_id 一致，必须显式校验防止跨空间执行。
-    workspace_guard::verify_todo_belongs_to_ws(&state.db, todo_id, ws_id).await?;
-    let todo = state
-        .db
-        .get_todo(todo_id)
-        .await?
-        .ok_or_else(|| AppError::BadRequest(format!("默认响应 Todo #{} 不存在", todo_id)))?;
-
-    // 检查并发限制
-    // RwLock 中毒恢复：PoisonError 时取内部 guard 继续运行，与 backup.rs 保持一致
-    let max_concurrent = state.config.read().unwrap_or_else(|e| e.into_inner()).max_concurrent_todos;
-    let running_tasks = state.task_manager.get_all_task_infos().await;
-    let running_records = state.db.get_running_records_by_todo_id(todo_id).await?;
-    let running_count_for_todo = running_records
-        .iter()
-        .filter(|r| {
-            if let Some(task_id) = &r.task_id {
-                running_tasks.iter().any(|t| t.task_id == *task_id)
-            } else {
-                false
-            }
-        })
-        .count();
-    if running_count_for_todo >= max_concurrent as usize {
-        return Err(AppError::BadRequest(format!(
-            "默认响应 Todo #{} 已有 {} 个执行在运行中（上限 {}），请稍后再试",
-            todo_id, running_count_for_todo, max_concurrent
-        )));
-    }
-
-    // 构建模板参数
-    let mut params = std::collections::HashMap::new();
-    params.insert("content".to_string(), content.to_string());
-    params.insert("message".to_string(), content.to_string());
-    params.insert("raw_message".to_string(), content.to_string());
-
-    let mut message = todo.prompt.clone();
-
-    // 如果 prompt 模板中没有任何占位符，将用户内容追加到 message 末尾，
-    // 确保用户提交的内容一定能传递到执行器
-    let has_placeholder = params.keys().any(|key| message.contains(&format!("{{{{{}}}}}", key)));
-    if !has_placeholder {
-        if message.is_empty() {
-            message = content.to_string();
-        } else {
-            message = format!("{}\n\n{}", message, content);
-        }
-    }
-
-    let result = start_todo_execution(RunTodoExecutionRequest {
-        db: state.db.clone(),
-        executor_registry: state.executor_registry.clone(),
-        tx: state.tx.clone(),
-        task_manager: state.task_manager.clone(),
-        config: state.config.clone(),
-        blackboard_debouncer: state.blackboard_debouncer.clone(),
-        todo_id,
-        message,
-        req_executor: None,
-        req_model: None,
-        trigger_type: "smart_create".to_string(),
-        params: Some(params),
-        resume_session_id: None,
-        resume_message: None,
-        source_todo_id: None,
-        source_todo_title: None,
-        loop_step_execution_id: None,
-        step_id: None,
-        feishu_bot_id: None,
-        feishu_receive_id: None,
-            feishu_receive_id_type: None,
-        workspace_path: None,
-        // 从 todo 中提取 workspace_id，用于 FeishuPushService 按 workspace 隔离推送
-        workspace_id: todo.workspace_id,
-        // smart_create 路径：同样注入专家上下文，新建 todo 可能带 expert_name
-        expert_manager: Some(state.expert_manager.clone()),
-    })
-    .await?;
-
-    let record_id = result.record_id
-        .ok_or_else(|| AppError::Internal("执行启动失败：未获取到执行记录 ID".to_string()))?;
-
-    Ok(ApiResponse::ok(serde_json::json!({
-        "task_id": result.task_id,
-        "record_id": record_id,
-        "todo_id": todo_id,
-        "todo_title": todo.title,
-    })))
-}
 
 /// v1 路由集合：所有路径相对于 /api/v1/workspaces/{ws}/executions。
 /// 在 `mod.rs` 中通过 `.nest("/api/v1/workspaces/{ws}/executions", execution::v1_routes())`

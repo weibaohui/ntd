@@ -1,25 +1,27 @@
 import { useState, useEffect } from 'react';
-import { Card, Form, Select, Button, Space, message, Radio, InputNumber, Typography } from 'antd';
+import { Card, Form, Select, Button, Space, message, InputNumber, Typography } from 'antd';
 import * as db from '@/utils/database';
-import { listLoops } from '@/utils/database/loops';
+import { getAllExperts } from '@/utils/database/experts';
+import { getExpertDisplayName } from '@/types/expert';
+import type { ExpertMetadata } from '@/types/expert';
 import { EXECUTORS_FOR_PICKER } from '@/utils/executors';
 import { ExecutorPicker } from '@/components/todo-drawer/ExecutorPicker';
-import type { TodoBrief } from '@/types';
-import type { LoopListItem } from '@/types/loop';
 import type { AgentBot } from '@/utils/database';
 import type { FeishuHistoryChat } from '@/types';
 import { HistoryChatsCard } from '@/components/settings/assistant/HistoryChatsCard';
 
 const { Paragraph } = Typography;
 
-interface DefaultResponseConfigPanelProps {
+interface WorkspaceSettingsPanelProps {
   workspaceId: number;
   onChanged?: () => void;
 }
 
-export function DefaultResponseConfigPanel({ workspaceId, onChanged }: DefaultResponseConfigPanelProps) {
-  const [todos, setTodos] = useState<TodoBrief[]>([]);
-  const [loops, setLoops] = useState<LoopListItem[]>([]);
+// 108 空间管家：本面板承载工作空间级设置——管家配置（专家+执行器）、
+// 委派接力上限、历史消息处理与拉取群。默认响应机制（todo/loop/executor 三选一）
+// 已整体退役，未命中斜杠命令的消息统一由空间管家处理。
+export function WorkspaceSettingsPanel({ workspaceId, onChanged }: WorkspaceSettingsPanelProps) {
+  const [experts, setExperts] = useState<ExpertMetadata[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -38,10 +40,8 @@ export function DefaultResponseConfigPanel({ workspaceId, onChanged }: DefaultRe
   useEffect(() => {
     loadSettings();
     loadHistorySettings();
-    // 按 workspace_id 过滤 Todo，使下拉列表仅显示当前工作空间内的事项
-    db.getTodoBriefs(workspaceId).then(setTodos).catch(() => {});
-    // 加载当前工作空间的环路列表
-    listLoops(workspaceId).then(setLoops).catch(() => {});
+    // 加载专家列表供管家专家选择（专家名几乎不变，失败静默降级为空列表）
+    getAllExperts().then(setExperts).catch(() => {});
     // 加载当前工作空间的飞书 bot（一个工作空间一个 bot），用于历史拉取群配置
     db.getAgentBots().then(bots => {
       const b = bots.find(x => x.workspace_id === workspaceId && x.bot_type === 'feishu') || null;
@@ -55,10 +55,9 @@ export function DefaultResponseConfigPanel({ workspaceId, onChanged }: DefaultRe
     db.getWorkspaceSettings(workspaceId)
       .then(s => {
         form.setFieldsValue({
-          default_response_type: s.default_response_type || 'todo',
-          default_response_todo_id: s.default_response_todo_id,
-          default_response_loop_id: s.default_response_loop_id,
-          default_response_executor: s.default_response_executor,
+          // 空串/ null 都映射为 undefined：让 Select 显示 placeholder 而非空白值
+          butler_expert_name: s.butler_expert_name || undefined,
+          butler_executor: s.butler_executor || undefined,
           // raw 覆盖值：null 表示未配置（InputNumber 显示空，提示走系统默认）。
           delegate_max_rounds: s.delegate_max_rounds,
         });
@@ -86,10 +85,9 @@ export function DefaultResponseConfigPanel({ workspaceId, onChanged }: DefaultRe
       const values = await form.validateFields();
       setSaving(true);
       await db.updateWorkspaceSettings(workspaceId, {
-        default_response_type: values.default_response_type,
-        default_response_todo_id: values.default_response_type === 'todo' ? values.default_response_todo_id : undefined,
-        default_response_loop_id: values.default_response_type === 'loop' ? values.default_response_loop_id : 0,
-        default_response_executor: values.default_response_type === 'executor' ? values.default_response_executor : undefined,
+        // 清空选择时值为 undefined，显式传空串让后端落「显式清空」（与未配置的 NULL 下游同义）
+        butler_expert_name: values.butler_expert_name ?? '',
+        butler_executor: values.butler_executor ?? '',
         // null=清除回退系统兜底；N(1..=50)=置工作空间默认，任务级未覆盖时以此为准。
         delegate_max_rounds: values.delegate_max_rounds ?? null,
       });
@@ -151,86 +149,54 @@ export function DefaultResponseConfigPanel({ workspaceId, onChanged }: DefaultRe
     }
   };
 
-  const responseType = Form.useWatch('default_response_type', form);
-  const executorValue = Form.useWatch('default_response_executor', form);
+  const executorValue = Form.useWatch('butler_executor', form);
 
   return (
     <>
-      <Card size="small" loading={loading} title="默认响应配置">
-        <Form form={form} layout="vertical" initialValues={{ default_response_type: 'todo' }}>
+      <Card size="small" loading={loading} title="空间管家">
+        <Paragraph type="secondary" style={{ marginBottom: 16, fontSize: 13 }}>
+          未命中斜杠命令的消息由空间管家处理：管家 = 专家（人设与规则，可选）+ 执行器（实际对话进程）。
+          不配专家则管家是纯执行器聊天；不配执行器则消息收到配置引导提示。
+        </Paragraph>
+        <Form form={form} layout="vertical">
           <Form.Item
-            name="default_response_type"
-            label="响应类型"
-            tooltip="当工作空间内的 Bot 收到无法匹配斜杠命令的消息时，执行默认响应"
+            name="butler_expert_name"
+            label="管家专家"
+            tooltip="为管家注入专家的人设与行为规则；不选则管家退化为纯执行器聊天"
           >
-            <Radio.Group>
-              <Radio.Button value="todo">Todo</Radio.Button>
-              <Radio.Button value="loop">环路</Radio.Button>
-              <Radio.Button value="executor">执行器</Radio.Button>
-            </Radio.Group>
+            <Select
+              showSearch
+              allowClear
+              placeholder="选择管家专家（可选）"
+              filterOption={(input, option) =>
+                // label 拼上专家 ID：显示名是中文时可按英文 ID 搜（反之亦然）
+                (option?.label as string)?.toLowerCase().includes(input.toLowerCase())
+              }
+              style={{ width: 300 }}
+            >
+              {experts.map(expert => (
+                <Select.Option
+                  key={expert.name}
+                  value={expert.name}
+                  label={`${getExpertDisplayName(expert)}（${expert.name}）`}
+                >
+                  {getExpertDisplayName(expert)}（{expert.name}）
+                </Select.Option>
+              ))}
+            </Select>
           </Form.Item>
 
-          {responseType === 'todo' && (
-            <Form.Item
-              name="default_response_todo_id"
-              label="默认响应 Todo"
-              tooltip="选择工作空间内的 Todo 来处理消息"
-            >
-              <Select
-                showSearch
-                allowClear
-                placeholder="选择默认响应的 Todo"
-                filterOption={(input, option) =>
-                  (option?.label as string)?.toLowerCase().includes(input.toLowerCase())
-                }
-                style={{ width: 300 }}
-              >
-                {todos.map(todo => (
-                  <Select.Option key={todo.id} value={todo.id} label={`#${todo.id} ${todo.title}`}>
-                    #{todo.id} {todo.title}
-                  </Select.Option>
-                ))}
-              </Select>
-            </Form.Item>
-          )}
-
-          {responseType === 'loop' && (
-            <Form.Item
-              name="default_response_loop_id"
-              label="默认响应环路"
-              tooltip="选择工作空间内的环路来处理消息"
-            >
-              <Select
-                showSearch
-                allowClear
-                placeholder="选择默认响应的环路"
-                filterOption={(input, option) =>
-                  (option?.label as string)?.toLowerCase().includes(input.toLowerCase())
-                }
-                style={{ width: 300 }}
-              >
-                {loops.map(loop => (
-                  <Select.Option key={loop.id} value={loop.id} label={loop.name}>
-                    {loop.name}
-                  </Select.Option>
-                ))}
-              </Select>
-            </Form.Item>
-          )}
-
-          {responseType === 'executor' && (
-            <Form.Item
-              name="default_response_executor"
-              label="执行器类型"
-              tooltip="选择执行器来处理消息"
-            >
-              <ExecutorPicker
-                executor={executorValue || 'claudecode'}
-                executorOptions={EXECUTORS_FOR_PICKER}
-                onChange={v => form.setFieldValue('default_response_executor', v)}
-              />
-            </Form.Item>
-          )}
+          <Form.Item
+            name="butler_executor"
+            label="管家执行器"
+            tooltip="管家对话使用的执行器；不配置时，未命中斜杠命令的消息将收到配置引导提示"
+          >
+            <ExecutorPicker
+              executor={executorValue || ''}
+              executorOptions={EXECUTORS_FOR_PICKER}
+              onChange={v => form.setFieldValue('butler_executor', v)}
+            />
+          </Form.Item>
 
           {/* 委派接力上限（需求 092）：工作空间级默认，任务级可单独覆盖。 */}
           <Form.Item

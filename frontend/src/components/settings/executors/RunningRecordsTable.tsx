@@ -12,9 +12,11 @@ import type { ExecutionRecord } from '@/types';
 import type { UseRunningRecordsReturn } from '@/hooks/useRunningRecords';
 
 // 触发方式字面量→中文映射：提到模块级避免每次 render 重建字典。
+// butler_chat 为 108 起现行值；default_response 仅存量记录展示用。
 const triggerTypeMap: Record<string, string> = {
   manual: '手动',
   slash_command: '斜杠命令',
+  butler_chat: '空间管家',
   default_response: '默认响应',
   scheduler: '定时',
 };

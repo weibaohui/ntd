@@ -50,7 +50,7 @@ pub enum ExecEvent {
         duration_secs: i64,
         /// 累计 Token 消耗（input + output），用于推送统计摘要
         total_tokens: i64,
-        /// 本次执行的触发类型（"manual" / "smart_create" / "auto_review" / "blackboard" 等），
+        /// 本次执行的触发类型（"manual" / "butler_chat" / "auto_review" / "blackboard" 等），
         /// 用于黑板更新等场景在 Finished 钩子中识别"自身"以避免递归触发。
         /// 旧代码路径未传时为 None。
         trigger_type: Option<String>,
@@ -81,7 +81,7 @@ pub enum ExecEvent {
         review_status: String,
     },
     /// 私聊直达卡片消息：消息经 executor 处理后直接把结果发回飞书，不存储执行记录。
-    /// 用于工作空间默认响应配置中选择"执行器"类型的场景（开始/结束/错误等关键节点）。
+    /// 用于空间管家聊天（butler_chat）场景（开始/结束/错误等关键节点）。
     DirectCardMessage {
         /// Feishu bot_id
         bot_id: i64,
@@ -92,7 +92,7 @@ pub enum ExecEvent {
         /// 要发送的文本内容
         content: String,
     },
-    /// 私聊直达流式消息：executor 默认响应场景下，执行过程中每条日志直接推送给触发用户。
+    /// 私聊直达流式消息：管家聊天场景下，执行过程中每条日志直接推送给触发用户。
     /// 与 DirectCardMessage 的区别：后者是开始/结束等关键节点的卡片消息，
     /// 前者是执行过程中流式输出的日志消息（push_level="all" 时发送）。
     DirectStreamMessage {

@@ -1224,7 +1224,7 @@ mod tests {
         let db = Arc::new(Database::new(":memory:").await.unwrap());
         // 写入空 prompt
         crate::db::workspace_setting::upsert_workspace_settings(
-            &db, 1, None, None, None, None, Some(String::new()),
+            &db, 1, None, None, Some(String::new()),
         )
         .await
         .unwrap();
@@ -1238,7 +1238,7 @@ mod tests {
         let db = Arc::new(Database::new(":memory:").await.unwrap());
         // 创建时显式传 None → system_prompt 列为 NULL
         crate::db::workspace_setting::upsert_workspace_settings(
-            &db, 1, Some("todo".to_string()), None, None, None, None,
+            &db, 1, None, None, None,
         )
         .await
         .unwrap();
@@ -1252,7 +1252,7 @@ mod tests {
         let db = Arc::new(Database::new(":memory:").await.unwrap());
         let prompt = "## 工作空间共识\n- 产物目录：./target";
         crate::db::workspace_setting::upsert_workspace_settings(
-            &db, 1, None, None, None, None, Some(prompt.to_string()),
+            &db, 1, None, None, Some(prompt.to_string()),
         )
         .await
         .unwrap();

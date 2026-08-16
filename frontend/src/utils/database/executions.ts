@@ -101,18 +101,6 @@ export async function rateExecutionRecord(
   return unwrap(await api.put(`/api/v1/workspaces/${workspaceId}/executions/${recordId}/rating`, { rating }));
 }
 
-// Smart Create API — POST /api/v1/workspaces/{ws}/todos/smart（嵌套在 todos 下）
-
-export interface SmartCreateResult {
-  task_id: string;
-  record_id: number;
-  todo_id: number;
-  todo_title: string;
-}
-
-export async function smartCreate(workspaceId: number, content: string): Promise<SmartCreateResult> {
-  return unwrap(await api.post(`/api/v1/workspaces/${workspaceId}/todos/smart`, { content }));
-}
 
 export async function getRunningBoardData(
   workspaceId: number,

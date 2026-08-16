@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tokio::time::sleep;
 
-use crate::handlers::{task_posts, workspace_guard, AppError, AppState};
+use crate::handlers::{task_posts, AppError, AppState};
 use crate::models::ApiResponse;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -832,25 +832,15 @@ pub async fn get_workspace_settings(
 
     // 合并 Some/None 两分支：None 时回退到与「未配置」等价的默认展示口径，避免两段近乎重复的 json!。
     // 各字段从 Model 取值或回退默认；relay 上限额外算 effective（raw NULL → 兜底常量）。
-    let (resp_type, todo_id, loop_id, executor, prompt, raw_max, updated_at) = match settings {
+    let (butler_expert_name, butler_executor, prompt, raw_max, updated_at) = match settings {
         Some(s) => (
-            s.default_response_type,
-            s.default_response_todo_id,
-            s.default_response_loop_id,
-            s.default_response_executor,
+            s.butler_expert_name,
+            s.butler_executor,
             s.system_prompt,
             s.delegate_max_rounds,
             s.updated_at,
         ),
-        None => (
-            "todo".to_string(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        ),
+        None => (None, None, None, None, None),
     };
     // effective：复用 task_posts 的统一口径（合法区间 1..=CAP 才采纳，否则兜底常量）。
     // 既消除「此处再手写一遍 filter(>0).unwrap_or(常量)」的重复，又顺带获得 >CAP 脏数据钳制，
@@ -858,10 +848,8 @@ pub async fn get_workspace_settings(
     let max_effective = crate::handlers::task_posts::workspace_effective_max(raw_max);
     Ok(ApiResponse::ok(serde_json::json!({
         "workspace_id": workspace_id,
-        "default_response_type": resp_type,
-        "default_response_todo_id": todo_id,
-        "default_response_loop_id": loop_id,
-        "default_response_executor": executor,
+        "butler_expert_name": butler_expert_name,
+        "butler_executor": butler_executor,
         "system_prompt": prompt,
         // raw：用户显式配置的上限（NULL=未配置）；effective：解析后实际生效值。
         "delegate_max_rounds": raw_max,
@@ -872,10 +860,10 @@ pub async fn get_workspace_settings(
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct UpdateWorkspaceSettingsRequest {
-    pub default_response_type: Option<String>,
-    pub default_response_todo_id: Option<i64>,
-    pub default_response_loop_id: Option<i64>,
-    pub default_response_executor: Option<String>,
+    /// 空间管家的专家名（108）：Some(含空串=清空) 覆写；None 不动。
+    pub butler_expert_name: Option<String>,
+    /// 空间管家的执行器（108）：Some(含空串=清空) 覆写；None 不动。
+    pub butler_executor: Option<String>,
     /// 工作空间级共识 prompt（需求 022）。
     /// Some(含空串) 覆写；None 不动。用户清空时前端传空串。
     pub system_prompt: Option<String>,
@@ -888,30 +876,21 @@ pub struct UpdateWorkspaceSettingsRequest {
 
 /// 更新工作空间的设置
 ///
-/// 若请求指定了默认响应 todo/loop，先校验其确实属于当前 workspace，防止通过设置
-/// 间接引用其他 workspace 的资源（与 smart_create 的 workspace 隔离保持一致）。
+/// 108：默认响应 todo/loop 配置已随 SmartCreate/默认响应机制一并退役，
+/// 不再需要通过设置间接引用其他 workspace 资源的校验（管家字段均为纯文本配置）。
 pub async fn update_workspace_settings(
     State(state): State<AppState>,
     Path(workspace_id): Path<i64>,
     Json(req): Json<UpdateWorkspaceSettingsRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    if let Some(todo_id) = req.default_response_todo_id {
-        workspace_guard::verify_todo_belongs_to_ws(&state.db, todo_id, workspace_id).await?;
-    }
-    if let Some(loop_id) = req.default_response_loop_id {
-        workspace_guard::verify_loop_belongs_to_ws(&state.db, loop_id, workspace_id).await?;
-    }
-
     // relay 上限越界校验前置到任何写入之前：否则先 upsert 其它 settings、随后才发现越界返回 400，
     // 会留下「其它字段已写、relay 未写」的部分写不一致（评审发现）。null=清除放行，仅拦越界值。
     task_posts::validate_delegate_max_rounds(req.delegate_max_rounds)?;
     crate::db::workspace_setting::upsert_workspace_settings(
         &state.db,
         workspace_id,
-        req.default_response_type,
-        req.default_response_todo_id,
-        req.default_response_loop_id,
-        req.default_response_executor,
+        req.butler_expert_name,
+        req.butler_executor,
         req.system_prompt,
     )
     .await

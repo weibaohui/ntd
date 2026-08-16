@@ -728,9 +728,9 @@ mod placeholder_tests {
     }
 
     #[test]
-    fn test_build_trigger_params_default_response() {
+    fn test_build_trigger_params_butler_chat() {
         let (trigger_type, params) = build_trigger_params("hello world");
-        assert_eq!(trigger_type, "default_response");
+        assert_eq!(trigger_type, "butler_chat");
         assert_eq!(params.get("content"), Some(&"hello world".to_string()));
         assert_eq!(params.get("message"), Some(&"hello world".to_string()));
         assert_eq!(params.get("raw_message"), Some(&"hello world".to_string()));
@@ -740,7 +740,7 @@ mod placeholder_tests {
     #[test]
     fn test_build_trigger_params_slash_only_no_body() {
         let (trigger_type, params) = build_trigger_params("/help");
-        assert_eq!(trigger_type, "default_response");
+        assert_eq!(trigger_type, "butler_chat");
         assert_eq!(params.get("content"), Some(&"/help".to_string()));
         assert_eq!(params.get("message"), Some(&"/help".to_string()));
         assert!(params.get("slash_command").is_none());

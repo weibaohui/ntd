@@ -6,6 +6,9 @@ const { Text } = Typography;
 
 const processedTypeLabel = (type: string | null): string => {
   const map: Record<string, string> = {
+    // butler_chat 是 108 起的现行处理类型；default_response* 是 108 前历史值，
+    // 仅为 DB 存量消息的展示保留（与 MessageCard 的映射保持同键同文案）
+    'butler_chat': '空间管家',
     'default_response': '默认响应-事项',
     'default_response_executor': '默认响应-执行器',
     'default_response_loop': '默认响应-环路',

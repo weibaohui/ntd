@@ -5,17 +5,13 @@ use std::time::Duration;
 use dashmap::DashMap;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde::Deserialize;
-use std::sync::RwLock;
 use tokio::time::interval;
 use tracing::{debug, info, warn};
 
 use crate::service_context::ServiceContext;
-use crate::config::Config as AppConfig;
 use crate::db::NewFeishuHistoryMessage;
 use crate::feishu::sdk::config::{Config as FeishuSdkConfig, CONTENT_TYPE_JSON};
 use crate::feishu::sdk::token_manager::TokenManager;
-use crate::models::build_trigger_params;
-use crate::services::message_debounce::{MessageDebounce, PendingMessage};
 
 const IM_V1_LIST_MESSAGES: &str = "/open-apis/im/v1/messages";
 
@@ -23,7 +19,6 @@ pub struct FeishuHistoryFetcher {
     ctx: ServiceContext,
     token_manager: Arc<TokenManager>,
     bot_credentials: Arc<DashMap<i64, (String, String, String)>>,
-    debounce: Arc<MessageDebounce>,
     // 复用的 HTTP 客户端：旧实现每条非 user 消息（resolve_bot_open_id）、每页翻页
     // （list_messages）、每次 token 解析（build_sdk_config）都 reqwest::Client::new()，
     // 繁忙群聊下 N×新连接池 → 打爆临时端口 / 触发飞书限流。整个 fetcher 生命周期共用一个。
@@ -76,17 +71,17 @@ struct ChatToFetch {
 }
 
 impl FeishuHistoryFetcher {
+    /// 108：debounce 依赖已移除——历史重放到执行管线的死代码随默认响应机制退役，
+    /// 本 fetcher 只做历史消息落库。
     pub fn new(
         ctx: ServiceContext,
         token_manager: Arc<TokenManager>,
         bot_credentials: Arc<DashMap<i64, (String, String, String)>>,
-        debounce: Arc<MessageDebounce>,
     ) -> Self {
         Self {
             ctx,
             token_manager,
             bot_credentials,
-            debounce,
             // 106 评审修复：改为真·进程级单例（OnceLock），与 feishu_api_client 的
             // shared_http_client 同源——旧实现注释声称「复用单例」实则每次 new()
             // 都新建 Client（连接池不共享）；起多个 fetcher 实例时仍会各开一套。
@@ -347,66 +342,9 @@ impl FeishuHistoryFetcher {
                             continue;
                         }
 
-                        // Process the message through debounce pipeline
-                        if let Some(ref msg_content) = content {
-                            // Check group whitelist
-                            let in_whitelist = match self.ctx.db
-                                .is_sender_in_whitelist(bot_id, sender_open_id)
-                                .await
-                            {
-                                Ok(allowed) => allowed,
-                                Err(e) => {
-                                    tracing::warn!("[feishu-history-fetcher] whitelist check failed for sender {}, denying: {}", sender_open_id, e);
-                                    false
-                                }
-                            };
-                            if !in_whitelist {
-                                tracing::debug!(
-                                    "[feishu-history-fetcher] sender {} not in group whitelist, skipping",
-                                    sender_open_id
-                                );
-                                continue;
-                            }
-
-                            // Push to debounce buffer instead of executing directly
-                            if let Some(todo_id) = Self::resolve_todo_id(&self.ctx.config, msg_content).await
-                            {
-                                let (trigger_type, params) =
-                                    build_trigger_params(msg_content);
-                                let todo_prompt = match self.ctx.db.get_todo(todo_id).await {
-                                    Ok(Some(t)) => Some(t.prompt.clone()),
-                                    Ok(None) => None,
-                                    Err(e) => {
-                                        tracing::error!(
-                                            "Failed to fetch todo {} for feishu history: {}",
-                                            todo_id,
-                                            e
-                                        );
-                                        None
-                                    }
-                                }
-                                .unwrap_or_default();
-                                self.debounce.push(PendingMessage {
-                                    bot_id,
-                                    chat_id: chat_id.to_string(),
-                                    chat_type: "group".to_string(),
-                                    sender: sender_open_id.to_string(),
-                                    content: msg_content.clone(),
-                                    todo_id,
-                                    todo_prompt,
-                                    executor: None,
-                                    trigger_type,
-                                    params: Some(params),
-                                    message_id: Some(item.message_id.clone()),
-                                    resume_session_id: None,
-                                    resume_message: None,
-                                    binding_id: None,
-                                    workspace_id: None,
-                                    immediate: false,
-                                });
-                                // Debounce timer will mark message as processed with execution_record_id
-                            }
-                        }
+                        // 108：历史消息重放到 debounce 的死代码已删除——它依赖
+                        // resolve_todo_id（默认响应 todo 机制，恒返回 None 的桩），
+                        // 默认响应机制随空间管家改造整体退役。本 fetcher 只做历史落库。
                     }
                 }
             }
@@ -415,12 +353,6 @@ impl FeishuHistoryFetcher {
         Ok(total_fetched)
     }
 
-    /// Resolve the target todo_id for a message: slash command match or default response.
-    /// TODO: 需要改为从 workspace 设置查询
-    async fn resolve_todo_id(_config: &Arc<RwLock<AppConfig>>, _content: &str) -> Option<i64> {
-        // 当前实现已移除，后续需要通过 workspace 设置查询
-        None
-    }
 
     fn base_url(&self, bot_id: i64) -> Option<String> {
         let domain = self.bot_credentials.get(&bot_id)?.2.clone();
