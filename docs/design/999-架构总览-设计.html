@@ -457,9 +457,9 @@ LoopTriggerDispatcher → LoopRunner
 <table>
 <thead><tr><th>业务域</th><th>实体</th><th>用途</th></tr></thead>
 <tbody>
-<tr><td><strong>待办</strong></td><td><code>todos</code>、<code>tags</code>、<code>todo_tags</code>、<code>todo_templates</code></td><td>核心任务项、标签、模板</td></tr>
+<tr><td><strong>待办</strong></td><td><code>todos</code>、<code>todo_templates</code></td><td>核心任务项、模板</td></tr>
 <tr><td><strong>执行</strong></td><td><code>execution_records</code>、<code>execution_logs</code>、<code>executors</code></td><td>执行历史、日志行、执行器配置</td></tr>
-<tr><td><strong>Loop Studio</strong></td><td><code>loops</code>、<code>loop_steps</code>、<code>loop_step_executions</code>、<code>loop_executions</code>、<code>loop_triggers</code>、<code>loop_tags</code></td><td>自动化多步 AI 工作流</td></tr>
+<tr><td><strong>Loop Studio</strong></td><td><code>loops</code>、<code>loop_steps</code>、<code>loop_step_executions</code>、<code>loop_executions</code></td><td>自动化多步 AI 工作流</td></tr>
 <tr><td><strong>飞书</strong></td><td><code>feishu_homes</code>、<code>feishu_messages</code>、<code>feishu_history_chats</code>、<code>feishu_push_targets</code>、<code>feishu_response_config</code>、<code>feishu_project_bindings</code>、<code>feishu_group_whitelist</code></td><td>飞书机器人集成与消息推送</td></tr>
 <tr><td><strong>用量统计</strong></td><td><code>usage_stats</code>、<code>usage_model_breakdown</code>、<code>usage_executor_daily</code></td><td>AI 模型用量分析与计费</td></tr>
 <tr><td><strong>设置</strong></td><td><code>workspace_settings</code>、<code>workspace_slash_commands</code>、<code>agent_bots</code>、<code>project_directories</code>、<code>review_templates</code></td><td>配置、斜杠命令、机器人</td></tr>
@@ -469,8 +469,7 @@ LoopTriggerDispatcher → LoopRunner
 </table>
 
 <h3>核心关系</h3>
-<div class="ascii">todos ──┬── todo_tags ── tags
-        ├── execution_records（触发）
+<div class="ascii">todos ──┬── execution_records（触发）
         ├── todo_templates（引用）
         └── loop_step_executions（来源）
 

@@ -130,7 +130,7 @@ ntd 有两个核心概念，理解它们就能用好一切功能：
 ### 工作流（Loop）流程
 
 ```
-  触发器（Cron / 飞书 / Todo完成 / 标签 / Webhook）
+  触发器（Cron / 飞书 / Todo完成 / Webhook）
                       │
                       ▼
            ┌──────────────────────┐
@@ -181,12 +181,11 @@ ntd 有两个核心概念，理解它们就能用好一切功能：
 - **5 种状态** — 待办 / 进行中 / 已完成 / 已失败 / 已取消
 - **定时调度** — 支持 Cron 表达式 + IANA 时区（如 `Asia/Shanghai`），支持夏令时
 - **Hook 系统** — Todo 完成后可级联触发子 Todo，带防环检测
-- **标签分类** — 灵活打标签，快速筛选定位
 
 ### Loop Studio：可视化自动化
 
 - **流程图编辑器** — DAG 自动布局，可视化步骤间的跳转关系
-- **6 种触发方式** — 手动 / Cron 定时 / 飞书消息 / 飞书命令 / Todo 完成 / 标签新增
+- **5 种触发方式** — 手动 / Cron 定时 / 飞书消息 / 飞书命令 / Todo 完成
 - **条件控制流** — 每步支持 `on_success`（next / goto / end）和 `on_rating_fail`（break / skip / goto / end）策略
 - **黑板传参** — 上一步的结论自动注入下一步的 Prompt，实现有状态的流水线
 - **AI 评分闸门** — 内置 AI 评审，不达标自动回退重做
@@ -294,11 +293,9 @@ ntd process versions my-proc             # 版本历史
 ntd process diff my-proc 1.2.0 --base 1.1.0                # 版本对比
 ```
 
-#### 标签 / 统计 / 工作空间
+#### 统计 / 工作空间
 
 ```bash
-ntd tag list                         # 列出标签
-ntd tag create --name bug
 ntd stats                            # 全局统计
 ntd workspace list                   # 列出项目目录
 ntd workspace create --path /tmp/proj-a --name proj-a
