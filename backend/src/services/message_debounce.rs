@@ -515,7 +515,7 @@ impl MessageDebounce {
         }
     }
 
-    /// 构造 todo 执行请求（_ 分支：普通默认响应或斜杠命令）。
+    /// 构造 todo 执行请求（_ 分支：斜杠命令触发的 todo 执行）。
     ///
     /// 抽出来让 dispatch_execution 的 _ 分支保持简短；clone Arc 引用是因为
     /// RunTodoExecutionRequest 需要 owned，而同一批依赖在 drain 循环里要复用。
@@ -1076,7 +1076,7 @@ fn emit_direct_stream(
 /// 用极大 duration 表达「永不超时」，与 todo pipeline 的 `timeout_enabled = v > 0` 对齐）。
 fn read_execution_timeout_secs(config: &Arc<std::sync::RwLock<crate::config::Config>>) -> u64 {
     // 锁中毒=有线程 panic 过，但配置值本身仍可读：恢复内部守卫降级读取，
-    // 不让一次无关 panic 击穿飞书默认响应链路（生产代码禁 expect，见禁止清单 #1）
+    // 不让一次无关 panic 击穿飞书管家聊天链路（生产代码禁 expect，见禁止清单 #1）
     config
         .read()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -1624,7 +1624,7 @@ mod merge_pending_messages_tests {
     }
 }
 
-/// 飞书默认响应执行器的反馈消息格式化与超时运行逻辑测试。
+/// 飞书管家聊天（butler_chat）的反馈消息格式化与超时运行逻辑测试。
 ///
 /// 这组测试覆盖 `handle_butler_chat` 里抽出来的纯逻辑：
 /// 三类飞书反馈消息（开始/错误/空结束）的格式，以及带超时地运行子进程

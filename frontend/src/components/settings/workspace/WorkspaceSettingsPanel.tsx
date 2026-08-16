@@ -169,12 +169,17 @@ export function WorkspaceSettingsPanel({ workspaceId, onChanged }: WorkspaceSett
               allowClear
               placeholder="选择管家专家（可选）"
               filterOption={(input, option) =>
+                // label 拼上专家 ID：显示名是中文时可按英文 ID 搜（反之亦然）
                 (option?.label as string)?.toLowerCase().includes(input.toLowerCase())
               }
               style={{ width: 300 }}
             >
               {experts.map(expert => (
-                <Select.Option key={expert.name} value={expert.name} label={getExpertDisplayName(expert)}>
+                <Select.Option
+                  key={expert.name}
+                  value={expert.name}
+                  label={`${getExpertDisplayName(expert)}（${expert.name}）`}
+                >
                   {getExpertDisplayName(expert)}（{expert.name}）
                 </Select.Option>
               ))}

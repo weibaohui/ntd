@@ -529,7 +529,9 @@ pub(crate) fn format_record_time(started_at: &str) -> String {
             "stop" => CardAction::Stop,
             "new" => CardAction::New,
             "push" => CardAction::Push(arg?.to_string()),
-            "setbutlerexecutor" => CardAction::SetButlerExecutor(arg?.to_string()),
+            // "setexecutor" 是 108 前的旧 verb：历史控制台卡片上的按钮仍可点，
+            // 别名保留一代，避免旧卡片按钮变死按钮。
+            "setbutlerexecutor" | "setexecutor" => CardAction::SetButlerExecutor(arg?.to_string()),
             "bind" => CardAction::Bind(arg?.parse().ok()?),
             "runtodo" => CardAction::RunTodo(arg?.parse().ok()?),
             "runloop" => CardAction::RunLoop(arg?.parse().ok()?),
@@ -591,6 +593,16 @@ mod tests {
         assert_eq!(
             CardActionHandler::parse_card_action("act:/push result_only"),
             Some(CardAction::Push("result_only".to_string()))
+        );
+        // 管家执行器（108）：新 verb 与旧 verb 别名都要解析为 SetButlerExecutor，
+        // 旧别名保证历史控制台卡片上的按钮不失效
+        assert_eq!(
+            CardActionHandler::parse_card_action("act:/setbutlerexecutor pi"),
+            Some(CardAction::SetButlerExecutor("pi".to_string()))
+        );
+        assert_eq!(
+            CardActionHandler::parse_card_action("act:/setexecutor pi"),
+            Some(CardAction::SetButlerExecutor("pi".to_string()))
         );
         // 缺参数 → None
         assert_eq!(CardActionHandler::parse_card_action("act:/bind"), None);

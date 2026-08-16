@@ -345,7 +345,6 @@ impl FeishuHistoryFetcher {
                         // 108：历史消息重放到 debounce 的死代码已删除——它依赖
                         // resolve_todo_id（默认响应 todo 机制，恒返回 None 的桩），
                         // 默认响应机制随空间管家改造整体退役。本 fetcher 只做历史落库。
-                        let _ = &content;
                     }
                 }
             }

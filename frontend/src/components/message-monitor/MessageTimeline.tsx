@@ -115,7 +115,8 @@ export function MessageTimeline({
         />
 
         {/* 处理类型：value 是语义关键字，后端用 processed_type LIKE '%关键字%' 落到具体类型。
-            slash→斜杠命令(slash_command/slash_command_loop)、executor→执行器、loop→环路(*_loop)。 */}
+            slash→斜杠命令(slash_command/slash_command_loop)、butler→空间管家(butler_chat)、
+            loop→环路(*_loop)、executor→执行器（108 前的历史值 default_response_executor）。 */}
         <Select
           size="small"
           placeholder="处理类型"
@@ -125,8 +126,9 @@ export function MessageTimeline({
           options={[
             { value: 'all', label: '全部类型' },
             { value: 'slash', label: '斜杠命令' },
-            { value: 'executor', label: '执行器' },
+            { value: 'butler', label: '空间管家' },
             { value: 'loop', label: '环路' },
+            { value: 'executor', label: '执行器(历史)' },
           ]}
         />
 

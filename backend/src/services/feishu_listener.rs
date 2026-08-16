@@ -643,13 +643,12 @@ impl FeishuListener {
 
         // 读取工作空间的管家配置；DB 失败与「无配置」对用户同等表现为未配置提示，
         // 但日志里区分出来便于排查。
-        let butler_executor = crate::db::workspace_setting::get_workspace_settings(context.db, workspace_id)
+        let settings = crate::db::workspace_setting::get_workspace_settings(context.db, workspace_id)
             .await
             .map_err(|e| tracing::warn!("[feishu:{}] read workspace settings failed: {}", context.bot_id, e))
             .ok()
-            .flatten()
-            .and_then(|s| s.butler_executor)
-            .filter(|e| !e.is_empty());
+            .flatten();
+        let butler_executor = Self::resolve_butler_executor(settings);
 
         match butler_executor {
             Some(executor) => Self::debounce_push_butler_chat(
@@ -669,6 +668,15 @@ impl FeishuListener {
                 "🤖 本工作空间尚未配置空间管家，请在工作空间设置中选择管家专家与执行器。",
             ).await,
         }
+    }
+
+    /// 从工作空间设置解析管家执行器：无设置行 / 字段 NULL / 空串统一视为未配置。
+    /// 抽成纯函数便于单测——dispatch_butler_chat 的「提示 vs 推管家」分支全挂在这个
+    /// 解析结果上，是管家通路的唯一判据。
+    fn resolve_butler_executor(
+        settings: Option<crate::db::entity::workspace_settings::Model>,
+    ) -> Option<String> {
+        settings?.butler_executor.filter(|e| !e.is_empty())
     }
 
     /// 阶段 6b 的提示回复出口：按 chat_type 解析 receive target 后发文本。
@@ -877,6 +885,52 @@ mod tests {
         };
         assert!(!FeishuListener::is_message_allowed("group", false, &cfg));
         assert!(FeishuListener::is_message_allowed("group", true, &cfg));
+    }
+
+    /// 管家执行器解析的构造辅助：只需关心 butler_executor 一个字段，其余给默认值
+    fn settings_with_butler(butler_executor: Option<String>) -> crate::db::entity::workspace_settings::Model {
+        crate::db::entity::workspace_settings::Model {
+            id: 1,
+            workspace_id: 1,
+            butler_expert_name: None,
+            butler_executor,
+            system_prompt: None,
+            delegate_max_rounds: None,
+            updated_at: None,
+        }
+    }
+
+    /// 无设置行 → None（走未配置提示分支）
+    #[test]
+    fn test_resolve_butler_executor_no_settings_row() {
+        assert_eq!(FeishuListener::resolve_butler_executor(None), None);
+    }
+
+    /// 字段 NULL → None
+    #[test]
+    fn test_resolve_butler_executor_null_field() {
+        assert_eq!(
+            FeishuListener::resolve_butler_executor(Some(settings_with_butler(None))),
+            None
+        );
+    }
+
+    /// 空串 = 显式清空，与 NULL 同义 → None
+    #[test]
+    fn test_resolve_butler_executor_empty_string_is_unconfigured() {
+        assert_eq!(
+            FeishuListener::resolve_butler_executor(Some(settings_with_butler(Some(String::new())))),
+            None
+        );
+    }
+
+    /// 已配置 → Some(原名)
+    #[test]
+    fn test_resolve_butler_executor_configured() {
+        assert_eq!(
+            FeishuListener::resolve_butler_executor(Some(settings_with_butler(Some("pi".to_string())))),
+            Some("pi".to_string())
+        );
     }
 
     #[tokio::test]
