@@ -331,6 +331,8 @@ export async function getTodoCenter(
     sortOrder?: 'asc' | 'desc';
     status?: string;
     actionType?: string;
+    /** 时间窗（111）：按 created_at 过滤最近 N 小时；null/undefined/0 不传参=不过滤 */
+    hours?: number | null;
   } = {},
 ): Promise<TodoCenterPage> {
   const params: Record<string, string | number> = {};
@@ -342,6 +344,9 @@ export async function getTodoCenter(
   if (options.sortOrder) params.sort_order = options.sortOrder;
   if (options.status && options.status !== 'all') params.status = options.status;
   if (options.actionType && options.actionType !== 'all') params.action_type = options.actionType;
+  // 111：时间窗过滤下推 SQL（服务端分页场景下前端过滤会漏数据）；
+  // 0/null 视为未过滤，不上送参数，避免后端做无谓的 cutoff 计算。
+  if (options.hours != null && options.hours > 0) params.hours = options.hours;
   return unwrap(await api.get(`/api/v1/workspaces/${workspaceId}/todos/center`, { params }));
 }
 

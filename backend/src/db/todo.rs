@@ -73,6 +73,8 @@ pub struct TodoCenterPageQuery<'a> {
     pub sort_desc: bool,
     pub page: i64,
     pub page_size: i64,
+    /// 时间窗过滤（111）：只保留 created_at 距今 N 小时内的记录；None/0 = 不过滤。
+    pub hours: Option<u32>,
 }
 
 /// 事项中心分页结果（056）：`page` 是按 total 截断后的**有效页码**——
@@ -378,6 +380,13 @@ impl Database {
             sql.push_str(TODO_CENTER_BUCKET_EXPR);
             sql.push_str(" = ?");
             values.push(center_bucket_str(b).into());
+        }
+        // 111：时间窗过滤。cutoff 由 Rust 侧生成（T/Z ISO，与写入格式同构），
+        // 参数绑定裸列比较让 created_at 索引可用——禁止列上套 REPLACE/datetime 函数
+        // （093 教训：列上函数导致索引恒失效）。0/None 语义等价：不过滤。
+        if let Some(h) = q.hours.filter(|&h| h > 0) {
+            sql.push_str(" AND t.created_at >= ?");
+            values.push(crate::models::utc_timestamp_minus_hours(h).into());
         }
         (sql, values)
     }
@@ -2384,6 +2393,7 @@ mod todo_center_tests {
         // 不过滤：应同时含两类
         let (all, _, _, _, _) = db.get_todo_center_page(crate::db::TodoCenterPageQuery {
                 workspace_id: None, bucket: None, search: None, status: None, action_type: None, sort_by: None, sort_desc: true, page: 1, page_size: 200,
+                hours: None,
             }).await.map(center_tuple).unwrap();
         assert_eq!(all.len(), 2, "未过滤应返回全部非软删事项");
 
@@ -2391,6 +2401,7 @@ mod todo_center_tests {
         let (manual, _, _, _, _) = db
             .get_todo_center_page(crate::db::TodoCenterPageQuery {
                 workspace_id: None, bucket: Some(ComputedBucket::Manual), search: None, status: None, action_type: None, sort_by: None, sort_desc: true, page: 1, page_size: 200,
+                hours: None,
             })
             .await
             .map(center_tuple)
@@ -2403,6 +2414,7 @@ mod todo_center_tests {
         let (archived, _, _, _, _) = db
             .get_todo_center_page(crate::db::TodoCenterPageQuery {
                 workspace_id: None, bucket: Some(ComputedBucket::Archived), search: None, status: None, action_type: None, sort_by: None, sort_desc: true, page: 1, page_size: 200,
+                hours: None,
             })
             .await
             .map(center_tuple)
@@ -2431,6 +2443,7 @@ mod todo_center_tests {
 
         let (items, _, _, _, _) = db.get_todo_center_page(crate::db::TodoCenterPageQuery {
                 workspace_id: None, bucket: None, search: None, status: None, action_type: None, sort_by: None, sort_desc: true, page: 1, page_size: 200,
+                hours: None,
             }).await.map(center_tuple).unwrap();
         let item = items.iter().find(|i| i.todo.id == id).expect("todo present");
         assert_eq!(item.used_by_loop_step_count, 1, "应聚合到 1 次启用引用");
@@ -2446,17 +2459,20 @@ mod todo_center_tests {
         // 全量应含两条
         let (all, _, _, _, _) = db.get_todo_center_page(crate::db::TodoCenterPageQuery {
                 workspace_id: None, bucket: None, search: None, status: None, action_type: None, sort_by: None, sort_desc: true, page: 1, page_size: 200,
+                hours: None,
             }).await.map(center_tuple).unwrap();
         assert_eq!(all.len(), 2);
         // search="登录" 只命中第一条
         let (hit, _, _, _, _) = db.get_todo_center_page(crate::db::TodoCenterPageQuery {
                 workspace_id: None, bucket: None, search: Some("登录"), status: None, action_type: None, sort_by: None, sort_desc: true, page: 1, page_size: 200,
+                hours: None,
             }).await.map(center_tuple).unwrap();
         assert_eq!(hit.len(), 1);
         assert_eq!(hit[0].todo.title, "修复登录");
         // 大小写不敏感：search="PROMPT" 命中 prompt 子串
         let (hit2, _, _, _, _) = db.get_todo_center_page(crate::db::TodoCenterPageQuery {
                 workspace_id: None, bucket: None, search: Some("PROMPT"), status: None, action_type: None, sort_by: None, sort_desc: true, page: 1, page_size: 200,
+                hours: None,
             }).await.map(center_tuple).unwrap();
         assert_eq!(hit2.len(), 1);
         assert_eq!(hit2[0].todo.title, "优化prompt");
@@ -2669,6 +2685,7 @@ mod todo_center_tests {
             .count_todo_center_buckets(&crate::db::TodoCenterPageQuery {
                 workspace_id: None, bucket: None, search: None, status: None, action_type: None,
                 sort_by: None, sort_desc: true, page: 1, page_size: 200,
+                hours: None,
             })
             .await
             .unwrap();
@@ -2688,6 +2705,7 @@ mod todo_center_tests {
                 sort_desc: true,
                 page: 1,
                 page_size: 200,
+                hours: None,
             })
             .await
             .map(center_tuple)
@@ -2723,6 +2741,7 @@ mod todo_center_tests {
                 sort_desc: true,
                 page: 3,
                 page_size: 2,
+                hours: None,
             })
             .await
             .map(center_tuple)
@@ -2740,6 +2759,7 @@ mod todo_center_tests {
                 sort_desc: true,
                 page: 1,
                 page_size: 20,
+                hours: None,
             })
             .await
             .map(center_tuple)
@@ -2875,6 +2895,7 @@ mod todo_center_tests {
                 sort_desc: false, // ASC
                 page: 1,
                 page_size: 20,
+                hours: None,
             })
             .await
             .map(center_tuple)
@@ -2905,6 +2926,7 @@ mod todo_center_tests {
                 sort_desc: true,
                 page: 1,
                 page_size: 20,
+                hours: None,
             })
             .await
             .map(center_tuple)
@@ -2923,6 +2945,7 @@ mod todo_center_tests {
                 sort_desc: true,
                 page: 1,
                 page_size: 20,
+                hours: None,
             })
             .await
             .map(center_tuple)
@@ -2954,6 +2977,7 @@ mod todo_center_tests {
             sort_desc: true,
             page: 1,
             page_size: 20,
+            hours: None,
         };
         let (items, total, _, _, _) = db
             .get_todo_center_page(crate::db::TodoCenterPageQuery {
@@ -3030,6 +3054,7 @@ mod todo_center_tests {
                 sort_desc: true,
                 page: 100000,
                 page_size: 2,
+                hours: None,
             })
             .await
             .map(center_tuple)
@@ -3045,6 +3070,97 @@ mod todo_center_tests {
             .unwrap();
         assert_eq!(items2.len(), 1);
         assert_eq!(page2, 3, "旧 /todos 分页同样返回有效页码（评审 F2）");
+    }
+
+    /// 111：事项中心 hours 过滤——created_at 窗口内命中、窗口外排除，
+    /// 且 total / bucket_counts 与 items 同口径收窄。
+    /// 测试数据用生产契约的 T/Z ISO 秒级格式（触发器形态）；cutoff 为毫秒级字面量，
+    /// 两者字符串比较在秒级等价（毫秒误差 <1s，对小时级窗口可忽略，093 §1.3）。
+    #[tokio::test]
+    async fn test_todo_center_page_hours_filter_window() {
+        let db = fresh_db().await;
+        // seed 的 created_at 由触发器统一写「now」，先改成确定性的窗口内外时间
+        let recent = seed_todo(&db, "窗口内").await;
+        let old = seed_todo(&db, "窗口外").await;
+        db.exec(&format!(
+            "UPDATE todos SET created_at = strftime('%Y-%m-%dT%H:%M:%SZ','now','-1 hours') WHERE id = {recent}"
+        ))
+        .await
+        .unwrap();
+        db.exec(&format!(
+            "UPDATE todos SET created_at = strftime('%Y-%m-%dT%H:%M:%SZ','now','-100 hours') WHERE id = {old}"
+        ))
+        .await
+        .unwrap();
+
+        // hours=24：只命中窗口内一条；total 与 bucket_counts 走同一 where，应同口径
+        let data = db
+            .get_todo_center_page(crate::db::TodoCenterPageQuery {
+                workspace_id: None,
+                bucket: None,
+                search: None,
+                status: None,
+                action_type: None,
+                sort_by: None,
+                sort_desc: true,
+                page: 1,
+                page_size: 200,
+                hours: Some(24),
+            })
+            .await
+            .unwrap();
+        assert_eq!(data.items.len(), 1);
+        assert_eq!(data.items[0].todo.id, recent, "只应命中窗口内的 recent");
+        assert_eq!(data.total, 1, "total 必须与过滤后一致");
+        assert_eq!(
+            data.bucket_counts.values().sum::<i64>(),
+            1,
+            "bucket_counts 应同口径收窄到 1"
+        );
+    }
+
+    /// 111：hours=0 与 None 语义等价——都不追加 created_at 条件（不过滤）。
+    #[tokio::test]
+    async fn test_todo_center_page_hours_zero_or_none_means_no_filter() {
+        let db = fresh_db().await;
+        seed_todo(&db, "甲").await;
+        seed_todo(&db, "乙").await;
+
+        let (all, _, _, _, _) = db
+            .get_todo_center_page(crate::db::TodoCenterPageQuery {
+                workspace_id: None,
+                bucket: None,
+                search: None,
+                status: None,
+                action_type: None,
+                sort_by: None,
+                sort_desc: true,
+                page: 1,
+                page_size: 200,
+                hours: None,
+            })
+            .await
+            .map(center_tuple)
+            .unwrap();
+        assert_eq!(all.len(), 2);
+
+        let (zero, _, _, _, _) = db
+            .get_todo_center_page(crate::db::TodoCenterPageQuery {
+                workspace_id: None,
+                bucket: None,
+                search: None,
+                status: None,
+                action_type: None,
+                sort_by: None,
+                sort_desc: true,
+                page: 1,
+                page_size: 200,
+                hours: Some(0),
+            })
+            .await
+            .map(center_tuple)
+            .unwrap();
+        assert_eq!(zero.len(), 2, "hours=0 语义等同不过滤");
     }
 
     /// 096-W2：get_recent_completed_todos 的 hours 过滤（参数化 `er.finished_at >= ?`）±1 小时边界。

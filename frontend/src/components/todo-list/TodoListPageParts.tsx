@@ -18,6 +18,8 @@ import {
   UnorderedListOutlined,
 } from '@ant-design/icons';
 import * as db from '@/utils/database';
+// 111：全站共享时间过滤分段（与任务页/环路页同组件同档位）
+import { TimeRangeSegmented } from '@/components/common/TimeRangeSegmented';
 import type { TodoCenterItem } from '@/types';
 
 interface TodoListHeaderProps {
@@ -26,6 +28,9 @@ interface TodoListHeaderProps {
   viewMode: 'card' | 'list' | 'running';
   searchKeyword: string;
   loading: boolean;
+  /** 111：时间窗（null=全部）；card/list 共用，running 形态不渲染。 */
+  hours: number | null;
+  onHoursChange: (h: number | null) => void;
   onSearchChange: (kw: string) => void;
   onViewChange: (m: 'card' | 'list' | 'running') => void;
   onReload: () => void;
@@ -42,6 +47,8 @@ export function TodoListHeader({
   viewMode,
   searchKeyword,
   loading,
+  hours,
+  onHoursChange,
   onSearchChange,
   onViewChange,
   onReload,
@@ -78,7 +85,8 @@ export function TodoListHeader({
     );
   }
 
-  // 桌面端：搜索 + 刷新 + Segmented + 新建
+  // 桌面端：搜索 + 时间分段 + 刷新 + Segmented + 新建
+  // 时间分段位置与任务页顶栏顺序一致（搜索 → 时间 → 刷新）。
   return (
     <>
       <Input
@@ -91,6 +99,7 @@ export function TodoListHeader({
         style={{ width: 200 }}
         data-testid="items-page-search"
       />
+      <TimeRangeSegmented showAll value={hours} onChange={onHoursChange} />
       <Button size="small" icon={<ReloadOutlined />} onClick={onReload} loading={loading} aria-label="刷新">
         刷新
       </Button>

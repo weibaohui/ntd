@@ -51,8 +51,13 @@ function readInitialView(): 'card' | 'list' | 'running' {
 /** 056：搜索防抖毫秒数——输入停顿后再发请求，避免逐字符打服务端。 */
 const SEARCH_DEBOUNCE_MS = 300;
 
-/** 列表数据加载 hook（056 服务端分页版）：翻页/排序/搜索变化时重新拉取对应页。 */
-function useTodoListData(workspaceId: number | null, viewMode: 'card' | 'list' | 'running', searchKeyword: string) {
+/** 列表数据加载 hook（056 服务端分页版）：翻页/排序/搜索/时间窗变化时重新拉取对应页。 */
+function useTodoListData(
+  workspaceId: number | null,
+  viewMode: 'card' | 'list' | 'running',
+  searchKeyword: string,
+  hours: number | null,
+) {
   const [items, setItems] = useState<TodoCenterItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
@@ -72,6 +77,12 @@ function useTodoListData(workspaceId: number | null, viewMode: 'card' | 'list' |
     return () => clearTimeout(timer);
   }, [searchKeyword]);
 
+  // 111：时间窗变化时回第 1 页——窗口收窄后旧页码可能超出有效页数，
+  // 后端虽有截断兜底，但主动重置可避免用户看到「第 3 页但只有 1 条」的困惑。
+  useEffect(() => {
+    setPage(1);
+  }, [hours]);
+
   // reload 用 useCallback 包裹，使 effect 依赖稳定
   const reload = useCallback(async () => {
     if (workspaceId == null) { setItems([]); setTotal(0); return; }
@@ -83,6 +94,8 @@ function useTodoListData(workspaceId: number | null, viewMode: 'card' | 'list' |
         search: debouncedSearch || undefined,
         sortBy,
         sortOrder,
+        // 111：时间窗下推服务端过滤——分页场景下前端过滤只作用于当前页会漏数据
+        hours,
       });
       setItems(data.items);
       setTotal(data.total);
@@ -92,7 +105,7 @@ function useTodoListData(workspaceId: number | null, viewMode: 'card' | 'list' |
     } finally {
       setLoading(false);
     }
-  }, [workspaceId, page, pageSize, debouncedSearch, sortBy, sortOrder]);
+  }, [workspaceId, page, pageSize, debouncedSearch, sortBy, sortOrder, hours]);
 
   // 列表形态挂载/工作空间变化/分页参数变化时拉数据；卡片形态不触发（其内部自管）
   useEffect(() => {
@@ -160,11 +173,14 @@ export function TodoListPage({
   const viewMode = pickListView(listView, ['card', 'list', 'running'], storedView);
   // 统一搜索词：卡片/列表两种形态共用一个搜索框
   const [searchKeyword, setSearchKeyword] = useState('');
+  // 111：时间窗（card/list 共享）：null=全部不过滤，与任务页口径一致；
+  // 不持久化——离开页面回到默认「全部」，避免用户忘记过滤态导致老数据「消失」。
+  const [hours, setHours] = useState<number | null>(null);
   // 刷新信号：每次点击刷新按钮自增，传递给 TodoCenterCardView 触发重新加载
   const [refreshKey, setRefreshKey] = useState(0);
-  // 列表数据：056 服务端分页 hook（搜索词传入后内部防抖）
+  // 列表数据：056 服务端分页 hook（搜索词传入后内部防抖；时间窗变化自动重拉）
   const { items, loading, reload, pagination, onServerChange } =
-    useTodoListData(workspaceId, viewMode, searchKeyword);
+    useTodoListData(workspaceId, viewMode, searchKeyword, hours);
 
   // 行操作 + 带参执行 Modal（已拆到 TodoListPageParts）
   const rowActions = useTodoRowActions({ workspaceId, onReload: reload });
@@ -189,6 +205,8 @@ export function TodoListPage({
       viewMode={viewMode}
       searchKeyword={searchKeyword}
       loading={loading}
+      hours={hours}
+      onHoursChange={setHours}
       onSearchChange={setSearchKeyword}
       onViewChange={handleViewChange}
       onReload={handleReload}
@@ -204,6 +222,7 @@ export function TodoListPage({
           onSelectLoop={onSelectLoop}
           isMobile={isMobile}
           searchKeyword={searchKeyword}
+          hours={hours}
           extra={headerExtra}
           refreshKey={refreshKey}
         />

@@ -25,7 +25,8 @@ import { COLUMNS, execStatusView } from './helpers';
 
 interface Props {
   searchText?: string;
-  hours?: number;
+  /** 111：时间窗（null=全部不过滤）。注意 null 是合法值：宿主选择「全部」时下推 null。 */
+  hours?: number | null;
   /** 执行轨迹流程图中点击事项标题跳转事项详情；未注入时标题不可点击。 */
   onOpenTodo?: (todoId: number) => void;
 }
@@ -34,9 +35,11 @@ interface Props {
 // （宿主用 TimeRangeSegmented 等组件直接驱动自己的 state）。
 export function LoopKanban({ searchText: externalSearch, hours: externalHours, onOpenTodo }: Props = {}) {
   const [internalSearch] = useState('');
+  // 111：内部兜底仍为 24h（组件被无 hours 的宿主复用时保持历史默认）；
+  // fallback 用 !== undefined 而非 ??：宿主显式传 null（全部）时不能再回退到 24h。
   const [internalHours] = useState(24);
   const searchText = externalSearch ?? internalSearch;
-  const hours = externalHours ?? internalHours;
+  const hours = externalHours !== undefined ? externalHours : internalHours;
 
   // AntApp.useApp() 是 antd 的 message 上下文 API，与项目自建 useApp/useTodos 无关，勿混淆。
   const { message } = AntApp.useApp();
