@@ -217,9 +217,11 @@ function getInitialListView(): string | null {
  * - raw 合法（在 allowed 内）→ 用 raw（URL 直达优先）；
  * - raw 为 null/非法 → 回退 fallback（localStorage 记忆），保持旧行为。
  * 抽成纯函数供四个列表页面共用，避免各写各的 includes 校验漂移。
+ * 泛型化让 T 由 allowed/fallback 字面量联合推导：调用点无需 as 断言，
+ * 且 allowed 写入不在 T 值域内的成员时编译期即报错（review 修复）。
  */
-export function pickListView(raw: string | null, allowed: string[], fallback: string): string {
-  return raw && allowed.includes(raw) ? raw : fallback;
+export function pickListView<T extends string>(raw: string | null, allowed: readonly T[], fallback: T): T {
+  return raw && (allowed as readonly string[]).includes(raw) ? (raw as T) : fallback;
 }
 
 /**

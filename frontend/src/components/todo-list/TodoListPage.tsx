@@ -156,7 +156,8 @@ export function TodoListPage({
   // 注意 allowed 必须包含全部三种形态（含默认 card）：否则 localStorage 记忆为 list/running 时，
   // ?view=card 会被误判非法而无法强制卡片形态（review 修复）。
   const [storedView] = useState<'card' | 'list' | 'running'>(readInitialView);
-  const viewMode = pickListView(listView, ['card', 'list', 'running'], storedView) as 'card' | 'list' | 'running';
+  // 泛型版 pickListView 由 allowed/fallback 推导联合类型，无需 as 断言
+  const viewMode = pickListView(listView, ['card', 'list', 'running'], storedView);
   // 统一搜索词：卡片/列表两种形态共用一个搜索框
   const [searchKeyword, setSearchKeyword] = useState('');
   // 刷新信号：每次点击刷新按钮自增，传递给 TodoCenterCardView 触发重新加载

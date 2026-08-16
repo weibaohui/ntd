@@ -63,6 +63,8 @@ pub async fn verify_pat(pat: &str) -> Result<(), VerifyError> {
         .bearer_auth(pat)
         .send()
         .await
+        // 连接失败/超时/DNS 等都属上游可达性问题，与 PAT 本身是否有效无关。
+        // reqwest 错误体只含 URL（PAT 在 Authorization 头，不会出现），可安全透传便于排障。
         .map_err(|e| VerifyError::Upstream(format!("请求用户信息失败: {e}")))?;
     ensure_success(response).await?;
     Ok(())
@@ -79,6 +81,7 @@ pub async fn fetch_user(pat: &str) -> Result<GitUser, VerifyError> {
         .bearer_auth(pat)
         .send()
         .await
+        // 同 verify_pat：错误体只含 URL 不含 PAT，透传安全（论证见 verify_pat 处注释）。
         .map_err(|e| VerifyError::Upstream(format!("请求用户信息失败: {e}")))?;
     let body = ensure_success(response).await?;
     // 解析失败（上游结构变化）属上游故障而非 PAT 无效：不诱导用户轮换令牌。

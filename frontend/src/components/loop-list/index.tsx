@@ -101,7 +101,8 @@ export function LoopListPage({
   // 视图模式：URL ?view= 优先（直达指定形态），无参数/非法值回退 localStorage 记忆。
   // storedView 只在挂载时读一次：URL 变化走 listView 同步，localStorage 只作无参数兜底。
   const [storedView] = useState<'list' | 'kanban'>(readInitialView);
-  const viewMode = pickListView(listView, ['list', 'kanban'], storedView) as 'list' | 'kanban';
+  // 泛型版 pickListView 由 allowed/fallback 推导联合类型，无需 as 断言
+  const viewMode = pickListView(listView, ['list', 'kanban'], storedView);
   // kanban 态时间窗：LoopKanban 受控，由本层下推 hours。
   const [hours, setHours] = useState(24);
 

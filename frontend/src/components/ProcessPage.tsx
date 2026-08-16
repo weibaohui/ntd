@@ -130,7 +130,8 @@ function ProcessListView({ workspaceId, onOpenLoop, processGuid }: Omit<ProcessP
   // 039：「我的/模板」视图范围：URL ?view= 优先（直达指定范围），无参数/非法值
   // 回退 localStorage 记忆（持久化用户上次选择）。storedScope 只在挂载时读一次。
   const [storedScope] = useState<ProcessScope>(readInitialScope);
-  const scope = pickListView(listView, ['mine', 'template'], storedScope) as ProcessScope;
+  // 泛型版 pickListView 由 allowed/fallback 推导 ProcessScope，无需 as 断言
+  const scope = pickListView(listView, ['mine', 'template'], storedScope);
 
   const load = async () => {
     setLoading(true);

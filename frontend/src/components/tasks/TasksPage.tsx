@@ -79,7 +79,8 @@ export function TasksPage({ workspaceId }: TasksPageProps) {
   // 视图模式：URL ?view= 优先（直达指定形态），无参数/非法值回退 localStorage 记忆。
   // storedView 只在挂载时读一次：URL 变化走 listView 同步，localStorage 只作无参数兜底。
   const [storedView] = useState<TasksViewMode>(readInitialView);
-  const viewMode = pickListView(listView, ['list', 'kanban', 'card'], storedView) as TasksViewMode;
+  // 泛型版 pickListView 由 allowed/fallback 推导 TasksViewMode，无需 as 断言
+  const viewMode: TasksViewMode = pickListView(listView, ['list', 'kanban', 'card'], storedView);
 
   // 任务列表数据（三态视图共享）。
   const [tasks, setTasks] = useState<TaskItem[]>([]);

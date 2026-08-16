@@ -80,6 +80,9 @@ function GitCodePatTab() {
       await saveContributionPat(values.pat!.trim());
       message.success('PAT 保存成功');
       form.resetFields();
+      // 旧验证结果随 PAT 换新立即过期（展示的还是上一个令牌的归属），
+      // 与状态注释「保存/清空后清空旧验证结果」的约定保持一致（review 修复）。
+      setVerifyResult(null);
       await loadStatus();
     } catch (err: any) {
       message.error('PAT 保存失败: ' + (err?.message || String(err)));
@@ -89,15 +92,17 @@ function GitCodePatTab() {
   };
 
   // 验证已保存的 PAT：后端读本地 PAT 调 GitCode /user，返回用户名即证明令牌可用。
-  // 失败不区分「无效/网络」在展示层细化——错误信息由后端按原因分类返回，直接透出。
+  // 失败不区分「无效/网络」在展示层细化——错误信息由后端按原因分类返回，直接透传。
+  // err 用 unknown 窄化取 message（api 层抛 Error，但防御非 Error 抛出物），不用 any。
   const handleVerify = async () => {
     setVerifying(true);
     setVerifyResult(null);
     try {
       const result = await verifyContributionPat();
       setVerifyResult(result);
-    } catch (err: any) {
-      message.error('PAT 验证失败: ' + (err?.message || String(err)));
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      message.error('PAT 验证失败: ' + msg);
     } finally {
       setVerifying(false);
     }
