@@ -594,8 +594,11 @@ impl MessageDebounce {
                 )
                 .await
             }
-            // 108：空间管家聊天（原 default_response_executor 的继任者）
-            "butler_chat" => {
+            // 108 修订：单聊直聊（dm_chat）与群聊管家（butler_chat）共用执行器直连通路，
+            // 唯一差异是专家注入——群聊注入 butler_expert_name（管家人设），单聊不注入
+            // （单聊是「我跟执行器说话」的一对一心智，套管家/专家属多余）。
+            // 两个 trigger_type 都路由到同一 handler，由 handler 内按 msg.chat_type 分流。
+            "dm_chat" | "butler_chat" => {
                 let (rid, rtype) = Self::feishu_reply_target(msg);
                 Self::handle_butler_chat(
                     db,
@@ -611,6 +614,9 @@ impl MessageDebounce {
                     msg.workspace_id,
                     merged_content,
                     resolved.resume_session_id.clone(),
+                    // 专家注入判据：仅群聊注入，单聊恒 None（纯执行器对话）
+                    if msg.chat_type == "group" { msg.workspace_id } else { None },
+                    &msg.chat_type,
                 )
                 .await
             }
@@ -1076,7 +1082,7 @@ fn emit_direct_stream(
 /// 用极大 duration 表达「永不超时」，与 todo pipeline 的 `timeout_enabled = v > 0` 对齐）。
 fn read_execution_timeout_secs(config: &Arc<std::sync::RwLock<crate::config::Config>>) -> u64 {
     // 锁中毒=有线程 panic 过，但配置值本身仍可读：恢复内部守卫降级读取，
-    // 不让一次无关 panic 击穿飞书管家聊天链路（生产代码禁 expect，见禁止清单 #1）
+    // 不让一次无关 panic 击穿飞书聊天直连链路（生产代码禁 expect，见禁止清单 #1）
     config
         .read()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -1294,14 +1300,14 @@ async fn persist_executor_session(
 }
 
 // ============================================================================
-// 斜杠规则与空间管家处理器：环路触发（slash_command_loop）与管家聊天（butler_chat）
+// 斜杠规则与聊天直连处理器：环路触发（slash_command_loop）与聊天直连（dm_chat/butler_chat，108 修订共用一个 handler）
 // ============================================================================
 
-/// 读取工作空间的管家专家名（108）。
+/// 读取群聊管家的专家名（108 修订：仅群聊消费）。
 ///
-/// 返回 None 的三种情况——无 workspace_id / 未配置（含空串）/ DB 读取失败——
-/// 对调用方同等含义「不注入专家 prompt」。DB 失败静默降级是有意的：
-/// 专家注入是增强能力，不应因一次读取抖动阻断管家聊天主流程；
+/// 返回 None 的情况——workspace_id 为 None（单聊直聊，调用方传 None 即跳过注入）/
+/// 未配置（含空串）/ DB 读取失败——对调用方同等含义「不注入专家 prompt」。
+/// DB 失败静默降级是有意的：专家注入是增强能力，不应因一次读取抖动阻断聊天主流程；
 /// warn 日志保留排查线索。
 async fn load_butler_expert_name(db: &Database, workspace_id: Option<i64>) -> Option<String> {
     let wid = workspace_id?;
@@ -1387,8 +1393,13 @@ impl MessageDebounce {
         })
     }
 
-    /// 处理空间管家聊天（butler_chat）：执行器对话 + 管家专家 prompt 注入（108）
-    /// 直接调用执行器进行交互，不创建执行记录
+    /// 处理聊天直连（108 修订）：执行器对话，群聊（butler_chat）额外注入管家专家 prompt。
+    ///
+    /// 单聊（dm_chat）= 纯执行器对话：session 连续、流式回推，不注入任何专家；
+    /// 群聊（butler_chat）= 群聊管家：面向多人的共享助手，注入 butler_expert_name
+    /// 定义行为准则。两者共用本 handler，差异收敛在 expert_workspace_id——
+    /// 调用方对单聊传 None（load_butler_expert_name 见 None 直接跳过注入）。
+    /// 直接调用执行器进行交互，不创建执行记录。
     #[allow(clippy::too_many_arguments)] // 参数来自上游 handler 的独立数据源，合并为 struct 增加认知负担
     async fn handle_butler_chat(
         db: &Arc<Database>,
@@ -1404,6 +1415,12 @@ impl MessageDebounce {
         workspace_id: Option<i64>,
         message: &str,
         resume_session_id: Option<String>,
+        // 专家注入的查库维度：群聊传 workspace_id（读管家专家），单聊传 None（跳过注入）。
+        // 与 workspace_id 分开传是因为两者语义不同——执行器运行目录用 workspace_id，
+        // 专家注入开关用本参数，单聊两者恰好一个 Some 一个 None。
+        expert_workspace_id: Option<i64>,
+        // 日志标识用：群聊 "butler_chat" / 单聊 "dm_chat"，便于在 tracing 里区分通路。
+        trigger_label: &str,
     ) -> Result<crate::executor_service::ExecutionResult, Option<String>> {
         let executor_type = executor_type.unwrap_or("claudecode");
 
@@ -1456,17 +1473,20 @@ impl MessageDebounce {
         let mut pipeline = log_capture::create_pipeline_for_executor(executor.as_ref())
             .unwrap_or_else(|| EventPipeline::new(executor.executor_type().as_str()));
         let mut logs: Vec<ParsedLogEntry> = Vec::new();
-        // 管家专家注入（108）：执行时现读 workspace_settings 的 butler_expert_name，
-        // 配置变更立即生效且 PendingMessage 结构零改动；专家未配置/已卸载/读取失败时
-        // inject 原样返回（静默回退），管家退化为纯执行器聊天，不阻断主流程。
+        // 管家专家注入（108 修订：仅群聊）：执行时现读 workspace_settings 的
+        // butler_expert_name，配置变更立即生效且 PendingMessage 结构零改动；
+        // 单聊由调用方传 expert_workspace_id=None，这里天然跳过注入（纯直聊）。
+        // 专家未配置/已卸载/读取失败时 inject 原样返回（静默回退），不阻断主流程。
         // 注入对象是 debounce 合并后的整段消息（多条合并为一次执行，只注入一次），
         // 且只进入发给执行器的文本——上面的开始回执与日志展示的都是用户原文。
-        let butler_expert = load_butler_expert_name(db, workspace_id).await;
+        let butler_expert = load_butler_expert_name(db, expert_workspace_id).await;
         let exec_message = crate::expert::inject_expert_message(
             expert_manager,
             butler_expert.as_deref(),
             message,
-            "butler chat: ",
+            // caller_tag 带 trigger_label：运维日志里区分专家注入失败来自群聊管家还是单聊
+            // （单聊本就不注入，出现该前缀的 warn 只可能来自群聊通路，缩小排查面）
+            &format!("{trigger_label}: "),
         );
         let outcome = DirectExecutorSession::spawn_and_stream(
             SessionSpawnConfig {
@@ -1624,7 +1644,7 @@ mod merge_pending_messages_tests {
     }
 }
 
-/// 飞书管家聊天（butler_chat）的反馈消息格式化与超时运行逻辑测试。
+/// 飞书聊天直连（dm_chat/butler_chat）的反馈消息格式化与超时运行逻辑测试。
 ///
 /// 这组测试覆盖 `handle_butler_chat` 里抽出来的纯逻辑：
 /// 三类飞书反馈消息（开始/错误/空结束）的格式，以及带超时地运行子进程
@@ -2110,16 +2130,28 @@ mod p2p_queue_tests {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod butler_expert_tests {
-    //! 验证管家专家名的读取口径（108）：
-    //! 无 workspace / 无配置行 / 空串 / DB 失败统一返回 None（不注入），
-    //! 只有显式配置了非空专家名才返回 Some。
+    //! 验证群聊管家专家名的读取口径（108 修订）：
+    //! 无 workspace（单聊直聊的调用方式）/ 无配置行 / 空串 / DB 失败统一返回 None
+    //! （不注入），只有显式配置了非空专家名才返回 Some。
+    //! 单聊跳过注入的机制正是「调用方传 None」→ 本函数短路。
     use super::load_butler_expert_name;
     use crate::db::Database;
 
-    /// workspace_id 为 None（如历史遗留消息）→ None，不查库
+    /// workspace_id 为 None（单聊直聊路径：dispatch_execution 对 p2p 传 None）→ None，不查库。
+    /// 这是 108 修订的核心行为锁定：单聊无论管家专家配了什么，都不注入。
     #[tokio::test]
     async fn test_load_butler_expert_name_none_workspace() {
         let db = Database::new(":memory:").await.unwrap();
+        // 预置专家配置，确保「None 跳过」不是因为没配置，而是参数本身短路
+        crate::db::workspace_setting::upsert_workspace_settings(
+            &db,
+            1,
+            Some("workspace-butler".to_string()),
+            Some("claudecode".to_string()),
+            None,
+        )
+        .await
+        .unwrap();
         assert_eq!(load_butler_expert_name(&db, None).await, None);
     }
 

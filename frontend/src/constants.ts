@@ -130,7 +130,8 @@ export const TRIGGER_LABELS: Record<string, string> = {
   manual: '手动',
   cron: '定时',
   slash_command: '命令',
-  butler_chat: '空间管家',
+  butler_chat: '群聊管家',
+  dm_chat: '单聊对话',
   default_response: '默认回复',
 };
 

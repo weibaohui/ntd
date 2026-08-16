@@ -690,11 +690,13 @@ pub fn replace_placeholders(text: &str, params: &std::collections::HashMap<Strin
 }
 
 /// Build standard trigger params from message content.
-/// This unifies how params are constructed across slash commands and butler chat.
+/// This unifies how params are constructed across slash commands and chat dispatch.
 ///
 /// Returns (trigger_type, params):
 /// - For slash commands (content starts with '/'): trigger_type = "slash_command"
-/// - For other messages: trigger_type = "butler_chat"（108：非斜杠消息统一走空间管家）
+/// - For other messages: trigger_type = "chat"（108 修订：非斜杠消息进聊天直连出口；
+///   真正的 dm_chat/butler_chat 区分由 debounce_push_butler_chat 按 chat_type 落值，
+///   这里只给一个中性的「非斜杠」标记——本函数唯一的非测试调用方只消费 params）
 ///
 /// Standard params always include:
 /// - `content`: the message body
@@ -725,5 +727,5 @@ pub fn build_trigger_params(content: &str) -> (String, std::collections::HashMap
     params.insert("content".to_string(), trimmed.to_string());
     params.insert("message".to_string(), trimmed.to_string());
     params.insert("raw_message".to_string(), trimmed.to_string());
-    ("butler_chat".to_string(), params)
+    ("chat".to_string(), params)
 }

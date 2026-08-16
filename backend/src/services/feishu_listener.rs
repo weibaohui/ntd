@@ -609,11 +609,12 @@ impl FeishuListener {
         });
     }
 
-    /// 阶段 6b：空间管家——所有未命中斜杠命令的消息的统一出口（108）。
+    /// 阶段 6b：聊天直连出口（108 修订）。
     ///
-    /// 已配置管家（butler_executor 非空）→ 推 butler_chat 消息进 debounce，
-    /// 由执行器聊天通路注入管家专家 prompt 后与用户对话；
-    /// 未配置 → 回复配置引导提示。提示不是兜底执行：不触发任何 todo/loop/执行器。
+    /// 单聊（p2p）未命中斜杠 → 与「对话执行器」直聊（dm_chat，不注入专家）；
+    /// 群聊（group）未命中斜杠 → 群聊管家（butler_chat，注入管家专家 prompt）。
+    /// 两者共用 butler_executor 字段选执行器；未配置 → 回复配置引导提示
+    /// （提示不是兜底执行：不触发任何 todo/loop/执行器）。
     async fn dispatch_butler_chat(
         context: &ListenerMessageContext<'_>,
         msg: &ChannelMessage,
@@ -627,7 +628,7 @@ impl FeishuListener {
         if prep.content.is_empty() {
             return;
         }
-        // 管家配置挂在工作空间上：bot 未绑定工作空间时无法路由，
+        // 对话执行器配置挂在工作空间上：bot 未绑定工作空间时无法路由，
         // 提示用户先完成绑定（提示本身不执行任何任务）。
         let workspace_id = match context.db.get_agent_bot_workspace_id(context.bot_id).await {
             Ok(Some(id)) => id,
@@ -641,7 +642,7 @@ impl FeishuListener {
             }
         };
 
-        // 读取工作空间的管家配置；DB 失败与「无配置」对用户同等表现为未配置提示，
+        // 读取工作空间的对话执行器配置；DB 失败与「无配置」对用户同等表现为未配置提示，
         // 但日志里区分出来便于排查。
         let settings = crate::db::workspace_setting::get_workspace_settings(context.db, workspace_id)
             .await
@@ -661,22 +662,33 @@ impl FeishuListener {
                 Some(workspace_id),
                 prep.is_mention,
             ),
-            None => Self::reply_butler_hint(
-                context,
-                msg,
-                prep.chat_type,
-                "🤖 本工作空间尚未配置空间管家，请在工作空间设置中选择管家专家与执行器。",
-            ).await,
+            // 提示语按场景分：单聊配的是「对话执行器」，群聊配的是「群聊管家」——
+            // 用户按收到的提示去找对应的配置项，不混用概念
+            None => {
+                let hint = if prep.chat_type == "p2p" {
+                    "🤖 尚未配置对话执行器，请在工作空间设置中选择执行器后再对话。"
+                } else {
+                    "🤖 本群尚未配置群聊管家，请在工作空间设置中选择管家执行器。"
+                };
+                Self::reply_butler_hint(context, msg, prep.chat_type, hint).await;
+            }
         }
     }
 
-    /// 从工作空间设置解析管家执行器：无设置行 / 字段 NULL / 空串统一视为未配置。
-    /// 抽成纯函数便于单测——dispatch_butler_chat 的「提示 vs 推管家」分支全挂在这个
-    /// 解析结果上，是管家通路的唯一判据。
+    /// 从工作空间设置解析对话执行器：无设置行 / 字段 NULL / 空串统一视为未配置。
+    /// 抽成纯函数便于单测——dispatch_butler_chat 的「提示 vs 直聊」分支全挂在这个
+    /// 解析结果上，是聊天直连通路的唯一判据（108 修订：单聊/群聊共用此执行器）。
     fn resolve_butler_executor(
         settings: Option<crate::db::entity::workspace_settings::Model>,
     ) -> Option<String> {
         settings?.butler_executor.filter(|e| !e.is_empty())
+    }
+
+    /// 聊天直连的 trigger_type 落值（108 修订）：p2p→dm_chat（单聊直聊）、
+    /// 其余（群聊）→butler_chat（群聊管家）。下游 dispatch_execution 据此分流
+    /// 专家注入（仅 butler_chat 注入），消息监控据标签区分两种对话。
+    fn chat_trigger_type(chat_type: &str) -> &'static str {
+        if chat_type == "p2p" { "dm_chat" } else { "butler_chat" }
     }
 
     /// 阶段 6b 的提示回复出口：按 chat_type 解析 receive target 后发文本。
@@ -702,7 +714,9 @@ impl FeishuListener {
         .await;
     }
 
-    /// 阶段 6b-i：把管家聊天消息塞进 debounce
+    /// 阶段 6b-i：把聊天直连消息塞进 debounce（108 修订：单聊/群聊共用）
+    /// trigger_type 按 chat_type 拆分：p2p→dm_chat（纯直聊）、group→butler_chat（管家），
+    /// 消息监控可分开展示两种对话；dispatch_execution 把两者路由到同一 handler。
     #[allow(clippy::too_many_arguments)] // 参数来自上游 handler 的独立数据源，合并为 struct 增加认知负担
     fn debounce_push_butler_chat(
         debounce: &Arc<MessageDebounce>,
@@ -720,10 +734,10 @@ impl FeishuListener {
             chat_type: chat_type.to_string(),
             sender: msg.sender.clone(),
             content: content.to_string(),
-            todo_id: 0, // 管家聊天不绑定 todo
+            todo_id: 0, // 聊天直连不绑定 todo
             todo_prompt: String::new(),
             executor: Some(butler_executor.to_string()),
-            trigger_type: "butler_chat".to_string(),
+            trigger_type: Self::chat_trigger_type(chat_type).to_string(),
             params: None,
             message_id: Some(msg.id.clone()),
             resume_session_id: None,
@@ -931,6 +945,21 @@ mod tests {
             FeishuListener::resolve_butler_executor(Some(settings_with_butler(Some("pi".to_string())))),
             Some("pi".to_string())
         );
+    }
+
+    /// trigger_type 按 chat_type 分流（108 修订核心行为）：p2p→dm_chat、群聊→butler_chat。
+    /// 抽出落值表达式为纯函数，让分流规则可被直接单测（改动词/加场景先改测试）。
+    #[test]
+    fn test_chat_trigger_type_p2p_is_dm_chat() {
+        assert_eq!(FeishuListener::chat_trigger_type("p2p"), "dm_chat");
+    }
+
+    #[test]
+    fn test_chat_trigger_type_group_is_butler_chat() {
+        // 非明确 p2p 一律按群聊处理：飞书 chat_type 只有 p2p/group 两种，
+        // 用 else 分支兜底避免未来新增类型时静默落错 trigger_type
+        assert_eq!(FeishuListener::chat_trigger_type("group"), "butler_chat");
+        assert_eq!(FeishuListener::chat_trigger_type("unknown"), "butler_chat");
     }
 
     #[tokio::test]

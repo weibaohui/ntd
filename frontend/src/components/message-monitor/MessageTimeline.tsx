@@ -125,12 +125,14 @@ export function MessageTimeline({
             { value: 'all', label: '全部类型' },
             // 匹配 slash_command / slash_command_loop（斜杠规则显式触发）
             { value: 'slash', label: '斜杠命令' },
-            // 匹配 butler_chat：108 起非斜杠消息的现行处理类型
-            { value: 'butler', label: '空间管家' },
+            // 匹配 butler_chat：群聊管家（108 修订：仅群聊消息走管家）
+            { value: 'butler', label: '群聊管家' },
+            // 匹配 dm_chat：单聊直聊（108 修订：单聊未命中斜杠=纯执行器对话，无专家）
+            { value: 'dm', label: '单聊对话' },
             // 匹配 *_loop：包含斜杠环路与 108 前的默认响应环路历史值
             { value: 'loop', label: '环路' },
-            // 匹配 default_response_executor（108 前历史值）——现行执行器聊天是
-            // butler_chat，归入「空间管家」；本项仅为查询旧库存量消息保留
+            // 匹配 default_response_executor（108 前历史值）——现行聊天是 dm_chat/
+            // butler_chat；本项仅为查询旧库存量消息保留
             { value: 'executor', label: '执行器(历史)' },
           ]}
         />

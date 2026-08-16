@@ -860,9 +860,9 @@ pub async fn get_workspace_settings(
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct UpdateWorkspaceSettingsRequest {
-    /// 空间管家的专家名（108）：Some(含空串=清空) 覆写；None 不动。
+    /// 群聊管家的专家名（108 修订：仅群聊注入）：Some(含空串=清空) 覆写；None 不动。
     pub butler_expert_name: Option<String>,
-    /// 空间管家的执行器（108）：Some(含空串=清空) 覆写；None 不动。
+    /// 对话执行器（108 修订：单聊/群聊共用）：Some(含空串=清空) 覆写；None 不动。
     pub butler_executor: Option<String>,
     /// 工作空间级共识 prompt（需求 022）。
     /// Some(含空串) 覆写；None 不动。用户清空时前端传空串。

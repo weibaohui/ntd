@@ -9,7 +9,8 @@ const { Text } = Typography;
 const processedTypeLabel = (type: string | null): string => {
   const map: Record<string, string> = {
     // 108：butler_chat 为现行值；default_response* 为历史值（默认响应机制已退役）
-    'butler_chat': '空间管家',
+    'butler_chat': '群聊管家',
+    'dm_chat': '单聊对话',
     'default_response': '默认响应-事项',
     'default_response_executor': '默认响应-执行器',
     'default_response_loop': '默认响应-环路',

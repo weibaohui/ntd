@@ -31,7 +31,7 @@ export function MessageConfigDrawer({ open, workspaceId, onClose, onChanged }: M
         <Divider style={{ margin: '16px 0' }} />
 
         <div style={{ marginBottom: 16 }}>
-          <h4 style={{ margin: '0 0 12px', fontSize: 14, fontWeight: 500 }}>空间管家</h4>
+          <h4 style={{ margin: '0 0 12px', fontSize: 14, fontWeight: 500 }}>对话与群聊管家</h4>
           <WorkspaceSettingsPanel
             workspaceId={workspaceId}
             onChanged={onChanged}

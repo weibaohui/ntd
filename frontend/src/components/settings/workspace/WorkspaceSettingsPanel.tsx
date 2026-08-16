@@ -17,9 +17,9 @@ interface WorkspaceSettingsPanelProps {
   onChanged?: () => void;
 }
 
-// 108 空间管家：本面板承载工作空间级设置——管家配置（专家+执行器）、
-// 委派接力上限、历史消息处理与拉取群。默认响应机制（todo/loop/executor 三选一）
-// 已整体退役，未命中斜杠命令的消息统一由空间管家处理。
+// 108 修订（群聊管家）：本面板承载工作空间级设置——对话执行器（单聊直聊/群聊管家共用）、
+// 群聊管家专家（仅群聊注入）、委派接力上限、历史消息处理与拉取群。
+// 默认响应机制（todo/loop/executor 三选一）已整体退役，未命中斜杠命令的消息进聊天直连。
 export function WorkspaceSettingsPanel({ workspaceId, onChanged }: WorkspaceSettingsPanelProps) {
   const [experts, setExperts] = useState<ExpertMetadata[]>([]);
   const [loading, setLoading] = useState(false);
@@ -153,21 +153,34 @@ export function WorkspaceSettingsPanel({ workspaceId, onChanged }: WorkspaceSett
 
   return (
     <>
-      <Card size="small" loading={loading} title="空间管家">
+      <Card size="small" loading={loading} title="对话与群聊管家">
         <Paragraph type="secondary" style={{ marginBottom: 16, fontSize: 13 }}>
-          未命中斜杠命令的消息由空间管家处理：管家 = 专家（人设与规则，可选）+ 执行器（实际对话进程）。
-          不配专家则管家是纯执行器聊天；不配执行器则消息收到配置引导提示。
+          未命中斜杠命令的消息进聊天直连：单聊直接与「对话执行器」对话（多轮会话）；
+          群聊由「群聊管家」处理——管家 = 专家（人设与规则，仅群聊生效，可选）+ 执行器。
+          不配执行器时，未命中消息收到配置引导提示。
         </Paragraph>
         <Form form={form} layout="vertical">
           <Form.Item
+            name="butler_executor"
+            label="对话执行器"
+            tooltip="单聊直聊与群聊管家共用的执行进程；不配置时，未命中斜杠命令的消息将收到配置引导提示"
+          >
+            <ExecutorPicker
+              executor={executorValue || ''}
+              executorOptions={EXECUTORS_FOR_PICKER}
+              onChange={v => form.setFieldValue('butler_executor', v)}
+            />
+          </Form.Item>
+
+          <Form.Item
             name="butler_expert_name"
-            label="管家专家"
-            tooltip="为管家注入专家的人设与行为规则；不选则管家退化为纯执行器聊天"
+            label="群聊管家专家"
+            tooltip="仅群聊生效：为群聊管家注入专家的人设与行为规则；单聊始终是纯执行器对话，不读此配置"
           >
             <Select
               showSearch
               allowClear
-              placeholder="选择管家专家（可选）"
+              placeholder="选择群聊管家专家（可选，仅群聊生效）"
               filterOption={(input, option) =>
                 // label 拼上专家 ID：显示名是中文时可按英文 ID 搜（反之亦然）
                 (option?.label as string)?.toLowerCase().includes(input.toLowerCase())
@@ -184,18 +197,6 @@ export function WorkspaceSettingsPanel({ workspaceId, onChanged }: WorkspaceSett
                 </Select.Option>
               ))}
             </Select>
-          </Form.Item>
-
-          <Form.Item
-            name="butler_executor"
-            label="管家执行器"
-            tooltip="管家对话使用的执行器；不配置时，未命中斜杠命令的消息将收到配置引导提示"
-          >
-            <ExecutorPicker
-              executor={executorValue || ''}
-              executorOptions={EXECUTORS_FOR_PICKER}
-              onChange={v => form.setFieldValue('butler_executor', v)}
-            />
           </Form.Item>
 
           {/* 委派接力上限（需求 092）：工作空间级默认，任务级可单独覆盖。 */}
