@@ -103,8 +103,11 @@ export function LoopListPage({
   const [storedView] = useState<'list' | 'kanban'>(readInitialView);
   // 泛型版 pickListView 由 allowed/fallback 推导联合类型，无需 as 断言
   const viewMode = pickListView(listView, ['list', 'kanban'], storedView);
-  // kanban 态时间窗：LoopKanban 受控，由本层下推 hours。
-  const [hours, setHours] = useState(24);
+  // 111：list/kanban 各自独立时间窗——两个形态的数据维度不同（环路定义 vs 执行历史），
+  // 共享一个 state 会让默认值互相污染。默认值：list=null（全部，管理视角不默认收窄）；
+  // kanban=24（保持历史默认，执行历史维度不突变）。两者均不持久化，与任务页口径一致。
+  const [listHours, setListHours] = useState<number | null>(null);
+  const [kanbanHours, setKanbanHours] = useState<number | null>(24);
 
   // 列表数据加载 hook（仅 list 态消费；kanban 态 LoopKanban 自拉执行历史）
   const { items, loading, reload } = useLoopListData(workspaceId, loopUpdateCount);
@@ -134,12 +137,22 @@ export function LoopListPage({
   // 工作空间切换时关闭配置页
   useEffect(() => { handleCloseLoopConfig(); }, [workspaceId, handleCloseLoopConfig]);
 
-  // 按搜索词过滤：useMemo 避免每次渲染都重新计算
+  // 按搜索词 + 时间窗过滤：useMemo 避免每次渲染都重新计算。
+  // 111：时间窗按环路 created_at 过滤（与任务页口径一致）；created_at 缺失/非法
+  // 视为不在窗口内（与任务页对非法时间的 NaN-drop 处理对齐）。
   const filteredItems = useMemo(() => {
+    let result = items;
+    if (listHours != null) {
+      const cutoff = Date.now() - listHours * 3600 * 1000;
+      result = result.filter(l => {
+        const ts = l.created_at ? new Date(l.created_at).getTime() : NaN;
+        return !Number.isNaN(ts) && ts >= cutoff;
+      });
+    }
     const kw = searchKeyword.trim().toLowerCase();
-    if (!kw) return items;
-    return items.filter(l => (l.name || '').toLowerCase().includes(kw));
-  }, [items, searchKeyword]);
+    if (!kw) return result;
+    return result.filter(l => (l.name || '').toLowerCase().includes(kw));
+  }, [items, searchKeyword, listHours]);
 
   // 配置态：渲染 WorkspaceLoopConfigPage 替代列表
   if (loopConfigOpen && currentWorkspace) {
@@ -148,14 +161,15 @@ export function LoopListPage({
     );
   }
 
-  // header 共用：list/kanban 态共享 searchKeyword/Segmented，按 viewMode 显隐配置/刷新/时间窗。
+  // header 共用：list/kanban 态共享 searchKeyword/Segmented；
+  // 111：时间窗按形态路由到各自 state，切换形态互不污染。
   const headerExtra = (
     <LoopListHeader
       viewMode={viewMode}
       onViewChange={handleViewChange}
       searchKeyword={searchKeyword}
-      hours={hours}
-      onHoursChange={setHours}
+      hours={viewMode === 'kanban' ? kanbanHours : listHours}
+      onHoursChange={viewMode === 'kanban' ? setKanbanHours : setListHours}
       loading={loading}
       workspaceId={workspaceId}
       onSearchChange={setSearchKeyword}
@@ -174,7 +188,7 @@ export function LoopListPage({
       style={{ flex: 1, height: '100%' }}
       contentStyle={{ height: 'calc(100% - 43px)', overflow: 'hidden' }}
     >
-      <LoopKanban searchText={searchKeyword} hours={hours} onOpenTodo={handleOpenTodo} />
+      <LoopKanban searchText={searchKeyword} hours={kanbanHours} onOpenTodo={handleOpenTodo} />
     </PageCard>
   );
 

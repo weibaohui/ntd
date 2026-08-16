@@ -20,9 +20,10 @@ interface LoopListHeaderProps {
   viewMode: 'list' | 'kanban';
   onViewChange: (m: 'list' | 'kanban') => void;
   searchKeyword: string;
-  /** kanban 态时间窗：下推给 LoopKanban 过滤执行历史。 */
-  hours: number;
-  onHoursChange: (h: number) => void;
+  /** 111：时间窗（null=全部）。list 态按环路 created_at 过滤；
+   *  kanban 态下推给 LoopKanban 过滤执行历史（保持 started_at 口径）。 */
+  hours: number | null;
+  onHoursChange: (h: number | null) => void;
   loading: boolean;
   workspaceId: number | null;
   onSearchChange: (kw: string) => void;
@@ -73,10 +74,10 @@ export function LoopListHeader({
         style={{ width: 200 }}
         data-testid="loop-list-search"
       />
-      {/* kanban 态时间窗：LoopKanban 受控，下推 hours 过滤执行历史。 */}
-      {viewMode === 'kanban' && (
-        <TimeRangeSegmented value={hours} onChange={onHoursChange} />
-      )}
+      {/* 111：时间分段两形态均渲染（showAll 含「全部」）。
+          kanban 态默认 24h 由 LoopListPage 的 kanbanHours 初值保证；
+          list 态默认「全部」（listHours 初值 null），按环路创建时间过滤。 */}
+      <TimeRangeSegmented showAll value={hours} onChange={onHoursChange} />
       {/* list 态专属：环路配置 + 刷新（kanban 态 LoopKanban 自拉执行历史）。 */}
       {viewMode === 'list' && (
         <Button

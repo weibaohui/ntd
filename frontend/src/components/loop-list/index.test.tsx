@@ -1,6 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { LoopListPage } from './index';
+import * as dbLoops from '@/utils/database/loops';
 import type { LoopListItem } from '@/types/loop';
 
 // 093：组件已从合并版 useApp 迁移到细粒度 useTodos，mock 目标同步切换；
@@ -18,6 +19,8 @@ vi.mock('@/utils/database/loops', () => ({
   listLoops: vi.fn().mockResolvedValue([]),
   deleteLoop: vi.fn().mockResolvedValue(undefined),
   updateLoopStatus: vi.fn().mockResolvedValue(undefined),
+  // 111：LoopKanban 被整体 mock，listExecutions 仅为类型占位，不会被真实调用
+  listExecutions: vi.fn().mockResolvedValue({ items: [] }),
 }));
 
 vi.mock('@/utils/database/todos', () => ({
@@ -52,8 +55,22 @@ vi.mock('@/components/loop-list/LoopListView', () => ({
     onRefresh: () => void;
   }) => (
     <div data-testid="mock-loop-list-view">
+      {/* 111：渲染 items 数量，供时间窗过滤断言 */}
+      <div data-testid="mock-loop-count">{props.items.length}</div>
       <button onClick={() => props.onSelectLoop(1)} data-testid="mock-row-click">Row</button>
     </div>
+  ),
+}));
+
+// 111：LoopKanban 替换为静态桩（真实组件会拉执行历史与渲染 Drawer，jsdom 下无必要），
+// 渲染 hours 供断言 kanban 形态的默认值与「全部」切换。
+vi.mock('@/components/loop-kanban', () => ({
+  LoopKanban: (props: {
+    searchText?: string;
+    hours?: number | null;
+    onOpenTodo?: (todoId: number) => void;
+  }) => (
+    <div data-testid="mock-loop-kanban" data-hours={String(props.hours)} />
   ),
 }));
 
@@ -75,6 +92,13 @@ describe('LoopListPage', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // 111：URL ?view= 决定形态，用例间复位 hash 与 localStorage 防串台
+    window.history.replaceState(null, '', '/');
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    window.history.replaceState(null, '', '/');
   });
 
   it('renders page card with correct title', async () => {
@@ -123,5 +147,62 @@ describe('LoopListPage', () => {
 
     const refreshBtn = screen.getByRole('button', { name: /刷新/i });
     expect(refreshBtn).toBeInTheDocument();
+  });
+
+  describe('111 时间过滤', () => {
+    // 构造窗口内（1 小时前）与窗口外（100 小时前）两条环路，验证 created_at 口径
+    function makeLoops(): LoopListItem[] {
+      const recent = new Date(Date.now() - 1 * 3600 * 1000).toISOString();
+      const old = new Date(Date.now() - 100 * 3600 * 1000).toISOString();
+      return [
+        { id: 1, name: '最近环路', created_at: recent } as LoopListItem,
+        { id: 2, name: '老旧环路', created_at: old } as LoopListItem,
+      ];
+    }
+
+    it('列表形态默认「全部」：不过滤', async () => {
+      vi.mocked(dbLoops.listLoops).mockResolvedValueOnce(makeLoops() as never);
+      render(
+        <LoopListPage
+          onSelectLoop={mockOnSelectLoop}
+          onLoopChanged={mockOnLoopChanged}
+        />,
+      );
+      await waitFor(() => {
+        expect(screen.getByTestId('mock-loop-count')).toHaveTextContent('2');
+      });
+    });
+
+    it('列表形态选择 24h：只保留窗口内环路', async () => {
+      vi.mocked(dbLoops.listLoops).mockResolvedValueOnce(makeLoops() as never);
+      render(
+        <LoopListPage
+          onSelectLoop={mockOnSelectLoop}
+          onLoopChanged={mockOnLoopChanged}
+        />,
+      );
+      await waitFor(() => {
+        expect(screen.getByTestId('mock-loop-count')).toHaveTextContent('2');
+      });
+      fireEvent.click(screen.getByText('24h'));
+      expect(screen.getByTestId('mock-loop-count')).toHaveTextContent('1');
+      // 切回「全部」恢复全量
+      fireEvent.click(screen.getByText('全部'));
+      expect(screen.getByTestId('mock-loop-count')).toHaveTextContent('2');
+    });
+
+    it('kanban 形态默认 24h，切「全部」回传 null', async () => {
+      window.history.replaceState(null, '', '#/loops?view=kanban');
+      render(
+        <LoopListPage
+          onSelectLoop={mockOnSelectLoop}
+          onLoopChanged={mockOnLoopChanged}
+        />,
+      );
+      // kanban 默认保持历史 24h（需求 111 决策 3A：仅新增「全部」选项，不改变默认值）
+      expect(screen.getByTestId('mock-loop-kanban')).toHaveAttribute('data-hours', '24');
+      fireEvent.click(screen.getByText('全部'));
+      expect(screen.getByTestId('mock-loop-kanban')).toHaveAttribute('data-hours', 'null');
+    });
   });
 });

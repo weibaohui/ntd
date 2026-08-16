@@ -16,7 +16,9 @@ export interface LoopExecutionWithLoopName extends LoopExecutionDto {
  * - limit=20 的边界：看板场景下只需展示近期执行，20 条足够覆盖常见时间窗口且避免首屏过慢
  * - loading 状态在空列表时也能正确重置：确保空状态能正常展示，而非永久 loading
  */
-export function useLoopExecutions(workspaceId?: number | null, hours?: number) {
+// 111：hours 允许 null（=「全部」不过滤）；null 时 listExecutions 不携带 hours 参数，
+// 后端即返回全量执行历史（与 LoopKanban 的可空语义对齐）。
+export function useLoopExecutions(workspaceId?: number | null, hours?: number | null) {
   const [allLoops, setAllLoops] = useState<LoopListItem[]>([]);
   const [executions, setExecutions] = useState<LoopExecutionWithLoopName[]>([]);
   const [loading, setLoading] = useState(true);

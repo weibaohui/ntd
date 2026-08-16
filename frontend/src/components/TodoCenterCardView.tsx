@@ -37,6 +37,8 @@ interface TodoCenterCardViewProps {
   isMobile?: boolean;
   /** 统一搜索词（来自 ItemsPage 顶层搜索框），由 ItemsPage 负责渲染输入框。 */
   searchKeyword?: string;
+  /** 111：时间窗（null=全部），与列表形态共用 TodoListPage 的页级 state，下推服务端过滤。 */
+  hours?: number | null;
   /** ItemsPage 顶层构建的完整 header extra（搜索框 + 刷新 + Segmented + 新建）。 */
   extra?: ReactNode;
   /** 刷新信号，ItemsPage 点击刷新按钮时自增，触发本组件重载数据。 */
@@ -55,6 +57,7 @@ export function TodoCenterCardView({
   onSelectLoop,
   isMobile,
   searchKeyword = '',
+  hours = null,
   extra,
   refreshKey,
 }: TodoCenterCardViewProps) {
@@ -80,6 +83,11 @@ export function TodoCenterCardView({
     }, 300);
     return () => clearTimeout(timer);
   }, [searchKeyword]);
+  // 111：时间窗变化回第 1 页——窗口收窄后当前页可能超出有效页数，
+  // 与筛选 setter 的回页策略一致，避免出现空页或截断页困惑。
+  useEffect(() => {
+    setPage(1);
+  }, [hours]);
   // 当前 Tab（五类驱动），默认手动触发；持久化到 localStorage 记住用户上次选择
   const [activeBucket, setActiveBucket] = useState<ComputedBucket>(() => {
     try {
@@ -121,6 +129,8 @@ export function TodoCenterCardView({
         actionType: actionTypeFilter,
         page,
         pageSize,
+        // 111：时间窗与列表形态同源，SQL 下推保证 Tab 角标（bucket_counts）同口径
+        hours,
       });
       setItems(data.items);
       setTotal(data.total);
@@ -131,7 +141,7 @@ export function TodoCenterCardView({
     } finally {
       setLoading(false);
     }
-  }, [workspaceId, activeBucket, debouncedSearch, statusFilter, actionTypeFilter, page, pageSize]);
+  }, [workspaceId, activeBucket, debouncedSearch, statusFilter, actionTypeFilter, page, pageSize, hours]);
 
   useEffect(() => {
     reload();

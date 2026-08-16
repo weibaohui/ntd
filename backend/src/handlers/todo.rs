@@ -671,6 +671,10 @@ pub struct TodoCenterQueryV1 {
     /// 动作类型精确过滤（卡片墙「来源筛选」下拉；缺省=全部）
     #[serde(default)]
     pub action_type: Option<String>,
+    /// 时间窗过滤（111）：按 created_at 过滤最近 N 小时创建的事项；
+    /// 缺省/0 = 不过滤，与 V1 todo 列表的 hours 参数语义一致。
+    #[serde(default)]
+    pub hours: Option<u32>,
 }
 
 /// V1 事项 brief 查询参数：ids 逗号分隔；省略时返回该 ws 全部 brief（看板用）。
@@ -786,6 +790,8 @@ pub async fn get_todo_center_v1(
             sort_desc,
             page,
             page_size,
+            // 111：时间窗过滤透传（缺省/0 由 db 层判为不过滤）
+            hours: params.hours,
         })
         .await?;
     // data.page 是 db 按 total 截断后的有效页码，响应必须用它（评审 F2）
