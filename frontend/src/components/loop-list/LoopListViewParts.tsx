@@ -22,7 +22,7 @@ import {
 } from '@ant-design/icons';
 import { formatRelativeTime } from '@/utils/datetime';
 import { formatProcessText } from '@/utils/processText';
-import { makeSorter } from '@/hooks/useResizableColumns';
+import { makeSorter, compareValues } from '@/hooks/useResizableColumns';
 import type { LoopListItem } from '@/types/loop';
 
 /** 环路状态 → 中文 + 颜色；与 LoopStudioDetailPanel 的状态展示保持一致。 */
@@ -140,6 +140,8 @@ export function buildColumns({
       key: 'process',
       width: 240,
       ellipsis: true,
+      // 114：补齐排序——按展示文本（loopProcessText）比较，排序与看到的文案一致。
+      sorter: (a: LoopListItem, b: LoopListItem) => compareValues(loopProcessText(a), loopProcessText(b)),
       // 三列表统一格式：#工艺id-工艺名称-工艺版本；手工环路显示 '-'。
       render: (_v, record) => loopProcessText(record),
     },
@@ -172,6 +174,8 @@ export function buildColumns({
       title: '最近执行',
       dataIndex: 'last_execution_status',
       width: 100,
+      // 114：补齐排序（客户端枚举字符串比较）
+      sorter: makeSorter<LoopListItem>('last_execution_status'),
       render: (s?: string | null) => s ? <Tag color={s === 'success' ? 'success' : s === 'failed' ? 'error' : 'processing'}>{s}</Tag> : '-',
     },
     {

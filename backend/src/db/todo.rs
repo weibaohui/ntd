@@ -34,6 +34,34 @@ const TODO_CENTER_BUCKET_EXPR: &str = "CASE \
     WHEN t.webhook_enabled = 1 THEN 'event_driven' \
     ELSE 'manual' END";
 
+/// 114：类型排序键，与 TodoListView 类型列渲染优先级严格一致（评审 > 异常处理 > 快捷 > 事项）。
+/// todo_type 为 NULL 视为 0（普通事项，COALESCE 兜底）；action_type 非空视为「快捷」。
+/// CASE 输出 0..=3 让 SQLite 按数值排序，升/降序都符合用户对类型分组的直觉。
+const TODO_CENTER_TYPE_EXPR: &str = "CASE \
+    WHEN COALESCE(t.todo_type, 0) = 2 THEN 2 \
+    WHEN COALESCE(t.todo_type, 0) = 3 THEN 3 \
+    WHEN t.action_type IS NOT NULL AND t.action_type != '' THEN 1 \
+    ELSE 0 END";
+
+/// 114：最近执行记录的 status（相关子查询取该 todo 的 MAX(id) 记录）。
+/// 口径必须与 execution.rs get_latest_execution_summaries_for_todos 一致——
+/// 聚合展示用「id 最大 = 最近一条」（自增主键）；若改用时间排序，补录历史记录时
+/// 排序结果会与页面展示的「最近执行」不一致。命中 idx_execution_records_todo_id。
+const TODO_CENTER_LAST_EXEC_STATUS_EXPR: &str = "(SELECT er2.status FROM execution_records er2 \
+    WHERE er2.todo_id = t.id ORDER BY er2.id DESC LIMIT 1)";
+
+/// 114：最近执行记录的展示时间（MAX(id) 口径），优先 finished_at 回退 started_at，
+/// 与 LatestExecutionSummary::display_at 语义一致。无执行记录时为 NULL。
+const TODO_CENTER_LAST_EXEC_AT_EXPR: &str = "(SELECT COALESCE(er2.finished_at, er2.started_at) \
+    FROM execution_records er2 WHERE er2.todo_id = t.id ORDER BY er2.id DESC LIMIT 1)";
+
+/// 114：引用环路数（enabled=1 的 loop_steps 计数）。
+/// 环路列/工艺列的展示数据都来自 referencing_loops（get_referencing_loops_for_todos 的
+/// enabled=1 口径），排序键用同一计数子查询保证排序与展示一致；与 computed_bucket 的
+/// loop_driven 判断同源。无引用时为 NULL，DESC 时沉底。
+const TODO_CENTER_LOOP_REF_COUNT_EXPR: &str =
+    "(SELECT COUNT(*) FROM loop_steps ls WHERE ls.todo_id = t.id AND ls.enabled = 1)";
+
 /// ComputedBucket → SQL 表达式输出字符串（与 serde snake_case 保持一致）。
 fn center_bucket_str(b: ComputedBucket) -> &'static str {
     match b {
@@ -52,6 +80,19 @@ fn center_sort_column(sort_by: Option<&str>) -> &'static str {
         Some("updated_at") => "t.updated_at",
         Some("title") => "t.title COLLATE NOCASE",
         Some("status") => "t.status",
+        // 114：类型列（前端无 dataIndex，antd 用 key='type' 作排序 field）
+        Some("type") => TODO_CENTER_TYPE_EXPR,
+        // 114：最近执行状态/时间（聚合列，相关子查询——见常量注释的口径对齐说明）
+        Some("last_execution_status") => TODO_CENTER_LAST_EXEC_STATUS_EXPR,
+        Some("last_execution_at") => TODO_CENTER_LAST_EXEC_AT_EXPR,
+        // 114：普通字段列（NULL 由 SQLite 排最小，DESC 时沉底）
+        Some("executor") => "t.executor",
+        Some("expert_name") => "t.expert_name",
+        // 114：调度列（无 dataIndex，antd 用 key='scheduler'）——按 cron 配置存在性排序
+        Some("scheduler") => "t.scheduler_config",
+        // 114：环路/工艺列（展示同源 referencing_loops），按引用环路数排序
+        Some("loop") => TODO_CENTER_LOOP_REF_COUNT_EXPR,
+        Some("process") => TODO_CENTER_LOOP_REF_COUNT_EXPR,
         Some("computed_bucket") => TODO_CENTER_BUCKET_EXPR,
         _ => "t.id",
     }
@@ -2782,6 +2823,252 @@ mod todo_center_tests {
             vec![archived_id, manual_id, time_id],
             "ASC 应按 bucket 名字典序 archived < manual < time_driven"
         );
+    }
+
+    /// 114：center_sort_column 白名单新增分支映射 + 非法输入回退默认 id。
+    /// 白名单是 SQL 拼接的唯一安全途径（参数绑定不能绑标识符），映射错误=注入面扩大。
+    #[test]
+    fn test_center_sort_column_new_branches() {
+        // 新增三个分支必须返回对应常量（与实现同步改，防止拼写漂移）
+        assert_eq!(center_sort_column(Some("type")), TODO_CENTER_TYPE_EXPR);
+        assert_eq!(
+            center_sort_column(Some("last_execution_status")),
+            TODO_CENTER_LAST_EXEC_STATUS_EXPR
+        );
+        assert_eq!(
+            center_sort_column(Some("last_execution_at")),
+            TODO_CENTER_LAST_EXEC_AT_EXPR
+        );
+        // 114：全列排序——普通字段/复合列分支映射到预期表达式
+        assert_eq!(center_sort_column(Some("executor")), "t.executor");
+        assert_eq!(center_sort_column(Some("expert_name")), "t.expert_name");
+        assert_eq!(center_sort_column(Some("scheduler")), "t.scheduler_config");
+        assert_eq!(center_sort_column(Some("loop")), TODO_CENTER_LOOP_REF_COUNT_EXPR);
+        assert_eq!(center_sort_column(Some("process")), TODO_CENTER_LOOP_REF_COUNT_EXPR);
+        // 白名单外输入（含注入尝试）一律回退 t.id，不进入 SQL
+        assert_eq!(center_sort_column(Some("evil; DROP TABLE todos")), "t.id");
+        assert_eq!(center_sort_column(None), "t.id");
+        // 既有分支不回归
+        assert_eq!(center_sort_column(Some("title")), "t.title COLLATE NOCASE");
+    }
+
+    /// 114：sort_by=last_execution_at 的排序口径 = MAX(id) 记录的 COALESCE(finished_at, started_at)，
+    /// 与展示层 get_latest_execution_summaries_for_todos 严格一致。
+    /// b 的两条记录时间乱序写入（id 更大的那条时间更旧）：若按时间取「最近一条」会得 07-03
+    /// （DESC 时 b 在 a 前），按 MAX(id) 得 07-01（DESC 时 a 在 b 前）——断言可区分两种口径。
+    #[tokio::test]
+    async fn test_center_page_sort_by_last_execution_at() {
+        let db = fresh_db().await;
+        // a：唯一执行记录 finished=07-02（07-01 开始）
+        let a = seed_todo(&db, "a").await;
+        db.exec(&format!(
+            "INSERT INTO execution_records (todo_id, status, trigger_type, started_at, finished_at) \
+             VALUES ({a}, 'success', 'manual', '2026-07-01T00:00:00Z', '2026-07-02T00:00:00Z')"
+        ))
+        .await
+        .unwrap();
+        // b：两条记录——id 最大的那条 finished=07-01（更旧），id 小的反而 07-03（更新）
+        let b = seed_todo(&db, "b").await;
+        db.exec(&format!(
+            "INSERT INTO execution_records (todo_id, status, trigger_type, started_at, finished_at) \
+             VALUES ({b}, 'success', 'manual', '2026-07-03T00:00:00Z', '2026-07-03T01:00:00Z')"
+        ))
+        .await
+        .unwrap();
+        db.exec(&format!(
+            "INSERT INTO execution_records (todo_id, status, trigger_type, started_at, finished_at) \
+             VALUES ({b}, 'failed', 'manual', '2026-07-01T00:00:00Z', '2026-07-01T01:00:00Z')"
+        ))
+        .await
+        .unwrap();
+        // c：无执行记录 → 子查询 NULL
+        let c = seed_todo(&db, "c").await;
+
+        // DESC：按 MAX(id) 口径 a(07-02) > b(07-01) > c(NULL 沉底)
+        let (items, _, _, _, _) = db
+            .get_todo_center_page(crate::db::TodoCenterPageQuery {
+                workspace_id: None,
+                bucket: None,
+                search: None,
+                status: None,
+                action_type: None,
+                sort_by: Some("last_execution_at"),
+                sort_desc: true,
+                page: 1,
+                page_size: 20,
+                hours: None,
+            })
+            .await
+            .map(center_tuple)
+            .unwrap();
+        let order: Vec<i64> = items.iter().map(|i| i.todo.id).collect();
+        assert_eq!(order, vec![a, b, c], "DESC 应 a > b > c(无记录沉底)，口径为 MAX(id)");
+        // 展示时间与排序键同源：b 的 last_execution_at 必须是 id 最大记录的 07-01
+        let item_b = items.iter().find(|i| i.todo.id == b).unwrap();
+        assert_eq!(
+            item_b.last_execution_at.as_deref(),
+            Some("2026-07-01T01:00:00Z"),
+            "last_execution_at 展示与排序必须同口径（MAX(id) 记录）"
+        );
+
+        // ASC：NULL 最小 → c 排最前
+        let (items2, _, _, _, _) = db
+            .get_todo_center_page(crate::db::TodoCenterPageQuery {
+                workspace_id: None,
+                bucket: None,
+                search: None,
+                status: None,
+                action_type: None,
+                sort_by: Some("last_execution_at"),
+                sort_desc: false,
+                page: 1,
+                page_size: 20,
+                hours: None,
+            })
+            .await
+            .map(center_tuple)
+            .unwrap();
+        let order2: Vec<i64> = items2.iter().map(|i| i.todo.id).collect();
+        assert_eq!(order2, vec![c, b, a], "ASC 应 c(NULL 最小) 最前，其后 b > a");
+    }
+
+    /// 114：sort_by=type 按 CASE 权重排序：异常处理(3) > 评审(2) > 快捷(1) > 事项(0)。
+    /// 权重与 TodoListView 类型列渲染优先级一致（评审/异常优先判断、action_type 快捷次之）。
+    #[tokio::test]
+    async fn test_center_page_sort_by_type() {
+        let db = fresh_db().await;
+        // 普通事项：todo_type NULL → COALESCE 按 0（事项）
+        let normal = seed_todo(&db, "普通").await;
+        // 评审：todo_type=2
+        let review = seed_todo(&db, "评审").await;
+        db.exec(&format!("UPDATE todos SET todo_type = 2 WHERE id = {review}"))
+            .await
+            .unwrap();
+        // 异常处理：todo_type=3
+        let abnormal = seed_todo(&db, "异常").await;
+        db.exec(&format!("UPDATE todos SET todo_type = 3 WHERE id = {abnormal}"))
+            .await
+            .unwrap();
+        // 快捷：action_type 非空且 todo_type 非 2/3
+        let quick = seed_todo(&db, "快捷").await;
+        db.exec(&format!("UPDATE todos SET action_type = 'at' WHERE id = {quick}"))
+            .await
+            .unwrap();
+
+        // DESC：3 > 2 > 1 > 0
+        let (items, _, _, _, _) = db
+            .get_todo_center_page(crate::db::TodoCenterPageQuery {
+                workspace_id: None,
+                bucket: None,
+                search: None,
+                status: None,
+                action_type: None,
+                sort_by: Some("type"),
+                sort_desc: true,
+                page: 1,
+                page_size: 20,
+                hours: None,
+            })
+            .await
+            .map(center_tuple)
+            .unwrap();
+        let order: Vec<i64> = items.iter().map(|i| i.todo.id).collect();
+        assert_eq!(order, vec![abnormal, review, quick, normal], "DESC 应按 3>2>1>0");
+
+        // ASC：0 < 1 < 2 < 3
+        let (items2, _, _, _, _) = db
+            .get_todo_center_page(crate::db::TodoCenterPageQuery {
+                workspace_id: None,
+                bucket: None,
+                search: None,
+                status: None,
+                action_type: None,
+                sort_by: Some("type"),
+                sort_desc: false,
+                page: 1,
+                page_size: 20,
+                hours: None,
+            })
+            .await
+            .map(center_tuple)
+            .unwrap();
+        let order2: Vec<i64> = items2.iter().map(|i| i.todo.id).collect();
+        assert_eq!(order2, vec![normal, quick, review, abnormal], "ASC 应按 0<1<2<3");
+    }
+
+    /// 114：sort_by=loop/process 按引用环路数（enabled=1 的 loop_steps）排序，
+    /// 与 referencing_loops 展示口径同源。禁用 step 不计入；无引用沉底（DESC）。
+    #[tokio::test]
+    async fn test_center_page_sort_by_loop_ref_count() {
+        let db = fresh_db().await;
+        // a：2 条 enabled 引用 + 1 条 disabled 引用（禁用不计）
+        let a = seed_todo(&db, "a").await;
+        // b：1 条 enabled 引用
+        let b = seed_todo(&db, "b").await;
+        // c：无引用
+        let c = seed_todo(&db, "c").await;
+        for (todo_id, enabled) in [(a, 1), (a, 1), (a, 0), (b, 1)] {
+            // loop_steps.loop_id/name 为 NOT NULL，先建一条环路再挂 step
+            db.exec("INSERT INTO loops (name) VALUES ('L')").await.unwrap();
+            let row = db
+                .conn
+                .query_one(Statement::from_string(
+                    DbBackend::Sqlite,
+                    "SELECT last_insert_rowid() AS id",
+                ))
+                .await
+                .expect("query loop id")
+                .expect("row exists");
+            let loop_id: i64 = row.try_get_by("id").expect("id readable");
+            db.exec(&format!(
+                "INSERT INTO loop_steps (loop_id, name, todo_id, enabled) \
+                 VALUES ({loop_id}, 's', {todo_id}, {enabled})"
+            ))
+            .await
+            .unwrap();
+        }
+
+        // DESC：a(2) > b(1) > c(NULL 沉底)
+        for sort_by in ["loop", "process"] {
+            let (items, _, _, _, _) = db
+                .get_todo_center_page(crate::db::TodoCenterPageQuery {
+                    workspace_id: None,
+                    bucket: None,
+                    search: None,
+                    status: None,
+                    action_type: None,
+                    sort_by: Some(sort_by),
+                    sort_desc: true,
+                    page: 1,
+                    page_size: 20,
+                    hours: None,
+                })
+                .await
+                .map(center_tuple)
+                .unwrap();
+            let order: Vec<i64> = items.iter().map(|i| i.todo.id).collect();
+            assert_eq!(order, vec![a, b, c], "{sort_by} DESC 应按引用数 a>b>c");
+        }
+
+        // ASC：c(NULL 最小) 最前
+        let (items2, _, _, _, _) = db
+            .get_todo_center_page(crate::db::TodoCenterPageQuery {
+                workspace_id: None,
+                bucket: None,
+                search: None,
+                status: None,
+                action_type: None,
+                sort_by: Some("loop"),
+                sort_desc: false,
+                page: 1,
+                page_size: 20,
+                hours: None,
+            })
+            .await
+            .map(center_tuple)
+            .unwrap();
+        let order2: Vec<i64> = items2.iter().map(|i| i.todo.id).collect();
+        assert_eq!(order2, vec![c, b, a], "loop ASC 应 c 最前");
     }
 
     /// 056 评审补测：搜索词含 LIKE 通配符（%/_）时被转义，不作为通配符匹配。

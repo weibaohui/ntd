@@ -191,6 +191,8 @@ function buildTodoColumns(
       title: '类型',
       key: 'type',
       width: 100,
+      // 114：服务端排序——后端按类型 CASE 权重（评审>异常处理>快捷>事项）排序
+      sorter: true,
       render: (_: unknown, record: TodoCenterItem) => {
         const td = record.todo_type ?? 0;
         const at = record.action_type;
@@ -230,6 +232,8 @@ function buildTodoColumns(
       title: '执行器',
       dataIndex: 'executor',
       width: 110,
+      // 114：服务端排序（t.executor 字段，无执行器的行 DESC 时沉底）
+      sorter: true,
       render: (executor?: string) =>
         executor ? <ExecutorBadge executor={executor} /> : '-',
     },
@@ -237,6 +241,8 @@ function buildTodoColumns(
       title: '专家',
       dataIndex: 'expert_name',
       width: 100,
+      // 114：服务端排序（t.expert_name 字段）
+      sorter: true,
       render: (name?: string | null) => name ? <ExpertBadge expertName={name} /> : '-',
     },
     {
@@ -244,6 +250,8 @@ function buildTodoColumns(
       key: 'scheduler',
       width: 70,
       align: 'center',
+      // 114：服务端排序（按 cron 配置存在性，有调度的行排前）
+      sorter: true,
       render: (_, record) => renderSchedulerColumn(record),
     },
     {
@@ -251,6 +259,8 @@ function buildTodoColumns(
       key: 'loop',
       width: 160,
       ellipsis: true,
+      // 114：服务端排序（引用环路数，与展示口径同源）
+      sorter: true,
       render: (_, record) => renderLoopColumn(record.referencing_loops),
     },
     {
@@ -258,20 +268,25 @@ function buildTodoColumns(
       key: 'process',
       width: 160,
       ellipsis: true,
+      // 114：服务端排序（与环路列同源，按引用环路数）
+      sorter: true,
       render: (_, record) => renderProcessColumn(record.referencing_loops),
     },
     {
       title: '最近执行',
       dataIndex: 'last_execution_status',
       width: 100,
+      // 114：服务端排序——子查询取 MAX(id) 执行记录的状态（与展示口径一致）
+      sorter: true,
       render: (status?: string | null) => renderStatusTag(status),
     },
     {
       title: '执行时间',
       dataIndex: 'last_execution_at',
       width: 130,
-      // 056：聚合字段不支持服务端排序（该值由最近执行记录推导，不在 todos 表），
-      // 页内排序会误导为全局排序，故移除 sorter。
+      // 114：恢复服务端排序——056 因聚合字段无法排序而移除，现由后端相关子查询
+      // （MAX(id) 记录、finished_at 回退 started_at，与展示口径一致）支撑，跨页排序正确。
+      sorter: true,
       render: (t?: string | null) => (t ? formatRelativeTime(t) : '-'),
     },
     {
@@ -412,10 +427,13 @@ export function TodoListView({
             tableProps.onChange?.(pag, filters, sorter, extra);
             const s = Array.isArray(sorter) ? sorter[0] : sorter;
             const sortOrder = s?.order === 'ascend' ? 'asc' : s?.order === 'descend' ? 'desc' : undefined;
+            // 无 dataIndex 的列（「类型」列只有 key）sorter.field 为 undefined，
+            // 回退 columnKey 才能把 sort_by=type 传给后端（114 修复）。
+            const sortBy = s?.field != null ? String(s.field) : s?.columnKey != null ? String(s.columnKey) : undefined;
             onServerChange(
               pag.current ?? 1,
               pag.pageSize ?? 20,
-              s?.field ? String(s.field) : undefined,
+              sortBy,
               sortOrder,
             );
           }}
