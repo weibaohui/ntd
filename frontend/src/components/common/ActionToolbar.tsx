@@ -31,7 +31,7 @@ export interface BatchActionItem<TId extends Key = number> {
   onClick: (selectedIds: TId[]) => void;
 }
 
-export interface ActionToolbarProps<TId extends Key = number> {
+interface ActionToolbarProps<TId extends Key = number> {
   // —— 选择态 ——
   /** 当前过滤后可见、可选的 id 列表。点「全选」会全选这批。 */
   selectableIds: TId[];

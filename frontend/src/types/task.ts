@@ -52,7 +52,7 @@ export interface TaskPost {
  * 任务详情接口返回的单次执行摘要。
  * 字段集对齐后端 get_task_detail 的 executions 段；可选字段按后端可能缺省声明。
  */
-export interface ExecInfo {
+interface ExecInfo {
   id: number;
   status: string;
   started_at?: string;

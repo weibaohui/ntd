@@ -9,7 +9,7 @@ import type { Todo, TodoTemplate, ComputedBucket, TodoCenterItem, TodoCenterPage
  * 响应从全量数组改为分页结构；调用方若确实需要全量（如看板），
  * 应改用不含大字段的 `getTodoBriefs`。
  */
-export async function getTodosPage(
+async function getTodosPage(
   workspaceId: number,
   options: { hours?: number; page?: number; pageSize?: number } = {},
 ): Promise<TodoListPage> {

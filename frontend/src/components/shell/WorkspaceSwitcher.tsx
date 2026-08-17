@@ -5,7 +5,7 @@ import { FolderOutlined, FolderOpenOutlined, SettingOutlined, PlusOutlined, Down
 import * as db from '@/utils/database';
 import type { Workspace } from '@/types';
 
-export type WorkspaceSwitcherMode = 'full' | 'compact';
+type WorkspaceSwitcherMode = 'full' | 'compact';
 
 interface QuickAddFormValues {
   name: string;

@@ -1,5 +1,4 @@
 import { EXECUTOR_COLORS, getExecutorColor } from '@/types';
-import type { SkillMeta } from '@/types';
 import { formatDateTime } from '@/utils/format';
 
 export { EXECUTOR_COLORS, getExecutorColor };
@@ -43,17 +42,6 @@ export function splitSkillName(name: string): { category: string | null; shortNa
   if (!name.includes('/')) return { category: null, shortName: name };
   const parts = name.split('/');
   return { category: parts[0], shortName: parts.slice(1).join('/') };
-}
-
-export interface SkillTreeNode {
-  key: string;
-  name: string;
-  type: 'category' | 'skill';
-  executor: string;
-  color: string;
-  data: SkillMeta | null;
-  children?: SkillTreeNode[];
-  depth: number;
 }
 
 export interface ExportTask {

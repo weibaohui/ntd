@@ -22,7 +22,7 @@ import {
   type SkillSourceWithCount,
 } from '@/api/bundled';
 
-export type ViewMode = 'browse-sources' | 'all-skills';
+type ViewMode = 'browse-sources' | 'all-skills';
 
 /** 两种视图模式都走后端分页，默认 30 条/页（桌面卡片网格双列布局下的可读性平衡点）。
  * 导出供主组件 Pagination 的 pageSize 使用（单一事实源，避免两处写死漂移）。 */

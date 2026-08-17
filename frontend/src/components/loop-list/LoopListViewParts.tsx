@@ -26,14 +26,14 @@ import { makeSorter } from '@/hooks/useResizableColumns';
 import type { LoopListItem } from '@/types/loop';
 
 /** 环路状态 → 中文 + 颜色；与 LoopStudioDetailPanel 的状态展示保持一致。 */
-export const LOOP_STATUS_META: Record<string, { label: string; color: string }> = {
+const LOOP_STATUS_META: Record<string, { label: string; color: string }> = {
   enabled: { label: '已启用', color: 'success' },
   paused: { label: '已暂停', color: 'default' },
   disabled: { label: '已禁用', color: 'error' },
 };
 
 /** 把 status 串映射为 Tag；未知状态原样返回，便于扩展。 */
-export function renderLoopStatusTag(status?: string | null): ReactNode {
+function renderLoopStatusTag(status?: string | null): ReactNode {
   if (!status) return '-';
   const meta = LOOP_STATUS_META[status];
   if (!meta) return status;

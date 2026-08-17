@@ -39,7 +39,7 @@ export const HEADER_LINK_GAP = 16;
 // LinkNode 之间纵向间距
 export const LINK_GAP = 16;
 // phase 之间横向间距（dagre ranksep）
-export const PHASE_RANKSEP = 80;
+const PHASE_RANKSEP = 80;
 
 // ── phase 高度公式（单一数据源）────────────────────
 

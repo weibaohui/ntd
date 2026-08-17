@@ -44,7 +44,7 @@ export interface LoopStats {
 }
 
 /** Loop 触发类型分布项。 */
-export interface LoopTriggerTypeCount {
+interface LoopTriggerTypeCount {
   trigger_type: string;
   count: number;
   success_count: number;

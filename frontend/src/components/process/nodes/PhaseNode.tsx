@@ -29,7 +29,7 @@ import { PHASE_HEADER } from '../processLayout';
 // ── 节点 data 类型 ─────────────────────────────────
 
 // buildProcessGraph 注入的 data 结构
-export interface PhaseNodeData {
+interface PhaseNodeData {
   // phase 定义
   phase: PhaseDefinition;
   // phase 在 phases 数组中的索引

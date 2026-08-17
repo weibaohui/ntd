@@ -64,8 +64,8 @@ ${hints.notes ? '\n' + hints.notes + '\n' : ''}
 
 // ─── 各执行器安装提示词 ──────────────────────────────────────
 
-export const INSTALL_CLAUCODE_ACTION_KEY = 'claudecode';
-export const INSTALL_CLAUCODE_PROMPT = buildInstallPrompt({
+const INSTALL_CLAUCODE_ACTION_KEY = 'claudecode';
+const INSTALL_CLAUCODE_PROMPT = buildInstallPrompt({
   displayName: 'Claude Code',
   binaryName: 'claude',
   verifyArgs: '--version',
@@ -79,8 +79,8 @@ export const INSTALL_CLAUCODE_PROMPT = buildInstallPrompt({
   notes: 'Claude Code 安装后首次运行需要登录 Anthropic 账号，请明确告知用户这一步需要手动完成。',
 });
 
-export const INSTALL_CODEBUDDY_ACTION_KEY = 'codebuddy';
-export const INSTALL_CODEBUDDY_PROMPT = buildInstallPrompt({
+const INSTALL_CODEBUDDY_ACTION_KEY = 'codebuddy';
+const INSTALL_CODEBUDDY_PROMPT = buildInstallPrompt({
   displayName: 'CodeBuddy',
   binaryName: 'codebuddy',
   verifyArgs: '--version',
@@ -92,8 +92,8 @@ export const INSTALL_CODEBUDDY_PROMPT = buildInstallPrompt({
   windows: '优先用官方 PowerShell 安装：\`irm https://copilot.tencent.com/cli/install.ps1 | iex\`；或 npm 全局安装：\`npm install -g @tencent-ai/codebuddy-code\`。',
 });
 
-export const INSTALL_OPENCODE_ACTION_KEY = 'opencode';
-export const INSTALL_OPENCODE_PROMPT = buildInstallPrompt({
+const INSTALL_OPENCODE_ACTION_KEY = 'opencode';
+const INSTALL_OPENCODE_PROMPT = buildInstallPrompt({
   displayName: 'Opencode',
   binaryName: 'opencode',
   verifyArgs: '--version',
@@ -107,8 +107,8 @@ export const INSTALL_OPENCODE_PROMPT = buildInstallPrompt({
   notes: 'Opencode 有新旧两个版本，新版为 Go 自包含二进制，旧版为 npm 包（opencode-ai），命令参数不同，安装后请确认 \`opencode --version\` 能正常输出。',
 });
 
-export const INSTALL_ATOMCODE_ACTION_KEY = 'atomcode';
-export const INSTALL_ATOMCODE_PROMPT = buildInstallPrompt({
+const INSTALL_ATOMCODE_ACTION_KEY = 'atomcode';
+const INSTALL_ATOMCODE_PROMPT = buildInstallPrompt({
   displayName: 'AtomCode',
   binaryName: 'atomcode',
   verifyArgs: '--version',
@@ -121,8 +121,8 @@ export const INSTALL_ATOMCODE_PROMPT = buildInstallPrompt({
   windows: '优先用官方 PowerShell 安装：\`irm https://raw.atomgit.com/atomgit_atomcode/atomcode/raw/main/scripts/install.ps1 | iex\`；若使用 Git-Bash / MSYS，可改走 \`curl -fsSL https://raw.atomgit.com/atomgit_atomcode/atomcode/raw/main/scripts/install.sh | sh\`。',
 });
 
-export const INSTALL_HERMES_ACTION_KEY = 'hermes';
-export const INSTALL_HERMES_PROMPT = buildInstallPrompt({
+const INSTALL_HERMES_ACTION_KEY = 'hermes';
+const INSTALL_HERMES_PROMPT = buildInstallPrompt({
   displayName: 'Hermes',
   binaryName: 'hermes',
   verifyArgs: '--version',
@@ -133,8 +133,8 @@ export const INSTALL_HERMES_PROMPT = buildInstallPrompt({
   windows: '优先用官方 PowerShell 安装脚本；或用 npm 全局安装：\`npm install -g hermes-git\`。',
 });
 
-export const INSTALL_KIMI_ACTION_KEY = 'kimi';
-export const INSTALL_KIMI_PROMPT = buildInstallPrompt({
+const INSTALL_KIMI_ACTION_KEY = 'kimi';
+const INSTALL_KIMI_PROMPT = buildInstallPrompt({
   displayName: 'Kimi',
   binaryName: 'kimi',
   verifyArgs: '--version',
@@ -147,8 +147,8 @@ export const INSTALL_KIMI_PROMPT = buildInstallPrompt({
   notes: 'Kimi CLI 安装后通常需要配置 API Key，请明确告知用户在安装完成后按官方文档配置。',
 });
 
-export const INSTALL_CODEX_ACTION_KEY = 'codex';
-export const INSTALL_CODEX_PROMPT = buildInstallPrompt({
+const INSTALL_CODEX_ACTION_KEY = 'codex';
+const INSTALL_CODEX_PROMPT = buildInstallPrompt({
   displayName: 'Codex',
   binaryName: 'codex',
   verifyArgs: '--version',
@@ -161,8 +161,8 @@ export const INSTALL_CODEX_PROMPT = buildInstallPrompt({
   notes: 'Codex CLI 安装后首次运行需要登录 OpenAI 账号（\`codex login\`），请明确告知用户这一步必须手动完成。',
 });
 
-export const INSTALL_MOBILECODER_ACTION_KEY = 'mobilecoder';
-export const INSTALL_MOBILECODER_PROMPT = buildInstallPrompt({
+const INSTALL_MOBILECODER_ACTION_KEY = 'mobilecoder';
+const INSTALL_MOBILECODER_PROMPT = buildInstallPrompt({
   displayName: 'MobileCoder',
   binaryName: 'mobile',
   verifyArgs: '--version',
@@ -173,8 +173,8 @@ export const INSTALL_MOBILECODER_PROMPT = buildInstallPrompt({
   windows: '优先按 MobileCoder 官网安装脚本/PowerShell 执行；或从官网下载安装包。',
 });
 
-export const INSTALL_CODEWHALE_ACTION_KEY = 'codewhale';
-export const INSTALL_CODEWHALE_PROMPT = buildInstallPrompt({
+const INSTALL_CODEWHALE_ACTION_KEY = 'codewhale';
+const INSTALL_CODEWHALE_PROMPT = buildInstallPrompt({
   displayName: 'CodeWhale',
   binaryName: 'codewhale',
   verifyArgs: '--version',
@@ -186,8 +186,8 @@ export const INSTALL_CODEWHALE_PROMPT = buildInstallPrompt({
   windows: '优先用 npm 全局安装（下载预编译 Rust 二进制）：\`npm install -g codewhale\`；或从官方 GitHub Releases 下载 exe。',
 });
 
-export const INSTALL_PI_ACTION_KEY = 'pi';
-export const INSTALL_PI_PROMPT = buildInstallPrompt({
+const INSTALL_PI_ACTION_KEY = 'pi';
+const INSTALL_PI_PROMPT = buildInstallPrompt({
   displayName: 'Pi',
   binaryName: 'pi',
   verifyArgs: '--version',
@@ -199,8 +199,8 @@ export const INSTALL_PI_PROMPT = buildInstallPrompt({
   windows: '优先用 npm 全局安装：\`npm install -g @mariozechner/pi-coding-agent\`；或执行官方 PowerShell 安装脚本。',
 });
 
-export const INSTALL_MIMO_ACTION_KEY = 'mimo';
-export const INSTALL_MIMO_PROMPT = buildInstallPrompt({
+const INSTALL_MIMO_ACTION_KEY = 'mimo';
+const INSTALL_MIMO_PROMPT = buildInstallPrompt({
   displayName: 'MiMo',
   binaryName: 'mimo',
   verifyArgs: '--version',
@@ -212,8 +212,8 @@ export const INSTALL_MIMO_PROMPT = buildInstallPrompt({
   windows: '优先执行官方 PowerShell 安装脚本：\`powershell -ep Bypass -c "irm https://mimo.xiaomi.com/install.ps1 | iex"\`；或用 npm 全局安装：\`npm install -g @mimo-ai/cli\`。',
 });
 
-export const INSTALL_ZHANLU_ACTION_KEY = 'zhanlu';
-export const INSTALL_ZHANLU_PROMPT = buildInstallPrompt({
+const INSTALL_ZHANLU_ACTION_KEY = 'zhanlu';
+const INSTALL_ZHANLU_PROMPT = buildInstallPrompt({
   displayName: 'Zhanlu',
   binaryName: 'zl',
   verifyArgs: '--version',
@@ -227,8 +227,8 @@ export const INSTALL_ZHANLU_PROMPT = buildInstallPrompt({
   notes: '请先询问用户当前是在公网还是内网环境，再选择对应地址；若脚本返回网络错误，提示用户切换另一条地址重试，不要反复重试同一地址。',
 });
 
-export const INSTALL_KILO_ACTION_KEY = 'kilo';
-export const INSTALL_KILO_PROMPT = buildInstallPrompt({
+const INSTALL_KILO_ACTION_KEY = 'kilo';
+const INSTALL_KILO_PROMPT = buildInstallPrompt({
   displayName: 'Kilo',
   binaryName: 'kilo',
   verifyArgs: '--version',

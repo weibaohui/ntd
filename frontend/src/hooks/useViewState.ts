@@ -59,7 +59,7 @@ export type View =
 
 // 028 之前用 'items' + ?panel=detail|post 区分详情；现已统一到 'todos' + path 段，Panel 类型不再需要。
 // 保留 'list' | 'detail' 字面量仅用于 MobileHeader 派生状态，避免大范围改动移动端组件签名。
-export type Panel = 'list' | 'detail' | 'post';
+type Panel = 'list' | 'detail' | 'post';
 
 // 所有合法 View 字面量集合：parseViewFromSegments 用它做 includes 校验，
 // 决定是否接受 URL 第一段为有效视图；新增 View 时必须同步追加，否则会被当成 fallback。

@@ -21,7 +21,7 @@ export async function getAllExperts(): Promise<ExpertMetadata[]> {
  *
  * 根据专家名称获取完整的元数据信息。
  */
-export async function getExpertByName(name: string): Promise<ExpertMetadata> {
+async function getExpertByName(name: string): Promise<ExpertMetadata> {
   return unwrap(await api.get(`/api/v1/experts/${encodeURIComponent(name)}`));
 }
 

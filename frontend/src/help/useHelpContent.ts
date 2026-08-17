@@ -6,7 +6,6 @@
 // 2. md 文件仍在源码树里，AI 可直接 read_file/write_file/edit_file 编辑。
 // 3. 视图 → pageId 的映射也集中在这里，避免 HelpDrawer 重复实现。
 
-import { useMemo } from 'react';
 import type { View } from '@/hooks/useViewState';
 import { HELP_PAGES } from './index';
 import type { HelpPage } from './types';
@@ -70,19 +69,4 @@ export function viewToPageId(view: View, hasDetail: boolean): string {
  */
 export function findHelpPage(pageId: string): HelpPage | undefined {
   return HELP_PAGES.find(p => p.pageId === pageId);
-}
-
-/**
- * Hook：根据当前视图派生默认选中的 pageId。
- *
- * @param activeView 当前视图
- * @param hasDetail 是否处于详情形态
- * @returns 默认选中的 pageId
- */
-export function useDefaultPageId(activeView: View, hasDetail: boolean): string {
-  return useMemo(() => {
-    const pageId = viewToPageId(activeView, hasDetail);
-    // 若该 pageId 已注册，直接用；否则回退到 '_overview'
-    return findHelpPage(pageId) ? pageId : '_overview';
-  }, [activeView, hasDetail]);
 }

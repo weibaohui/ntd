@@ -4,16 +4,16 @@
 // 数据来源：后端 /api/v1/experts 接口，从 ~/.ntd/experts/ 目录加载。
 
 /** 专家类型：单个专家 或 专家团队 */
-export type ExpertType = 'agent' | 'team';
+type ExpertType = 'agent' | 'team';
 
 /** 专家来源：系统内置 或 用户自定义 */
 export type ExpertSource = 'system' | 'user';
 
 /** 成员角色：负责人 或 成员 */
-export type MemberRole = 'lead' | 'member';
+type MemberRole = 'lead' | 'member';
 
 /** 专家标签（多语言） */
-export interface ExpertTag {
+interface ExpertTag {
   zh: string;
   en: string;
 }

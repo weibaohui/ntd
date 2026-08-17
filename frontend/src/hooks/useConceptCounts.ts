@@ -9,10 +9,10 @@ import * as dbLoops from '@/utils/database/loops';
 import type { ConceptNode } from '@/components/onboarding/concepts';
 
 /** 6 个概念当前数量映射，null 表示拉取失败/未拉取。 */
-export type ConceptCounts = Record<ConceptNode['id'], number | null>;
+type ConceptCounts = Record<ConceptNode['id'], number | null>;
 
 /** 快速开始完成状态，按序号索引。 */
-export type QuickStartStatus = Record<number, boolean | null>;
+type QuickStartStatus = Record<number, boolean | null>;
 
 interface UseConceptCountsResult {
   counts: ConceptCounts | null;

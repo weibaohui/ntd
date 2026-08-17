@@ -25,20 +25,20 @@ import * as db from '@/utils/database';
 import { setDefaultExecutorCache } from '@/utils/executors';
 
 /** 单次检测的结果（binary 是否找到 + 解析后的绝对路径）。 */
-export interface DetectResult {
+interface DetectResult {
   found: boolean;
   resolved: string | null;
 }
 
 /** 单次测试的结果（通过与否 + 输出/错误）。Modal 据此渲染。 */
-export interface ExecutorTestResult {
+interface ExecutorTestResult {
   test_passed: boolean;
   output: string | null;
   error: string | null;
 }
 
 /** 测试 Modal 的展示数据：被测执行器名 + 结果体。 */
-export interface ExecutorTestModalData {
+interface ExecutorTestModalData {
   name: string;
   result: ExecutorTestResult;
 }

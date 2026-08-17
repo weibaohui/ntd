@@ -35,14 +35,14 @@ export const STATUS_LABEL: Record<string, string> = {
  *   standard → blue   （标准，正常流程）
  *   complex  → purple （复杂，需多轮迭代）
  */
-export const COMPLEXITY_COLOR: Record<string, string> = {
+const COMPLEXITY_COLOR: Record<string, string> = {
   light: 'green',
   standard: 'blue',
   complex: 'purple',
 };
 
 /** 复杂度中文标签。 */
-export const COMPLEXITY_LABEL: Record<string, string> = {
+const COMPLEXITY_LABEL: Record<string, string> = {
   light: '轻量',
   standard: '标准',
   complex: '复杂',
@@ -270,7 +270,7 @@ export function StatusTag({ status }: { status: string }): ReactNode {
 }
 
 /** 取泳道色（看板列头 + 状态标签共用）。 */
-export function laneColorForStatus(status: string): string {
+function laneColorForStatus(status: string): string {
   const lane = TASK_LANES.find((l) => l.status === status);
   return lane?.color ?? '#6b7280';
 }

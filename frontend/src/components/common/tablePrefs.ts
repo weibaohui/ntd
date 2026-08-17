@@ -9,7 +9,7 @@
  */
 
 /** 排序方向白名单（与 antd SortOrder 对齐）。 */
-export type SortOrder = 'ascend' | 'descend' | null;
+type SortOrder = 'ascend' | 'descend' | null;
 
 /** 排序状态：field 为列 dataIndex，order 为方向。 */
 export interface SortState {

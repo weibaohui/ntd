@@ -27,7 +27,7 @@ import { WorkspaceSwitcher } from '@/components/shell/WorkspaceSwitcher';
 import type { BatchActionItem } from '@/components/common/ActionToolbar';
 
 /** 列表模式：决定调 db 还是 dbLoops，以及哪些批量操作可见。 */
-export type BatchMode = 'item' | 'loop';
+type BatchMode = 'item' | 'loop';
 
 export interface UseBatchActionsOptions {
   mode: BatchMode;

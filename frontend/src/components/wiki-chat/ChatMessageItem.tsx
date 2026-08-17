@@ -44,7 +44,7 @@ interface ChatMessageItemProps {
 }
 
 /** 格式化时间戳为 HH:MM:SS 格式 */
-export function formatChatTime(timestamp?: string): string {
+function formatChatTime(timestamp?: string): string {
   if (!timestamp) return '';
   try {
     const d = new Date(timestamp);

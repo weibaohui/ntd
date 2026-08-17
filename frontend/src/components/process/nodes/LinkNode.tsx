@@ -24,7 +24,7 @@ import type { LinkDefinition } from '@/types/process';
 // ── 节点 data 类型 ─────────────────────────────────
 
 // buildProcessGraph 注入的 data 结构
-export interface LinkNodeData {
+interface LinkNodeData {
   // link 定义
   link: LinkDefinition;
   // 所属 phase 的 id（YAML 里的 phase.id）

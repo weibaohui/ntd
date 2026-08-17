@@ -16,7 +16,7 @@ export interface MentionCandidate {
 }
 
 /** 候选浮层每组(专家/执行器)最多展示条数,避免列表过长。 */
-export const MAX_PER_GROUP = 4;
+const MAX_PER_GROUP = 4;
 
 /**
  * 检测正文末尾正在输入的 @token:末尾 `@` 后跟非空白/非@ 字符。

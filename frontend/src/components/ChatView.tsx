@@ -16,7 +16,6 @@ import type { LogEntry, ChatMessage } from '@/types';
 // 策略模式实现：解析日志为聊天消息
 import { parseLogsToMessages } from '@/utils/logParserStrategy';
 
-export type { ChatMessage };
 export { parseLogsToMessages };
 
 interface ChatViewProps {

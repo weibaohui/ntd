@@ -3,13 +3,13 @@ import { ClockCircleOutlined } from '@ant-design/icons';
 
 const { Text } = Typography;
 
-export interface CronPreset {
+interface CronPreset {
   label: string;
   value: string;
   category: string;
 }
 
-export const CRON_PRESETS: CronPreset[] = [
+const CRON_PRESETS: CronPreset[] = [
   // 常用
   { label: '每10分钟', value: '0 */10 * * * *', category: '常用' },
   { label: '每30分钟', value: '0 */30 * * * *', category: '常用' },

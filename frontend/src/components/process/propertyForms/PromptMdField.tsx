@@ -20,7 +20,7 @@ import { MdEditor } from '@/components/MdEditor';
 
 // 可插入参数的描述结构：key 为点击后插入编辑器的占位符文本，desc 为 Tooltip 说明。
 // 调用方的参数数组允许带多余字段（如 LinkPropertyForm 的 label），结构化类型天然兼容。
-export interface PromptParam {
+interface PromptParam {
   key: string;
   desc: string;
 }

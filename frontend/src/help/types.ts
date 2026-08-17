@@ -8,7 +8,7 @@
  * 一个「功能点」对应页面上一个可见的按钮/操作/区块，
  * 是帮助树形结构的二级节点。
  */
-export interface HelpFeature {
+interface HelpFeature {
   /** 功能点 id，在所属页面内唯一，如 "create-todo"。 */
   id: string;
   /** 中文功能名，显示在树形二级节点。 */
