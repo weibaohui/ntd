@@ -122,6 +122,9 @@ function buildColumns(
       key: 'process',
       width: 220,
       ellipsis: true,
+      // 114：补齐排序——按工艺模板名比较（委派/环路两种执行方式共用 template_name 字段），
+      // 无模板的任务空串兜底排前。
+      sorter: makeSorter<TaskItem>('template_name'),
       // NTD-013：工艺列按执行方式分支——委派走共享 TaskExecutionInfoTag（防文案漂移），
       // 环路走三段式 #工艺id-名称-版本（仅 Table 用三段式，Kanban/Card 仅工艺名，故由 loopTag 传入）。
       render: (_, task) => (
@@ -140,6 +143,8 @@ function buildColumns(
       dataIndex: 'latest_execution_status',
       key: 'latest_execution_status',
       width: 110,
+      // 114：补齐排序（客户端枚举字符串比较）
+      sorter: makeSorter<TaskItem>('latest_execution_status'),
       render: (status?: string) =>
         status ? (
           <Tag color={statusColor(status)}>{STATUS_LABEL[status] ?? status}</Tag>

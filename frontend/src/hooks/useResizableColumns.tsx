@@ -81,9 +81,15 @@ export function useResizableColumns<T>(
     (_pagination, _filters, sorter) => {
       // antd 单排序时 sorter 为对象；多排序为数组（本设计只用单排序）。
       const s = Array.isArray(sorter) ? sorter[0] : sorter;
-      const nextSort: SortState = s?.field
-        ? { field: String(s.field), order: s.order ?? null }
-        : DEFAULT_SORT;
+      // 无 dataIndex 的列（如事项表「类型」列）sorter.field 为 undefined，
+      // 必须回退 columnKey（antd 归一化的 key），否则排序偏好丢失、持久化失效。
+      const field = s?.field != null ? String(s.field) : s?.columnKey != null ? String(s.columnKey) : '';
+      // antd 取消排序（三态最后一步）时 activeSorters 为空，onChange 传「空 sorter」
+      // （legacy 兼容），此时必须保存「无排序」而非回退 DEFAULT_SORT——
+      // 否则默认列永远处于受控 descend，点击取消被覆盖回 descend，三态循环卡死。
+      const nextSort: SortState = s?.order
+        ? { field, order: s.order }
+        : { field: '', order: null };
       setPrefs(prev => {
         const next = { ...prev, sort: nextSort };
         setTablePrefs(tableKey, next);
