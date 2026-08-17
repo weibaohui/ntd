@@ -201,6 +201,7 @@ export function TodoDrawer({ open, todo, onClose, onSaved, defaultWorkspaceId }:
 
   const handleSave = async () => {
     if (!title.trim()) {
+      // 018：校验提示与抽屉标题/输入占位保持「事项」口径，避免与导航的「任务/事项」混用误导用户
       message.error('请输入事项标题');
       return;
     }
@@ -265,6 +266,7 @@ export function TodoDrawer({ open, todo, onClose, onSaved, defaultWorkspaceId }:
           await db.updateScheduler(workspaceToSave!, createdTodo.id, schedulerEnabled, schedulerConfig || null);
         }
 
+        // 018：同上，创建成功提示随「事项」口径（与列表页/详情页对同一实体的称呼一致）
         message.success('事项创建成功');
       }
 
@@ -306,6 +308,7 @@ export function TodoDrawer({ open, todo, onClose, onSaved, defaultWorkspaceId }:
           <Input
             value={title}
             onChange={e => setField('title', e.target.value)}
+            // 018：占位随「事项」口径；tests/e2e-test.spec.ts 按此文案定位输入框，改动需同步
             placeholder="事项标题"
             style={{ fontSize: 16, fontWeight: 600, padding: '8px 12px' }}
           />
@@ -391,6 +394,7 @@ export function TodoDrawer({ open, todo, onClose, onSaved, defaultWorkspaceId }:
             <Input.TextArea
               value={acceptanceCriteria}
               onChange={e => setField('acceptanceCriteria', e.target.value)}
+              // 018：验收标准占位随「事项」口径，e2e 同样按此文案定位，改动需同步
               placeholder="描述完成该事项需要满足的条件..."
               rows={3}
               style={{ resize: 'vertical' }}

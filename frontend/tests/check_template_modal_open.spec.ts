@@ -1,87 +1,80 @@
-// 回归脚本：新建事项抽屉术语 + 「从模板创建」按钮可用性。
-// 背景（NTD-018）：抽屉标题/占位/提示旧为「任务」口径，已统一为「事项」；
-// 同时守护「从模板创建」——用户曾反馈点不开，此处持续验证按钮可点、
-// 模板弹窗能浮在抽屉之上（antd 嵌套 Modal zIndex）、模板接口 200。
-// 运行前提：make dev 已起（18088）。
+// 回归用例（NTD-018 守护）：
+// 1. 新建抽屉术语口径——标题/占位必须是「事项」，不得回退旧「任务」文案；
+// 2. 「从模板创建」可用性——用户曾反馈"点不开"，此处验证按钮可点（无遮挡）、
+//    模板接口 200、弹窗 zIndex 高于抽屉（antd 嵌套 Modal 若被 Drawer 盖住即表现为"点不开"）。
+// 运行前提：make dev 已起；baseURL 由 playwright.config.ts 统一提供（18088），用例内不硬编码。
 
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 
-const BASE = 'http://localhost:18088';
+/**
+ * 打开事项列表并进入「新建」抽屉，返回钉住的工作空间 id。
+ * 工作空间必须钉死：应用 boot 时按 path 排序默认选中某个 ws（本机是 ws3），
+ * 不钉会让断言对象随环境漂移（项目 memory 已知坑）。
+ * 用 addInitScript 抢在应用初始化前写 localStorage——goto 后再 evaluate 会被
+ * useApp 的异步 SELECT_WORKSPACE dispatch 覆盖回默认值（063 用例踩过的竞态）。
+ */
+async function openCreateDrawer(page: Page): Promise<number> {
+  // 取环境里第一个工作空间 id 作为钉住目标；至少存在一个，否则用例无意义。
+  const resp = await page.request.get('/api/v1/workspaces');
+  const body = await resp.json();
+  const wsId: number | undefined = body?.data?.[0]?.id;
+  expect(wsId, '环境内至少存在一个工作空间').toBeTruthy();
 
-test('新建抽屉-从模板创建按钮复现', async ({ page }) => {
-  // 收集 console 错误与失败请求，便于判断「点不开」是 JS 报错还是接口问题。
-  const consoleErrors: string[] = [];
-  page.on('console', (msg) => {
-    if (msg.type() === 'error') consoleErrors.push(msg.text());
-  });
-  page.on('requestfailed', (req) => {
-    consoleErrors.push(`REQ FAIL: ${req.url()} ${req.failure()?.errorText}`);
-  });
+  // addInitScript 回调序列化到浏览器执行，不能闭包捕获 wsId，必须随 arg 传入。
+  await page.addInitScript(
+    (ws) => localStorage.setItem('selected_workspace', String(ws)),
+    wsId,
+  );
 
-  await page.goto(`${BASE}/`, { waitUntil: 'domcontentloaded' });
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(2500);
-
-  // 打开新建抽屉（顶部「新建」按钮，icon + 文本，用子串匹配避开 aria-label 前缀问题）。
+  // 新建按钮带 icon（可访问名含 aria-label 前缀，exact 匹配会失败），用子串匹配。
   await page.locator('button', { hasText: '新建' }).first().click();
   await page.waitForTimeout(1200);
+  return wsId!;
+}
 
-  // 记录抽屉标题并断言 018 术语统一：创建模式必须显示「创建事项」。
-  const drawerTitle = await page.locator('.ant-drawer-title').first().textContent().catch(() => null);
-  console.log('抽屉标题:', drawerTitle);
-  expect(drawerTitle).toBe('创建事项');
+test('新建抽屉标题与占位为「事项」口径（NTD-018）', async ({ page }) => {
+  await openCreateDrawer(page);
+  // 018 后的权威口径：标题精确匹配，占位文案可见；若有人改回「任务」会在此失败。
+  await expect(page.locator('.ant-drawer-title')).toHaveText('创建事项');
+  await expect(page.getByPlaceholder('事项标题')).toBeVisible();
+  await expect(page.getByPlaceholder('描述完成该事项需要满足的条件...')).toBeVisible();
+});
 
-  // 检查「从模板创建」按钮是否存在、可见、可点。
+test('从模板创建：按钮无遮挡、接口 200、弹窗浮于抽屉之上', async ({ page }) => {
+  await openCreateDrawer(page);
+
   const tplBtn = page.locator('button', { hasText: '从模板创建' }).first();
-  const btnCount = await tplBtn.count();
-  const btnVisible = btnCount > 0 ? await tplBtn.isVisible().catch(() => false) : false;
-  // elementFromPoint 验证点击位置最顶层元素是否就是按钮本体（排查被遮挡）。
-  let topElementAtBtn: string | null = null;
-  if (btnVisible) {
-    const box = await tplBtn.boundingBox();
-    if (box) {
-      topElementAtBtn = await page.evaluate(({ x, y }) => {
-        const el = document.elementFromPoint(x, y);
-        // 向上找最近的可描述节点（带 class 的元素），报告按钮是否被别的层盖住。
-        return el ? `${el.tagName}.${(el.className || '').toString().slice(0, 60)}` : null;
-      }, { x: box.x + box.width / 2, y: box.y + box.height / 2 });
-    }
-  }
-  console.log('按钮存在:', btnCount > 0, '可见:', btnVisible, '点击位置最顶层元素:', topElementAtBtn);
+  await expect(tplBtn).toBeVisible();
 
-  // 监听模板接口是否被发出。
-  const tplResponses: string[] = [];
-  page.on('response', (res) => {
-    if (res.url().includes('todo-templates')) tplResponses.push(`${res.status()} ${res.url()}`);
+  // 命中测试：按钮中心点最顶层元素必须是按钮自身内容（antd Button 内为 span）。
+  // 用户反馈的"点不开"最典型成因就是点击坐标被别的浮层占据。
+  const topAtBtn = await tplBtn.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+    return hit ? `${hit.tagName}.${String(hit.className).slice(0, 40)}` : null;
   });
+  expect(topAtBtn).toContain('SPAN');
 
-  if (btnVisible) {
-    await tplBtn.click();
-    await page.waitForTimeout(1500);
-  }
+  // 点击后：模板接口必须发出且返回 200（waitForResponse 先挂监听再点击，避免竞态）。
+  const tplRespPromise = page.waitForResponse((r) => r.url().includes('todo-templates'));
+  await tplBtn.click();
+  expect((await tplRespPromise).status()).toBe(200);
 
-  // 点击后检查 ant-modal 是否出现、是否可见（存在但不可见 = 被 Drawer 盖住）。
-  const modalCount = await page.locator('.ant-modal').count();
-  let modalInfo: string | null = null;
-  if (modalCount > 0) {
-    modalInfo = await page.evaluate(() => {
-      const m = document.querySelector('.ant-modal');
-      if (!m) return null;
-      const rect = m.getBoundingClientRect();
-      const style = getComputedStyle(m);
-      // wrap 是实际参与 z-index 堆叠的节点，一并报告
-      const wrap = m.closest('.ant-modal-wrap');
-      const wrapStyle = wrap ? getComputedStyle(wrap) : null;
-      return {
-        rect: { x: rect.x, y: rect.y, w: rect.width, h: rect.height },
-        display: style.display,
-        zIndex: wrapStyle?.zIndex ?? null,
-        drawerZIndex: document.querySelector('.ant-drawer') ? getComputedStyle(document.querySelector('.ant-drawer')!).zIndex : null,
-      };
-    });
-  }
-  console.log('点击后 .ant-modal 数量:', modalCount, '详情:', JSON.stringify(modalInfo));
-  console.log('todo-templates 接口响应:', tplResponses);
-  console.log('console 错误:', consoleErrors.slice(0, 10));
+  // 弹窗可见，且 zIndex 必须高于抽屉——antd 嵌套 Modal 靠 zIndex 上下文自动抬升，
+  // 一旦被 Drawer 盖住，表现就是"点了没反应"。
+  const modal = page.locator('.ant-modal-wrap:visible .ant-modal').first();
+  await expect(modal).toBeVisible({ timeout: 5000 });
+  const above = await modal.evaluate((el) => {
+    const wrap = el.closest('.ant-modal-wrap');
+    const drawer = document.querySelector('.ant-drawer');
+    const wrapZ = wrap ? Number(getComputedStyle(wrap).zIndex) : -1;
+    const drawerZ = drawer ? Number(getComputedStyle(drawer).zIndex) : -1;
+    return wrapZ > drawerZ;
+  });
+  expect(above, 'modal zIndex 应高于 drawer').toBe(true);
 
-  await page.screenshot({ path: 'frontend/tests/__screenshots__/check_template_modal.png', fullPage: false });
+  // 截图存 test-results/（gitignore 已覆盖，避免二进制误入仓库；也避免相对路径解析出游离目录）。
+  await page.screenshot({ path: 'test-results/check_template_modal.png' });
 });
