@@ -59,7 +59,7 @@ export interface PhaseDefinition {
 }
 
 /** 工艺元信息 */
-export interface ProcessMeta {
+interface ProcessMeta {
   name: string;
   display_name?: string;
   description?: string;
@@ -69,13 +69,13 @@ export interface ProcessMeta {
 }
 
 /** 全局限制 */
-export interface ProcessLimits {
+interface ProcessLimits {
   max_step_executions?: number;
   max_total_tokens?: number;
 }
 
 /** 工艺异常处理配置（YAML abnormal_handler 段，需求 035）。 */
-export interface AbnormalHandlerConfig {
+interface AbnormalHandlerConfig {
   /** 异常处理提示词，可含 {{loop_name}} {{abnormal_status}} {{error_detail}} 等占位符。空=未配置。 */
   prompt?: string;
   /** 触发条件：capped_step / capped_token / failed */

@@ -62,7 +62,7 @@ interface LeftRailItem {
   danger?: boolean;
 }
 
-export type LeftRailVariant = 'rail' | 'drawer';
+type LeftRailVariant = 'rail' | 'drawer';
 
 interface LeftRailProps {
   activeKey: LeftRailKey;

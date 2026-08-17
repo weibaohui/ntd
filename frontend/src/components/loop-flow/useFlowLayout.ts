@@ -29,7 +29,7 @@ export interface FlowEdgeInput {
 }
 
 /** 单个节点的布局位置（SVG 左上角）。 */
-export interface NodePosition {
+interface NodePosition {
   x: number;
   y: number;
 }

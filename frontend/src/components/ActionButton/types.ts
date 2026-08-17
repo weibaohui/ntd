@@ -8,7 +8,7 @@ import type { ReactNode } from 'react';
  *
  * 让自定义完成视图能自洽地操作 Drawer 关闭与重试，不必把 ActionButton 内部状态抬到父组件。
  */
-export interface CompletedViewCtx {
+interface CompletedViewCtx {
   result: string;
   close: () => void;
   retry: () => void;

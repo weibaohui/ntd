@@ -2,7 +2,7 @@ import type { ExecutionRecord, ExecutionUsage } from './execution';
 
 // ─── Dashboard & Statistics types ────────────────────────────
 
-export interface ExecutorCount {
+interface ExecutorCount {
   executor: string;
   count: number;
   execution_count: number;
@@ -13,7 +13,7 @@ export interface ExecutorCount {
   total_cost_usd: number;
 }
 
-export interface ModelCount {
+interface ModelCount {
   model: string;
   count: number;
   execution_count: number;
@@ -26,13 +26,13 @@ export interface ModelCount {
   total_cost_usd: number;
 }
 
-export interface DailyExecution {
+interface DailyExecution {
   date: string;
   success: number;
   failed: number;
 }
 
-export interface DailyTokenStats {
+interface DailyTokenStats {
   date: string;
   input_tokens: number;
   output_tokens: number;
@@ -41,20 +41,20 @@ export interface DailyTokenStats {
   total_cost_usd: number;
 }
 
-export interface TriggerTypeCount {
+interface TriggerTypeCount {
   trigger_type: string;
   count: number;
   success_count: number;
   failed_count: number;
 }
 
-export interface ExecutorDuration {
+interface ExecutorDuration {
   executor: string;
   avg_duration_ms: number;
   execution_count: number;
 }
 
-export interface ModelCacheStat {
+interface ModelCacheStat {
   model: string;
   total_input_tokens: number;
   total_cache_read_tokens: number;
@@ -129,7 +129,7 @@ export interface ExecutorSkills {
   skills: SkillMeta[];
 }
 
-export interface SkillPresence {
+interface SkillPresence {
   present: boolean;
   version: string | null;
   modified_at: string | null;
@@ -216,7 +216,7 @@ export interface FeishuHistoryChat {
 
 // ─── Skills Statistics ────────────────────────────────────────
 
-export interface SkillsStats {
+interface SkillsStats {
   total_invocations: number;
   success_invocations: number;
   failed_invocations: number;
@@ -227,18 +227,18 @@ export interface SkillsStats {
   daily_invocations: DailySkillInvocation[];
 }
 
-export interface SkillTop {
+interface SkillTop {
   skill_name: string;
   count: number;
   success_rate: number;
 }
 
-export interface ExecutorSkillCount {
+interface ExecutorSkillCount {
   executor: string;
   skills_count: number;
 }
 
-export interface DailySkillInvocation {
+interface DailySkillInvocation {
   date: string;
   count: number;
   success: number;
@@ -246,7 +246,7 @@ export interface DailySkillInvocation {
 
 // ─── Backup types ────────────────────────────────────────────
 
-export interface BackupStats {
+interface BackupStats {
   auto_backup_enabled: boolean;
   last_backup: string | null;
   auto_backup_cron: string;
@@ -259,13 +259,13 @@ export interface BackupStats {
   recent_backups: RecentBackup[];
 }
 
-export interface BackupCategoryStats {
+interface BackupCategoryStats {
   file_count: number;
   total_size: number;
   last_backup: string | null;
 }
 
-export interface RecentBackup {
+interface RecentBackup {
   type: string;
   name: string;
   size: number;
@@ -274,7 +274,7 @@ export interface RecentBackup {
 
 // ─── Usage Statistics (ccusage integration) ──────────────────
 
-export interface UsageStat {
+interface UsageStat {
   date: string;
   input_tokens: number;
   output_tokens: number;
@@ -290,7 +290,7 @@ export interface UsageStat {
   stats_type: string;
 }
 
-export interface ModelBreakdown {
+interface ModelBreakdown {
   date: string;
   model_name: string;
   input_tokens: number;

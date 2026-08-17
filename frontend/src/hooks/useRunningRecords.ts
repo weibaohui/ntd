@@ -24,7 +24,7 @@ import { useTodos } from '@/hooks/useTodoContext';
 import { useAutoRefreshRunningBoard } from '@/hooks/useRunningBoard';
 
 /** 面板 Tab 当前页（原联合类型逐字保留；'api-key' 经 setRunningTab 的 cast 写入）。 */
-export type ExecutorPanelTab = 'executors' | 'running' | 'sessions';
+type ExecutorPanelTab = 'executors' | 'running' | 'sessions';
 
 export interface UseRunningRecordsReturn {
   /** 面板当前 Tab。 */

@@ -11,7 +11,7 @@ export interface ProviderModel {
 }
 
 /** Provider 接入协议。后端 provider_config 仅支持这两种，summary/detail/input 三处复用，故抽成具名联合（08-类型定义规范 §2）。 */
-export type ProviderProtocol = 'openai' | 'anthropic';
+type ProviderProtocol = 'openai' | 'anthropic';
 
 /** 列表接口返回的摘要——不含 api_key / models，只给计数。对应后端 ProviderSummary。 */
 export interface ProviderSummary {

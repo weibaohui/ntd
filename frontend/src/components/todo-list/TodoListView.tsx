@@ -357,7 +357,7 @@ function useSelectedIdsClipping(items: TodoCenterItem[]) {
  * 整体处理思路：
  * 1. 接收已过滤的 items，渲染 Ant Design Table。
  * 2. 内部用 useBatchActions hook 管理批量 Modal。
- * 3. 选中行通过 selectedIds 受控，触发顶部 ActionToolbar 的批量菜单。
+ * 3. 选中行通过 selectedIds 受控，触发顶部 BatchButton 的批量菜单（原 ActionToolbar 组件已删）。
  * 4. 单行操作走 Dropdown 菜单。
  */
 export function TodoListView({

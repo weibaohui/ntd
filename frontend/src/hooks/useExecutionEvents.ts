@@ -100,7 +100,7 @@ export interface BlackboardDebounceStatus {
 }
 
 /** Wiki 对话开始事件：用户发起对话、执行器启动时推送 */
-export interface WikiChatStartedEvent {
+interface WikiChatStartedEvent {
   type: 'WikiChatStarted';
   task_id: string;
   workspace_id: number;
@@ -109,7 +109,7 @@ export interface WikiChatStartedEvent {
 }
 
 /** Wiki 对话输出事件：执行器每解析出一行日志就推送一次 */
-export interface WikiChatOutputEvent {
+interface WikiChatOutputEvent {
   type: 'WikiChatOutput';
   task_id: string;
   workspace_id: number;
@@ -117,7 +117,7 @@ export interface WikiChatOutputEvent {
 }
 
 /** Wiki 对话完成事件：执行器退出时推送，携带最终结果 */
-export interface WikiChatFinishedEvent {
+interface WikiChatFinishedEvent {
   type: 'WikiChatFinished';
   task_id: string;
   workspace_id: number;

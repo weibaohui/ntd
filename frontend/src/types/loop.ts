@@ -1,44 +1,15 @@
 // Loop Studio 类型定义。
 //
 // 与 backend/src/models/loop_.rs 一一对应：
-// - LoopDto = 环路主表 DTO
 // - LoopExecutionDto = 单次执行记录
+// （原 LoopDto 已删除——需求 044 环路瘦身时前端不再消费主表 DTO）
 //
 // 需求 044（环路瘦身）：环路降级为「工艺的运行时承载」，
 // 触发器（loop_triggers）、webhook、评审模板、手工创建/更新等概念整体下线，
 // 本文件只保留只读查询与运行态（启停/标签/审批）所需的类型。
 // 前端组件用这些类型组装 LoopStudio 页面。
 
-export type LoopStatus = 'enabled' | 'paused';
-
-export interface LoopDto {
-  id: number;
-  name: string;
-  description: string;
-  /**
-   * 工作空间 ID（workspaces.id），唯一键。
-   * 组件间统一传 id，path 不再上送 API；前端展示用 workspaces.name/path 自行查询。
-   */
-  workspace_id: number | null;
-  status: string;
-  limits_config: string;
-  /** 异常处理提示词快照（工艺定义）；null=未配置。需求 035。 */
-  abnormal_handler_prompt: string | null;
-  /** 异常处理触发条件 JSON 数组 */
-  abnormal_handler_trigger_on: string;
-  /** 来源工艺模板 ID（非工艺实例化环路时缺省不返回） */
-  process_template_id?: number | null;
-  /** 实例化时的工艺版本快照（「来源工艺」面包屑展示用） */
-  process_template_version?: string | null;
-  /** 来源工艺模板唯一名（面包屑展示用；040 起不再唯一） */
-  process_template_name?: string | null;
-  /** 来源工艺模板 guid（040：面包屑回跳按 guid 寻址） */
-  process_template_guid?: string | null;
-  /** 来源工艺模板显示名（面包屑展示用） */
-  process_template_display_name?: string | null;
-  created_at: string | null;
-  updated_at: string | null;
-}
+type LoopStatus = 'enabled' | 'paused';
 
 export interface LoopExecutionDto {
   id: number;
@@ -61,7 +32,7 @@ export interface LoopExecutionDto {
   error_message?: string | null;
 }
 
-/** 门禁评价摘要（需求 047）：门禁级 status/result，随 LoopStepExecutionDto 下发。 */
+/** 门禁评价摘要（需求 047）：门禁级 status/result，随步骤执行记录的 gate_results 数组下发。 */
 export interface GateResultDto {
   id: number;
   gate_type: string;
@@ -70,52 +41,6 @@ export interface GateResultDto {
   status: string;
   /** 评价结果文本（如「AI 评审未通过（评分 45，阈值 60）」） */
   result?: string | null;
-}
-
-export interface LoopStepExecutionDto {
-  id: number;
-  loop_execution_id: number;
-  /** 关联的 loop_step id（FK 到 loop_steps 表） */
-  loop_step_id: number;
-  /** 关联的 todo id（FK 到 todos 表） */
-  todo_id: number;
-  status: string;
-  execution_record_id: number | null;
-  error_message: string | null;
-  started_at: string | null;
-  finished_at: string | null;
-  /** AI 评审得分（0-100）。由 phase_driver 门禁评估时回写。 */
-  rating: number | null;
-  /** 历史快照：旧评分制未达标策略，仅为历史记录展示保留 */
-  unrated_policy: string | null;
-  /** 门禁阈值（ai_criteria_review.min_score）。由 phase_driver 回写。 */
-  min_rating: number | null;
-  step_name: string | null;
-  sequence_index: number;
-  conclusion: string | null;
-  /** 该环节消耗的 token（从关联的 execution_record.usage 解析） */
-  input_tokens: number | null;
-  /** 人工审批状态: null | 'pending' | 'approved' */
-  approval_status: string | null;
-  /** 审批人的备注/意见 */
-  approval_comment: string | null;
-  /**
-   * 待审批的 human_approval 门禁 ID（044 门禁制审批）：
-   * 仅当环节处于 pending_approval 且存在 pending 门禁时由后端注入，
-   * 前端凭它调 POST .../steps/{seid}/gates/{gid}/approve，无需再查审计接口。
-   */
-  pending_gate_id?: number | null;
-  output_tokens: number | null;
-  cache_read_input_tokens: number | null;
-  cache_creation_input_tokens: number | null;
-  total_cost_usd: number | null;
-  /**
-   * 评分来源评审 record id（需求 047）：反查 execution_records.source_execution_record_id 得到。
-   * 前端做可点击徽章，跳转看评审理由（result 含 RATING + 评审文本）。
-   */
-  review_record_id?: number | null;
-  /** 门禁级评价摘要（需求 047）：前端展示每个门禁的 status/result（失败原因）。 */
-  gate_results?: GateResultDto[];
 }
 
 export interface LoopStepDto {

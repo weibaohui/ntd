@@ -26,7 +26,7 @@ import type { ExecutorConfig } from '@/types';
 import * as db from '@/utils/database';
 
 /** updateExecutor 接受的字段补丁（与 db/skills.ts 的 data 形参同构，单一事实源）。 */
-export type ExecutorPatch = {
+type ExecutorPatch = {
   path?: string;
   enabled?: boolean;
   display_name?: string;
@@ -35,7 +35,7 @@ export type ExecutorPatch = {
 };
 
 /** inlineFieldSave 返回的双触发处理器三件套。 */
-export interface InlineFieldSaveHandlers {
+interface InlineFieldSaveHandlers {
   /** 失焦保存：去空格后与当前值比较，未改不存，改动则交给 onSave。 */
   onBlur: (e: React.FocusEvent<HTMLInputElement>) => void;
   /** 回车触发 blur → 走 onBlur 保存路径（双触发收敛到一处）。 */

@@ -1,11 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import {
   INSTALL_EXECUTOR_ACTION_TYPE,
-  INSTALL_CLAUCODE_ACTION_KEY,
-  INSTALL_CLAUCODE_PROMPT,
   getExecutorInstallPrompt,
   getInstallableExecutorNames,
 } from './executorInstallPrompts';
+
+// claudecode 的安装键用字面量断言；prompt 不做全等快照（易碎），
+// 也不用「再调一次函数的结果」做全等——那是 f(x)===f(x) 自证，断言不了任何东西。
+const CLAUCODE_ACTION_KEY = 'claudecode';
+const CLAUCODE_PROMPT = getExecutorInstallPrompt(CLAUCODE_ACTION_KEY)?.prompt ?? '';
 
 /**
  * 验证 getExecutorInstallPrompt 对已知执行器返回正确结构。
@@ -15,8 +18,9 @@ describe('getExecutorInstallPrompt', () => {
   it('returns prompt and actionKey for claudecode', () => {
     const result = getExecutorInstallPrompt('claudecode');
     expect(result).not.toBeNull();
-    expect(result?.actionKey).toBe(INSTALL_CLAUCODE_ACTION_KEY);
-    expect(result?.prompt).toBe(INSTALL_CLAUCODE_PROMPT);
+    expect(result?.actionKey).toBe(CLAUCODE_ACTION_KEY);
+    // prompt 只断言内容相关性（包含 claude 安装命令），全等断言见上方说明。
+    expect(result?.prompt).toContain('claude');
   });
 
   it('returns null for unknown executor', () => {
@@ -87,7 +91,7 @@ describe('prompt content', () => {
   });
 
   it('claudecode prompt asks to verify specifically claude --version', () => {
-    expect(INSTALL_CLAUCODE_PROMPT).toContain('claude --version');
+    expect(CLAUCODE_PROMPT).toContain('claude --version');
   });
 
   it('uses the shared action type', () => {
