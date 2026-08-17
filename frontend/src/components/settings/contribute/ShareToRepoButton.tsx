@@ -12,6 +12,11 @@ import { useViewState } from '@/hooks/useViewState';
 import { getContributionAuthStatus } from '@/utils/database/contribution';
 import { THIRD_PARTY_SETTINGS_TAB } from '@/components/settings/ThirdPartyPanel';
 
+// 113：分享类 action 统一固定 actionKey（与标题优化 title_optimize/default 同口径）——
+// 一类分享只占一个事项（expert/process/skill/todo_contribute 各 1 个），
+// 重复分享只新增执行记录，资源区分靠 params（resource_name/remote_path），不再按资源建事项。
+const SHARE_ACTION_KEY = 'default';
+
 /**
  * 把定义目录的绝对路径转成 ~/ 相对路径，避免在 prompt/执行记录里暴露家目录下的用户名。
  * 资源目录都在 ~/.ntd/ 下（~/.ntd/experts/、~/.ntd/processes/、~/.ntd/bundled/ 等）。
@@ -32,7 +37,6 @@ export function toHomePath(absPath: string): string {
  */
 export function ShareToRepoButton({
   actionType,
-  actionKey,
   params,
   buildPrompt,
   panelTitle,
@@ -43,8 +47,6 @@ export function ShareToRepoButton({
 }: {
   /** ActionButton action_type（按资源区分：expert/process/todo/skill_contribute） */
   actionType: string;
-  /** ActionButton action_key（资源名，用于执行记录去重） */
-  actionKey: string;
   /** 提示词占位符参数（{{key}} 替换），与 buildPrompt 的占位符一一对应 */
   params: Record<string, string>;
   /** 提示词构建函数（按资源类型），在渲染 ActionButton 时调用 */
@@ -108,7 +110,8 @@ export function ShareToRepoButton({
     return (
       <ActionButton
         actionType={actionType}
-        actionKey={actionKey}
+        // 113：固定 key，一类分享共用一个事项；actionType 负责区分四类资源
+        actionKey={SHARE_ACTION_KEY}
         prompt={buildPrompt()}
         params={finalParams}
         icon={<ShareAltOutlined />}

@@ -145,7 +145,6 @@ export function TodoTemplatesTab() {
                     {!record.is_system && (
                       <ShareToRepoButton
                         actionType="todo_contribute"
-                        actionKey={`todo-${record.id}`}
                         params={{
                           resource_name: record.title,
                           version: '',

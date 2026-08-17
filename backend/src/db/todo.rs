@@ -1343,6 +1343,11 @@ impl Database {
         if let Some(m) = existing {
             let mut am: todos::ActiveModel = m.into();
             am.deleted_at = ActiveValue::Set(Some(crate::models::utc_timestamp()));
+            // 113：软删除同时清空 action 标识，释放 (action_type, action_key, workspace_id)
+            // 唯一索引占用——否则软删行占死该键，同 key action 再次执行会 UNIQUE 冲突。
+            // 对非 action 事项（本路径的讨论载体 todo）这两列本就是 NULL，清空无副作用。
+            am.action_type = ActiveValue::Set(None);
+            am.action_key = ActiveValue::Set(None);
             am.update(&self.conn).await?;
         }
         Ok(())
@@ -1428,11 +1433,16 @@ impl Database {
         self.exec_update(am).await
     }
 
+    /// 软删除事项（置 deleted_at，事项中心/列表自动隐藏）。
+    /// 113：同时清空 action_type/action_key——软删行若不释放 (action_type, action_key,
+    /// workspace_id) 唯一索引，删除后再次分享/执行同 key action 会新建撞索引报错。
     pub async fn delete_todo(&self, id: i64) -> Result<(), sea_orm::DbErr> {
         let now = crate::models::utc_timestamp();
         let am = todos::ActiveModel {
             id: ActiveValue::Unchanged(id),
             deleted_at: ActiveValue::Set(Some(now)),
+            action_type: ActiveValue::Set(None),
+            action_key: ActiveValue::Set(None),
             ..Default::default()
         };
         self.exec_update(am).await
@@ -1445,6 +1455,9 @@ impl Database {
         let now = crate::models::utc_timestamp();
         let res = todos::Entity::update_many()
             .col_expr(todos::Column::DeletedAt, Some(now).into())
+            // 113：与 delete_todo 同口径，批量删除也释放 action 唯一索引占用
+            .col_expr(todos::Column::ActionType, None::<String>.into())
+            .col_expr(todos::Column::ActionKey, None::<String>.into())
             .filter(todos::Column::Id.is_in(ids.to_vec()))
             .filter(todos::Column::DeletedAt.is_null())
             .exec(&self.conn)
@@ -2128,6 +2141,121 @@ mod todo_center_tests {
         assert!(db.get_todo(id).await.unwrap().unwrap().webhook_enabled);
         assert!(db.update_todo_webhook(id, false).await.unwrap());
         assert!(!db.get_todo(id).await.unwrap().unwrap().webhook_enabled);
+    }
+
+    // -------- 113：软删除释放 action 唯一键 --------
+
+    /// 113：delete_todo 软删除后 action_type/action_key 被清空，
+    /// 不再占用 (action_type, action_key, workspace_id) 唯一索引。
+    #[tokio::test]
+    async fn test_delete_todo_clears_action_keys() {
+        let db = fresh_db().await;
+        let id = seed_todo(&db, "动作项").await;
+        // 直接 SQL 置 action 标识，模拟 find_or_create_todo 落库后的形态
+        db.exec(&format!(
+            "UPDATE todos SET action_type='expert_contribute', action_key='default' WHERE id={id}"
+        ))
+        .await
+        .expect("set action keys");
+
+        db.delete_todo(id).await.expect("delete");
+
+        let row = db
+            .conn
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                format!("SELECT action_type, action_key FROM todos WHERE id={id}"),
+            ))
+            .await
+            .expect("query row")
+            .expect("row exists");
+        let at: Option<String> = row.try_get_by_index(0).expect("action_type readable");
+        let ak: Option<String> = row.try_get_by_index(1).expect("action_key readable");
+        assert_eq!(at, None, "软删后 action_type 应清空");
+        assert_eq!(ak, None, "软删后 action_key 应清空");
+    }
+
+    /// 113：batch_delete_todos 批量软删同样清空 action 标识。
+    #[tokio::test]
+    async fn test_batch_delete_todos_clears_action_keys() {
+        let db = fresh_db().await;
+        let id1 = seed_todo(&db, "批量动作一").await;
+        let id2 = seed_todo(&db, "批量动作二").await;
+        // 两行分属不同 workspace：同键同 workspace 本就违反唯一索引（业务上也不会出现），
+        // 测试目的是验证批量软删后 action 标识被清空
+        db.exec(&format!(
+            "UPDATE todos SET action_type='skill_contribute', action_key='default', workspace_id=1 WHERE id={id1}"
+        ))
+        .await
+        .expect("set action keys");
+        db.exec(&format!(
+            "UPDATE todos SET action_type='skill_contribute', action_key='default', workspace_id=2 WHERE id={id2}"
+        ))
+        .await
+        .expect("set action keys");
+
+        let affected = db.batch_delete_todos(&[id1, id2]).await.expect("batch delete");
+        assert_eq!(affected, 2, "应删除两行");
+
+        let row = db
+            .conn
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                format!("SELECT COUNT(*) FROM todos WHERE id IN ({id1},{id2}) AND action_type IS NOT NULL"),
+            ))
+            .await
+            .expect("query")
+            .expect("row");
+        let remaining: i64 = row.try_get_by_index(0).expect("count readable");
+        assert_eq!(remaining, 0, "批量软删后不应残留 action_type");
+    }
+
+    /// 113：soft_delete_todo（内部软删路径）同样清空 action 标识。
+    #[tokio::test]
+    async fn test_soft_delete_todo_clears_action_keys() {
+        let db = fresh_db().await;
+        let id = seed_todo(&db, "内部软删项").await;
+        db.exec(&format!(
+            "UPDATE todos SET action_type='process_contribute', action_key='default' WHERE id={id}"
+        ))
+        .await
+        .expect("set action keys");
+
+        db.soft_delete_todo(id).await.expect("soft delete");
+
+        let row = db
+            .conn
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                format!("SELECT action_type, action_key FROM todos WHERE id={id}"),
+            ))
+            .await
+            .expect("query row")
+            .expect("row exists");
+        let at: Option<String> = row.try_get_by_index(0).expect("action_type readable");
+        assert_eq!(at, None, "内部软删后 action_type 应清空");
+    }
+
+    /// 113：删除 action 事项后，同 (action_type, action_key, workspace_id) 可再次创建——
+    /// 这是「删除后再次分享不再 UNIQUE 冲突」的直接回归防线。
+    #[tokio::test]
+    async fn test_recreate_same_action_key_after_delete_succeeds() {
+        let db = fresh_db().await;
+        let id = seed_todo(&db, "动作项").await;
+        db.exec(&format!(
+            "UPDATE todos SET action_type='expert_contribute', action_key='default', workspace_id=1 WHERE id={id}"
+        ))
+        .await
+        .expect("set action keys");
+
+        db.delete_todo(id).await.expect("delete");
+
+        // 同键再插入：若唯一索引仍被软删行占用会 UNIQUE 报错，此处成功即修复生效
+        db.exec(
+            "INSERT INTO todos (title, prompt, status, action_type, action_key, workspace_id)              VALUES ('新事项','p','pending','expert_contribute','default',1)",
+        )
+        .await
+        .expect("同 action 键重建应成功（唯一索引已释放）");
     }
 
     /// get_todo_center 把普通事项分到 Manual，已归档事项分到 Archived，

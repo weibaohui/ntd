@@ -33,6 +33,12 @@ export function sourceLabel(actionType?: string | null): string | null {
     blackboard_propose: '黑板推荐',
     title_optimize: '标题优化',
     prompt_optimize: 'Prompt 优化',
+    // 113：分享类 action 统一 key 后事项中心只显示 4 个分享事项，
+    // 中文标签让「快捷」来源 Tag 与来源筛选下拉可读（否则显示原始英文串）
+    expert_contribute: '专家贡献',
+    process_contribute: '工艺分享',
+    skill_contribute: '技能分享',
+    todo_contribute: '模板分享',
   };
   return map[actionType] ?? actionType;
 }

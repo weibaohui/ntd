@@ -346,7 +346,6 @@ function ProcessListView({ workspaceId, onOpenLoop, processGuid }: Omit<ProcessP
               <span key="share">
                 <ShareToRepoButton
                   actionType="process_contribute"
-                  actionKey={p.guid}
                   params={{
                     resource_name: p.name,
                     version: p.version,

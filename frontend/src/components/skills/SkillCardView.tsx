@@ -185,7 +185,6 @@ function SkillCard({ skill, executors, onClick, shareDir }: {
           >
             <ShareToRepoButton
               actionType="skill_contribute"
-              actionKey={skill.name}
               params={{
                 resource_name: skill.name,
                 version: skill.version || '',
