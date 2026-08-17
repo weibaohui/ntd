@@ -1,5 +1,5 @@
 import { api, unwrap } from './client';
-import type { Todo, Tag, TodoTemplate, ComputedBucket, TodoCenterItem, TodoCenterPage, TodoBrief, TodoListPage, LoopRefSummary } from '@/types';
+import type { Todo, TodoTemplate, ComputedBucket, TodoCenterItem, TodoCenterPage, TodoBrief, TodoListPage, LoopRefSummary } from '@/types';
 
 // Todo APIs — 所有 todo 端点嵌套在 /api/v1/workspaces/{ws}/todos 下（后端 ADR-7 纯 workspace 隔离）。
 // workspaceId 从 query/body 提升到 URL 路径段，调用方必须显式传入。
@@ -67,7 +67,6 @@ export async function getTodoBriefs(
 export async function createTodo(
   title: string,
   prompt: string = '',
-  tagIds: number[] = [],
   workspaceId: number,
   acceptanceCriteria?: string,
   autoReviewEnabled?: boolean,
@@ -76,7 +75,7 @@ export async function createTodo(
   model?: string | null,
 ): Promise<Todo> {
   // workspace_id 仅从 URL 路径段传入（后端 v1 路由从 Path 提取），body 中不再传递
-  const body: Record<string, unknown> = { title, prompt, tag_ids: tagIds };
+  const body: Record<string, unknown> = { title, prompt };
   if (acceptanceCriteria !== undefined) body.acceptance_criteria = acceptanceCriteria;
   if (autoReviewEnabled !== undefined) body.auto_review_enabled = autoReviewEnabled;
   if (webhookEnabled !== undefined) body.webhook_enabled = webhookEnabled;
@@ -124,10 +123,6 @@ export async function deleteTodo(workspaceId: number, id: number): Promise<void>
 /** 单字段改状态（056：看板拖拽用）——后端 force-status 端点只改 status，无需携带 prompt 全量字段。 */
 export async function updateTodoStatus(workspaceId: number, id: number, status: Todo['status']): Promise<Todo> {
   return unwrap(await api.put(`/api/v1/workspaces/${workspaceId}/todos/${id}/force-status`, { status }));
-}
-
-export async function updateTodoTags(workspaceId: number, todoId: number, tagIds: number[]): Promise<void> {
-  await api.put(`/api/v1/workspaces/${workspaceId}/todos/${todoId}/tags`, { tag_ids: tagIds });
 }
 
 /** 批量更新事项执行器。后端提供专用接口，单次 SQL 完成。 */
@@ -187,23 +182,9 @@ export async function batchCopyTodosWorkspace(
   return unwrap(await api.post(`/api/v1/workspaces/${workspaceId}/todos/batch/copy-workspace`, { ids, workspace_id }));
 }
 
-// Tag APIs — 全局资源，不嵌套 workspace（tags 表无 workspace_id 列）
-
 /** 单个 todo 详情（用于批量操作前取 title/prompt 等不可变字段）。 */
 export async function getTodo(workspaceId: number, id: number): Promise<Todo> {
   return unwrap(await api.get(`/api/v1/workspaces/${workspaceId}/todos/${id}`));
-}
-
-export async function getAllTags(): Promise<Tag[]> {
-  return unwrap(await api.get('/api/v1/tags'));
-}
-
-export async function createTag(name: string, color: string): Promise<Tag> {
-  return unwrap(await api.post('/api/v1/tags', { name, color }));
-}
-
-export async function deleteTag(id: number): Promise<void> {
-  await api.delete(`/api/v1/tags/${id}`);
 }
 
 // Todo Template APIs

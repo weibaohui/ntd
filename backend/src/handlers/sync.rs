@@ -4,7 +4,6 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 use crate::db::Database;
 use crate::handlers::{ApiResponse, AppError, AppState};
@@ -97,8 +96,6 @@ pub struct CloudTodoItem {
     pub scheduler_enabled: bool,
     #[serde(default)]
     pub scheduler_config: Option<String>,
-    #[serde(default)]
-    pub tag_names: Vec<String>,
     /// 工作空间 ID（workspaces.id），唯一键。
     /// 同步 payload 不再带路径——破坏式变更，所有调用方必须改为传 id。
     #[serde(default)]
@@ -112,8 +109,6 @@ pub struct CloudSyncData {
     pub version: String,
     #[serde(default)]
     pub todos: Vec<CloudTodoItem>,
-    #[serde(default)]
-    pub tags: Vec<String>,
     #[serde(default)]
     pub skills: Vec<String>,
 }
@@ -513,35 +508,24 @@ async fn resolve_cloud_workspace(
         .ok_or_else(|| "创建 /tmp fallback 失败".to_string())
 }
 
-// tag_map 仅用于 .get() 查询，按引用传入避免不必要的 HashMap clone
-fn local_todos_to_cloud(todos: Vec<Todo>, tag_map: &HashMap<i64, String>) -> CloudSyncData {
+fn local_todos_to_cloud(todos: Vec<Todo>) -> CloudSyncData {
     let cloud_todos: Vec<CloudTodoItem> = todos
         .into_iter()
-        .map(|t| {
-            let tag_names: Vec<String> = t
-                .tag_ids
-                .iter()
-                .filter_map(|id| tag_map.get(id).cloned())
-                .collect();
-
-            CloudTodoItem {
-                title: t.title,
-                prompt: t.prompt,
-                status: t.status.to_string(),
-                executor: t.executor,
-                scheduler_enabled: t.scheduler_enabled,
-                scheduler_config: t.scheduler_config,
-                tag_names,
-                workspace_id: t.workspace_id,
-                worktree: None,
-            }
+        .map(|t| CloudTodoItem {
+            title: t.title,
+            prompt: t.prompt,
+            status: t.status.to_string(),
+            executor: t.executor,
+            scheduler_enabled: t.scheduler_enabled,
+            scheduler_config: t.scheduler_config,
+            workspace_id: t.workspace_id,
+            worktree: None,
         })
         .collect();
 
     CloudSyncData {
         version: "1.0".to_string(),
         todos: cloud_todos,
-        tags: vec![],
         skills: vec![],
     }
 }
@@ -589,14 +573,8 @@ pub async fn cloud_sync_push(
         todos.extend(batch);
     }
 
-    // 获取标签映射
-    let tags = state.db.get_tags().await.map_err(|e| {
-        AppError::Internal(format!("获取本地标签失败: {}", e))
-    })?;
-    let tag_map: HashMap<i64, String> = tags.into_iter().map(|t| (t.id, t.name)).collect();
-
     // 转换为云端格式
-    let cloud_data = local_todos_to_cloud(todos, &tag_map);
+    let cloud_data = local_todos_to_cloud(todos);
     let yaml_content = serde_yaml::to_string(&cloud_data)
         .map_err(|e| AppError::Internal(format!("序列化失败: {}", e)))?;
 

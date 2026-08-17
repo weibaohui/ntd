@@ -5,10 +5,9 @@
 //
 // 1. LOOP_STATUS_META：环路状态 → 中文 + 颜色映射
 // 2. renderLoopStatusTag：状态 Tag 渲染
-// 3. renderTagList：标签列表渲染（最多展示 max 个）
-// 4. buildRowActions：单行操作菜单构建
-// 5. buildColumns：列定义构建（useMemo 包装，避免每次渲染重建）
-// 6. BatchButton：批量操作按钮组件
+// 3. buildRowActions：单行操作菜单构建
+// 4. buildColumns：列定义构建（useMemo 包装，避免每次渲染重建）
+// 5. BatchButton：批量操作按钮组件
 
 import type { ReactNode } from 'react';
 import { Button, Dropdown, Tag } from 'antd';
@@ -24,7 +23,6 @@ import {
 import { formatRelativeTime } from '@/utils/datetime';
 import { formatProcessText } from '@/utils/processText';
 import { makeSorter } from '@/hooks/useResizableColumns';
-import type { Tag as TagType } from '@/types';
 import type { LoopListItem } from '@/types/loop';
 
 /** 环路状态 → 中文 + 颜色；与 LoopStudioDetailPanel 的状态展示保持一致。 */
@@ -40,25 +38,6 @@ export function renderLoopStatusTag(status?: string | null): ReactNode {
   const meta = LOOP_STATUS_META[status];
   if (!meta) return status;
   return <Tag color={meta.color}>{meta.label}</Tag>;
-}
-
-/** 把 tag_ids 解析成 Tag 列表，最多展示 max 个，超出以 +N 显示。 */
-export function renderTagList(tagIds: number[] | undefined, tags: TagType[], max = 3): ReactNode {
-  if (!tagIds || tagIds.length === 0) return '-';
-  const resolved = tagIds
-    .map(id => tags.find(t => t.id === id))
-    .filter((t): t is TagType => !!t);
-  if (resolved.length === 0) return '-';
-  const visible = resolved.slice(0, max);
-  const overflow = resolved.length - visible.length;
-  return (
-    <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
-      {visible.map(t => (
-        <Tag key={t.id} color={t.color}>{t.name}</Tag>
-      ))}
-      {overflow > 0 && <Tag>+{overflow}</Tag>}
-    </span>
-  );
 }
 
 interface BuildRowActionsArgs {
@@ -113,7 +92,6 @@ export function loopProcessText(record: LoopListItem): string {
 }
 
 interface BuildColumnsArgs {
-  tags: TagType[];
   onSelectLoop: (id: number) => void;
   onDelete: (loop: LoopListItem) => void;
   onToggleStatus: (loop: LoopListItem) => void;
@@ -124,7 +102,6 @@ interface BuildColumnsArgs {
  * 抽成 useMemo 包装的函数，避免每次渲染重建列对象。
  */
 export function buildColumns({
-  tags,
   onSelectLoop,
   onDelete,
   onToggleStatus,
@@ -173,12 +150,6 @@ export function buildColumns({
       // 054：可排序列（状态枚举字符串排序）
       sorter: makeSorter<LoopListItem>('status'),
       render: renderLoopStatusTag,
-    },
-    {
-      title: '标签',
-      dataIndex: 'tag_ids',
-      width: 180,
-      render: (tagIds: number[]) => renderTagList(tagIds, tags),
     },
     {
       title: '环节',

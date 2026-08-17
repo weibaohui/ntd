@@ -284,20 +284,6 @@ pub struct ExecutorCount {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TagCount {
-    pub tag_id: i64,
-    pub tag_name: String,
-    pub tag_color: String,
-    pub count: i64,
-    pub execution_count: i64,
-    pub success_count: i64,
-    pub failed_count: i64,
-    pub total_input_tokens: u64,
-    pub total_output_tokens: u64,
-    pub total_cost_usd: f64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelCount {
     pub model: String,
     pub count: i64,
@@ -335,7 +321,6 @@ pub struct DashboardStats {
     pub running_todos: i64,
     pub completed_todos: i64,
     pub failed_todos: i64,
-    pub total_tags: i64,
     pub scheduled_todos: i64,
     pub total_executions: i64,
     pub success_executions: i64,
@@ -347,7 +332,6 @@ pub struct DashboardStats {
     pub total_cost_usd: f64,
     pub avg_duration_ms: u64,
     pub executor_distribution: Vec<ExecutorCount>,
-    pub tag_distribution: Vec<TagCount>,
     pub model_distribution: Vec<ModelCount>,
     pub daily_executions: Vec<DailyExecution>,
     pub daily_token_stats: Vec<DailyTokenStats>,

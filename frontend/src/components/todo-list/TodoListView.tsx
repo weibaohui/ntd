@@ -32,7 +32,7 @@ import { ExecutorBadge } from '@/components/ExecutorBadge';
 import { ExpertBadge } from '@/components/ExpertBadge';
 import { formatRelativeTime } from '@/utils/datetime';
 import { formatProcessText } from '@/utils/processText';
-import type { LoopRefSummary, Tag as TagType, TodoCenterItem } from '@/types';
+import type { LoopRefSummary, TodoCenterItem } from '@/types';
 
 /** 状态 → 中文 + 颜色映射；与事项中心卡片 StatusTag 保持一致口径。 */
 const STATUS_META: Record<string, { label: string; color: string }> = {
@@ -48,25 +48,6 @@ function renderStatusTag(status?: string | null): ReactNode {
   const meta = STATUS_META[status];
   if (!meta) return status;
   return <Tag color={meta.color}>{meta.label}</Tag>;
-}
-
-/** 把 tag_ids 解析成实际 Tag 列表，最多展示 max 个，超出以 +N 显示。 */
-function renderTagList(tagIds: number[] | undefined, tags: TagType[], max = 3): ReactNode {
-  if (!tagIds || tagIds.length === 0) return '-';
-  const resolved = tagIds
-    .map(id => tags.find(t => t.id === id))
-    .filter((t): t is TagType => !!t);
-  if (resolved.length === 0) return '-';
-  const visible = resolved.slice(0, max);
-  const overflow = resolved.length - visible.length;
-  return (
-    <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
-      {visible.map(t => (
-        <Tag key={t.id} color={t.color}>{t.name}</Tag>
-      ))}
-      {overflow > 0 && <Tag>+{overflow}</Tag>}
-    </span>
-  );
 }
 
 /** 工艺列：展示引用该事项的环路所基于的工艺模板，格式 #模板ID-模板名-版本，按模板去重。 */
@@ -188,7 +169,6 @@ function renderActionsColumn(
 
 // 构建 Table 列定义：抽为独立函数，让组件主体保持在 30 行内。
 function buildTodoColumns(
-  tags: TagType[],
   callbacks: {
     onSelectTodo: (id: number) => void;
   } & Parameters<typeof buildRowActionItems>[1],
@@ -245,12 +225,6 @@ function buildTodoColumns(
       // 056：服务端排序
       sorter: true,
       render: renderStatusTag,
-    },
-    {
-      title: '标签',
-      dataIndex: 'tag_ids',
-      width: 180,
-      render: (tagIds: number[]) => renderTagList(tagIds, tags),
     },
     {
       title: '执行器',
@@ -331,8 +305,6 @@ interface TodoListViewProps {
   items: TodoCenterItem[];
   /** 加载态：传入 true 时 table 显示 loading 蒙层。 */
   loading: boolean;
-  /** 全量标签集（渲染 Tag 列用）。 */
-  tags: TagType[];
   /** 服务端分页元数据。 */
   pagination: { current: number; pageSize: number; total: number };
   /** 翻页/改页大小/排序变化回调（父组件据此重新拉取对应页）。 */
@@ -376,7 +348,6 @@ function useSelectedIdsClipping(items: TodoCenterItem[]) {
 export function TodoListView({
   items,
   loading,
-  tags,
   pagination,
   onServerChange,
   onSelectTodo,
@@ -406,7 +377,7 @@ export function TodoListView({
     () => ({ onSelectTodo, onExecuteTodo, onExecuteWithArgs, onEditTodo, onDeleteTodo }),
     [onSelectTodo, onExecuteTodo, onExecuteWithArgs, onEditTodo, onDeleteTodo],
   );
-  const rawColumns = useMemo(() => buildTodoColumns(tags, callbacks), [tags, callbacks]);
+  const rawColumns = useMemo(() => buildTodoColumns(callbacks), [callbacks]);
   // 054：注入可拖拽列宽 + 受控排序 + localStorage 持久化。
   // 返回的 tableProps 包含 components / scroll / onChange，直接展开到 Table。
   const { columns, tableProps } = useResizableColumns('todos', rawColumns);

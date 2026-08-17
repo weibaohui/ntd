@@ -8,7 +8,6 @@ export interface Todo {
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
-  tag_ids: number[];
   executor?: string;
   /** 关联的专家/团队名称（WorkBuddy 专家系统） */
   expert_name?: string | null;
@@ -97,7 +96,6 @@ export interface TodoBrief {
   updated_at: string;
   archived_at?: string | null;
   workspace_id?: number | null;
-  tag_ids: number[];
   /** prompt 是否非空（看板「展开 prompt」的显示开关，内容按需另取）。 */
   has_prompt: boolean;
 }
@@ -108,13 +106,6 @@ export interface TodoListPage {
   total: number;
   page: number;
   page_size: number;
-}
-
-export interface Tag {
-  id: number;
-  name: string;
-  color: string;
-  created_at: string;
 }
 
 export interface TodoItem {

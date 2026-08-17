@@ -90,14 +90,12 @@ mod prompt_fallback_tests {
             "title": "Test Todo",
             "prompt": "This is the prompt",
             "executor": "kimi",
-            "tag_ids": [1, 2, 3],
             "workspace_id": 1
         }"#;
         let req: CreateTodoRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.title, "Test Todo");
         assert_eq!(req.prompt, "This is the prompt");
         assert_eq!(req.executor, Some("kimi".to_string()));
-        assert_eq!(req.tag_ids, vec![1, 2, 3]);
         assert_eq!(req.workspace_id, Some(1));
     }
 
@@ -109,7 +107,6 @@ mod prompt_fallback_tests {
         assert_eq!(req.title, "Minimal Todo");
         assert!(req.prompt.is_empty());
         assert!(req.executor.is_none());
-        assert!(req.tag_ids.is_empty());
         assert_eq!(req.workspace_id, Some(1));
     }
 }

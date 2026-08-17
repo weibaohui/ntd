@@ -249,7 +249,6 @@ export function TodoListPage({
           <TodoListView
             items={items}
             loading={loading}
-            tags={state.tags}
             pagination={pagination}
             onServerChange={onServerChange}
             onSelectTodo={onSelectTodo}

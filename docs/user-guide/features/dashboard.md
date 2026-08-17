@@ -51,9 +51,9 @@ ntd 的**全局运营视图**。数据聚合所有工作区，不随当前 works
 
 `total_todos` / `running_todos` / `completed_todos` / `failed_todos`。
 
-### 2.4 执行概览（ExecStats，4 项）
+### 2.4 执行概览（ExecStats，3 项）
 
-`total_tags` / `scheduled_todos` / `total_executions` / `total_cost_usd`。
+`scheduled_todos` / `total_executions` / `total_cost_usd`。
 
 ### 2.5 推理统计（InferenceStats，4 项）
 
@@ -81,61 +81,57 @@ ntd 的**全局运营视图**。数据聚合所有工作区，不随当前 works
 
 横向条形图：每个执行器的 `avg_duration_ms`（自适应 ms / s 显示）+ 执行次数。
 
-### 2.8 标签分布（TagChart）
-
-横向条形图：按 `tag_id` 聚合，含 Todo 数 / 成功率 / 花费。
-
-### 2.9 模型任务分布（ModelTaskChart）
+### 2.8 模型任务分布（ModelTaskChart）
 
 横向条形图：每个模型的 Todo 数 + 执行次数 + 成功率。
 
-### 2.10 模型推理统计（ModelTokenChart）
+### 2.9 模型推理统计（ModelTokenChart）
 
 横向条形图：每个模型的 `input_tokens` + 成本 + 输出率。
 
-### 2.11 缓存效率（ModelCache）
+### 2.10 缓存效率（ModelCache）
 
 横向条形图：每个模型的 `cache_hit_rate`（按 `>50%` 绿 / `>20%` 黄 / 其他红着色），含 cache 读 / 输入子标。
 
-### 2.12 活动热力图（ContributionHeatmap）
+### 2.11 活动热力图（ContributionHeatmap）
 
 按 `daily_executions` 数据绘制的热力图（`ChartCards.tsx:135-145`）。
 
-### 2.13 Token 趋势（TokenTrendChart）
+### 2.12 Token 趋势（TokenTrendChart）
 
 **双线折线图**（`ChartCards.tsx:147-220`），input（`#3b82f6`）和 output（`#22c55e`）两条线，X 轴是日期，Y 轴按 `max(input+output)` 归一化；时间窗口跟随顶部 `TimeRangeSelector` 切换（5h / 7d / 14d / 30d / 自定义）。
 
-### 2.14 触发来源（TriggerSource）
+### 2.13 触发来源（TriggerSource）
 
 按 `trigger_type` 分组的执行统计（manual / cron / slash_command / default_response）。
 
-### 2.15 状态 / 趋势图
+### 2.14 状态 / 趋势图
 
 `StatusChart`（按状态分布） + `TrendChart`（执行趋势折线）。
 
-### 2.16 模型排行榜（Leaderboard）
+### 2.15 模型排行榜（Leaderboard）
 
 `EnhancedCards.tsx` 中的 `Leaderboard` 组件展示模型排行。
 
-### 2.17 活跃任务（ActiveTasksCard）
+### 2.16 活跃任务（ActiveTasksCard）
 
 实时显示当前 running 的 Todo 列表（同「运行管理」面板）。**无任务时显示「Task In, Done Out.」禅意占位 + 一句随机引言**（`SpecialCards.tsx:55-67`）。
 
-### 2.18 Skills 调用统计（SkillsStats）
+### 2.17 Skills 调用统计（SkillsStats）
 
 包含「总调用 / 今日调用 / 成功率 / 平均耗时」4 个数字 + Top 5 Skills（`DistributionCards.tsx:257-327`）。
 
-### 2.19 备份统计（BackupStats）
+### 2.18 备份统计（BackupStats）
 
 `database.file_count` / `todo.file_count` / `skills.file_count`。
 
-### 2.20 使用统计（UsageStats）
+### 2.19 使用统计（UsageStats）
 
 `UsageStatsCard`（`dashboard/UsageStatsCard.tsx`）：顶部 `Segmented` 在 **日 / 周 / 月** 三个表格间切换，下方展示 `Input Tokens` / `Output Tokens` / `Total Cost` 三个汇总数 + 详细表格 + 按 model 分组的 breakdown 表。
 
 数据由 `usage_stats` 表（来自 ccusage 集成）写入。
 
-### 2.21 消息记录分析（MessageStats，4 项）
+### 2.20 消息记录分析（MessageStats，4 项）
 
 | 指标 | 含义 |
 |------|------|
@@ -146,7 +142,7 @@ ntd 的**全局运营视图**。数据聚合所有工作区，不随当前 works
 
 启用「飞书 Bot 绑定」后才有数据。
 
-### 2.22 分享卡（ShareCardPanel）
+### 2.21 分享卡（ShareCardPanel）
 
 底部「分享给朋友」按钮 → `ShareCard` 组件生成**一键复制 ntd 安装提示词**（`npm install -g @weibaohui/ntd...`），不是图片带 QR 码。
 

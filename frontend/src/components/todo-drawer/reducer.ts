@@ -18,8 +18,6 @@ export interface TodoFormState {
   title: string;
   /** 任务提示词 */
   prompt: string;
-  /** 选中的标签 ID 列表 */
-  selectedTags: number[];
   /** 执行器名称 */
   executor: string;
   /** 关联的专家/团队名称（WorkBuddy 专家系统），null 表示未选择 */
@@ -53,7 +51,6 @@ export function createInitialFormState(): TodoFormState {
   return {
     title: '',
     prompt: '',
-    selectedTags: [],
     executor: getDefaultExecutor(),
     expertName: null,
     model: null,
@@ -84,7 +81,6 @@ export function todoFormReducer(state: TodoFormState, action: TodoFormAction): T
         return {
           title: action.todo.title || '',
           prompt: action.todo.prompt || '',
-          selectedTags: action.todo.tag_ids || [],
           executor: action.todo.executor || getDefaultExecutor(),
           expertName: action.todo.expert_name ?? null,
           model: action.todo.model ?? null,

@@ -3,12 +3,11 @@ import { api, unwrap } from './client';
 // Backup APIs
 
 export async function mergeBackup(
-  tags: { name: string; color: string }[],
   // workspace_id 逐条携带用户选定的工作空间；全局 workspace_id 传 null，由后端按每条解析
-  todos: { title: string; prompt: string; status: string; executor?: string; scheduler_enabled: boolean; scheduler_config?: string; tag_names: string[]; workspace_path?: string; workspace_id?: number | null }[],
+  todos: { title: string; prompt: string; status: string; executor?: string; scheduler_enabled: boolean; scheduler_config?: string; workspace_path?: string; workspace_id?: number | null }[],
   workspace_id?: number | null,
 ): Promise<string> {
-  return unwrap(await api.post('/api/v1/backup/merge', { tags, todos, workspace_id }));
+  return unwrap(await api.post('/api/v1/backup/merge', { todos, workspace_id }));
 }
 
 // Database Backup APIs

@@ -82,7 +82,7 @@ async function createProposedTodos(
   try {
     // createTodo 不直接支持 executor 参数，故先逐条创建收集 id，再一次批量设执行器
     const created = await Promise.all(
-      picked.map(p => createTodo(p.title, p.prompt, [], workspaceId)),
+      picked.map(p => createTodo(p.title, p.prompt, workspaceId)),
     );
     const ids = created.map(t => t.id);
     // batchUpdateTodosExecutor 内部对网络/后端错误做了 catch 并返回 failed 列表（不抛），

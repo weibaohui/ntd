@@ -162,28 +162,6 @@ impl Migration for V41ConsolidatedLoopFeatures {
         add_column_warn(db, "ALTER TABLE loop_step_executions ADD COLUMN approval_status TEXT").await;
         add_column_warn(db, "ALTER TABLE loop_step_executions ADD COLUMN approval_comment TEXT").await;
 
-        // ---- V19: 标签关联表 ----
-        db.exec(
-            "CREATE TABLE IF NOT EXISTS step_tags (
-                step_id INTEGER NOT NULL, tag_id INTEGER NOT NULL,
-                PRIMARY KEY (step_id, tag_id),
-                FOREIGN KEY (step_id) REFERENCES steps(id) ON DELETE CASCADE,
-                FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
-            )",
-        )
-        .await?;
-        db.exec("CREATE INDEX IF NOT EXISTS idx_step_tags_step_id ON step_tags(step_id)").await?;
-        db.exec(
-            "CREATE TABLE IF NOT EXISTS loop_tags (
-                loop_id INTEGER NOT NULL, tag_id INTEGER NOT NULL,
-                PRIMARY KEY (loop_id, tag_id),
-                FOREIGN KEY (loop_id) REFERENCES loops(id) ON DELETE CASCADE,
-                FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
-            )",
-        )
-        .await?;
-        db.exec("CREATE INDEX IF NOT EXISTS idx_loop_tags_loop_id ON loop_tags(loop_id)").await?;
-
         // ---- V23: 删除 hooks 列 ----
         drop_column_if_exists(db, "todos", "hooks").await?;
         drop_column_if_exists(db, "execution_records", "source_hook_id").await?;

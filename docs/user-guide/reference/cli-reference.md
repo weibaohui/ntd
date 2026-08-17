@@ -90,7 +90,6 @@ ntd todo create [TITLE] [OPTIONS]
 | `--stdin`         | -   | 从 stdin 读取 JSON 数据（用于复杂字段如 `hooks`） |
 | `--executor <TYPE>` | `-e` | 执行器类型 |
 | `--workspace <PATH>` | `-w` | 工作目录 |
-| `--tags <IDs>`    | -   | 标签 ID（逗号分隔） |
 | `--schedule <CRON>` | - | 定时计划（Cron 表达式，传空字符串可清空） |
 
 **执行器类型：**
@@ -116,8 +115,8 @@ ntd todo create "完成报告" --prompt "写一份季度报告"
 # 从文件创建
 ntd todo create "代码审查" --file ./prompt.txt
 
-# 指定执行器和标签
-ntd todo create "AI 任务" -p "使用 Claude 执行" -e claudecode --tags "1,2"
+# 指定执行器
+ntd todo create "AI 任务" -p "使用 Claude 执行" -e claudecode
 
 # 定时任务
 ntd todo create "每日提醒" -p "检查日志" --schedule "0 9 * * *"
@@ -127,7 +126,6 @@ ntd todo create --stdin <<EOF
 {
   "title": "复杂任务",
   "prompt": "...",
-  "tag_ids": [1, 2],
   "scheduler_enabled": true,
   "scheduler_config": "0 0 9 * * *",
   "hooks": []
@@ -149,7 +147,6 @@ ntd todo list [OPTIONS]
 | 选项 | 简写 | 说明 |
 |------|------|------|
 | `--status <STATUS>` | - | 按状态筛选 |
-| `--tag <ID>` | - | 按标签 ID 筛选 |
 | `--running` | - | 仅显示运行中的 Todo |
 | `--search <KEYWORD>` | `-s` | 搜索标题或 prompt 关键词 |
 
@@ -160,9 +157,6 @@ ntd todo list
 
 # 筛选进行中的
 ntd todo list --status running
-
-# 按标签筛选
-ntd todo list --tag 1
 
 # 搜索
 ntd todo list -s "报告"
@@ -202,16 +196,12 @@ ntd todo update <ID> [OPTIONS]
 | `--status <STATUS>` | - | 新状态 |
 | `--executor <TYPE>` | - | 执行器类型 |
 | `--workspace <PATH>` | - | 工作目录 |
-| `--tags <IDs>`    | - | 标签 ID（逗号分隔） |
 | `--schedule <CRON>` | - | 定时计划 |
 
 **示例：**
 ```bash
 # 更新标题和状态
 ntd todo update 123 --title "新标题" --status completed
-
-# 更新标签
-ntd todo update 123 --tags "1,3"
 
 # 复杂字段用 --stdin
 ntd todo update 123 --stdin <<EOF
@@ -365,52 +355,7 @@ ntd todo execution resume 456 -m "继续执行"
 
 ---
 
-### 5. 标签管理命令
-
-#### `ntd tag list`
-列出所有标签。
-
-```bash
-ntd tag list
-```
-
----
-
-#### `ntd tag create <NAME>`
-创建新标签。
-
-```bash
-ntd tag create <NAME> [OPTIONS]
-```
-
-**选项：**
-
-| 选项 | 简写 | 默认值 | 说明 |
-|------|------|--------|------|
-| `--color <COLOR>` | `-c` | `#1890ff` | 标签颜色 |
-
-**示例：**
-```bash
-ntd tag create "重要" --color "#ff4d4f"
-```
-
----
-
-#### `ntd tag delete <ID>`
-删除标签。
-
-```bash
-ntd tag delete <ID>
-```
-
-**示例：**
-```bash
-ntd tag delete 1
-```
-
----
-
-### 6. Loop 管理命令
+### 5. Loop 管理命令
 
 #### `ntd loop list`
 列出所有 Loop。
@@ -999,20 +944,6 @@ ntd todo update 1 --status in_progress
 
 # 7. 删除 Todo
 ntd todo delete 1
-```
-
-### 标签管理
-
-```bash
-# 创建标签
-ntd tag create "重要" -c "#ff4d4f"
-ntd tag create "紧急" -c "#faad14"
-
-# 创建带标签的 Todo
-ntd todo create "处理投诉" -p "回复用户投诉" --tags "1,2"
-
-# 按标签筛选
-ntd todo list --tag 1
 ```
 
 ### 定时任务

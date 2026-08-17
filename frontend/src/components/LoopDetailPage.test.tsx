@@ -29,7 +29,6 @@ vi.mock('@/components/LoopStudioDetailPanel', () => ({
   LoopDetailPanel: (props: {
     loopId: number;
     workspaceId: number | null;
-    tags: Array<{ id: number; name: string; color: string }>;
     hideTitleRow?: boolean;
     onDelete: () => void;
     onToggleStatus: () => void;
@@ -70,7 +69,6 @@ describe('LoopDetailPage', () => {
       <LoopDetailPage
         loopId={456}
         workspaceId={1}
-        tags={[]}
         onBack={mockOnBack}
         onOpenProcess={mockOnOpenProcess}
         onSelectTodo={mockOnSelectTodo}
@@ -87,7 +85,6 @@ describe('LoopDetailPage', () => {
       <LoopDetailPage
         loopId={456}
         workspaceId={1}
-        tags={[]}
         onBack={mockOnBack}
         onOpenProcess={mockOnOpenProcess}
         onSelectTodo={mockOnSelectTodo}
@@ -106,7 +103,6 @@ describe('LoopDetailPage', () => {
       <LoopDetailPage
         loopId={456}
         workspaceId={1}
-        tags={[]}
         onBack={mockOnBack}
         onOpenProcess={mockOnOpenProcess}
         onSelectTodo={mockOnSelectTodo}
@@ -124,7 +120,6 @@ describe('LoopDetailPage', () => {
       <LoopDetailPage
         loopId={456}
         workspaceId={1}
-        tags={[]}
         onBack={mockOnBack}
         onOpenProcess={mockOnOpenProcess}
         onSelectTodo={mockOnSelectTodo}
@@ -140,7 +135,6 @@ describe('LoopDetailPage', () => {
     render(
       <LoopDetailPage
         loopId={456}
-        tags={[]}
         onBack={mockOnBack}
         onOpenProcess={mockOnOpenProcess}
         onSelectTodo={mockOnSelectTodo}

@@ -86,8 +86,7 @@ export function BackupPanel() {
   const [importing, setImporting] = useState(false);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizardItems, setWizardItems] = useState<ImportItem[]>([]);
-  const [wizardTags, setWizardTags] = useState<{ name: string; color: string }[]>([]);
-  const [selectedRowKeys, setSelectedRowKeys] = useState<number[]>([]);
+    const [selectedRowKeys, setSelectedRowKeys] = useState<number[]>([]);
   // 导入目标工作空间列表（父组件加载一次，下发给每行 WorkspaceSwitcher 复用）
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   // 逐行工作空间选择：ImportItem.key → workspaceId（null=未匹配/待指定）
@@ -232,14 +231,12 @@ export function BackupPanel() {
         executor: todo.executor,
         scheduler_enabled: todo.scheduler_enabled,
         scheduler_config: todo.scheduler_config,
-        tag_names: todo.tag_names || [],
         workspace_path: todo.workspace_path,
         // 保留原始 workspace_id，供按行默认匹配与「来源」列展示
         workspace_id: todo.workspace_id ?? null,
         action: 'new',
       }));
 
-      setWizardTags(data.tags || []);
       setWizardItems(items);
       setSelectedRowKeys(items.map(i => i.key));
 
@@ -303,7 +300,7 @@ export function BackupPanel() {
         ...todo,
         workspace_id: rowWorkspaceMap[key] ?? null,
       }));
-      const msg = await db.mergeBackup(wizardTags, selectedTodos, null);
+      const msg = await db.mergeBackup(selectedTodos, null);
       message.success(msg);
       setWizardOpen(false);
       window.location.reload();

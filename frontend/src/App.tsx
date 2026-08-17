@@ -384,7 +384,6 @@ function AppContent() {
             <LoopDetailPage
               loopId={loopDetailId}
               workspaceId={state.selectedWorkspace}
-              tags={state.tags}
               onBack={() => backToList()}
               onOpenProcess={handleOpenProcess}
               onSelectTodo={handleSelectTodo}
@@ -499,7 +498,6 @@ function AppContent() {
       <TodoDrawer
         open={todoModalOpen}
         todo={editingTodo}
-        tags={state.tags}
         onClose={() => {
           setTodoModalOpen(false);
           // 关闭时清空 editingTodo，避免下次打开仍处于编辑模式

@@ -1156,7 +1156,6 @@ phases:
             status: crate::models::TodoStatus::Pending,
             created_at: String::new(),
             updated_at: String::new(),
-            tag_ids: vec![],
             executor: None,
             scheduler_enabled: false,
             scheduler_config: None,

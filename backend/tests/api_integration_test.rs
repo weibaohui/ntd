@@ -86,7 +86,7 @@ async fn test_get_todos() {
     let (app, ws_id) = create_test_app().await;
 
     // Create a todo first
-    let req = json_request("POST", &format!("/api/v1/workspaces/{}/todos", ws_id), json!({"title": "Test", "prompt": "Do this", "workspace_id": ws_id, "tag_ids": []}));
+    let req = json_request("POST", &format!("/api/v1/workspaces/{}/todos", ws_id), json!({"title": "Test", "prompt": "Do this", "workspace_id": ws_id}));
     let response = app.clone().oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
 
@@ -116,7 +116,7 @@ async fn test_get_todos() {
 async fn test_create_todo_success() {
     let (app, ws_id) = create_test_app().await;
 
-    let req = json_request("POST", &format!("/api/v1/workspaces/{}/todos", ws_id), json!({"title": "New Todo", "prompt": "Prompt text", "workspace_id": ws_id, "tag_ids": []}));
+    let req = json_request("POST", &format!("/api/v1/workspaces/{}/todos", ws_id), json!({"title": "New Todo", "prompt": "Prompt text", "workspace_id": ws_id}));
     let response = app.oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
 
@@ -131,7 +131,7 @@ async fn test_create_todo_success() {
 async fn test_create_todo_empty_title() {
     let (app, ws_id) = create_test_app().await;
 
-    let req = json_request("POST", &format!("/api/v1/workspaces/{}/todos", ws_id), json!({"title": "", "prompt": "Prompt", "workspace_id": ws_id, "tag_ids": []}));
+    let req = json_request("POST", &format!("/api/v1/workspaces/{}/todos", ws_id), json!({"title": "", "prompt": "Prompt", "workspace_id": ws_id}));
     let response = app.oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
@@ -143,7 +143,7 @@ async fn test_create_todo_empty_title() {
 async fn test_create_todo_prompt_fallback() {
     let (app, ws_id) = create_test_app().await;
 
-    let req = json_request("POST", &format!("/api/v1/workspaces/{}/todos", ws_id), json!({"title": "Fallback Title", "prompt": "", "workspace_id": ws_id, "tag_ids": []}));
+    let req = json_request("POST", &format!("/api/v1/workspaces/{}/todos", ws_id), json!({"title": "Fallback Title", "prompt": "", "workspace_id": ws_id}));
     let response = app.oneshot(req).await.unwrap();
 
     let body: serde_json::Value = read_json_body(response).await;
@@ -151,29 +151,10 @@ async fn test_create_todo_prompt_fallback() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_create_todo_with_tags() {
-    let (app, ws_id) = create_test_app().await;
-
-    // Create a tag first
-    let tag_req = json_request("POST", "/api/v1/tags", json!({"name": "urgent", "color": "#ff0000"}));
-    let tag_resp = app.clone().oneshot(tag_req).await.unwrap();
-    let tag_body: serde_json::Value = read_json_body(tag_resp).await;
-    let tag_id = tag_body["data"]["id"].as_i64().unwrap();
-
-    let req = json_request("POST", &format!("/api/v1/workspaces/{}/todos", ws_id), json!({"title": "Tagged", "prompt": "Do this", "workspace_id": ws_id, "tag_ids": [tag_id]}));
-    let response = app.oneshot(req).await.unwrap();
-
-    let body: serde_json::Value = read_json_body(response).await;
-    let tag_ids = body["data"]["tag_ids"].as_array().unwrap();
-    assert_eq!(tag_ids.len(), 1);
-    assert_eq!(tag_ids[0], tag_id);
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_update_todo_success() {
     let (app, ws_id) = create_test_app().await;
 
-    let create_req = json_request("POST", &format!("/api/v1/workspaces/{}/todos", ws_id), json!({"title": "Old", "prompt": "Old prompt", "workspace_id": ws_id, "tag_ids": []}));
+    let create_req = json_request("POST", &format!("/api/v1/workspaces/{}/todos", ws_id), json!({"title": "Old", "prompt": "Old prompt", "workspace_id": ws_id}));
     let create_resp = app.clone().oneshot(create_req).await.unwrap();
     let create_body: serde_json::Value = read_json_body(create_resp).await;
     let id = create_body["data"]["id"].as_i64().unwrap();
@@ -191,7 +172,7 @@ async fn test_update_todo_success() {
 async fn test_update_todo_prompt_fallback() {
     let (app, ws_id) = create_test_app().await;
 
-    let create_req = json_request("POST", &format!("/api/v1/workspaces/{}/todos", ws_id), json!({"title": "Title", "prompt": "Prompt", "workspace_id": ws_id, "tag_ids": []}));
+    let create_req = json_request("POST", &format!("/api/v1/workspaces/{}/todos", ws_id), json!({"title": "Title", "prompt": "Prompt", "workspace_id": ws_id}));
     let create_resp = app.clone().oneshot(create_req).await.unwrap();
     let create_body: serde_json::Value = read_json_body(create_resp).await;
     let id = create_body["data"]["id"].as_i64().unwrap();
@@ -204,32 +185,10 @@ async fn test_update_todo_prompt_fallback() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_update_todo_tags() {
-    let (app, ws_id) = create_test_app().await;
-
-    let create_req = json_request("POST", &format!("/api/v1/workspaces/{}/todos", ws_id), json!({"title": "Test", "prompt": "Prompt", "workspace_id": ws_id, "tag_ids": []}));
-    let create_resp = app.clone().oneshot(create_req).await.unwrap();
-    let create_body: serde_json::Value = read_json_body(create_resp).await;
-    let todo_id = create_body["data"]["id"].as_i64().unwrap();
-
-    let tag_req = json_request("POST", "/api/v1/tags", json!({"name": "urgent", "color": "#ff0000"}));
-    let tag_resp = app.clone().oneshot(tag_req).await.unwrap();
-    let tag_body: serde_json::Value = read_json_body(tag_resp).await;
-    let tag_id = tag_body["data"]["id"].as_i64().unwrap();
-
-    let req = json_request("PUT", &format!("/api/v1/workspaces/{}/todos/{}/tags", ws_id, todo_id), json!({"tag_ids": [tag_id]}));
-    let response = app.oneshot(req).await.unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-
-    let body: serde_json::Value = read_json_body(response).await;
-    assert_eq!(body["code"], 0);
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_delete_todo() {
     let (app, ws_id) = create_test_app().await;
 
-    let create_req = json_request("POST", &format!("/api/v1/workspaces/{}/todos", ws_id), json!({"title": "To Delete", "prompt": "Prompt", "workspace_id": ws_id, "tag_ids": []}));
+    let create_req = json_request("POST", &format!("/api/v1/workspaces/{}/todos", ws_id), json!({"title": "To Delete", "prompt": "Prompt", "workspace_id": ws_id}));
     let create_resp = app.clone().oneshot(create_req).await.unwrap();
     let create_body: serde_json::Value = read_json_body(create_resp).await;
     let id = create_body["data"]["id"].as_i64().unwrap();
@@ -271,7 +230,7 @@ async fn test_delete_todo_not_found() {
 async fn test_force_update_status() {
     let (app, ws_id) = create_test_app().await;
 
-    let create_req = json_request("POST", &format!("/api/v1/workspaces/{}/todos", ws_id), json!({"title": "Test", "prompt": "Prompt", "workspace_id": ws_id, "tag_ids": []}));
+    let create_req = json_request("POST", &format!("/api/v1/workspaces/{}/todos", ws_id), json!({"title": "Test", "prompt": "Prompt", "workspace_id": ws_id}));
     let create_resp = app.clone().oneshot(create_req).await.unwrap();
     let create_body: serde_json::Value = read_json_body(create_resp).await;
     let id = create_body["data"]["id"].as_i64().unwrap();
@@ -294,68 +253,6 @@ async fn test_get_todo_not_found() {
 }
 
 // ===== Step handlers =====
-//
-// ===== Tag handlers =====
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_get_tags() {
-    let (app, _ws_id) = create_test_app().await;
-
-    let req = Request::builder()
-        .uri("/api/v1/tags")
-        .body(Body::empty())
-        .unwrap();
-    let response = app.oneshot(req).await.unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-
-    let body: serde_json::Value = read_json_body(response).await;
-    assert_eq!(body["code"], 0);
-    assert!(body["data"].as_array().unwrap().is_empty());
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_create_tag_success() {
-    let (app, _ws_id) = create_test_app().await;
-
-    let req = json_request("POST", "/api/v1/tags", json!({"name": "urgent", "color": "#ff0000"}));
-    let response = app.oneshot(req).await.unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-
-    let body: serde_json::Value = read_json_body(response).await;
-    assert_eq!(body["code"], 0);
-    assert_eq!(body["data"]["name"], "urgent");
-    assert_eq!(body["data"]["color"], "#ff0000");
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_create_tag_empty_name() {
-    let (app, _ws_id) = create_test_app().await;
-
-    let req = json_request("POST", "/api/v1/tags", json!({"name": "", "color": "#ff0000"}));
-    let response = app.oneshot(req).await.unwrap();
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-
-    let body: serde_json::Value = read_json_body(response).await;
-    assert_eq!(body["code"], 40002);
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_delete_tag() {
-    let (app, _ws_id) = create_test_app().await;
-
-    let create_req = json_request("POST", "/api/v1/tags", json!({"name": "to-delete", "color": "#ff0000"}));
-    let create_resp = app.clone().oneshot(create_req).await.unwrap();
-    let create_body: serde_json::Value = read_json_body(create_resp).await;
-    let id = create_body["data"]["id"].as_i64().unwrap();
-
-    let req = Request::builder()
-        .method("DELETE")
-        .uri(format!("/api/v1/tags/{}", id))
-        .body(Body::empty())
-        .unwrap();
-    let response = app.oneshot(req).await.unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-}
 
 // ===== Execution handlers =====
 
@@ -363,7 +260,7 @@ async fn test_delete_tag() {
 async fn test_get_execution_records() {
     let (app, ws_id) = create_test_app().await;
 
-    let create_req = json_request("POST", &format!("/api/v1/workspaces/{}/todos", ws_id), json!({"title": "Test", "prompt": "Prompt", "workspace_id": ws_id, "tag_ids": []}));
+    let create_req = json_request("POST", &format!("/api/v1/workspaces/{}/todos", ws_id), json!({"title": "Test", "prompt": "Prompt", "workspace_id": ws_id}));
     let create_resp = app.clone().oneshot(create_req).await.unwrap();
     let create_body: serde_json::Value = read_json_body(create_resp).await;
     let todo_id = create_body["data"]["id"].as_i64().unwrap();
@@ -385,7 +282,7 @@ async fn test_get_execution_records() {
 async fn test_get_execution_records_pagination() {
     let (app, ws_id) = create_test_app().await;
 
-    let create_req = json_request("POST", &format!("/api/v1/workspaces/{}/todos", ws_id), json!({"title": "Test", "prompt": "Prompt", "workspace_id": ws_id, "tag_ids": []}));
+    let create_req = json_request("POST", &format!("/api/v1/workspaces/{}/todos", ws_id), json!({"title": "Test", "prompt": "Prompt", "workspace_id": ws_id}));
     let create_resp = app.clone().oneshot(create_req).await.unwrap();
     let create_body: serde_json::Value = read_json_body(create_resp).await;
     let todo_id = create_body["data"]["id"].as_i64().unwrap();
@@ -405,7 +302,7 @@ async fn test_get_execution_records_pagination() {
 async fn test_get_execution_summary() {
     let (app, ws_id) = create_test_app().await;
 
-    let create_req = json_request("POST", &format!("/api/v1/workspaces/{}/todos", ws_id), json!({"title": "Test", "prompt": "Prompt", "workspace_id": ws_id, "tag_ids": []}));
+    let create_req = json_request("POST", &format!("/api/v1/workspaces/{}/todos", ws_id), json!({"title": "Test", "prompt": "Prompt", "workspace_id": ws_id}));
     let create_resp = app.clone().oneshot(create_req).await.unwrap();
     let create_body: serde_json::Value = read_json_body(create_resp).await;
     let todo_id = create_body["data"]["id"].as_i64().unwrap();
@@ -447,7 +344,7 @@ async fn test_stop_execution_not_found() {
 async fn test_update_scheduler_enable() {
     let (app, ws_id) = create_test_app().await;
 
-    let create_req = json_request("POST", &format!("/api/v1/workspaces/{}/todos", ws_id), json!({"title": "Scheduled", "prompt": "Prompt", "workspace_id": ws_id, "tag_ids": []}));
+    let create_req = json_request("POST", &format!("/api/v1/workspaces/{}/todos", ws_id), json!({"title": "Scheduled", "prompt": "Prompt", "workspace_id": ws_id}));
     let create_resp = app.clone().oneshot(create_req).await.unwrap();
     let create_body: serde_json::Value = read_json_body(create_resp).await;
     let id = create_body["data"]["id"].as_i64().unwrap();
@@ -465,7 +362,7 @@ async fn test_update_scheduler_enable() {
 async fn test_update_scheduler_disable() {
     let (app, ws_id) = create_test_app().await;
 
-    let create_req = json_request("POST", &format!("/api/v1/workspaces/{}/todos", ws_id), json!({"title": "Scheduled", "prompt": "Prompt", "workspace_id": ws_id, "tag_ids": []}));
+    let create_req = json_request("POST", &format!("/api/v1/workspaces/{}/todos", ws_id), json!({"title": "Scheduled", "prompt": "Prompt", "workspace_id": ws_id}));
     let create_resp = app.clone().oneshot(create_req).await.unwrap();
     let create_body: serde_json::Value = read_json_body(create_resp).await;
     let id = create_body["data"]["id"].as_i64().unwrap();
@@ -487,7 +384,7 @@ async fn test_update_scheduler_disable() {
 async fn test_update_scheduler_missing_config() {
     let (app, ws_id) = create_test_app().await;
 
-    let create_req = json_request("POST", &format!("/api/v1/workspaces/{}/todos", ws_id), json!({"title": "Scheduled", "prompt": "Prompt", "workspace_id": ws_id, "tag_ids": []}));
+    let create_req = json_request("POST", &format!("/api/v1/workspaces/{}/todos", ws_id), json!({"title": "Scheduled", "prompt": "Prompt", "workspace_id": ws_id}));
     let create_resp = app.clone().oneshot(create_req).await.unwrap();
     let create_body: serde_json::Value = read_json_body(create_resp).await;
     let id = create_body["data"]["id"].as_i64().unwrap();
@@ -505,7 +402,7 @@ async fn test_update_scheduler_missing_config() {
 async fn test_get_scheduler_todos() {
     let (app, ws_id) = create_test_app().await;
 
-    let create_req = json_request("POST", &format!("/api/v1/workspaces/{}/todos", ws_id), json!({"title": "Scheduled", "prompt": "Prompt", "workspace_id": ws_id, "tag_ids": []}));
+    let create_req = json_request("POST", &format!("/api/v1/workspaces/{}/todos", ws_id), json!({"title": "Scheduled", "prompt": "Prompt", "workspace_id": ws_id}));
     let create_resp = app.clone().oneshot(create_req).await.unwrap();
     let create_body: serde_json::Value = read_json_body(create_resp).await;
     let id = create_body["data"]["id"].as_i64().unwrap();
@@ -534,7 +431,7 @@ async fn test_todo_lifecycle() {
     let (app, ws_id) = create_test_app().await;
 
     // Create
-    let req = json_request("POST", &format!("/api/v1/workspaces/{}/todos", ws_id), json!({"title": "Lifecycle", "prompt": "Test", "workspace_id": ws_id, "tag_ids": []}));
+    let req = json_request("POST", &format!("/api/v1/workspaces/{}/todos", ws_id), json!({"title": "Lifecycle", "prompt": "Test", "workspace_id": ws_id}));
     let response = app.clone().oneshot(req).await.unwrap();
     let body: serde_json::Value = read_json_body(response).await;
     let id = body["data"]["id"].as_i64().unwrap();
@@ -554,74 +451,6 @@ async fn test_todo_lifecycle() {
         .unwrap();
     let response = app.oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_tag_lifecycle() {
-    let (app, _ws_id) = create_test_app().await;
-
-    // Create
-    let req = json_request("POST", "/api/v1/tags", json!({"name": "lifecycle", "color": "#00ff00"}));
-    let response = app.clone().oneshot(req).await.unwrap();
-    let body: serde_json::Value = read_json_body(response).await;
-    let id = body["data"]["id"].as_i64().unwrap();
-    assert_eq!(body["data"]["name"], "lifecycle");
-
-    // Get list
-    let req = Request::builder()
-        .uri("/api/v1/tags")
-        .body(Body::empty())
-        .unwrap();
-    let response = app.clone().oneshot(req).await.unwrap();
-    let body: serde_json::Value = read_json_body(response).await;
-    assert_eq!(body["data"].as_array().unwrap().len(), 1);
-
-    // Delete
-    let req = Request::builder()
-        .method("DELETE")
-        .uri(format!("/api/v1/tags/{}", id))
-        .body(Body::empty())
-        .unwrap();
-    let response = app.oneshot(req).await.unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_todo_with_tags() {
-    let (app, ws_id) = create_test_app().await;
-
-    // Create tags
-    let tag1_req = json_request("POST", "/api/v1/tags", json!({"name": "urgent", "color": "#ff0000"}));
-    let tag1_resp = app.clone().oneshot(tag1_req).await.unwrap();
-    let tag1_body: serde_json::Value = read_json_body(tag1_resp).await;
-    let tag1_id = tag1_body["data"]["id"].as_i64().unwrap();
-
-    let tag2_req = json_request("POST", "/api/v1/tags", json!({"name": "later", "color": "#00ff00"}));
-    let tag2_resp = app.clone().oneshot(tag2_req).await.unwrap();
-    let tag2_body: serde_json::Value = read_json_body(tag2_resp).await;
-    let tag2_id = tag2_body["data"]["id"].as_i64().unwrap();
-
-    // Create todo with tags
-    let todo_req = json_request("POST", &format!("/api/v1/workspaces/{}/todos", ws_id), json!({"title": "Tagged", "prompt": "Do it", "workspace_id": ws_id, "tag_ids": [tag1_id]}));
-    let todo_resp = app.clone().oneshot(todo_req).await.unwrap();
-    let todo_body: serde_json::Value = read_json_body(todo_resp).await;
-    let todo_id = todo_body["data"]["id"].as_i64().unwrap();
-    assert_eq!(todo_body["data"]["tag_ids"], json!([tag1_id]));
-
-    // Update tags
-    let update_req = json_request("PUT", &format!("/api/v1/workspaces/{}/todos/{}/tags", ws_id, todo_id), json!({"tag_ids": [tag2_id]}));
-    let _ = app.clone().oneshot(update_req).await.unwrap();
-
-    // Verify
-    let get_req = Request::builder()
-        .uri(format!("/api/v1/workspaces/{}/todos", ws_id))
-        .body(Body::empty())
-        .unwrap();
-    let get_resp = app.oneshot(get_req).await.unwrap();
-    let get_body: serde_json::Value = read_json_body(get_resp).await;
-    let todos = get_body["data"]["items"].as_array().unwrap();
-    let todo = todos.iter().find(|t| t["id"].as_i64().unwrap() == todo_id).unwrap();
-    assert_eq!(todo["tag_ids"], json!([tag2_id]));
 }
 
 /// DELETE /api/v1/workspaces/{id}/wiki/files/{slug}：删除已存在 topic，返回 deleted=true。

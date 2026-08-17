@@ -14,7 +14,7 @@
 - 数据来源：`db.getRecentCompletedTodos(hours)`（`MemorialBoard.tsx:55`）
 - 软删除（`deleted_at != null`）的 Todo **不显示**
 - 按完成时间倒序
-- 每个 Todo 一张卡片，显示：标题、标签、最后运行时间、执行器、模型、token、运行历史切换
+- 每个 Todo 一张卡片，显示：标题、最后运行时间、执行器、模型、token、运行历史切换
 
 ## 2. 视觉
 

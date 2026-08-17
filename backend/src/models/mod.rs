@@ -590,21 +590,11 @@ mod tests {
 
     #[test]
     fn test_create_todo_request_deserialize() {
-        let json = r#"{"title":"Test","prompt":"Do this","tag_ids":[1,2],"workspace_id":42}"#;
+        let json = r#"{"title":"Test","prompt":"Do this","workspace_id":42}"#;
         let req: CreateTodoRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.title, "Test");
         assert_eq!(req.prompt, "Do this");
-        assert_eq!(req.tag_ids, vec![1, 2]);
         assert_eq!(req.workspace_id, Some(42));
-    }
-
-    #[test]
-    fn test_create_todo_request_default_tag_ids() {
-        // workspace_id 可选（#[serde(default)]）：缺失时默认 None，v1 路由从路径覆盖。
-        // 测试确保 tag_ids 的 #[serde(default)] 仍正常工作。
-        let json = r#"{"title":"Test","prompt":"Do this"}"#;
-        let req: CreateTodoRequest = serde_json::from_str(json).unwrap();
-        assert!(req.tag_ids.is_empty());
     }
 
     #[test]
@@ -642,7 +632,6 @@ mod tests {
         assert!(validate_pseudo_id("@step_100"));
         assert!(validate_pseudo_id("@trigger_5"));
         assert!(validate_pseudo_id("@template_3"));
-        assert!(validate_pseudo_id("@tag_99"));
     }
 
     #[test]
@@ -653,9 +642,10 @@ mod tests {
         // 没有下划线
         assert!(!validate_pseudo_id("@loop"));
         assert!(!validate_pseudo_id("@todoabc"));
-        // 前缀不合法
+        // 前缀不合法（tag 前缀随标签功能移除，不再合法）
         assert!(!validate_pseudo_id("@invalid_1"));
         assert!(!validate_pseudo_id("@_1"));
+        assert!(!validate_pseudo_id("@tag_1"));
         // 数字部分不合法
         assert!(!validate_pseudo_id("@loop_abc"));
         assert!(!validate_pseudo_id("@loop_-1"));

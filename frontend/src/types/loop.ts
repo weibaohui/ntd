@@ -21,8 +21,6 @@ export interface LoopDto {
    */
   workspace_id: number | null;
   status: string;
-  /** 标签 ID 列表（单选，复用 Todo 的标签体系） */
-  tag_ids: number[];
   limits_config: string;
   /** 异常处理提示词快照（工艺定义）；null=未配置。需求 035。 */
   abnormal_handler_prompt: string | null;
@@ -153,8 +151,6 @@ export interface LoopDetail {
   /** 工作空间 ID（workspaces.id，唯一键）。组件间统一以 id 传递，path 不再上送。 */
   workspace_id: number | null;
   status: string;
-  /** 标签 ID 列表（单选，复用 Todo 的标签体系） */
-  tag_ids: number[];
   limits_config: string;
   created_at: string | null;
   updated_at: string | null;
@@ -184,8 +180,6 @@ export interface LoopListItem {
   /** 工作空间 ID（workspaces.id，唯一键）。组件间统一以 id 传递，path 不再上送。 */
   workspace_id: number | null;
   status: string;
-  /** 标签 ID 列表（单选，复用 Todo 的标签体系） */
-  tag_ids: number[];
   created_at: string | null;
   updated_at: string | null;
   step_count: number;

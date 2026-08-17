@@ -197,7 +197,6 @@ export interface ScheduledTodo {
   scheduler_config: string | null;
   scheduler_timezone: string | null;
   scheduler_next_run_at: string | null;
-  tag_ids: number[];
   workspace_id: number | null;
   updated_at: string;
 }

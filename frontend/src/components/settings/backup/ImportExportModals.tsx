@@ -6,7 +6,6 @@ import { WorkspaceSwitcher } from '@/components/shell/WorkspaceSwitcher';
 export interface BackupDataYaml {
   version: string;
   created_at: string;
-  tags: { name: string; color: string }[];
   todos: {
     title: string;
     prompt: string;
@@ -14,7 +13,6 @@ export interface BackupDataYaml {
     executor?: string;
     scheduler_enabled: boolean;
     scheduler_config?: string;
-    tag_names: string[];
     workspace_path?: string;
     workspace_id?: number;
   }[];
@@ -28,7 +26,6 @@ export interface ImportItem {
   executor?: string;
   scheduler_enabled: boolean;
   scheduler_config?: string;
-  tag_names: string[];
   workspace_path?: string;
   /** 导出文件里的原始工作空间 ID，用于按行默认匹配与「来源」展示 */
   workspace_id?: number | null;
@@ -189,14 +186,6 @@ export function ImportExportModals({
               dataIndex: 'executor',
               width: 90,
               render: (v: string | undefined) => v || '-',
-            },
-            {
-              title: '标签',
-              dataIndex: 'tag_names',
-              width: 120,
-              render: (names: string[]) => names.length > 0
-                ? names.slice(0, 3).map(n => <AntTag key={n}>{n}</AntTag>)
-                : '-',
             },
             {
               title: 'Prompt 摘要',

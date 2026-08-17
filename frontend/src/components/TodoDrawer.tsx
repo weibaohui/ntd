@@ -6,7 +6,6 @@ import type { Todo, ExecutorConfig, ExecutorOption, SkillMeta, ExecutorSkills, T
 import { EXECUTORS, executorConfigToOption, getExecutorColor } from '@/types';
 import { getDefaultExecutor } from '@/utils/executors';
 import { getLastExecutor, setLastExecutor } from '@/constants';
-import { TagCheckCardGroup } from './TagCheckCard';
 import { ExecutorPicker } from './todo-drawer/ExecutorPicker';
 import { ModelPicker } from '@/components/todo-drawer/ModelPicker';
 import { ExpertPicker } from './todo-drawer/ExpertPicker';
@@ -27,14 +26,13 @@ import {
 interface TodoDrawerProps {
   open: boolean;
   todo: Todo | null;
-  tags: Array<{ id: number; name: string; color: string }>;
   onClose: () => void;
   onSaved: (todo?: Todo) => void;
   /** 打开创建模式时自动选中的工作空间 ID（workspaces.id） */
   defaultWorkspaceId?: number | null;
 }
 
-export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspaceId }: TodoDrawerProps) {
+export function TodoDrawer({ open, todo, onClose, onSaved, defaultWorkspaceId }: TodoDrawerProps) {
   const { message } = App.useApp();
   const isEditMode = todo !== null;
 
@@ -56,7 +54,7 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
 
   // 从 formState 中解构出常用的字段
   const {
-    title, prompt, selectedTags, executor, expertName, model, workspaceId,
+    title, prompt, executor, expertName, model, workspaceId,
     webhookEnabled, schedulerEnabled, schedulerConfig, acceptanceCriteria,
   } = formState;
 
@@ -236,13 +234,11 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
           model ?? '',
         );
         await db.updateScheduler(workspaceToSave!, todo.id, schedulerEnabled, schedulerConfig || null);
-        await db.updateTodoTags(workspaceToSave!, todo.id, selectedTags);
         message.success('任务已更新');
       } else {
         createdTodo = await db.createTodo(
           title.trim(),
           prompt.trim(),
-          selectedTags,
           workspaceToSave!,
           acceptanceCriteria || undefined,
           undefined,
@@ -359,20 +355,6 @@ export function TodoDrawer({ open, todo, tags, onClose, onSaved, defaultWorkspac
             onToggle={() => setSkillsExpanded(prev => !prev)}
             onSkillClick={handleSkillClick}
           />
-
-          {tags.length > 0 && (
-            <>
-              <Divider style={{ margin: '8px 0 16px' }} />
-              <div style={{ marginBottom: 16 }}>
-                <div style={{ marginBottom: 10, fontWeight: 600, fontSize: 14 }}>标签</div>
-                <TagCheckCardGroup
-                  tags={tags}
-                  value={selectedTags[0] || null}
-                  onChange={(val) => setField('selectedTags', val ? [val as number] : [])}
-                />
-              </div>
-            </>
-          )}
 
           <Divider style={{ margin: '8px 0 16px' }} />
 

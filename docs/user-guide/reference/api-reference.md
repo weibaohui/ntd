@@ -15,28 +15,27 @@ ntd 后端 API 参考手册。所有业务接口前缀为 `/api/v1/`：workspace
 ## 接口分类
 
 ### 1. Todo 管理
-### 2. 标签管理
-### 3. 执行记录
-### 4. 执行操作
-### 5. 调度器
-### 6. 备份与恢复
-### 7. 配置管理
-### 8. 执行器管理
-### 9. 技能管理
-### 10. Agent Bot 管理
-### 11. 飞书集成
-### 12. 飞书历史
-### 13. 会话管理
-### 14. 工作空间
-### 15. Todo 模板
-### 16. 评审模板
-### 17. Loop Studio
-### 18. 自定义模板
-### 19. 系统接口
-### 20. WebSocket 事件
-### 21. Webhook 触发
-### 22. 使用统计
-### 23. 云端同步
+### 2. 执行记录
+### 3. 执行操作
+### 4. 调度器
+### 5. 备份与恢复
+### 6. 配置管理
+### 7. 执行器管理
+### 8. 技能管理
+### 9. Agent Bot 管理
+### 10. 飞书集成
+### 11. 飞书历史
+### 12. 会话管理
+### 13. 工作空间
+### 14. Todo 模板
+### 15. 评审模板
+### 16. Loop Studio
+### 17. 自定义模板
+### 18. 系统接口
+### 19. WebSocket 事件
+### 20. Webhook 触发
+### 21. 使用统计
+### 22. 云端同步
 
 ---
 
@@ -52,7 +51,6 @@ GET /api/v1/workspaces/{ws}/todos
 | 参数 | 类型 | 说明 |
 |------|------|------|
 | `status` | string | 按状态筛选 |
-| `tag_id` | number | 按标签 ID 筛选 |
 | `running` | boolean | 仅显示运行中的 Todo（`true`） |
 | `search` | string | 搜索关键词（标题或 prompt 包含匹配，由前端/CLI 在内存中过滤） |
 
@@ -87,7 +85,6 @@ POST /api/v1/workspaces/{ws}/todos
 {
   "title": "Todo 标题",
   "prompt": "Prompt 内容",
-  "tag_ids": [1, 2],
   "executor": "claudecode",
   "scheduler_enabled": true,
   "scheduler_config": "0 9 * * *",
@@ -100,7 +97,6 @@ POST /api/v1/workspaces/{ws}/todos
 |------|------|------|------|
 | `title` | string | 是 | Todo 标题 |
 | `prompt` | string | 否 | Prompt 内容（空时回退为 `title`） |
-| `tag_ids` | number[] | 否 | 标签 ID 数组 |
 | `executor` | string | 否 | 执行器类型，默认 `claudecode` |
 | `scheduler_enabled` | boolean | 否 | 是否启用调度 |
 | `scheduler_config` | string | 否 | Cron 表达式（6 字段：秒 + 标准 5 字段） |
@@ -173,20 +169,6 @@ PUT /api/v1/workspaces/{ws}/todos/{id}/force-status
 
 ---
 
-### 更新 Todo 标签
-```
-PUT /api/v1/workspaces/{ws}/todos/{id}/tags
-```
-
-**请求体：**
-```json
-{
-  "tag_ids": [1, 2, 3]
-}
-```
-
----
-
 ### 获取 Todo 执行摘要
 ```
 GET /api/v1/workspaces/{ws}/todos/{id}/summary
@@ -253,51 +235,7 @@ POST /api/v1/workspaces/{ws}/todos/batch-copy-workspace
 
 ---
 
-## 2. 标签管理
-
-### 获取标签列表
-```
-GET /api/v1/tags
-```
-
-**响应示例：**
-```json
-{
-  "code": 0,
-  "data": {
-    "tags": [
-      { "id": 1, "name": "重要", "color": "#ff4d4f" },
-      { "id": 2, "name": "紧急", "color": "#faad14" }
-    ]
-  }
-}
-```
-
----
-
-### 创建标签
-```
-POST /api/v1/tags
-```
-
-**请求体：**
-```json
-{
-  "name": "标签名",
-  "color": "#1890ff"
-}
-```
-
----
-
-### 删除标签
-```
-DELETE /api/v1/tags/{id}
-```
-
----
-
-## 3. 执行记录
+## 2. 执行记录
 
 ### 获取执行记录列表
 ```

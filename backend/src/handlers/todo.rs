@@ -10,7 +10,7 @@ use crate::models::{
     BatchUpdateTodoExecutorRequest, BatchUpdateTodoResult,
     BatchUpdateTodoSchedulerRequest, BatchUpdateTodoWorkspaceRequest, BatchWorkspaceResult,
     ComputedBucket, CreateTodoRequest, RecentCompletedTodo, Todo, TodoCenterItem,
-    UpdateTagsRequest, UpdateTodoRequest, UpdateWebhookRequest,
+    UpdateTodoRequest, UpdateWebhookRequest,
 };
 // 批量恢复调度需要在 handler 中构造 ServiceContext 调用 scheduler.upsert_task，
 // 与单个 update_scheduler handler (handlers/scheduler.rs) 的处理路径保持一致。
@@ -195,10 +195,6 @@ pub async fn create_todo(
         }
     }
 
-    for tag_id in &req.tag_ids {
-        state.db.add_todo_tag(id, *tag_id).await?;
-    }
-
     // Handle scheduler settings
     let scheduler_enabled = req.scheduler_enabled.unwrap_or(false);
     let scheduler_config = req
@@ -252,7 +248,6 @@ pub async fn create_todo(
         status: crate::models::TodoStatus::Pending,
         created_at: now.clone(),
         updated_at: now,
-        tag_ids: req.tag_ids.clone(),
         executor: Some(executor_name),
         expert_name: req.expert_name.clone(),
         model: model_val.map(|m| m.to_string()),
@@ -381,19 +376,6 @@ pub async fn update_todo(
 
     let todo = state.require_todo(id).await?;
     Ok(ApiResponse::ok(todo))
-}
-
-pub async fn update_todo_tags(
-    State(state): State<AppState>,
-    Path((ws_id, id)): Path<(i64, i64)>,
-    ApiJson(req): ApiJson<UpdateTagsRequest>,
-) -> Result<ApiResponse<()>, AppError> {
-    // V1 隔离：校验 todo 归属路径 workspace
-    workspace_guard::verify_todo_belongs_to_ws(&state.db, id, ws_id).await?;
-    state.db.set_todo_tags(id, &req.tag_ids).await?;
-    // 044：tag_added 触发器随 loop_triggers 表下线，不再向 loop dispatcher 派发，
-    // 因此也不再需要在更新前读取旧 tag 集合。
-    Ok(ApiResponse::ok(()))
 }
 
 pub async fn delete_todo(
@@ -934,7 +916,6 @@ pub fn v1_routes() -> Router<AppState> {
         .route("/recent-completed", get(get_recent_completed_todos_v1))
         // 按 id 的子路由（必须在 /{id} 之前注册，避免 axum 把子路径如 "archive" 当作 id 捕获）
         .route("/{id}/force-status", put(force_update_todo_status))
-        .route("/{id}/tags", put(update_todo_tags))
         .route("/{id}/scheduler", put(super::scheduler::update_scheduler))
         .route("/{id}/archive", post(archive_todo))
         .route("/{id}/restore", post(restore_todo))

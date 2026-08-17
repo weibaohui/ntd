@@ -138,7 +138,6 @@ pub mod middleware;
 pub mod static_handlers;
 
 mod todo;
-mod tag;
 pub(crate) mod execution;
 mod scheduler;
 pub mod backup;
@@ -410,7 +409,7 @@ pub async fn create_app(
 /// V1 路由装配：将所有领域路由合并为版本化 API。
 ///
 /// `action::v1_routes()` 是完整的 v1 API 聚合树，内部已处理：
-/// - 工作空间作用域资源（todos/executions/loops/tags/blackboard/slash-commands/settings）
+/// - 工作空间作用域资源（todos/executions/loops/blackboard/slash-commands/settings）
 ///   嵌套在 `/api/v1/workspaces/{ws}` 下
 /// - 全局 agent-bot 管理嵌套在 `/api/v1/agent-bots` 下
 /// - 所有全局资源路由（config/backup/skills/session/usage-stats/feishu/review-templates/
