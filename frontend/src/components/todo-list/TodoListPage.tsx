@@ -228,8 +228,9 @@ export function TodoListPage({
         />
       ) : viewMode === 'running' ? (
         // 执行监控态：复用 RunningBoard（执行记录 6 列 + 实时 WS + 评审流水线 + 自带统计栏/刷新）。
-        // 112：顶栏时间窗透传给 RunningBoard（其内置 hours 过滤：运行中记录恒显，
-        // 终态记录按 started_at/finished_at 收窗），与卡片/列表按 todo created_at 的口径属不同维度。
+        // 112：顶栏搜索词/时间窗透传给 RunningBoard（其内置 searchText 过滤：按 todo 标题/模型/
+        // 执行器与定时任务标题/Prompt 前端实时过滤；hours 过滤：运行中记录恒显、
+        // 终态记录按 started_at/finished_at 收窗），与卡片/列表的 created_at 口径属不同维度。
         <PageCard
           icon={<UnorderedListOutlined />}
           title="事项"
@@ -237,7 +238,12 @@ export function TodoListPage({
           style={{ flex: 1, height: '100%' }}
           contentStyle={{ height: 'calc(100% - 43px)', overflow: 'hidden' }}
         >
-          <RunningBoard hours={hours ?? undefined} />
+          <RunningBoard
+            // 搜索词 trim 后为空则归一为 undefined（与列表形态防抖后 trim 的口径一致）；
+            // hours 同理归一（RunningBoard props 为可选 number，null 语义=全部）
+            searchText={searchKeyword.trim() || undefined}
+            hours={hours ?? undefined}
+          />
         </PageCard>
       ) : (
         <PageCard

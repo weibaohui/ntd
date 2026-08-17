@@ -1,4 +1,5 @@
-// check_112_running_time_filter.spec.ts — 112：事项执行监控（running）视图顶栏时间过滤回归用例。
+// check_112_running_time_filter.spec.ts — 112：事项执行监控（running）视图顶栏
+// 搜索框 + 时间过滤回归用例。
 //
 // 运行方式：
 //   本 spec 默认验证 18088 dev 实例（与仓库其他 spec 一致，需 make dev 重建前端产物）；
@@ -64,5 +65,37 @@ test('running 视图切换 24h 后选中态生效并可切回「全部」', asyn
 
   // 截图留证（目录已 gitignore，发布到 PR 评论）
   await page.screenshot({ path: 'tests/__screenshots__/112-running-time-filter.png' });
+});
+
+test('running 视图搜索框与卡片/列表同款同位置，输入关键词实时过滤', async ({ page }) => {
+  await page.goto(`${BASE}/#/todos?view=running`);
+  await expect(page.locator('.running-board-stats')).toBeVisible({ timeout: 20000 });
+
+  // 搜索框存在（与卡片/列表同款控件、同一 data-testid）
+  const search = page.getByTestId('items-page-search');
+  await expect(search).toBeVisible();
+
+  // 位置断言：搜索框位于时间分段左侧（与卡片/列表顺序一致：搜索 → 时间）
+  const timeSeg = page.locator('.ant-segmented').first();
+  const s = await search.boundingBox();
+  const t = await timeSeg.boundingBox();
+  expect(s).not.toBeNull();
+  expect(t).not.toBeNull();
+  expect(s!.x).toBeLessThan(t!.x);
+  // 同一行：纵向区间有交集
+  expect(s!.y).toBeLessThan(t!.y + t!.height!);
+  expect(s!.y + s!.height!).toBeGreaterThan(t!.y);
+
+  // 实时过滤：记录统计栏「共 N 条」的初始值，输入无匹配关键词后收窄为 0
+  const totalStrong = page.locator('.running-stat-item', { hasText: '共' }).locator('strong');
+  const before = await totalStrong.textContent();
+  expect(before).toBeTruthy();
+
+  await search.fill('zzz-no-such-todo-112');
+  await expect(totalStrong).toHaveText('0');
+
+  // 清空后恢复初始总数（不持久化、可逆）
+  await search.fill('');
+  await expect(totalStrong).toHaveText(before!);
 });
 
