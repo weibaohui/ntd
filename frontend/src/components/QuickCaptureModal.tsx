@@ -129,9 +129,10 @@ export function QuickCaptureModal({
         );
       }
 
-      // 成功提示
-      message.success('已创建任务');
-      // 通知父组件任务已创建
+      // 成功提示（018 顺手修：快速捕获创建的也是「事项」，与抽屉/列表口径一致；
+      // 原「已创建任务」是缺陷文档 §8 划出的边界项，术语统一目标下成本仅一处字符串）
+      message.success('已创建事项');
+      // 通知父组件事项已创建
       onCreated?.(todo.id);
       // 关闭弹窗
       handleClose();
