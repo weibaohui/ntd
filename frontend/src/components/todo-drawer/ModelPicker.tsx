@@ -51,7 +51,8 @@ export const ModelPicker = memo(function ModelPicker({ model, executor, supports
   const label = (
     <div style={{ marginBottom: 10, fontWeight: 600, fontSize: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
       执行模型
-      <Tooltip title="指定本任务使用的模型，透传给对应执行器。留空则用执行器默认模型；执行器也没配则不传 --model。">
+      {/* 018：模型挂在「事项」维度，Tooltip 文案与抽屉其余部分同口径（旧文案为「本任务」） */}
+      <Tooltip title="指定本事项使用的模型，透传给对应执行器。留空则用执行器默认模型；执行器也没配则不传 --model。">
         <InfoCircleOutlined style={{ color: 'var(--color-text-secondary)', fontSize: 12 }} />
       </Tooltip>
     </div>
