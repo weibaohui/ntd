@@ -1233,35 +1233,25 @@ async fn resolve_executor_session(
 }
 
 
-/// 阶段⑤：查 push_level，仅当配置为 "all" 时返回私聊直推目标。
+/// 阶段⑤：构造私聊过程消息直推目标。
 ///
-/// 在发送端判断（而非 FeishuPushService 端），避免流式读取每条日志都查一次 DB。
-/// 查询失败 / 未配置都降级为不直推（None）——过程消息不直推不影响结果消息推送。
-async fn resolve_direct_output(
-    db: &Arc<Database>,
+/// 设计决策（114）：推送级别（disabled/result_only/all）仅作用于 ntd 主动触发的
+/// 事项/环路通知，飞书直连对话属于"用户主动发起的即时对话"，过程流式消息不应
+/// 受推送级别限制——用户在聊天就理应看到执行过程，与 DirectCardMessage（开始/
+/// 错误等关键节点卡片）绕过 push_level 的逻辑保持一致。
+///
+/// 本函数改为同步纯函数：移除 db 查询，调用点也去掉 .await；发送端始终直推。
+fn resolve_direct_output(
     bot_id: i64,
     receive_id: String,
     receive_id_type: &str,
 ) -> Option<DirectOutputInfo> {
-    // 默认 result_only：未配置 push target 时只推最终结果，不打扰过程
-    let push_level = match db.get_feishu_push_target(bot_id).await {
-        Ok(Some(target)) => target.push_level,
-        Ok(None) => "result_only".to_string(),
-        Err(e) => {
-            tracing::warn!("[debounce] failed to get push_level for bot {}: {}", bot_id, e);
-            "result_only".to_string()
-        }
-    };
-    // 仅 "all" 直推过程消息；其他级别过程消息只落库不进私聊
-    if push_level == "all" {
-        Some(DirectOutputInfo {
-            bot_id,
-            receive_id,
-            receive_id_type: receive_id_type.to_string(),
-        })
-    } else {
-        None
-    }
+    // 飞书直连对话场景：无条件构造直推目标，不再读取 push_level
+    Some(DirectOutputInfo {
+        bot_id,
+        receive_id,
+        receive_id_type: receive_id_type.to_string(),
+    })
 }
 
 
@@ -1478,8 +1468,9 @@ impl MessageDebounce {
         // 回执展示用户原文（而非注入管家 prompt 后的文本）：专家规则属于内部实现，
         // 不应刷屏暴露给用户。
         send_msg(executor_start_message(executor_type, message));
+        // 114：飞书直连对话绕过 push_level，直接构造过程消息直推目标
         let direct_output_info =
-            resolve_direct_output(db, bot_id, receive_id.clone(), receive_id_type).await;
+            resolve_direct_output(bot_id, receive_id.clone(), receive_id_type);
         // pipeline 在闭包外创建：闭包逐行借用它做有状态解析，产生与 todo 执行同格式的事件
         let mut pipeline = log_capture::create_pipeline_for_executor(executor.as_ref())
             .unwrap_or_else(|| EventPipeline::new(executor.executor_type().as_str()));
@@ -2206,5 +2197,45 @@ mod butler_expert_tests {
         .await
         .unwrap();
         assert_eq!(load_butler_expert_name(&db, Some(1)).await, None);
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod resolve_direct_output_tests {
+    //! 114 设计决策锁定：飞书直连对话（dm_chat/butler_chat）场景下，
+    //! 过程消息直推目标应无条件构造，绕过 push_level（disabled/result_only/all）限制。
+    //! push_level 只作用于 ntd 主动触发的事项/环路通知，不限制"用户主动聊天"。
+    use super::resolve_direct_output;
+
+    /// 基础用例：任意 bot_id / receive_id / receive_id_type 都返回 Some，且字段透传
+    #[test]
+    fn test_always_returns_some_open_id() {
+        let info = resolve_direct_output(42, "ou_user123".to_string(), "open_id")
+            .expect("114 后 resolve_direct_output 必须恒返回 Some");
+        assert_eq!(info.bot_id, 42);
+        assert_eq!(info.receive_id, "ou_user123");
+        assert_eq!(info.receive_id_type, "open_id");
+    }
+
+    /// 群聊 chat_id 场景：同样无条件 Some，字段透传
+    #[test]
+    fn test_always_returns_some_chat_id() {
+        let info = resolve_direct_output(7, "oc_group456".to_string(), "chat_id")
+            .expect("114 后 resolve_direct_output 必须恒返回 Some");
+        assert_eq!(info.bot_id, 7);
+        assert_eq!(info.receive_id, "oc_group456");
+        assert_eq!(info.receive_id_type, "chat_id");
+    }
+
+    /// 114 前的行为锁定（反向断言防止回退）：
+    /// resolve_direct_output 不再接受 db 参数（已改为同步纯函数），
+    /// 编译器层面保证了它没有能力读取 push_level 配置。
+    /// 这里用「参数签名检查」等价表述：函数签名是 3 参数同步函数。
+    #[test]
+    fn test_signature_is_sync_no_db_param() {
+        // 直接调用 3 参数同步版本：能编译通过就证明签名正确，无 db、无 async、无 .await
+        let result = resolve_direct_output(1, "r".to_string(), "open_id");
+        assert!(result.is_some());
     }
 }

@@ -85,18 +85,11 @@ impl FeishuPushService {
                                     continue;
                                 }
 
-                                // 执行器直接输出：executor 默认响应场景下，过程日志直接推送给触发用户。
-                                // 与 DirectCardMessage 的区别：后者是开始/结束等关键节点的卡片消息，
-                                // 前者是执行过程中流式输出的纯文本消息。
-                                // 受 push_level 控制：仅当配置为 "all" 时才发送过程消息，
-                                // "result_only" 和 "disabled" 时不发过程消息。
+                                // 飞书直连对话过程流式输出：绕过 push_level 过滤，直接推送给触发用户。
+                                // 设计决策（114）：push_level 只作用于 ntd 主动触发的事项/环路通知，
+                                // 直连对话是"用户主动聊"，过程消息理应完整可见；与 DirectCardMessage
+                                // （开始/错误等关键节点卡片）绕过 push_level 的策略一致。
                                 if let ExecEvent::DirectStreamMessage { bot_id, receive_id, receive_id_type, entry } = &ev {
-                                    // 先查该 bot 的 push_level 配置
-                                    let push_level = Self::get_bot_push_level(&db, *bot_id).await;
-                                    if push_level != "all" {
-                                        debug!("[feishu-push] executor direct output skipped for bot {} due to push_level={}", bot_id, push_level);
-                                        continue;
-                                    }
                                     // tool_call 类型：递增计数器并传入编号，用于显示 "🔧 工具 #N: 工具名"
                                     let tool_idx = if entry.log_type == "tool_call"
                                         || entry.log_type == "tool_use"

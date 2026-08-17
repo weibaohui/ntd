@@ -92,9 +92,10 @@ pub enum ExecEvent {
         /// 要发送的文本内容
         content: String,
     },
-    /// 私聊直达流式消息：管家聊天场景下，执行过程中每条日志直接推送给触发用户。
-    /// 与 DirectCardMessage 的区别：后者是开始/结束等关键节点的卡片消息，
-    /// 前者是执行过程中流式输出的日志消息（push_level="all" 时发送）。
+    /// 私聊直达流式消息：飞书直连对话场景（dm_chat/butler_chat）下，执行过程中每条日志
+    /// 直接推送给触发用户。与 DirectCardMessage 的区别：后者是开始/结束等关键节点的卡片，
+    /// 前者是执行过程中流式输出的日志。114 设计决策：本事件绕过 push_level 限制（因为
+    /// 是"用户主动聊天"的即时对话，与 ntd 主动触发的通知不同）。
     DirectStreamMessage {
         /// Feishu bot_id
         bot_id: i64,
