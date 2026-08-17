@@ -73,8 +73,13 @@ vi.mock('@/components/todo-list/TodoListView', () => ({
 
 // 111：running 形态渲染 RunningBoard（自带统计栏+实时 WS），测试中替换为静态桩，
 // 避免真实组件在 jsdom 里拉数据/建 WS。
+// 112：桩组件把收到的 hours prop 渲染出来，供断言时间窗是否透传进 RunningBoard。
 vi.mock('@/components/running-board', () => ({
-  RunningBoard: () => <div data-testid="mock-running-board" />,
+  RunningBoard: (props: { hours?: number }) => (
+    <div data-testid="mock-running-board">
+      <div data-testid="mock-running-hours">{String(props.hours ?? null)}</div>
+    </div>
+  ),
 }));
 
 vi.mock('@/components/common/PageCard', () => ({
@@ -202,7 +207,7 @@ describe('TodoListPage', () => {
       });
     });
 
-    it('执行监控（running）形态不渲染时间分段', () => {
+    it('执行监控（running）形态渲染时间分段并把 hours 透传给 RunningBoard', () => {
       window.history.replaceState(null, '', '#/todos?view=running');
       render(
         <TodoListPage
@@ -213,8 +218,13 @@ describe('TodoListPage', () => {
         />,
       );
       expect(screen.getByTestId('mock-running-board')).toBeInTheDocument();
-      // running 态 header 精简：不渲染「全部」（RunningBoard 自带时间统计）
-      expect(screen.queryByText('全部')).not.toBeInTheDocument();
+      // 112：running 态 header 与卡片/列表同一位置渲染时间分段（「全部」可见）
+      expect(screen.getByText('全部')).toBeInTheDocument();
+      // 默认 null=全部：RunningBoard 收到的 hours 归一为 null 语义（undefined）
+      expect(screen.getByTestId('mock-running-hours')).toHaveTextContent('null');
+      // 点击 24h 后时间窗透传进 RunningBoard，由其既有逻辑过滤执行记录
+      fireEvent.click(screen.getByText('24h'));
+      expect(screen.getByTestId('mock-running-hours')).toHaveTextContent('24');
     });
   });
 });

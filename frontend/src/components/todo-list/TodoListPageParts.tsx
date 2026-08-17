@@ -28,7 +28,7 @@ interface TodoListHeaderProps {
   viewMode: 'card' | 'list' | 'running';
   searchKeyword: string;
   loading: boolean;
-  /** 111：时间窗（null=全部）；card/list 共用，running 形态不渲染。 */
+  /** 111：时间窗（null=全部）；card/list/running 三形态共用，running 透传给 RunningBoard 过滤执行记录。 */
   hours: number | null;
   onHoursChange: (h: number | null) => void;
   onSearchChange: (kw: string) => void;
@@ -75,10 +75,24 @@ export function TodoListHeader({
     </Button>
   );
 
-  // 精简 header：移动端或运行态，只保留 Segmented + 新建（RunningBoard 自带统计栏+刷新+实时 WS）。
-  if (isMobile || viewMode === 'running') {
+  // 移动端精简 header：只保留 Segmented + 新建（与卡片/列表形态的移动端行为一致，
+  // 时间分段与搜索在窄屏下均不展示，避免顶栏溢出）。
+  if (isMobile) {
     return (
       <>
+        {segmented}
+        {createBtn}
+      </>
+    );
+  }
+
+  // 运行态桌面 header：RunningBoard 自带统计栏刷新与实时 WS，因此不放搜索框与刷新按钮；
+  // 但时间分段仍渲染在视图切换器左侧，与卡片/列表形态保持同一槽位，
+  // hours 由 TodoListPage 透传给 RunningBoard，对其执行记录按时间窗过滤（112）。
+  if (viewMode === 'running') {
+    return (
+      <>
+        <TimeRangeSegmented showAll value={hours} onChange={onHoursChange} />
         {segmented}
         {createBtn}
       </>
