@@ -2210,7 +2210,7 @@ mod resolve_direct_output_tests {
 
     /// 基础用例：任意 bot_id / receive_id / receive_id_type 都返回 Some，且字段透传
     #[test]
-    fn test_always_returns_some_open_id() {
+    fn test_resolve_direct_output_私聊open_id恒构造直推目标() {
         let info = resolve_direct_output(42, "ou_user123".to_string(), "open_id")
             .expect("114 后 resolve_direct_output 必须恒返回 Some");
         assert_eq!(info.bot_id, 42);
@@ -2220,7 +2220,7 @@ mod resolve_direct_output_tests {
 
     /// 群聊 chat_id 场景：同样无条件 Some，字段透传
     #[test]
-    fn test_always_returns_some_chat_id() {
+    fn test_resolve_direct_output_群聊chat_id恒构造直推目标() {
         let info = resolve_direct_output(7, "oc_group456".to_string(), "chat_id")
             .expect("114 后 resolve_direct_output 必须恒返回 Some");
         assert_eq!(info.bot_id, 7);
@@ -2233,7 +2233,7 @@ mod resolve_direct_output_tests {
     /// 编译器层面保证了它没有能力读取 push_level 配置。
     /// 这里用「参数签名检查」等价表述：函数签名是 3 参数同步函数。
     #[test]
-    fn test_signature_is_sync_no_db_param() {
+    fn test_resolve_direct_output_同步三参签名无db参数() {
         // 直接调用 3 参数同步版本：能编译通过就证明签名正确，无 db、无 async、无 .await
         let result = resolve_direct_output(1, "r".to_string(), "open_id");
         assert!(result.is_some());

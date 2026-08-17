@@ -102,9 +102,9 @@ impl FeishuPushService {
                                     } else {
                                         None
                                     };
-                                    // 使用无标题卡片样式发送过程消息，支持 markdown 格式（不显示"执行器输出"标题）
-                                    let Some(text) = render_log_entry("", entry, tool_idx) else { continue };
-                                    let card_json = render_card_message(&text);
+                                    // 114：恒推送——卡片构造刻意不接收 push_level（见 build_direct_stream_card 注释）；
+                                    // None 表示该条日志无可展示内容，跳过（与渲染层过滤口径一致）
+                                    let Some(card_json) = build_direct_stream_card(entry, tool_idx) else { continue };
                                     let res = FeishuApiClient::send_card_raw(&feishu_listener.bot_credentials, &feishu_listener.token_manager, *bot_id, receive_id, receive_id_type, &card_json).await;
                                     if let Err(e) = res {
                                         warn!("[feishu-push] executor direct output (card) failed for bot {}: {}", bot_id, e);
@@ -601,6 +601,21 @@ fn render_card_message(content: &str) -> String {
     render_card(&card, "")
 }
 
+/// 构造直连对话流式消息的出站卡片（114：恒推送，与 push_level 无关）。
+///
+/// 从 select! 循环 arm 中抽出：arm 持有 counters/listener 借用且 send_card_raw 是
+/// 静态网络调用，无法单测；本函数承载该分支全部可纯测的决策（渲染文本 → 包装卡片）。
+/// 刻意不接收 push_level 入参——签名里没有级别参数，就是「直连对话不受推送级别
+/// 约束」（设计 114 §2）的编译器级表达：恢复任何按级别拦截都必须改签名，
+/// 会先撞坏 direct_stream_card_tests 的用例。
+fn build_direct_stream_card(
+    entry: &crate::models::ParsedLogEntry,
+    tool_call_index: Option<usize>,
+) -> Option<String> {
+    let text = render_log_entry("", entry, tool_call_index)?;
+    Some(render_card_message(&text))
+}
+
 /// 将 Finished 事件格式化为卡片 JSON 字符串
 fn format_finished_card(event: &ExecEvent) -> Option<String> {
     match event {
@@ -631,6 +646,42 @@ fn format_finished_card(event: &ExecEvent) -> Option<String> {
             Some(render_card(&card, ""))
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, clippy::panic)]
+mod direct_stream_card_tests {
+    //! 114 推送侧决策锁定（评审修复补充，对应设计 §4.1 的测试意图）。
+    //! 设计原承诺「disabled/result_only/all 三级别参数化用例走到 send_card_raw」；
+    //! 但 send_card_raw 是静态网络调用、select! arm 持有运行时借用，单测无法触达。
+    //! 等价锁定：build_direct_stream_card 签名刻意没有 push_level 参数——
+    //! 恢复任何按级别拦截都必须改签名，先撞坏这组用例。
+
+    use super::build_direct_stream_card;
+    use crate::models::ParsedLogEntry;
+
+    /// 普通文本日志：恒产出卡片且内容透传（114 后与推送级别无关）
+    #[test]
+    fn test_build_direct_stream_card_文本日志产出含内容卡片() {
+        let entry = ParsedLogEntry::new("text", "正在分析依赖");
+        let card = build_direct_stream_card(&entry, None).expect("非空文本必须产出卡片");
+        assert!(card.contains("正在分析依赖"));
+    }
+
+    /// 空白内容：返回 None，对应推送循环 arm 里 let-else 的 continue 跳过分支
+    #[test]
+    fn test_build_direct_stream_card_空白内容不产出卡片() {
+        let entry = ParsedLogEntry::new("text", "   ");
+        assert!(build_direct_stream_card(&entry, None).is_none());
+    }
+
+    /// 工具调用：编号透传渲染（🔧 工具 #N），确保 counters → 卡片链路不断
+    #[test]
+    fn test_build_direct_stream_card_工具调用透传编号() {
+        let entry = ParsedLogEntry::new("tool_call", "ls -la");
+        let card = build_direct_stream_card(&entry, Some(3)).expect("工具调用必须产出卡片");
+        assert!(card.contains("#3"), "卡片应包含工具编号 #3：{card}");
     }
 }
 
