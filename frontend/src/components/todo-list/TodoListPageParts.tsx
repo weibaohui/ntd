@@ -28,7 +28,7 @@ interface TodoListHeaderProps {
   viewMode: 'card' | 'list' | 'running';
   searchKeyword: string;
   loading: boolean;
-  /** 111：时间窗（null=全部）；card/list 共用，running 形态不渲染。 */
+  /** 111：时间窗（null=全部）；card/list/running 三形态共用，running 透传给 RunningBoard 过滤执行记录。 */
   hours: number | null;
   onHoursChange: (h: number | null) => void;
   onSearchChange: (kw: string) => void;
@@ -38,8 +38,8 @@ interface TodoListHeaderProps {
 }
 
 /**
- * 顶部 header：搜索框 + 刷新 + Segmented + 新建。
- * 桌面端展开全部；移动端精简（去掉搜索/刷新，保留 Segmented + 新建）。
+ * 顶部 header：搜索框 + 时间分段 + 刷新 + Segmented + 新建。
+ * 桌面端展开全部（running 形态无刷新按钮，统计栏自带）；移动端精简（保留 Segmented + 新建）。
  * 拆出独立组件避免 TodoListPage 主函数膨胀。
  */
 export function TodoListHeader({
@@ -75,10 +75,34 @@ export function TodoListHeader({
     </Button>
   );
 
-  // 精简 header：移动端或运行态，只保留 Segmented + 新建（RunningBoard 自带统计栏+刷新+实时 WS）。
-  if (isMobile || viewMode === 'running') {
+  // 移动端精简 header：只保留 Segmented + 新建（与卡片/列表形态的移动端行为一致，
+  // 时间分段与搜索在窄屏下均不展示，避免顶栏溢出）。
+  if (isMobile) {
     return (
       <>
+        {segmented}
+        {createBtn}
+      </>
+    );
+  }
+
+  // 运行态桌面 header：RunningBoard 自带统计栏刷新与实时 WS，因此不放刷新按钮；
+  // 但搜索框与时间分段仍渲染在与卡片/列表相同的槽位（搜索 → 时间 → 切换器 → 新建），
+  // 关键词/时间窗由 TodoListPage 透传给 RunningBoard，对其执行记录实时过滤（112）。
+  if (viewMode === 'running') {
+    return (
+      <>
+        <Input
+          allowClear
+          size="small"
+          placeholder="搜索标题或 Prompt"
+          prefix={<SearchOutlined />}
+          value={searchKeyword}
+          onChange={(e) => onSearchChange(e.target.value)}
+          style={{ width: 200 }}
+          data-testid="items-page-search"
+        />
+        <TimeRangeSegmented showAll value={hours} onChange={onHoursChange} />
         {segmented}
         {createBtn}
       </>

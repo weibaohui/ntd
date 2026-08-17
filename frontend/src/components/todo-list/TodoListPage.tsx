@@ -173,7 +173,7 @@ export function TodoListPage({
   const viewMode = pickListView(listView, ['card', 'list', 'running'], storedView);
   // 统一搜索词：卡片/列表两种形态共用一个搜索框
   const [searchKeyword, setSearchKeyword] = useState('');
-  // 111：时间窗（card/list 共享）：null=全部不过滤，与任务页口径一致；
+  // 111：时间窗（card/list/running 三形态共享）：null=全部不过滤，与任务页口径一致；
   // 不持久化——离开页面回到默认「全部」，避免用户忘记过滤态导致老数据「消失」。
   const [hours, setHours] = useState<number | null>(null);
   // 刷新信号：每次点击刷新按钮自增，传递给 TodoCenterCardView 触发重新加载
@@ -228,7 +228,9 @@ export function TodoListPage({
         />
       ) : viewMode === 'running' ? (
         // 执行监控态：复用 RunningBoard（执行记录 6 列 + 实时 WS + 评审流水线 + 自带统计栏/刷新）。
-        // 不传 searchText/hours：RunningBoard 自带统计栏+刷新+实时，全量执行记录（与 card 的 todo 定义维度区分）。
+        // 112：顶栏搜索词/时间窗透传给 RunningBoard（其内置 searchText 过滤：按 todo 标题/模型/
+        // 执行器与定时任务标题/Prompt 前端实时过滤；hours 过滤：运行中记录恒显、
+        // 终态记录按 started_at/finished_at 收窗），与卡片/列表的 created_at 口径属不同维度。
         <PageCard
           icon={<UnorderedListOutlined />}
           title="事项"
@@ -236,7 +238,12 @@ export function TodoListPage({
           style={{ flex: 1, height: '100%' }}
           contentStyle={{ height: 'calc(100% - 43px)', overflow: 'hidden' }}
         >
-          <RunningBoard />
+          <RunningBoard
+            // 搜索词 trim 后为空则归一为 undefined（与列表形态防抖后 trim 的口径一致）；
+            // hours 同理归一（RunningBoard props 为可选 number，null 语义=全部）
+            searchText={searchKeyword.trim() || undefined}
+            hours={hours ?? undefined}
+          />
         </PageCard>
       ) : (
         <PageCard
