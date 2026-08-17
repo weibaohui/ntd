@@ -36,7 +36,6 @@ export function ContributeButton({
   return (
     <ShareToRepoButton
       actionType={CONTRIBUTE_ACTION_TYPE}
-      actionKey={expert.name}
       params={{
         expert_name: expert.name,
         version: expert.version,

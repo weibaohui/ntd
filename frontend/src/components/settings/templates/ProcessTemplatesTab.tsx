@@ -125,7 +125,6 @@ export function ProcessTemplatesTab({ refreshTick }: { refreshTick?: number }) {
           {!record.is_system && record.source_path && (
             <ShareToRepoButton
               actionType="process_contribute"
-              actionKey={record.guid}
               params={{
                 resource_name: record.name,
                 version: record.version,

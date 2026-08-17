@@ -68,7 +68,6 @@ export function SkillTemplatesTab({ refreshTick }: { refreshTick?: number }) {
       render: (_: unknown, record: BundledSkillMeta) => (
         <ShareToRepoButton
           actionType="skill_contribute"
-          actionKey={record.name}
           params={{
             resource_name: record.short_name,
             version: record.version || '',
