@@ -5,7 +5,8 @@ import {
   getInstallableExecutorNames,
 } from './executorInstallPrompts';
 
-// 已降级为文件内 const 的 claudecode 安装键与 prompt，测试中以字面量直接引用。
+// claudecode 的安装键用字面量断言；prompt 不做全等快照（易碎），
+// 也不用「再调一次函数的结果」做全等——那是 f(x)===f(x) 自证，断言不了任何东西。
 const CLAUCODE_ACTION_KEY = 'claudecode';
 const CLAUCODE_PROMPT = getExecutorInstallPrompt(CLAUCODE_ACTION_KEY)?.prompt ?? '';
 
@@ -18,7 +19,8 @@ describe('getExecutorInstallPrompt', () => {
     const result = getExecutorInstallPrompt('claudecode');
     expect(result).not.toBeNull();
     expect(result?.actionKey).toBe(CLAUCODE_ACTION_KEY);
-    expect(result?.prompt).toBe(CLAUCODE_PROMPT);
+    // prompt 只断言内容相关性（包含 claude 安装命令），全等断言见上方说明。
+    expect(result?.prompt).toContain('claude');
   });
 
   it('returns null for unknown executor', () => {

@@ -1,8 +1,8 @@
 // Loop Studio 类型定义。
 //
 // 与 backend/src/models/loop_.rs 一一对应：
-// - LoopDto = 环路主表 DTO
 // - LoopExecutionDto = 单次执行记录
+// （原 LoopDto 已删除——需求 044 环路瘦身时前端不再消费主表 DTO）
 //
 // 需求 044（环路瘦身）：环路降级为「工艺的运行时承载」，
 // 触发器（loop_triggers）、webhook、评审模板、手工创建/更新等概念整体下线，
@@ -32,7 +32,7 @@ export interface LoopExecutionDto {
   error_message?: string | null;
 }
 
-/** 门禁评价摘要（需求 047）：门禁级 status/result，随 LoopStepExecutionDto 下发。 */
+/** 门禁评价摘要（需求 047）：门禁级 status/result，随步骤执行记录的 gate_results 数组下发。 */
 export interface GateResultDto {
   id: number;
   gate_type: string;

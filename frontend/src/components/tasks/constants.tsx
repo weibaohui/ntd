@@ -249,28 +249,6 @@ export function formatDateShort(iso?: string): string {
   return iso.slice(0, 10);
 }
 
-/** ReactNode 形式的状态标签，便于多处复用。 */
-export function StatusTag({ status }: { status: string }): ReactNode {
-  return (
-    <span
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 4,
-        padding: '2px 8px',
-        borderRadius: 4,
-        fontSize: 12,
-        color: STATUS_COLOR[status] === 'default' ? '#6b7280' : '#fff',
-        background: laneColorForStatus(status),
-      }}
-    >
-      {STATUS_LABEL[status] ?? status}
-    </span>
-  );
-}
-
-/** 取泳道色（看板列头 + 状态标签共用）。 */
-function laneColorForStatus(status: string): string {
-  const lane = TASK_LANES.find((l) => l.status === status);
-  return lane?.color ?? '#6b7280';
-}
+// StatusTag 与 laneColorForStatus 已删除（PR #1073 评审修复）：
+// StatusTag 全仓无消费方（TodoCenterCard/TodoListView 各有自己的局部状态标签实现），
+// laneColorForStatus 唯一调用方就是 StatusTag，连带删除。看板列头取色走 TASK_LANES 自身。

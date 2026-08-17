@@ -8,7 +8,7 @@
 // 4. modals 作为 JSX 返回，调用方在组件末尾一次性渲染。
 // 5. 单函数 ≤ 30 行：每个 Modal 抽为独立组件，hook 主体仅负责状态编排。
 
-import { useState, useCallback, useMemo, type ReactNode } from 'react';
+import { useState, useCallback, useMemo, type Key, type ReactNode } from 'react';
 import { Modal, App as AntApp } from 'antd';
 import {
   SwapOutlined,
@@ -24,7 +24,18 @@ import * as dbLoops from '@/utils/database/loops';
 import { EXECUTORS_FOR_PICKER } from '@/types/execution';
 import { ExecutorPicker } from '@/components/todo-drawer/ExecutorPicker';
 import { WorkspaceSwitcher } from '@/components/shell/WorkspaceSwitcher';
-import type { BatchActionItem } from '@/components/common/ActionToolbar';
+// BatchActionItem 原住在 common/ActionToolbar.tsx；该组件确认全仓无渲染方（PR #1073 评审修复删除），
+// 类型随唯一消费方 hook 迁入，避免为保一个类型留下整份死组件文件。
+/** 单个批量操作菜单项。渲染方不感知业务语义，只负责点击时回传当前已选 id 列表。
+ *  仅本文件（UseBatchActionsResult/batchActions）消费，故不导出——外部按结构化类型接入。 */
+interface BatchActionItem<TId extends Key = number> {
+  key: string;
+  label: string;
+  icon?: ReactNode;
+  danger?: boolean;
+  /** 收到当前 selectedIds，由父组件决定如何执行（弹 Modal / 调 API 等）。 */
+  onClick: (selectedIds: TId[]) => void;
+}
 
 /** 列表模式：决定调 db 还是 dbLoops，以及哪些批量操作可见。 */
 type BatchMode = 'item' | 'loop';
@@ -299,7 +310,7 @@ export function useBatchActions(opts: UseBatchActionsOptions): UseBatchActionsRe
     }
   }, [pendingDeleteIds, mode, selectedWorkspace, message, onRefreshItems, onRefreshLoops, onClearSelection]);
 
-  // ─── 顶部 ActionToolbar 菜单项 ──────────────────────────────
+  // ─── 顶部批量操作菜单项（渲染方为 TodoListView 的 BatchButton） ──
   const batchActions = useMemo<BatchActionItem<number>[]>(() => {
     if (mode === 'item') {
       return [
