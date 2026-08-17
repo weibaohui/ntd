@@ -24,14 +24,14 @@ test.describe('Executor UI Tests', () => {
     await expect(addButton).toBeVisible({ timeout: 5000 });
     await addButton.click();
 
-    // TodoDrawer 是 antd Drawer（role=dialog）；创建模式标题为「创建任务」。
+    // TodoDrawer 是 antd Drawer（role=dialog）；创建模式标题为「创建事项」（018：术语随全局口径统一，旧为「创建任务」）。
     const drawer = page.getByRole('dialog');
     await expect(drawer).toBeVisible({ timeout: 5000 });
 
-    // 标题输入框 placeholder 已由旧的「输入 Todo 标题」改为「任务标题」。
-    await drawer.getByPlaceholder('任务标题').fill('Test task for UI');
-    // Prompt 文本域 placeholder 改为「描述完成该任务需要满足的条件...」。
-    await drawer.getByPlaceholder('描述完成该任务需要满足的条件...').fill('Say hello in 3 words');
+    // 标题输入框 placeholder 已由旧的「输入 Todo 标题」「任务标题」改为「事项标题」（018）。
+    await drawer.getByPlaceholder('事项标题').fill('Test task for UI');
+    // Prompt 文本域 placeholder 为「描述完成该事项需要满足的条件...」（018：任务→事项）。
+    await drawer.getByPlaceholder('描述完成该事项需要满足的条件...').fill('Say hello in 3 words');
 
     // 提交按钮：创建模式下文案为「创建」（编辑模式才为「保存」）。
     // antd 对「纯文字、无图标」的两个汉字按钮会自动在中间插一个空格（autoInsertSpaceInButton），

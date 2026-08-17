@@ -201,7 +201,7 @@ export function TodoDrawer({ open, todo, onClose, onSaved, defaultWorkspaceId }:
 
   const handleSave = async () => {
     if (!title.trim()) {
-      message.error('请输入任务标题');
+      message.error('请输入事项标题');
       return;
     }
 
@@ -234,7 +234,9 @@ export function TodoDrawer({ open, todo, onClose, onSaved, defaultWorkspaceId }:
           model ?? '',
         );
         await db.updateScheduler(workspaceToSave!, todo.id, schedulerEnabled, schedulerConfig || null);
-        message.success('任务已更新');
+        // 018：全局口径已统一为「事项」，成功提示不再沿用旧「任务」措辞
+        // （rebase 注：111 删除标签功能后此处无 updateTodoTags 调用，冲突取 main 结构+本 PR 文案）
+        message.success('事项已更新');
       } else {
         createdTodo = await db.createTodo(
           title.trim(),
@@ -263,7 +265,7 @@ export function TodoDrawer({ open, todo, onClose, onSaved, defaultWorkspaceId }:
           await db.updateScheduler(workspaceToSave!, createdTodo.id, schedulerEnabled, schedulerConfig || null);
         }
 
-        message.success('任务创建成功');
+        message.success('事项创建成功');
       }
 
       // NTD-014-B：把新事项传给宿主（编辑模式传 undefined），
@@ -285,7 +287,8 @@ export function TodoDrawer({ open, todo, onClose, onSaved, defaultWorkspaceId }:
 
   return (
     <Drawer
-      title={isEditMode ? '编辑任务' : '创建任务'}
+      /* 018：全局 UI 术语统一为「事项」（导航/列表/详情均为事项），抽屉弃用旧「任务」口径 */
+      title={isEditMode ? '编辑事项' : '创建事项'}
       open={open}
       onClose={onClose}
       width={600}
@@ -303,7 +306,7 @@ export function TodoDrawer({ open, todo, onClose, onSaved, defaultWorkspaceId }:
           <Input
             value={title}
             onChange={e => setField('title', e.target.value)}
-            placeholder="任务标题"
+            placeholder="事项标题"
             style={{ fontSize: 16, fontWeight: 600, padding: '8px 12px' }}
           />
         </div>
@@ -388,7 +391,7 @@ export function TodoDrawer({ open, todo, onClose, onSaved, defaultWorkspaceId }:
             <Input.TextArea
               value={acceptanceCriteria}
               onChange={e => setField('acceptanceCriteria', e.target.value)}
-              placeholder="描述完成该任务需要满足的条件..."
+              placeholder="描述完成该事项需要满足的条件..."
               rows={3}
               style={{ resize: 'vertical' }}
             />
