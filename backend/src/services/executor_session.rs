@@ -23,7 +23,7 @@ use std::time::Duration;
 use command_group::AsyncCommandGroup;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
-use crate::adapters::CodeExecutor;
+use crate::adapters::{insert_dir_arg, CodeExecutor};
 
 /// 直连执行 session 的 spawn 配置（A/B 调用方各自组装，通路差异不进本结构）。
 pub(crate) struct SessionSpawnConfig {
@@ -100,6 +100,14 @@ impl DirectExecutorSession {
         let is_resume = session_id.is_some();
         let command_args =
             executor.command_args_with_session(&message, session_id.as_deref(), is_resume);
+        // 目录参数注入（NTD-019）：zhanlu 不跟随进程 cwd，把 cwd 同源的目录
+        // 以 `--dir <path>` 插进 argv。to_str() 失败（非 UTF-8 路径）时不注入，
+        // 退化为仅 current_dir 的现状语义，不 panic。
+        let command_args = insert_dir_arg(
+            command_args,
+            executor.dir_arg(),
+            cwd.to_str(),
+        );
         let program = executor.executable_path();
         tracing::info!(
             "[session] spawning {}: {:?} (cwd={:?}, tag={})",

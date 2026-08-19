@@ -241,6 +241,38 @@ pub fn default_final_result_with_think_stripping(logs: &[ParsedLogEntry]) -> Opt
     }
 }
 
+/// 把执行器的目录参数插进 argv（NTD-019）。
+///
+/// 只在两个条件同时满足时才动 argv：执行器声明了目录 flag（`dir_arg()` 为
+/// `Some`，目前仅 zhanlu 的 `--dir`——zl 不跟随进程 cwd），且本次执行有生效
+/// 目录（worktree 路径 / workspace path / wiki 目录）。任一缺失、或 argv 为空
+/// （没有 message 锚点）时原样返回——其余 10 家执行器的 argv 逐字节不变。
+///
+/// 插入位置取最后一个元素之前：所有适配器的 argv 都以 message 收尾（位置参数），
+/// clap 系 CLI 的 flag 必须在位置参数之前才稳妥，不赌 trailing flag 可解析。
+pub fn insert_dir_arg(
+    args: Vec<String>,
+    dir_flag: Option<&str>,
+    dir: Option<&str>,
+) -> Vec<String> {
+    // let-else 解包「flag 与目录齐备」：目录参数缺一不可，缺任一个都等于没有
+    // 目录信息可传，保持现状（仅进程 cwd）比传半个参数更安全。
+    let (Some(flag), Some(dir)) = (dir_flag, dir) else {
+        return args;
+    };
+    // argv 为空说明连 message 都没有，没有可锚定的插入点；防御分支，正常不会走到。
+    if args.is_empty() {
+        return args;
+    }
+    let mut args = args;
+    // 插在 message（最后一个位置参数）之前：先插 dir 再插 flag，两次同位插入
+    // 让 flag 落在 dir 前面，得到 `... --dir /path <message>` 的目标形态。
+    let at = args.len() - 1;
+    args.insert(at, dir.to_string());
+    args.insert(at, flag.to_string());
+    args
+}
+
 /// 共享的执行器基础状态：path + 可选 model。
 ///
 /// `BaseExecutor` 解决 Issue #504 提到的 10 个 executor 适配器高度重复的问题。
@@ -362,6 +394,14 @@ pub trait CodeExecutor: Send + Sync {
     /// `is_resume` 为 true 时表示恢复已有会话，false 表示新执行并指定 session_id
     fn command_args_with_session(&self, message: &str, _session_id: Option<&str>, _is_resume: bool) -> Vec<String> {
         self.command_args(message)
+    }
+
+    /// CLI 目录参数差异点（NTD-019）：返回 `Some(flag)` 表示该执行器不跟随进程
+    /// cwd、需要 argv 显式携带工作目录（zhanlu 的 `--dir`），spawn 层会把
+    /// `flag <生效目录>` 插到 argv 的 message 之前；返回 `None`（默认）表示
+    /// 只依赖进程 cwd，argv 不注入目录。默认值让其余 10 家执行器零改动。
+    fn dir_arg(&self) -> Option<&'static str> {
+        None
     }
 
     /// 该执行器是否支持通过 session_id 恢复对话
@@ -1020,5 +1060,55 @@ mod tests {
         *exec.base.model.lock() = Some("claude-3-5-sonnet".to_string());
         // 通过 trait 方法读出
         assert_eq!(exec.get_model(), Some("claude-3-5-sonnet".to_string()));
+    }
+
+    #[test]
+    fn test_insert_dir_arg_目录参数插在message之前() {
+        // 模拟 zhanlu 的 argv 形态：message 是最后一个位置参数，
+        // --dir 必须落在 message 前、其余 flag 之后。
+        let args = vec![
+            "run".to_string(),
+            "--format".to_string(),
+            "json".to_string(),
+            "--dangerously-skip-permissions".to_string(),
+            "写代码".to_string(),
+        ];
+        let out = insert_dir_arg(args, Some("--dir"), Some("/tmp/ws"));
+        assert_eq!(
+            out,
+            vec![
+                "run".to_string(),
+                "--format".to_string(),
+                "json".to_string(),
+                "--dangerously-skip-permissions".to_string(),
+                "--dir".to_string(),
+                "/tmp/ws".to_string(),
+                "写代码".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_insert_dir_arg_执行器无目录flag时argv原样() {
+        // dir_arg()=None 的执行器（其余 10 家）：即使有目录也不注入，argv 逐字节不变
+        let args = vec!["-p".to_string(), "hello".to_string()];
+        let out = insert_dir_arg(args.clone(), None, Some("/tmp/ws"));
+        assert_eq!(out, args);
+    }
+
+    #[test]
+    fn test_insert_dir_arg_无生效目录时argv原样() {
+        // effective_workspace_path=None（未配置工作空间/非 UTF-8 路径退化）：
+        // 有 flag 也没有目录可传，保持现状（仅进程 cwd）
+        let args = vec!["run".to_string(), "hello".to_string()];
+        let out = insert_dir_arg(args.clone(), Some("--dir"), None);
+        assert_eq!(out, args);
+    }
+
+    #[test]
+    fn test_insert_dir_arg_空argv不注入() {
+        // 防御分支：没有 message 锚点时不硬插，返回空 argv
+        let out = insert_dir_arg(vec![], Some("--dir"), Some("/tmp"));
+        assert!(out.is_empty());
     }
 }

@@ -16,7 +16,7 @@ use command_group::AsyncCommandGroup;
 use tokio::io::AsyncWriteExt;
 use tokio::task::JoinHandle;
 
-use crate::adapters::CodeExecutor;
+use crate::adapters::{insert_dir_arg, CodeExecutor};
 use crate::db::Database;
 use crate::executor_service::ExecEvent;
 use crate::models::ParsedLogEntry;
@@ -221,12 +221,23 @@ pub(crate) fn build_executor_command(
 
 /// `build_executor_command` + `group_spawn` 两步合一：argv 已就绪，直接
 /// 创建进程组让 kill 时能整组杀，避免留下 zombie 子进程。
+///
+/// spawn 前补一道目录参数注入（NTD-019）：zhanlu 系 CLI 不跟随进程 cwd，
+/// 需要 `--dir <生效目录>` 显式指定。注入放这里而不是 argv 构造期
+/// （pre_spawn），是因为 effective_workspace_path 此时才最终确定——
+/// worktree 启用时要传 worktree 路径，argv 构造期只能拿到 todo.workspace_path。
 pub(crate) fn spawn_executor_child(
     runtime: &SpawnRuntime,
 ) -> Result<command_group::AsyncGroupChild, std::io::Error> {
+    // dir_arg() 为 None 的执行器（其余 10 家）insert_dir_arg 原样返回，argv 零变化。
+    let command_args = insert_dir_arg(
+        runtime.prepared.command_args.clone(),
+        runtime.executor_spawn.dir_arg(),
+        runtime.effective_workspace_path.as_deref(),
+    );
     let mut cmd = build_executor_command(
         &runtime.prepared.executable_path,
-        &runtime.prepared.command_args,
+        &command_args,
         runtime.effective_workspace_path.as_deref(),
     );
     cmd.group_spawn()
