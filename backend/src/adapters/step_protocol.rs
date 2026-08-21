@@ -74,6 +74,13 @@ impl StepProtocolFlavor {
     fn reports_model(self) -> bool {
         !matches!(self, Self::Mimo)
     }
+
+    /// CLI 目录参数差异点（NTD-019）：zl run 以 `--dir <path>` 为工作目录、
+    /// 不跟随进程 cwd，因此仅 Zhanlu 需要 argv 显式携带目录；同族其余三家
+    /// （kilo/opencode/mimo）跟随 cwd，返回 None 保持 argv 不动。
+    fn dir_flag(self) -> Option<&'static str> {
+        matches!(self, Self::Zhanlu).then_some("--dir")
+    }
 }
 
 /// Step 协议族统一执行器。
@@ -260,6 +267,12 @@ impl CodeExecutor for StepProtocolExecutor {
 
     fn supports_resume(&self) -> bool {
         true
+    }
+
+    /// 目录参数委托给 flavor（NTD-019）：仅 Zhanlu 返回 Some("--dir")，
+    /// spawn 层据此把生效目录插进 argv；同族其余 flavor 维持 trait 默认 None。
+    fn dir_arg(&self) -> Option<&'static str> {
+        self.flavor.dir_flag()
     }
 
     /// 执行前注入期望模型，写入 base.model，供 command_args_with_session 拼 -m。
@@ -576,6 +589,16 @@ mod tests {
         let args = exec.command_args_with_session("hello", None, false);
         let model_value = args.windows(2).find(|w| w[0] == "-m").map(|w| w[1].clone());
         assert_eq!(model_value, Some("xiaomi/mimo-v2.5-pro".to_string()));
+    }
+
+    /// NTD-019 目录参数差异：仅 zhanlu 需要 `--dir`（zl 不跟随进程 cwd），
+    /// 同族其余三家跟随 cwd，必须保持 None 让 argv 不被注入目录。
+    #[test]
+    fn test_dir_arg_仅zhanlu返回flag其余flavor为none() {
+        assert_eq!(StepProtocolExecutor::zhanlu("z".into()).dir_arg(), Some("--dir"));
+        assert_eq!(StepProtocolExecutor::kilo("k".into()).dir_arg(), None);
+        assert_eq!(StepProtocolExecutor::opencode("o".into()).dir_arg(), None);
+        assert_eq!(StepProtocolExecutor::mimo("m".into()).dir_arg(), None);
     }
 
     /// executor_type 与注册名一一对应
