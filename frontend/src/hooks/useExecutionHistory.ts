@@ -13,9 +13,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { ExecutionRecord, LogEntry, ExecutionSummary } from '@/types';
-import type { TodoAction } from './useTodoContext';
 import type { ExecutionAction } from './useExecutionContext';
-import type { UIAction } from './useUIContext';
 import * as db from '@/utils/database';
 
 interface UseExecutionHistoryOptions {
@@ -27,7 +25,8 @@ interface UseExecutionHistoryOptions {
   /** Records already in the global store for this todo */
   storeRecords: ExecutionRecord[];
   /** Dispatch from useApp() — used to sync fetched records back into global state */
-  dispatch: React.Dispatch<TodoAction | ExecutionAction | UIAction>;
+  // 093 批次2：本 hook 只 dispatch 执行域 action，类型从三域联合收窄到 ExecutionAction
+  dispatch: React.Dispatch<ExecutionAction>;
 }
 
 interface UseExecutionHistoryResult {

@@ -1,5 +1,9 @@
 import { useEffect, useRef } from 'react';
-import { useApp } from './useApp';
+// 093 批次2：useApp → useAppDispatch + useTodos 细粒度拆分。
+// 本 hook 只需合并 dispatch（WS 事件路由）与 selectedWorkspace（订阅范围），
+// 经 dispatch-only context 取 dispatch 后，执行/日志域高频更新不再触发本 hook 宿主重渲染。
+import { useAppDispatch } from './useApp';
+import { useTodos } from './useTodoContext';
 import type { LogEntry, TodoItem, ExecutionStats } from '@/types';
 import { TODO_LIST_REFRESH_EVENT } from '@/constants';
 
@@ -155,7 +159,7 @@ let sharedOnRefreshRefs: Array<React.MutableRefObject<(() => void) | undefined>>
 /** 自动清除已结束任务的定时器：key=taskId（056 改为 Map，支持 Sync 时按任务撤销）。 */
 let sharedRemoveTaskTimers = new Map<string, ReturnType<typeof setTimeout>>();
 /** 全局 dispatch 函数（从第一个调用方的 useApp() 获取，后续复用） */
-let sharedDispatch: ReturnType<typeof useApp>['dispatch'] | null = null;
+let sharedDispatch: ReturnType<typeof useAppDispatch> | null = null;
 /** 当前活跃的调用方数量（当计数归零时关闭 WS） */
 let sharedInstanceCount = 0;
 
@@ -170,7 +174,7 @@ function getReconnectDelay(): number {
 }
 
 /** 创建全局 WebSocket 连接（如果尚未创建） */
-function connectShared(dispatch: ReturnType<typeof useApp>['dispatch']) {
+function connectShared(dispatch: ReturnType<typeof useAppDispatch>) {
   if (!sharedShouldReconnect) return;
   // 已有连接则跳过（防止 React StrictMode 开发期双调用创建两个 WS）
   if (sharedWs) return;
@@ -447,9 +451,11 @@ function reconnectWithWorkspace(workspaceId: number | null) {
 }
 
 export function useExecutionEvents(onRefresh?: () => void) {
-  const { state, dispatch } = useApp();
+  // dispatch 走 dispatch-only context（零 state 订阅）；workspace 只读 todo 域
+  const dispatch = useAppDispatch();
+  const { state: todoState } = useTodos();
   // 094：订阅范围跟随全局 workspace 选择态
-  const selectedWorkspace = state.selectedWorkspace;
+  const selectedWorkspace = todoState.selectedWorkspace;
 
   // 用 ref 持有 onRefresh，使其始终指向最新值但不触发 effect 重新执行
   const onRefreshRef = useRef(onRefresh);

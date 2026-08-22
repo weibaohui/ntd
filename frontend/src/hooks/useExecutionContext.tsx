@@ -89,13 +89,20 @@ function reducer(state: ExecutionState, action: ExecutionAction): ExecutionState
 // ─── Context ──────────────────────────────────────────────────
 
 const ExecutionContext = createContext<{ state: ExecutionState; dispatch: React.Dispatch<ExecutionAction> } | null>(null);
+// 093 批次2：dispatch 独立 context——执行态高频变化（进度/统计推送），
+// 只订阅 dispatch 的消费方不再被卷入重渲染。
+const ExecutionDispatchContext = createContext<React.Dispatch<ExecutionAction> | null>(null);
 
 // ─── Provider ─────────────────────────────────────────────────
 
 export function ExecutionProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
   const ctx = useMemo(() => ({ state, dispatch }), [state, dispatch]);
-  return <ExecutionContext.Provider value={ctx}>{children}</ExecutionContext.Provider>;
+  return (
+    <ExecutionDispatchContext.Provider value={dispatch}>
+      <ExecutionContext.Provider value={ctx}>{children}</ExecutionContext.Provider>
+    </ExecutionDispatchContext.Provider>
+  );
 }
 
 // ─── Hook ─────────────────────────────────────────────────────
@@ -104,6 +111,13 @@ export function useExecution() {
   const ctx = useContext(ExecutionContext);
   if (!ctx) throw new Error('useExecution must be used within ExecutionProvider');
   return ctx;
+}
+
+/** 只取 dispatch（引用恒定）：订阅它不会因执行态变化重渲染。 */
+export function useExecutionDispatch() {
+  const dispatch = useContext(ExecutionDispatchContext);
+  if (!dispatch) throw new Error('useExecutionDispatch must be used within ExecutionProvider');
+  return dispatch;
 }
 
 export type { ExecutionAction };
