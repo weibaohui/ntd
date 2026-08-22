@@ -1,7 +1,12 @@
 import { useEffect, useState } from 'react';
 import { ExpandOutlined, CompressOutlined, InfoCircleOutlined, StopOutlined, CloseOutlined } from '@ant-design/icons';
 import { Popconfirm, Popover, Dropdown, App } from 'antd';
-import { useApp } from '@/hooks/useApp';
+// 093 批次2：合并版 useApp 拆为三域细粒度订阅——todo 域只读 selectedWorkspace，
+// 执行域 action 走 useExecution，日志域 action 走 useLogsDispatch；
+// 任一域变化不再牵连其它两域的订阅者。
+import { useTodos } from '@/hooks/useTodoContext';
+import { useExecution } from '@/hooks/useExecutionContext';
+import { useLogsDispatch } from '@/hooks/useLogsContext';
 import { useTheme } from '@/hooks/useTheme';
 import { getExecutorOption } from '@/types';
 import { stopExecution } from '@/utils/database';
@@ -24,9 +29,11 @@ interface ExecutionPanelProps {
 }
 
 export function ExecutionPanel({ collapsed, onToggleCollapse, hidden, onTemporaryClose, onPermanentClose }: ExecutionPanelProps) {
-  const { state, dispatch } = useApp();
+  const { state: todoState } = useTodos();
+  const { state: execState, dispatch: execDispatch } = useExecution();
+  const logsDispatch = useLogsDispatch();
   const { themeMode } = useTheme();
-  const { runningTasks, activeTaskId, executionRecords } = state;
+  const { runningTasks, activeTaskId, executionRecords } = execState;
   const { message } = App.useApp();
   const [fullscreen, setFullscreen] = useState(false);
 
@@ -56,14 +63,14 @@ export function ExecutionPanel({ collapsed, onToggleCollapse, hidden, onTemporar
         const elapsed = Date.now() - new Date(task.finishedAt).getTime();
         const delay = Math.max(0, 5000 - elapsed);
         timers.push(setTimeout(() => {
-          dispatch({ type: 'REMOVE_RUNNING_TASK', payload: id });
+          execDispatch({ type: 'REMOVE_RUNNING_TASK', payload: id });
           // 091：任务移出运行列表时同步释放其日志内存，与 WS 事件 Finished 路径一致。
-          dispatch({ type: 'REMOVE_TASK_LOGS', payload: id });
+          logsDispatch({ type: 'REMOVE_TASK_LOGS', payload: id });
         }, delay));
       }
     });
     return () => timers.forEach(clearTimeout);
-  }, [runningTasks, dispatch]);
+  }, [runningTasks, execDispatch]);
 
   // Get elapsed seconds for a task
   const getElapsedSeconds = (startedAt: string) => {
@@ -90,7 +97,7 @@ export function ExecutionPanel({ collapsed, onToggleCollapse, hidden, onTemporar
     }
     try {
       // v1 纯 workspace-scoped：stopExecution 需 workspaceId
-      await stopExecution(state.selectedWorkspace ?? 0, record.id);
+      await stopExecution(todoState.selectedWorkspace ?? 0, record.id);
       message.success('已停止执行');
     } catch (err) {
       message.error(`停止失败: ${err}`);
@@ -114,7 +121,7 @@ export function ExecutionPanel({ collapsed, onToggleCollapse, hidden, onTemporar
                 key={taskId}
                 className={`execution-tab ${isActive ? 'active' : ''} ${task.status}`}
                 onClick={() => {
-                  dispatch({ type: 'SET_ACTIVE_TASK', payload: taskId });
+                  execDispatch({ type: 'SET_ACTIVE_TASK', payload: taskId });
                   if (collapsed) onToggleCollapse();
                 }}
                 role="button"
@@ -122,7 +129,7 @@ export function ExecutionPanel({ collapsed, onToggleCollapse, hidden, onTemporar
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault();
-                    dispatch({ type: 'SET_ACTIVE_TASK', payload: taskId });
+                    execDispatch({ type: 'SET_ACTIVE_TASK', payload: taskId });
                   }
                 }}
               >

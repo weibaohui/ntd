@@ -29,10 +29,14 @@ class FakeWebSocket {
 
 // useApp mock：可控的 selectedWorkspace + 空 dispatch（本测试不断言状态分发）
 let mockWorkspace: number | null = null;
+// 093 批次2：组件已拆为 useAppDispatch（dispatch-only）+ useTodos（workspace），
+// mock 同步拆到两个模块；本测试不断言状态分发，dispatch 给空实现即可。
 vi.mock('./useApp', () => ({
-  useApp: () => ({
+  useAppDispatch: () => vi.fn(),
+}));
+vi.mock('./useTodoContext', () => ({
+  useTodos: () => ({
     state: { selectedWorkspace: mockWorkspace },
-    dispatch: vi.fn(),
   }),
 }));
 

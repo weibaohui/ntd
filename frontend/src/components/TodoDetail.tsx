@@ -1,5 +1,8 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
-import { useApp } from '@/hooks/useApp';
+// 093 批次2：合并版 useApp 拆为细粒度订阅——todo 域（selectedWorkspace/selectedTodoId）
+// 与 exec 域（executionRecords/runningTasks）分开，uiState 变化不再触发本组件重渲染。
+import { useTodos } from '@/hooks/useTodoContext';
+import { useExecution } from '@/hooks/useExecutionContext';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { useExecutionHistory } from '@/hooks/useExecutionHistory';
 import { Button, Empty, App, Modal, Input, Skeleton } from 'antd';
@@ -50,9 +53,11 @@ async function loadTodoById(
 }
 
 export function TodoDetail({ hideTitleRow = false, onOpenPost, onActionsReady }: TodoDetailProps) {
-  const { state, dispatch } = useApp();
+  const { state: todoState, dispatch: todoDispatch } = useTodos();
+  const { state: execState, dispatch: execDispatch } = useExecution();
   const { message } = App.useApp();
-  const { selectedTodoId, executionRecords, runningTasks } = state;
+  const { selectedTodoId, selectedWorkspace } = todoState;
+  const { executionRecords, runningTasks } = execState;
   const isWide = !useIsMobile(BREAKPOINTS.wide);
 
   // selectedTodo 改为独立请求获取的 local state，不再依赖 todos 列表缓存。
@@ -122,17 +127,17 @@ export function TodoDetail({ hideTitleRow = false, onOpenPost, onActionsReady }:
     }
     // ws 尚未解析时不发请求，避免 null workspace 直接命中错误态分支；
     // 依赖里的 selectedWorkspace 变化会重新触发本 effect，自动重试。
-    if (state.selectedWorkspace == null) return;
-    fetchTodo(selectedTodoId, state.selectedWorkspace);
+    if (selectedWorkspace == null) return;
+    fetchTodo(selectedTodoId, selectedWorkspace);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTodoId, state.selectedWorkspace]);
+  }, [selectedTodoId, selectedWorkspace]);
 
   // 重新加载当前 todo（供回调成功后调用，确保 local state 与后端一致）
   const reloadSelectedTodo = useCallback(async () => {
     if (selectedTodoId == null) return;
-    const fresh = await loadTodoById(selectedTodoId, state.selectedWorkspace);
+    const fresh = await loadTodoById(selectedTodoId, selectedWorkspace);
     if (fresh) setSelectedTodo(fresh);
-  }, [selectedTodoId, state.selectedWorkspace]);
+  }, [selectedTodoId, selectedWorkspace]);
 
   const [todoDrawerOpen, setTodoDrawerOpen] = useState(false);
 
@@ -152,9 +157,11 @@ export function TodoDetail({ hideTitleRow = false, onOpenPost, onActionsReady }:
     handleHistoryPageChange,
   } = useExecutionHistory({
     selectedTodoId,
-    workspaceId: state.selectedWorkspace,
+    workspaceId: selectedWorkspace,
     storeRecords: selectedTodoId ? executionRecords[selectedTodoId] : [],
-    dispatch,
+    // 093 批次2：hook 内部只 dispatch 执行域 action（SET/UPDATE_EXECUTION_RECORD），
+    // 配合把 dispatch prop 收窄到 Dispatch<ExecutionAction>
+    dispatch: execDispatch,
   });
 
   // Timer for live duration display of running records
@@ -214,7 +221,7 @@ export function TodoDetail({ hideTitleRow = false, onOpenPost, onActionsReady }:
       // 获取新创建的执行记录并立即添加到状态中
       try {
         const newRecord = await db.getExecutionRecord(selectedTodo.workspace_id!, result.record_id);
-        dispatch({
+        execDispatch({
           type: 'ADD_EXECUTION_RECORD',
           payload: { todoId: selectedTodo.id, record: newRecord }
         });
@@ -255,7 +262,7 @@ export function TodoDetail({ hideTitleRow = false, onOpenPost, onActionsReady }:
       // 获取新创建的执行记录并立即添加到状态中
       try {
         const newRecord = await db.getExecutionRecord(selectedTodo.workspace_id!, result.record_id);
-        dispatch({
+        execDispatch({
           type: 'ADD_EXECUTION_RECORD',
           payload: { todoId: selectedTodo.id, record: newRecord }
         });
@@ -285,7 +292,7 @@ export function TodoDetail({ hideTitleRow = false, onOpenPost, onActionsReady }:
     } catch {
       // ignore: interceptor already shows error
     }
-  }, [selectedTodo, dispatch]);
+  }, [selectedTodo, todoDispatch]);
 
   const handleTitleUpdate = useCallback(async (aiResult: string) => {
     if (!selectedTodo) return;
@@ -311,7 +318,7 @@ export function TodoDetail({ hideTitleRow = false, onOpenPost, onActionsReady }:
     // 056：全局桶已删除——详情页本地 state 为准，列表页经刷新事件重拉
     setSelectedTodo(updated);
     window.dispatchEvent(new Event(TODO_LIST_REFRESH_EVENT));
-  }, [selectedTodo, dispatch]);
+  }, [selectedTodo, todoDispatch]);
 
   // 升级/降级已移除：环节与 Todo 合一，无需 promote 流程
 
@@ -322,12 +329,12 @@ export function TodoDetail({ hideTitleRow = false, onOpenPost, onActionsReady }:
       await db.deleteTodo(selectedTodo.workspace_id!, selectedTodo.id);
       // 056：全局桶已删除——通知列表页重拉
       window.dispatchEvent(new Event(TODO_LIST_REFRESH_EVENT));
-      dispatch({ type: 'SELECT_TODO', payload: null });
+      todoDispatch({ type: 'SELECT_TODO', payload: null });
       message.success('删除成功');
     } catch {
       // ignore: interceptor already shows error
     }
-  }, [selectedTodo, dispatch, message]);
+  }, [selectedTodo, todoDispatch, message]);
 
   // 独立路由场景：把操作按钮上下文上报给外层 PageCard 的 extra 区（062 修正注释，原误写 titleSuffix）。
   // selectedTodo 为空时上报 null（加载中/错误态），外层相应不渲染按钮。
@@ -374,7 +381,7 @@ export function TodoDetail({ hideTitleRow = false, onOpenPost, onActionsReady }:
                   // 复用共享加载函数，与初始 useEffect 走同一条带竞态保护的路径，
                   // 避免重试 Promise 在用户切换 todo 后用旧结果覆盖新 todo。
                   if (selectedTodoId != null) {
-                    fetchTodo(selectedTodoId, state.selectedWorkspace);
+                    fetchTodo(selectedTodoId, selectedWorkspace);
                   }
                 }}
               >

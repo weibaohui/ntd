@@ -76,13 +76,21 @@ function reducer(state: TodoState, action: TodoAction): TodoState {
 // ─── Context ──────────────────────────────────────────────────
 
 const TodoContext = createContext<{ state: TodoState; dispatch: React.Dispatch<TodoAction> } | null>(null);
+// 093 批次2：dispatch 独立 context（沿用 091 LogsContext 双 context 先例）。
+// useReducer 的 dispatch 引用恒定，只订阅 dispatch 的消费方（如 WS 事件路由）
+// 不会因 todo state 变化而重渲染。
+const TodoDispatchContext = createContext<React.Dispatch<TodoAction> | null>(null);
 
 // ─── Provider ─────────────────────────────────────────────────
 
 export function TodoProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
   const ctx = useMemo(() => ({ state, dispatch }), [state]);
-  return <TodoContext.Provider value={ctx}>{children}</TodoContext.Provider>;
+  return (
+    <TodoDispatchContext.Provider value={dispatch}>
+      <TodoContext.Provider value={ctx}>{children}</TodoContext.Provider>
+    </TodoDispatchContext.Provider>
+  );
 }
 
 // ─── Hooks ─────────────────────────────────────────────────────
@@ -91,6 +99,13 @@ export function useTodos() {
   const ctx = useContext(TodoContext);
   if (!ctx) throw new Error('useTodos must be used within TodoProvider');
   return ctx;
+}
+
+/** 只取 dispatch（引用恒定）：订阅它不会因 state 变化重渲染。 */
+export function useTodosDispatch() {
+  const dispatch = useContext(TodoDispatchContext);
+  if (!dispatch) throw new Error('useTodosDispatch must be used within TodoProvider');
+  return dispatch;
 }
 
 export type { TodoAction };
