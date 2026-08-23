@@ -293,6 +293,12 @@ impl Database {
         bot_id: i64,
         chat_id: &str,
     ) -> Result<Option<String>, sea_orm::DbErr> {
+        // 查询链设计（输入：bot+chat 定位会话；输出：该会话最新一条入站消息的 chat_type）：
+        // - 双条件过滤缺一不可：同一条 chat_id 可能被多个 bot 拉进各自的消息表记录，
+        //   不带 bot_id 会把别的 bot 的会话类型错当成本 bot 的；
+        // - 「最新」按自增 id 倒序而非 created_at：created_at 是秒级时间字符串，
+        //   同秒多条消息排序不稳定，自增 id 严格单调、与落库顺序一致；
+        // - .one() 只取首条即最新一条，反查场景不需要整段历史。
         let row = feishu_messages::Entity::find()
             .filter(feishu_messages::Column::BotId.eq(bot_id))
             .filter(feishu_messages::Column::ChatId.eq(chat_id))
@@ -552,6 +558,18 @@ mod tests {
         seed_bot_for_messages(&db).await?;
         // bot 尚无消息记录的会话（如刚建群即点卡片）反查为空是正常态，不能报错
         assert_eq!(db.get_latest_chat_type(1, "oc_none").await?, None);
+        Ok(())
+    }
+
+    /// NTD-019：get_latest_chat_type——查询出错（表缺失模拟 DB 故障）返回 Err，
+    /// 调用方据此显式失败而不是误当「无历史」降级兜底（CodeRabbit CR-2 的错误分支覆盖）。
+    #[tokio::test]
+    async fn test_get_latest_chat_type_db_error_returns_err() -> Result<(), sea_orm::DbErr> {
+        let db = fresh_db().await;
+        seed_bot_for_messages(&db).await?;
+        // 内存库无法方便地伪造断连，直接删表让查询确定性走 Err 分支
+        db.exec("DROP TABLE feishu_messages").await?;
+        assert!(db.get_latest_chat_type(1, "oc_x").await.is_err());
         Ok(())
     }
 

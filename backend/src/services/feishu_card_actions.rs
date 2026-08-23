@@ -187,25 +187,64 @@ pub(crate) fn format_record_time(started_at: &str) -> String {
     /// 清了不存在的 session 无害）。
     /// scope 经 resolve_session_scope 三级推断（payload 透传 > 消息表反查 > Group 兜底），
     /// 保证「新会话」按钮在哪类会话里点就清哪个维度的 session（单聊清 dm、群聊清 group）。
+    /// 执行体在 clear_butler_session（不依赖 ListenerMessageContext，便于内存库直连回归）。
     pub(crate) async fn act_new(context: &ListenerMessageContext<'_>, msg: &ChannelMessage) -> ActionOutcome {
-        let Some(wid) = context.db.get_agent_bot_workspace_id(context.bot_id).await.ok().flatten() else {
+        CardActionHandler::clear_butler_session(
+            context.db,
+            context.bot_id,
+            msg.origin_chat_type.as_deref(),
+            &msg.channel,
+        )
+        .await
+    }
+
+    /// act:/new 的执行体：定位 workspace 与对话执行器，三级推断会话维度后清该维度 session。
+    /// 与 context 解耦只取 db+标量入参，是因为 ListenerMessageContext 聚合了 token/任务管理等
+    /// 重依赖、单测无法廉价构造；抽出来才能直连内存库回归「实际清了哪个维度的键」。
+    async fn clear_butler_session(
+        db: &Database,
+        bot_id: i64,
+        origin_chat_type: Option<&str>,
+        chat_id: &str,
+    ) -> ActionOutcome {
+        let Some(wid) = db.get_agent_bot_workspace_id(bot_id).await.ok().flatten() else {
             return ActionOutcome { success: false, message: "未设置工作空间".to_string() };
         };
         // 未配置管家时兜底 claudecode：与 handle_butler_chat 的默认执行器口径一致，
         // 用户在配置管家前也能用 /new 清掉历史遗留会话
-        let executor = CardActionHandler::workspace_butler_executor(context.db, context.bot_id)
+        let executor = CardActionHandler::workspace_butler_executor(db, bot_id)
             .await
             .unwrap_or_else(|| "claudecode".to_string());
+        // tier1 已带真实类型时直接短路跳过反查：少一次 DB 往返，更不让 DB 抖动
+        // 阻断本已可靠的路径（payload 可信度高于本地消息表）。
+        // tier2 反查则必须区分两种「拿不到」：Err 是读不到事实（DB 故障），此时清任何维度
+        // 都是盲清，宁可显式失败让用户重试或走文本 /new（CodeRabbit CR-2）；
+        // Ok(None) 只是该会话暂无历史，仍可走 tier3 兜底。
+        let db_chat_type = if origin_chat_type.is_some() {
+            None
+        } else {
+            match db.get_latest_chat_type(bot_id, chat_id).await {
+                Ok(t) => t,
+                Err(e) => {
+                    tracing::warn!("[feishu:{}] get_latest_chat_type 失败，放弃清 session：{e}", bot_id);
+                    return ActionOutcome {
+                        success: false,
+                        message: "会话类型反查失败，请重试或发送文本 /new".to_string(),
+                    };
+                }
+            }
+        };
         // NTD-019：scope 三级推断——①透传的原始会话类型 → ②消息表反查 → ③Group 兜底。
         // 旧实现用 channel.is_empty() 猜维度，但单聊也有 chat_id（恒非空 → 恒 Group），
         // 导致单聊点卡片 /new 误清 group 键、dm 键旧 session 原样保留。
-        let scope = Self::resolve_session_scope(
-            msg.origin_chat_type.as_deref(),
-            // DB 返回 Option<String>，同样压成 &str 与 payload 透传同口径进入推断
-            context.db.get_latest_chat_type(context.bot_id, &msg.channel).await.ok().flatten().as_deref(),
-        );
+        // 双缺走 Group 是缺陷分析 §3 记录的取舍（= 修复前口径，群聊卡片不因此回退），
+        // 留 warn 便于线上观测该兜底的实际触发频率，作为后续收紧的依据。
+        if origin_chat_type.is_none() && db_chat_type.is_none() {
+            tracing::warn!("[feishu:{}] 会话 {} 无 chat_type 事实源，按 Group 兜底清 session", bot_id, chat_id);
+        }
+        let scope = Self::resolve_session_scope(origin_chat_type, db_chat_type.as_deref());
         // set (wid, executor, scope, None)：None 即清除该维度键，下次对话从全新 session 开始
-        match context.db.set_executor_session(wid, &executor, scope, None).await {
+        match db.set_executor_session(wid, &executor, scope, None).await {
             Ok(_) => ActionOutcome { success: true, message: "已开启新会话".to_string() },
             Err(e) => ActionOutcome { success: false, message: format!("失败：{e}") },
         }
@@ -802,5 +841,134 @@ mod tests {
             CardActionHandler::resolve_session_scope(Some("unknown_future_type"), None),
             ExecutorSessionScope::Group
         );
+    }
+
+    /// NTD-019 直连回归的公共种子：workspace 1 + bot 1（不配 workspace_settings，
+    /// 让管家执行器走「未配置 → 兜底 claudecode」分支）+ dm/group 两侧各放一个旧 session。
+    /// 种完即可断言「清了哪个键、没动哪个键」，覆盖 CodeRabbit CR-3 指出的
+    /// 「只测纯函数、未验证 DB 反查与 set_executor_session 实际写入」缺口。
+    async fn seed_session_scene(db: &crate::db::Database) -> Result<(), sea_orm::DbErr> {
+        use crate::db::workspace::ExecutorSessionScope;
+        db.exec("INSERT INTO workspaces (path, git_worktree_enabled, auto_cleanup) VALUES ('/p', 0, 0)")
+            .await?;
+        db.exec("INSERT INTO agent_bots (bot_type, bot_name, app_id, app_secret, workspace_id) VALUES ('feishu', 'b', 'a', 's', 1)")
+            .await?;
+        db.set_executor_session(1, "claudecode", ExecutorSessionScope::Dm, Some("dm-old".into()))
+            .await?;
+        db.set_executor_session(1, "claudecode", ExecutorSessionScope::Group, Some("group-old".into()))
+            .await?;
+        Ok(())
+    }
+
+    /// NTD-019 直连回归①：payload 透传 p2p → 清 dm 键，group 键不受影响（110 隔离设计）。
+    #[tokio::test]
+    async fn test_clear_butler_session_payload_p2p_clears_dm_key_only() -> Result<(), sea_orm::DbErr> {
+        use crate::db::workspace::ExecutorSessionScope;
+        let db = crate::db::Database::new(":memory:").await?;
+        seed_session_scene(&db).await?;
+        let outcome = CardActionHandler::clear_butler_session(&db, 1, Some("p2p"), "oc_x").await;
+        assert!(outcome.success, "payload 带 p2p 应成功：{}", outcome.message);
+        // Some(None) = 键存在但已清空；group 侧旧值必须原样保留
+        assert_eq!(db.get_executor_session(1, "claudecode", ExecutorSessionScope::Dm).await?, Some(None));
+        assert_eq!(
+            db.get_executor_session(1, "claudecode", ExecutorSessionScope::Group).await?,
+            Some(Some("group-old".to_string()))
+        );
+        Ok(())
+    }
+
+    /// NTD-019 直连回归②：payload 缺失、消息表反查到 p2p → 同样清 dm 键（tier2 主路径）。
+    #[tokio::test]
+    async fn test_clear_butler_session_db_reverse_p2p_clears_dm_key_only() -> Result<(), sea_orm::DbErr> {
+        use crate::db::workspace::ExecutorSessionScope;
+        let db = crate::db::Database::new(":memory:").await?;
+        seed_session_scene(&db).await?;
+        // 预埋一条该 chat 的 p2p 入站消息，充当反查事实源（线上 payload 疑似不带 chat_type，
+        // 这条路径是实际主力——见修复总结已知限制）
+        db.exec("INSERT INTO feishu_messages (bot_id, message_id, chat_id, chat_type, sender_open_id, msg_type) VALUES (1, 'm1', 'oc_x', 'p2p', 'ou_1', 'text')")
+            .await?;
+        let outcome = CardActionHandler::clear_butler_session(&db, 1, None, "oc_x").await;
+        assert!(outcome.success, "反查到 p2p 应成功：{}", outcome.message);
+        assert_eq!(db.get_executor_session(1, "claudecode", ExecutorSessionScope::Dm).await?, Some(None));
+        assert_eq!(
+            db.get_executor_session(1, "claudecode", ExecutorSessionScope::Group).await?,
+            Some(Some("group-old".to_string()))
+        );
+        Ok(())
+    }
+
+    /// NTD-019 直连回归③：payload 透传 group → 清 group 键，dm 键不受影响（群聊行为不变）。
+    #[tokio::test]
+    async fn test_clear_butler_session_group_clears_group_key_only() -> Result<(), sea_orm::DbErr> {
+        use crate::db::workspace::ExecutorSessionScope;
+        let db = crate::db::Database::new(":memory:").await?;
+        seed_session_scene(&db).await?;
+        let outcome = CardActionHandler::clear_butler_session(&db, 1, Some("group"), "oc_x").await;
+        assert!(outcome.success, "payload 带 group 应成功：{}", outcome.message);
+        assert_eq!(db.get_executor_session(1, "claudecode", ExecutorSessionScope::Group).await?, Some(None));
+        assert_eq!(
+            db.get_executor_session(1, "claudecode", ExecutorSessionScope::Dm).await?,
+            Some(Some("dm-old".to_string()))
+        );
+        Ok(())
+    }
+
+    /// NTD-019 直连回归④：双缺（无 payload 且无历史）→ Group 兜底（缺陷分析 §3 记录的
+    /// 取舍）：清 group 键、dm 键保留——把「兜底清了哪侧」固化成显式断言，防止后人误改。
+    #[tokio::test]
+    async fn test_clear_butler_session_undetermined_falls_back_to_group() -> Result<(), sea_orm::DbErr> {
+        use crate::db::workspace::ExecutorSessionScope;
+        let db = crate::db::Database::new(":memory:").await?;
+        seed_session_scene(&db).await?;
+        let outcome = CardActionHandler::clear_butler_session(&db, 1, None, "oc_x").await;
+        assert!(outcome.success, "双缺走 Group 兜底应成功：{}", outcome.message);
+        assert_eq!(db.get_executor_session(1, "claudecode", ExecutorSessionScope::Group).await?, Some(None));
+        assert_eq!(
+            db.get_executor_session(1, "claudecode", ExecutorSessionScope::Dm).await?,
+            Some(Some("dm-old".to_string()))
+        );
+        Ok(())
+    }
+
+    /// NTD-019 直连回归⑤：payload 缺失 + 反查 Err（删表模拟 DB 故障）→ 显式失败且
+    /// 两个键都不清（CodeRabbit CR-2：读不到事实时清任何维度都是盲清，不能报「已开启新会话」）。
+    #[tokio::test]
+    async fn test_clear_butler_session_db_error_fails_without_clearing() -> Result<(), sea_orm::DbErr> {
+        use crate::db::workspace::ExecutorSessionScope;
+        let db = crate::db::Database::new(":memory:").await?;
+        seed_session_scene(&db).await?;
+        // 内存库无法方便地伪造断连，直接删表让 get_latest_chat_type 确定性返回 Err
+        db.exec("DROP TABLE feishu_messages").await?;
+        let outcome = CardActionHandler::clear_butler_session(&db, 1, None, "oc_x").await;
+        assert!(!outcome.success, "反查失败必须显式失败");
+        assert!(outcome.message.contains("反查失败"), "失败文案应指引用户重试：{}", outcome.message);
+        // 两个维度的旧 session 都必须原样保留
+        assert_eq!(
+            db.get_executor_session(1, "claudecode", ExecutorSessionScope::Dm).await?,
+            Some(Some("dm-old".to_string()))
+        );
+        assert_eq!(
+            db.get_executor_session(1, "claudecode", ExecutorSessionScope::Group).await?,
+            Some(Some("group-old".to_string()))
+        );
+        Ok(())
+    }
+
+    /// NTD-019 直连回归⑥：tier1 短路——payload 带 p2p 时即使反查必然失败（表已删）
+    /// 也照常清 dm 键，可靠路径不被 DB 故障阻断。
+    #[tokio::test]
+    async fn test_clear_butler_session_payload_bypasses_db_lookup() -> Result<(), sea_orm::DbErr> {
+        use crate::db::workspace::ExecutorSessionScope;
+        let db = crate::db::Database::new(":memory:").await?;
+        seed_session_scene(&db).await?;
+        db.exec("DROP TABLE feishu_messages").await?;
+        let outcome = CardActionHandler::clear_butler_session(&db, 1, Some("p2p"), "oc_x").await;
+        assert!(outcome.success, "payload 可靠时不应被 DB 故障阻断：{}", outcome.message);
+        assert_eq!(db.get_executor_session(1, "claudecode", ExecutorSessionScope::Dm).await?, Some(None));
+        assert_eq!(
+            db.get_executor_session(1, "claudecode", ExecutorSessionScope::Group).await?,
+            Some(Some("group-old".to_string()))
+        );
+        Ok(())
     }
 }
