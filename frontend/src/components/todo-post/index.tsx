@@ -10,7 +10,11 @@ import {
 import {
   InfoCircleOutlined,
 } from "@ant-design/icons";
-import { useApp } from "@/hooks/useApp";
+// 093 批次2评审补漏：原 useApp() 改为按域细粒度订阅——本页实际跨两域：
+// todo 域读 selectedWorkspace（8 处）、执行域读 runningTasks；
+// 原 useApp() 会连 ui/logs 域一并卷入，任一域变化都重渲染本页。
+import { useTodos } from "@/hooks/useTodoContext";
+import { useExecution } from "@/hooks/useExecutionContext";
 import { useTodoById } from "@/hooks/useTodoById";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { PageCard } from "@/components/common/PageCard";
@@ -37,10 +41,13 @@ export function TodoPostPage({
   recordId: number;
   onBack: () => void;
 }) {
-  const { state } = useApp();
+  // 093 批次2评审补漏：原 const { state } = useApp() 是收尾批次漏迁的最后一处消费方
+  //（评审发现 18→0 声明不实即此处）；按域拆开后 ui/logs 变化不再牵动本页。
+  const { state: todoState } = useTodos();
+  const { state: execState } = useExecution();
   const isMobile = useIsMobile();
   const { message } = App.useApp();
-  const { runningTasks } = state;
+  const { runningTasks } = execState;
 
   const [records, setRecords] = useState<ExecutionRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -66,7 +73,7 @@ export function TodoPostPage({
     // selectedWorkspace 冷启动深链（/#/todos/:id/posts/:rid）时可能尚未解析（null），
     // 直接返回不请求；等下方 effect 依赖里的 selectedWorkspace 就绪后自动重跑补拉。
     // 不能回退到 0——record 归属真实 ws，用 0 请求会 403 触发空态。
-    const wsId = state.selectedWorkspace;
+    const wsId = todoState.selectedWorkspace;
     if (wsId == null) return;
     setLoading(true);
     try {
@@ -97,13 +104,13 @@ export function TodoPostPage({
     // loadSessionRecords 提前返回不请求；DataLoader 解析出 workspace 后本 effect
     // 因依赖变化重跑，自动补拉同 session 记录，避免首帧用 ws=0 请求 403 空态。
     loadSessionRecords();
-  }, [recordId, state.selectedWorkspace]);
+  }, [recordId, todoState.selectedWorkspace]);
 
   // 加载日志
   const loadLogsForRecord = async (rId: number, page: number) => {
     setIsLoadingLogs(true);
     try {
-      const result = await db.getExecutionLogs(state.selectedWorkspace ?? 0, rId, page, logsPerPage);
+      const result = await db.getExecutionLogs(todoState.selectedWorkspace ?? 0, rId, page, logsPerPage);
       setPaginatedLogs(result.logs);
       setLogsPage(page);
     } catch {
@@ -152,7 +159,7 @@ export function TodoPostPage({
 
   const handleStopExecution = async (rId: number) => {
     try {
-      await db.stopExecution(state.selectedWorkspace ?? 0, rId);
+      await db.stopExecution(todoState.selectedWorkspace ?? 0, rId);
       message.info("已发送停止指令");
       await loadSessionRecords();
     } catch (error) {
@@ -164,7 +171,7 @@ export function TodoPostPage({
     if (!replyMessage.trim()) return;
     setReplyLoading(true);
     try {
-      await db.resumeExecutionRecord(state.selectedWorkspace ?? 0, r.id, replyMessage);
+      await db.resumeExecutionRecord(todoState.selectedWorkspace ?? 0, r.id, replyMessage);
       message.success("回复成功，开始执行");
       await loadSessionRecords();
     } catch (error) {
@@ -176,7 +183,7 @@ export function TodoPostPage({
 
   const handleRateExecution = async (rId: number, rating: number | null) => {
     try {
-      const wsId = state.selectedWorkspace ?? 0;
+      const wsId = todoState.selectedWorkspace ?? 0;
       await db.rateExecutionRecord(wsId, rId, rating);
       // 刷新当前记录
       const updated = await db.getExecutionRecord(wsId, rId);
@@ -190,7 +197,7 @@ export function TodoPostPage({
   const handleExportMarkdown = async (r: ExecutionRecord) => {
     let logs: LogEntry[] = [];
     try {
-      const result = await db.getExecutionLogs(state.selectedWorkspace ?? 0, r.id, 1, EXPORT.maxLogs);
+      const result = await db.getExecutionLogs(todoState.selectedWorkspace ?? 0, r.id, 1, EXPORT.maxLogs);
       logs = result.logs;
     } catch { /* ignore */ }
     const msgs = parseLogsToMessages(logs);
@@ -233,7 +240,7 @@ export function TodoPostPage({
   };
 
   // 056：全局桶删除后按 id 定点查询（带共享缓存）
-  const todo = useTodoById(state.selectedWorkspace, todoId);
+  const todo = useTodoById(todoState.selectedWorkspace, todoId);
   const todoTitle = todo?.title || `事项 #${todoId}`;
 
   // 全局楼层号

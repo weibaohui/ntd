@@ -4,6 +4,7 @@
 |--------|---------|---------|
 | AI (Pi) | 2026-08-08 | 初始版本（批次 1） |
 | AI (Pi) | 2026-08-08 | 实施修订：Dashboard 实测跨 todo+exec 两域（解构访问 runningTasks），按双 hook 组合迁移；两个测试文件 mock 目标同步切换 |
+| AI (Claude) | 2026-08-23 | 批次 2 评审修订：§2「不迁移」清单与批次 2 实际实现冲突——useExecutionEvents 已迁 useAppDispatch（零订阅合并 dispatch），修订原文；补记批次 2 评审补漏 todo-post |
 
 > 093 优化扫描专项第 4 项。091 已把 logs 拆出独立 LogsContext，但 `useApp()` 仍合并
 > todoState/execState/uiState 三个域——任一域变化，所有消费方重渲染。
@@ -61,7 +62,10 @@ SettingsPage 之外的遗留。每处需显式组合两个 hooks，改动面与�
 ### 不迁移（永久保留 useApp）
 
 - `App.tsx`：组合根，真实消费全三域（runningTasks 决定执行面板、loading 决定骨架屏），拆分无收益；
-- `useExecutionEvents.ts`：WS 事件路由层，需向全域 dispatch，`useApp` 的合并 dispatch 正是为此设计。
+- ~~`useExecutionEvents.ts`：WS 事件路由层，需向全域 dispatch，`useApp` 的合并 dispatch 正是为此设计。~~
+  **批次 2 修订（2026-08-23）**：原文判断作废——收尾批次实现 dispatch-only 双 context 后，
+  该文件已迁至 `useAppDispatch()`（四域 dispatch 组合、零 state 订阅），比「永久保留 useApp」
+  更彻底地消除 WS 宿主的高频重渲染。保留 `App.tsx` 一项不变。
 
 ## 3. 影响模块
 

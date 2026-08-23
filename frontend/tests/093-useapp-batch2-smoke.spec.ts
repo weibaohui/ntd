@@ -1,7 +1,9 @@
 // 093 useApp 批次 2 冒烟：TodoDetail / ExecutionPanel 迁移 + useAppDispatch 零订阅拆分。
 import { test, expect } from '@playwright/test';
 
-const BASE = 'http://localhost:5173';
+// 端口对齐文档口径：CLAUDE.md/测试规范/playwright.config 的 make dev 环境是 18088，
+// 原误写 5173（vite 裸端口）导致本 spec 无法在标准验证流程下运行。
+const BASE = 'http://localhost:18088';
 
 test('093-b2: 列表页 → 打开 Todo 详情（TodoDetail 迁移路径）渲染无错', async ({ page }) => {
   const errors: string[] = [];

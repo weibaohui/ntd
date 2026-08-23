@@ -24,7 +24,7 @@ interface UseExecutionHistoryOptions {
   stepId?: number | null;
   /** Records already in the global store for this todo */
   storeRecords: ExecutionRecord[];
-  /** Dispatch from useApp() — used to sync fetched records back into global state */
+  /** 执行域 dispatch（调用方 TodoDetail 传 useExecution().dispatch）——用于把拉取的记录同步回全局执行态 */
   // 093 批次2：本 hook 只 dispatch 执行域 action，类型从三域联合收窄到 ExecutionAction
   dispatch: React.Dispatch<ExecutionAction>;
 }
