@@ -178,6 +178,11 @@ pub struct CardActionContext {
     pub open_chat_id: Option<String>,
     #[serde(rename = "open_message_id")]
     pub open_message_id: Option<String>,
+    /// NTD-019：卡片回调的会话类型（p2p/group）。旧版结构未声明导致该字段被 serde
+    /// 丢弃，act_new 无法分辨单聊/群聊而清错 session 维度。
+    /// Option + default：飞书增删字段或旧 payload 无此字段时反序列化仍成功（None 走回退）。
+    #[serde(default)]
+    pub chat_type: Option<String>,
 }
 
 // --- Event dispatcher ---

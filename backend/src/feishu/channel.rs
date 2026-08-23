@@ -214,6 +214,8 @@ impl FeishuChannelService {
                                 timestamp,
                                 chat_type: Some(chat_type),
                                 mentioned_open_ids,
+                                // 普通消息：chat_type 字段已是真实类型，无需透传
+                                origin_chat_type: None,
                             };
 
                             if let Err(e) = tx.try_send(channel_msg) {
@@ -308,6 +310,12 @@ impl FeishuChannelService {
                             };
 
                             // 构造一个特殊的 ChannelMessage 来传递卡片回调信息
+                            // NTD-019：透传卡片回调的真实会话类型（payload 无此字段时为 None，
+                            // 下游 act_new 经消息表反查兜底）——修复单聊点卡片「新会话」
+                            // 按钮误清 group 维度 session 的缺陷。
+                            let origin_chat_type = event.event.context
+                                .as_ref()
+                                .and_then(|c| c.chat_type.clone());
                             let card_callback_msg = ChannelMessage {
                                 id: message_id,
                                 sender,
@@ -317,6 +325,7 @@ impl FeishuChannelService {
                                 timestamp: 0,
                                 chat_type: Some("card_callback".to_string()),
                                 mentioned_open_ids: vec![],
+                                origin_chat_type,
                             };
 
                             if let Err(e) = tx_card.try_send(card_callback_msg) {
