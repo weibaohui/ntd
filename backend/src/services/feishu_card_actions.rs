@@ -185,8 +185,8 @@ pub(crate) fn format_record_time(started_at: &str) -> String {
     /// 开启新会话：清当前 workspace 对话执行器的 session（110：session 键是
     /// (workspace, 执行器, chat 维度)，未配置管家时清兜底 claudecode 的 session——
     /// 清了不存在的 session 无害）。
-    /// scope 由卡片回调消息推断：channel 非空=群聊（与 resolve_receive_target 同口径），
-    /// 帮助卡片的「新会话」按钮在哪类会话里点就清哪个维度的 session。
+    /// scope 经 resolve_session_scope 三级推断（payload 透传 > 消息表反查 > Group 兜底），
+    /// 保证「新会话」按钮在哪类会话里点就清哪个维度的 session（单聊清 dm、群聊清 group）。
     pub(crate) async fn act_new(context: &ListenerMessageContext<'_>, msg: &ChannelMessage) -> ActionOutcome {
         let Some(wid) = context.db.get_agent_bot_workspace_id(context.bot_id).await.ok().flatten() else {
             return ActionOutcome { success: false, message: "未设置工作空间".to_string() };
@@ -201,7 +201,8 @@ pub(crate) fn format_record_time(started_at: &str) -> String {
         // 导致单聊点卡片 /new 误清 group 键、dm 键旧 session 原样保留。
         let scope = Self::resolve_session_scope(
             msg.origin_chat_type.as_deref(),
-            context.db.get_latest_chat_type(context.bot_id, &msg.channel).await.ok().flatten(),
+            // DB 返回 Option<String>，同样压成 &str 与 payload 透传同口径进入推断
+            context.db.get_latest_chat_type(context.bot_id, &msg.channel).await.ok().flatten().as_deref(),
         );
         // set (wid, executor, scope, None)：None 即清除该维度键，下次对话从全新 session 开始
         match context.db.set_executor_session(wid, &executor, scope, None).await {
@@ -216,10 +217,11 @@ pub(crate) fn format_record_time(started_at: &str) -> String {
     /// 且群聊卡片的使用频率更高，未知场景落在高频维度更可能恰好正确。
     fn resolve_session_scope(
         origin_chat_type: Option<&str>,
-        db_chat_type: Option<String>,
+        db_chat_type: Option<&str>,
     ) -> crate::db::workspace::ExecutorSessionScope {
+        // 两个入参只读不消费，取 &str 避免 needless_pass_by_value 告警（零告警红线）
         origin_chat_type
-            .or(db_chat_type.as_deref())
+            .or(db_chat_type)
             .map(crate::db::workspace::ExecutorSessionScope::from_chat_type)
             .unwrap_or(crate::db::workspace::ExecutorSessionScope::Group)
     }
@@ -785,7 +787,7 @@ mod tests {
         );
         // ② payload 缺失 → 消息表反查
         assert_eq!(
-            CardActionHandler::resolve_session_scope(None, Some("p2p".to_string())),
+            CardActionHandler::resolve_session_scope(None, Some("p2p")),
             ExecutorSessionScope::Dm,
             "payload 缺失时应回退消息表反查"
         );

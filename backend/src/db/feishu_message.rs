@@ -504,30 +504,55 @@ mod tests {
         .expect("insert msg");
     }
 
-    /// NTD-019：get_latest_chat_type——按 chat_id 反查最近消息的 chat_type；无历史返回 None。
-    #[tokio::test]
-    async fn test_get_latest_chat_type() {
-        let db = fresh_db().await;
+    /// 建 workspace+bot（feishu_messages.bot_id 有外键依赖，PRAGMA foreign_keys=ON
+    /// 时必须先建父行才能插消息；两个 NTD-019 用例共用的前置，抽出来避免重复样板）。
+    /// 返回 Result 供调用方用 `?` 串联（测试规范 §5：测试代码禁 unwrap）。
+    async fn seed_bot_for_messages(db: &Database) -> Result<(), sea_orm::DbErr> {
         db.exec("INSERT INTO workspaces (path, git_worktree_enabled, auto_cleanup) VALUES ('/p', 0, 0)")
-            .await
-            .expect("insert workspace");
+            .await?;
         db.exec("INSERT INTO agent_bots (bot_type, bot_name, app_id, app_secret, workspace_id) VALUES ('feishu', 'b', 'a', 's', 1)")
             .await
-            .expect("insert bot");
-        // 同一 chat 两条消息：旧的 p2p、新的 group——应取最新（id 最大）
-        db.exec("INSERT INTO feishu_messages (bot_id, message_id, chat_id, chat_type, sender_open_id, msg_type) VALUES (1, 'm1', 'oc_x', 'p2p', 'ou_1', 'text')")
-            .await
-            .expect("insert m1");
-        db.exec("INSERT INTO feishu_messages (bot_id, message_id, chat_id, chat_type, sender_open_id, msg_type) VALUES (1, 'm2', 'oc_x', 'group', 'ou_1', 'text')")
-            .await
-            .expect("insert m2");
+    }
+
+    /// 插一条可指定 chat_id/chat_type 的消息（既有 seed_msg 把两者写死为 'c'/'p2p'，
+    /// 无法覆盖「同一 chat 多条不同类型」的反查场景，故 NTD-019 单独建种子）。
+    async fn seed_chat_type_msg(
+        db: &Database,
+        message_id: &str,
+        chat_id: &str,
+        chat_type: &str,
+    ) -> Result<(), sea_orm::DbErr> {
+        db.exec(&format!(
+            "INSERT INTO feishu_messages (bot_id, message_id, chat_id, chat_type, sender_open_id, msg_type) \
+             VALUES (1, '{message_id}', '{chat_id}', '{chat_type}', 'ou_1', 'text')"
+        ))
+        .await
+    }
+
+    /// NTD-019：get_latest_chat_type——同一 chat 多条消息时取最新（自增 id 最大）一条。
+    #[tokio::test]
+    async fn test_get_latest_chat_type_returns_latest() -> Result<(), sea_orm::DbErr> {
+        let db = fresh_db().await;
+        seed_bot_for_messages(&db).await?;
+        // 旧的 p2p、新的 group：靠自增 id 区分新旧，断言反查拿到的是更晚落库的 group
+        seed_chat_type_msg(&db, "m1", "oc_x", "p2p").await?;
+        seed_chat_type_msg(&db, "m2", "oc_x", "group").await?;
         assert_eq!(
-            db.get_latest_chat_type(1, "oc_x").await.unwrap(),
+            db.get_latest_chat_type(1, "oc_x").await?,
             Some("group".to_string()),
             "应取最新消息的 chat_type"
         );
-        // 无历史的 chat → None（调用方走最终兜底）
-        assert_eq!(db.get_latest_chat_type(1, "oc_none").await.unwrap(), None);
+        Ok(())
+    }
+
+    /// NTD-019：get_latest_chat_type——无历史消息的 chat 返回 None（调用方走最终兜底）。
+    #[tokio::test]
+    async fn test_get_latest_chat_type_no_history_returns_none() -> Result<(), sea_orm::DbErr> {
+        let db = fresh_db().await;
+        seed_bot_for_messages(&db).await?;
+        // bot 尚无消息记录的会话（如刚建群即点卡片）反查为空是正常态，不能报错
+        assert_eq!(db.get_latest_chat_type(1, "oc_none").await?, None);
+        Ok(())
     }
 
     /// get_distinct_senders（重写为 GROUP BY）：按 sender_open_id 聚合计数，
