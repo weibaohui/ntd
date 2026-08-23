@@ -982,6 +982,7 @@ mod tests {
             timestamp: 0,
             chat_type: Some("p2p".to_string()),
             mentioned_open_ids: vec![],
+            origin_chat_type: None,
         };
         FeishuListener::capture_owner_if_p2p(&db, bot_id, &p2p_msg, "p2p").await;
         assert_eq!(

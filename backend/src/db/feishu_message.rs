@@ -284,6 +284,24 @@ impl Database {
         Ok(result.is_some())
     }
 
+    /// NTD-019：按 chat_id 反查最近一次入站消息的 chat_type（p2p/group）。
+    /// 用途：卡片回调 payload 未携带 chat_type 时，act_new 的 scope 推断回退到这里——
+    /// 卡片必然出现在有过交互的会话里，入站消息表是最可靠的本地事实源。
+    /// 无历史消息（全新会话）返回 None，调用方再走最终兜底。
+    pub async fn get_latest_chat_type(
+        &self,
+        bot_id: i64,
+        chat_id: &str,
+    ) -> Result<Option<String>, sea_orm::DbErr> {
+        let row = feishu_messages::Entity::find()
+            .filter(feishu_messages::Column::BotId.eq(bot_id))
+            .filter(feishu_messages::Column::ChatId.eq(chat_id))
+            .order_by_desc(feishu_messages::Column::Id)
+            .one(&self.conn)
+            .await?;
+        Ok(row.map(|m| m.chat_type))
+    }
+
     pub async fn get_distinct_senders(
         &self,
     ) -> Result<Vec<(String, Option<String>, Option<String>, i64)>, sea_orm::DbErr> {
@@ -484,6 +502,32 @@ mod tests {
         ))
         .await
         .expect("insert msg");
+    }
+
+    /// NTD-019：get_latest_chat_type——按 chat_id 反查最近消息的 chat_type；无历史返回 None。
+    #[tokio::test]
+    async fn test_get_latest_chat_type() {
+        let db = fresh_db().await;
+        db.exec("INSERT INTO workspaces (path, git_worktree_enabled, auto_cleanup) VALUES ('/p', 0, 0)")
+            .await
+            .expect("insert workspace");
+        db.exec("INSERT INTO agent_bots (bot_type, bot_name, app_id, app_secret, workspace_id) VALUES ('feishu', 'b', 'a', 's', 1)")
+            .await
+            .expect("insert bot");
+        // 同一 chat 两条消息：旧的 p2p、新的 group——应取最新（id 最大）
+        db.exec("INSERT INTO feishu_messages (bot_id, message_id, chat_id, chat_type, sender_open_id, msg_type) VALUES (1, 'm1', 'oc_x', 'p2p', 'ou_1', 'text')")
+            .await
+            .expect("insert m1");
+        db.exec("INSERT INTO feishu_messages (bot_id, message_id, chat_id, chat_type, sender_open_id, msg_type) VALUES (1, 'm2', 'oc_x', 'group', 'ou_1', 'text')")
+            .await
+            .expect("insert m2");
+        assert_eq!(
+            db.get_latest_chat_type(1, "oc_x").await.unwrap(),
+            Some("group".to_string()),
+            "应取最新消息的 chat_type"
+        );
+        // 无历史的 chat → None（调用方走最终兜底）
+        assert_eq!(db.get_latest_chat_type(1, "oc_none").await.unwrap(), None);
     }
 
     /// get_distinct_senders（重写为 GROUP BY）：按 sender_open_id 聚合计数，

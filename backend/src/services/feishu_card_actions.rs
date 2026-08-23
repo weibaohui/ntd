@@ -196,18 +196,32 @@ pub(crate) fn format_record_time(started_at: &str) -> String {
         let executor = CardActionHandler::workspace_butler_executor(context.db, context.bot_id)
             .await
             .unwrap_or_else(|| "claudecode".to_string());
-        // 卡片回调的 chat_type 是 "card_callback" 而非 p2p/group，无法直接喂
-        // from_chat_type——按 resolve_receive_target 的口径从 channel 推断会话类型
-        let scope = if msg.channel.is_empty() {
-            crate::db::workspace::ExecutorSessionScope::Dm
-        } else {
-            crate::db::workspace::ExecutorSessionScope::Group
-        };
+        // NTD-019：scope 三级推断——①透传的原始会话类型 → ②消息表反查 → ③Group 兜底。
+        // 旧实现用 channel.is_empty() 猜维度，但单聊也有 chat_id（恒非空 → 恒 Group），
+        // 导致单聊点卡片 /new 误清 group 键、dm 键旧 session 原样保留。
+        let scope = Self::resolve_session_scope(
+            msg.origin_chat_type.as_deref(),
+            context.db.get_latest_chat_type(context.bot_id, &msg.channel).await.ok().flatten(),
+        );
         // set (wid, executor, scope, None)：None 即清除该维度键，下次对话从全新 session 开始
         match context.db.set_executor_session(wid, &executor, scope, None).await {
             Ok(_) => ActionOutcome { success: true, message: "已开启新会话".to_string() },
             Err(e) => ActionOutcome { success: false, message: format!("失败：{e}") },
         }
+    }
+
+    /// NTD-019：session scope 三级推断（纯函数便于单测）。
+    /// 优先级：卡片 payload 透传的 origin_chat_type > 消息表反查的 chat_type > Group 兜底。
+    /// 兜底选 Group 而非 Dm 的理由：保持修复前行为不劣化（旧实现恒 Group）；
+    /// 且群聊卡片的使用频率更高，未知场景落在高频维度更可能恰好正确。
+    fn resolve_session_scope(
+        origin_chat_type: Option<&str>,
+        db_chat_type: Option<String>,
+    ) -> crate::db::workspace::ExecutorSessionScope {
+        origin_chat_type
+            .or(db_chat_type.as_deref())
+            .map(crate::db::workspace::ExecutorSessionScope::from_chat_type)
+            .unwrap_or(crate::db::workspace::ExecutorSessionScope::Group)
     }
 
     /// 停止当前 workspace 的运行任务（by workspace + ExecutionStatus::Running 直接查）。
@@ -746,10 +760,45 @@ mod tests {
             timestamp: 0,
             chat_type: Some("card_callback".to_string()),
             mentioned_open_ids: vec![],
+            origin_chat_type: None,
         };
         assert_eq!(CardActionHandler::resolve_receive_target(&group_msg), ("oc_group", "chat_id"));
         // 私聊：channel 空 → 回退到点击者 open_id
         let private_msg = ChannelMessage { channel: String::new(), ..group_msg.clone() };
         assert_eq!(CardActionHandler::resolve_receive_target(&private_msg), ("ou_user", "open_id"));
+    }
+
+    /// NTD-019 回归：resolve_session_scope 三级推断。
+    /// 核心场景：单聊卡片回调（channel 非空）也必须判 Dm——修复前恒 Group 的缺陷。
+    #[test]
+    fn test_resolve_session_scope_three_tiers() {
+        use crate::db::workspace::ExecutorSessionScope;
+        // ① origin_chat_type 优先：payload 带 p2p → Dm（核心修复场景）
+        assert_eq!(
+            CardActionHandler::resolve_session_scope(Some("p2p"), None),
+            ExecutorSessionScope::Dm,
+            "payload 透传 p2p 应判 Dm（即使 channel 非空）"
+        );
+        assert_eq!(
+            CardActionHandler::resolve_session_scope(Some("group"), None),
+            ExecutorSessionScope::Group
+        );
+        // ② payload 缺失 → 消息表反查
+        assert_eq!(
+            CardActionHandler::resolve_session_scope(None, Some("p2p".to_string())),
+            ExecutorSessionScope::Dm,
+            "payload 缺失时应回退消息表反查"
+        );
+        // ③ 两者皆无 → Group 兜底（保持修复前行为不劣化）
+        assert_eq!(
+            CardActionHandler::resolve_session_scope(None, None),
+            ExecutorSessionScope::Group,
+            "完全未知时回退 Group（与修复前一致）"
+        );
+        // 未知类型字符串（如未来新类型）走 from_chat_type 的 Group 兜底口径
+        assert_eq!(
+            CardActionHandler::resolve_session_scope(Some("unknown_future_type"), None),
+            ExecutorSessionScope::Group
+        );
     }
 }
