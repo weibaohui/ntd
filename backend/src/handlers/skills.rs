@@ -36,6 +36,11 @@ pub fn executor_skills_dir_str(et: &str) -> Option<PathBuf> {
         "codebuddy" => Some(home.join(".codebuddy").join("skills")),
         "opencode" => Some(home.join(".opencode").join("skills")),
         "atomcode" => Some(home.join(".atomcode").join("skills")),
+        // codewhale / kilo：历史 PR（#428 / Kilo）漏加了 skills 目录映射，
+        // 导致 Skills 管理、对比矩阵、skill install 一直看不到这两个执行器；
+        // 本次接 dsh 时一并补齐（session 目录见 adapters::EXECUTORS 注册表）
+        "codewhale" => Some(home.join(".codewhale").join("skills")),
+        "kilo" => Some(home.join(".kilo").join("skills")),
         "kimi" => Some(home.join(".kimi").join("skills")),
         "mobilecoder" => Some(home.join(".mobile-coder").join("skills")),
         "pi" => Some(home.join(".pi").join("skills")),
@@ -45,6 +50,9 @@ pub fn executor_skills_dir_str(et: &str) -> Option<PathBuf> {
         "zhanlu" => Some(home.join(".local/share/zhanlu").join("skills")),
         // agents 是只读 skill 来源：扫描但不参与执行器管理/Todo 执行
         "agents" => Some(home.join(".agents").join("skills")),
+        // dsh（DeepSeek Harness）：可写 skill 来源，非 ExecutorType、不参与 Todo 执行，
+        // 但 delete/import/sync 等写操作全部放行（与只读的 agents 相区别）
+        "dsh" => Some(home.join(".dsh").join("skills")),
         _ => None,
     }
 }
@@ -533,7 +541,7 @@ fn discover_skills_for(name: &str, label: &str) -> ExecutorSkills {
 
 // ── API handlers ────────────────────────────────────────────────────────
 
-/// 参与 skill 扫描/对比的所有来源：9 个执行器 + 只读来源 `agents`。
+/// 参与 skill 扫描/对比的所有来源：13 个执行器 + 只读来源 `agents` + 可写来源 `dsh`。
 ///
 /// 用字符串数组而非 `ExecutorType` 数组，方便容纳非 ExecutorType 来源。
 /// **新增来源时**：
@@ -544,7 +552,10 @@ const ALL_SKILL_SOURCES: &[&str] = &[
     "claudecode", "codebuddy", "opencode", "atomcode",
     "hermes", "kimi", "mobilecoder", "codex",
     "pi", "mimo", "zhanlu",
+    // codewhale/kilo 历史漏登记（见 executor_skills_dir_str 注释），随 dsh 一并补齐
+    "codewhale", "kilo",
     "agents",
+    "dsh",
 ];
 
 /// 把 source 名字转成 UI 显示名。
@@ -556,6 +567,8 @@ fn executor_label_for_source(name: &str) -> &'static str {
     match name {
         // 特殊来源走专门分支，避开 parse_executor_type 的解析开销
         "agents" => "Agents",
+        // dsh（DeepSeek Harness）：可写 skill 来源，UI 显示名
+        "dsh" => "Dsh",
         other => {
             // 解析失败的回退：返回空串，调用方会兜底用 name 当 label
             if let Some(et) = crate::adapters::parse_executor_type(other) {
@@ -571,7 +584,7 @@ fn executor_label_for_source(name: &str) -> &'static str {
 ///
 /// GET /api/skills - List skills grouped by executor
 ///
-/// 扫描 11 个 ExecutorType 之外，还扫 `~/.agents/skills`（只读 skill 来源）。
+/// 扫描所有执行器之外，还扫 `~/.agents/skills`（只读）与 `~/.dsh/skills`（可写）两个非执行器来源。
 /// agents 不参与 Todo 执行，但能在 Skills 总览/对比/同步里看到并使用。
 ///
 /// 实现选择：每个来源的目录 IO 放在 `spawn_blocking` 里跑，
@@ -581,7 +594,7 @@ pub async fn list_skills(
 ) -> Result<ApiResponse<Vec<ExecutorSkills>>, AppError> {
     // spawn_blocking：磁盘 IO 不能跑在 tokio reactor 上，否则会卡住其他请求
     let result = tokio::task::spawn_blocking(move || {
-        // 顺序遍历 12 个来源：单次调用只 IO 一次，顺序 vs 并行收益不大，
+        // 顺序遍历所有来源：单次调用只 IO 一次，顺序 vs 并行收益不大，
         // 而且顺序能保证响应里 source 顺序稳定，方便前端按位置渲染 Tab
         ALL_SKILL_SOURCES
             .iter()
@@ -680,11 +693,10 @@ pub async fn delete_skill(
             query.executor
         )));
     }
-    let et = crate::adapters::parse_executor_type(&query.executor)
+    // 用字符串映射而非 parse_executor_type：dsh 这类非 ExecutorType 的可写来源
+    // 也能删除（映射不到的未知名字仍然 400，安全性不降级）
+    let skills_dir = executor_skills_dir_str(&query.executor)
         .ok_or_else(|| AppError::BadRequest(format!("Unknown executor: {}", query.executor)))?;
-
-    let skills_dir = executor_skills_dir(et)
-        .ok_or_else(|| AppError::BadRequest("No skills directory for this executor".to_string()))?;
 
     // Reject skill names with path separators or parent traversal
     if query.skill_name.contains('/') || query.skill_name.contains('\\') || query.skill_name.contains("..") {
@@ -794,11 +806,10 @@ pub async fn import_skill(
             params.executor
         )));
     }
-    let et = crate::adapters::parse_executor_type(&params.executor)
+    // 用字符串映射而非 parse_executor_type：dsh 这类非 ExecutorType 的可写来源
+    // 也能导入（映射不到的未知名字仍然 400，安全性不降级）
+    let skills_dir = executor_skills_dir_str(&params.executor)
         .ok_or_else(|| AppError::BadRequest(format!("Unknown executor: {}", params.executor)))?;
-
-    let skills_dir = executor_skills_dir(et)
-        .ok_or_else(|| AppError::BadRequest("No skills directory for this executor".to_string()))?;
 
     std::fs::create_dir_all(&skills_dir)
         .map_err(|e| AppError::Internal(format!("Failed to create skills dir: {}", e)))?;
@@ -1027,7 +1038,7 @@ pub struct SkillFileContentResponse {
 
 /// GET /api/skills/compare - Cross-executor skill comparison matrix
 ///
-/// 比 8 个 ExecutorType 多扫了 `agents`（`~/.agents/skills`），让用户
+/// 除执行器外还扫 `agents`/`dsh` 等非执行器来源，让用户
 /// 能看到 "lark-doc" 这类 skill 在哪些来源里有、版本是不是落后。
 ///
 /// 输出结构：每个 skill 一行，每个来源一列，单元格标记 present/version。
@@ -1303,11 +1314,13 @@ pub async fn sync_skill(
     let mut errors = Vec::new();
 
     for target in &req.target_executors {
-        // agents 已允许作为同步目标（复制安装到 ~/.agents/skills），
-        // 但 delete/import 等其他写操作仍保持只读保护。
-        let target_dir = if *target == "agents" {
-            // agents 不在 ExecutorType 枚举中，用 executor_skills_dir_str 单独解析
-            match executor_skills_dir_str("agents") {
+        // 非 ExecutorType 的 skill 来源（无 CLI 执行链，但目录可作为同步目标）：
+        // agents（delete/import 仍只读保护）与 dsh（完全可写）。
+        // 用集合而非字面量比较，后续新增非执行器来源只需往集合加一项。
+        const NON_EXECUTOR_SOURCES: &[&str] = &["agents", "dsh"];
+        let target_dir = if NON_EXECUTOR_SOURCES.contains(&target.as_str()) {
+            // 这些来源不在 ExecutorType 枚举中，用 executor_skills_dir_str 单独解析
+            match executor_skills_dir_str(target) {
                 Some(d) => d,
                 None => {
                     errors.push(format!("No skills directory for {}", target));
@@ -1548,6 +1561,31 @@ mod tests {
     }
 
     #[test]
+    fn test_executor_label_for_source_dsh() {
+        // dsh 是可写 skill 来源（非 ExecutorType），显示名走专门分支；
+        // 若忘了加分支会返回空串，UI 退化显示原始名 "dsh"
+        assert_eq!(executor_label_for_source("dsh"), "Dsh");
+    }
+
+    #[test]
+    fn test_executor_skills_dir_str_dsh() {
+        // 目录映射是 dsh 接入的唯一事实源：list/compare/sync/delete/import 全部经此解析
+        let home = dirs::home_dir().expect("home 目录应存在");
+        assert_eq!(
+            executor_skills_dir_str("dsh"),
+            Some(home.join(".dsh").join("skills"))
+        );
+    }
+
+    #[test]
+    fn test_all_skill_sources_contains_dsh() {
+        // ALL_SKILL_SOURCES 驱动 list/compare/version-update 三个接口的来源枚举，
+        // 漏加则 dsh 在总览/对比/版本检测里完全不可见
+        assert!(ALL_SKILL_SOURCES.contains(&"dsh"),
+            "ALL_SKILL_SOURCES should contain dsh");
+    }
+
+    #[test]
     fn test_executor_label_for_source_unknown_returns_empty() {
         assert_eq!(executor_label_for_source("does_not_exist"), "");
     }
@@ -1562,6 +1600,12 @@ mod tests {
     #[test]
     fn test_is_readonly_skill_source_kilo_is_not_readonly() {
         assert!(!is_readonly_skill_source("kilo"));
+    }
+
+    #[test]
+    fn test_is_readonly_skill_source_dsh_is_writable() {
+        // dsh 与 agents 的核心区别：可写来源，delete/import 不被只读守卫拦截
+        assert!(!is_readonly_skill_source("dsh"));
     }
 
     // ── extract_yaml_front_matter() tests ───────────────────────────────

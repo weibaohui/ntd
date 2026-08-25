@@ -353,11 +353,12 @@ fn executor_skills_dir(et: &str) -> Option<PathBuf> {
     handlers::skills::executor_skills_dir_str(et)
 }
 
-// Known executors (不含 agents，agents 是只读 skill 来源，用 --all 单独注入）
+// Known executors (不含 agents，agents 是只读 skill 来源，用 --all 单独注入；
+// dsh 是可写 skill 来源，与其余执行器一致默认安装，故直接列入)
 const KNOWN_EXECUTORS: &[&str] = &[
     "claudecode", "hermes", "codex", "codebuddy",
     "opencode", "atomcode", "kimi", "mobilecoder", "codewhale", "pi", "mimo",
-    "zhanlu",
+    "zhanlu", "dsh",
 ];
 
 /// Install embedded ntd-usage skill to executor skill directories.

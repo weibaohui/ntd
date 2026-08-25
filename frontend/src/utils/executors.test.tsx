@@ -58,6 +58,15 @@ describe('EXECUTORS 常量', () => {
     expect(entry?.color).toBe('#e67700');
     expect(entry?.resumable).toBe(true);
   });
+
+  it('dsh 条目存在且非 resumable（可写 skill 来源，非执行器）', () => {
+    // dsh 需要进 EXECUTORS 才能在 Skills 总览/同步/市场 UI 拿到 label 与颜色；
+    // 但它没有 CLI 执行链，绝不能标 resumable（否则 Todo 详情会出现「继续对话」按钮）
+    const entry = EXECUTORS.find((e) => e.value === 'dsh');
+    expect(entry).toBeDefined();
+    expect(entry?.label).toBe('Dsh');
+    expect(entry?.resumable).toBeFalsy();
+  });
 });
 
 describe('EXECUTOR_COLORS 常量', () => {
@@ -69,6 +78,15 @@ describe('EXECUTOR_COLORS 常量', () => {
     // 颜色相近会让看板/徽标视觉混淆，故要求互不相同
     expect(EXECUTOR_COLORS['kilo']).not.toBe(EXECUTOR_COLORS['zhanlu']);
     expect(EXECUTOR_COLORS['kilo']).not.toBe(EXECUTOR_COLORS['agents']);
+  });
+
+  it('dsh 颜色与所有现有来源不撞色', () => {
+    // 卡片视图/对比矩阵用颜色区分来源方块，撞色即失去辨识度；
+    // 遍历除 dsh 外的全部登记色，逐一断言不等
+    const others = Object.entries(EXECUTOR_COLORS).filter(([k]) => k !== 'dsh');
+    for (const [name, color] of others) {
+      expect(EXECUTOR_COLORS['dsh'], `dsh 与 ${name} 撞色`).not.toBe(color);
+    }
   });
 
   it('EXECUTOR_COLORS[kilo] 与 EXECUTORS[kilo].color 一致（单一真相源）', () => {
@@ -91,6 +109,12 @@ describe('EXECUTORS_FOR_PICKER', () => {
 
   it('不含 agents（agents 是聚合项，不应出现在单选 picker）', () => {
     expect(EXECUTORS_FOR_PICKER.some((e) => e.value === 'agents')).toBe(false);
+  });
+
+  it('不含 dsh（dsh 是 skill 来源，无 CLI 执行链，不能执行 Todo）', () => {
+    // 新建任务/批量换执行器/默认执行器/@提及候选都消费此列表；
+    // dsh 混入会让用户建出无法执行的任务
+    expect(EXECUTORS_FOR_PICKER.some((e) => e.value === 'dsh')).toBe(false);
   });
 });
 

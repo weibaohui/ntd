@@ -10,16 +10,16 @@ Skills 是 ntd 帮各执行器管理的**预制 prompt 模板**，类似 Claude 
 
 | 来源 | 目录 | 可写 | 说明 |
 |------|------|------|------|
-| `claudecode` / `codebuddy` / `opencode` / `atomcode` / `hermes` / `kimi` / `mobilecoder` / `codex` / `pi` / `mimo` / `zhanlu` | `~/.{executor}/skills/` | ✅ | 11 个真实执行器，有 skills 目录映射 |
-| `codewhale` | — | — | 是执行器，但**没有** skills 目录映射（不在扫描列表中） |
+| `claudecode` / `codebuddy` / `opencode` / `atomcode` / `hermes` / `kimi` / `mobilecoder` / `codex` / `pi` / `mimo` / `zhanlu` / `codewhale` / `kilo` | `~/.{executor}/skills/`（codewhale/kilo 为 `~/.codewhale/skills`、`~/.kilo/skills`） | ✅ | 13 个真实执行器，均有 skills 目录映射 |
 | `agents` | `~/.agents/skills/` | ❌ | **只读来源**，扫描但不参与 Todo 执行 |
+| `dsh` | `~/.dsh/skills/` | ✅ | DeepSeek Harness 的 skill 目录，**可写来源**（非执行器） |
 
 ### 0.1 写权限与「出现在哪」
 
-- 可写：仅**非只读来源**（`agents` 标记为只读，其他 9 个执行器可写）
-- `agents`：
-  - ❌ **不**出现在「执行器管理」标签（`types/execution.tsx:131-133`）
-  - ✓ 出现在 Skills 总览 / 同步标签中
+- 可写：**非只读来源**（`agents` 只读；13 个执行器 + `dsh` 均可写）
+- `agents` / `dsh` 都不是执行器：
+  - ❌ **不**出现在「执行器管理」、新建任务/委派的执行器下拉（`EXECUTORS_FOR_PICKER` 排除）
+  - ✓ 出现在 Skills 总览 / 对比 / 版本更新 / 同步目标中
 
 ### 0.2 `agents` 只读来源
 
@@ -29,8 +29,16 @@ Skills 是 ntd 帮各执行器管理的**预制 prompt 模板**，类似 Claude 
 - ✅ 支持**作为同步源**（把 `agents` 的 skill 复制到其他执行器）
 - ❌ 禁止**导入**到 `agents`（避免覆盖其他工具的内容）
 - ❌ 禁止**删除** `agents` 里的 skill
-- ❌ 禁止把 `agents` 当作**同步目标**
+- ✅ 允许把 `agents` 当作**同步目标**（023 号需求放行：复制安装到 `~/.agents/skills`，但 delete/import 仍只读保护）
 - ❌ 不出现在「执行器管理」和 TodoDrawer 下拉框
+
+### 0.3 `dsh` 可写来源
+
+`dsh`（DeepSeek Harness CLI）的 skill 目录 `~/.dsh/skills` 以**可写来源**形态接入（115 号需求）：
+- ✅ 扫描/展示/导出/同步（源与目标）
+- ✅ **删除**与**导入**（与执行器目录一致，不受只读守卫限制）
+- ✅ `ntd skill install` 默认把 ntd-usage 装入 `~/.dsh/skills/ntd-usage`
+- ❌ 不是执行器：不能执行 Todo、不出现在执行器选择 UI
 
 **使用场景**：本地有 cc-connect 等工具放在 `~/.agents/skills/` 的 skill，你想让 ntd 的某个执行器也能用 → 在「Skills 同步」选 source=agents、target=claudecode，复制一份过去。
 
