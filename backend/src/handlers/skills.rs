@@ -793,6 +793,21 @@ fn add_dir_to_zip<W: std::io::Write + std::io::Seek>(
     Ok(())
 }
 
+/// 校验 import 的 skill_name，拒绝会让 target_dir 指向 skills 根目录的取值。
+///
+/// 空串与 "." 都会使 `skills_dir.join(name)` 解析回 skills 根目录本身，
+/// 后续「删除原目标目录 + 原子替换」步骤会把整个 skills 目录清空再替换，
+/// 造成不可恢复的批量误删。dsh 作为可写来源接入后，该存量边界的影响面
+/// 扩大到 `~/.dsh/skills` 根，必须在 join 前集中拦截。
+fn validate_import_skill_name(name: &str) -> Result<(), AppError> {
+    if name.is_empty() || name == "." || name.starts_with('/') || name.contains("..") {
+        return Err(AppError::BadRequest(
+            "Invalid skill name: empty, '.', absolute paths and parent directory traversal are not allowed".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 /// POST /api/skills/import - Import skill from .zip
 pub async fn import_skill(
     State(_state): State<AppState>,
@@ -822,10 +837,10 @@ pub async fn import_skill(
     let flatten = params.flatten.unwrap_or(true);
     let skill_name = params.skill_name.clone().unwrap_or_else(|| "imported-skill".to_string());
 
-    // Validate skill_name: reject absolute paths and parent directory traversal
-    if skill_name.starts_with('/') || skill_name.contains("..") {
-        return Err(AppError::BadRequest("Invalid skill name: absolute paths and parent directory traversal are not allowed".to_string()));
-    }
+    // 校验 skill_name：空串/单点/绝对路径/父级穿越都会让 target_dir 偏离预期
+    // （空与 "." 会让 join 解析回 skills 根，后续替换会删整个 skills 目录），
+    // 在 join 前由专门函数统一拦截
+    validate_import_skill_name(&skill_name)?;
 
     let target_dir = skills_dir.join(&skill_name);
 
@@ -1606,6 +1621,19 @@ mod tests {
     fn test_is_readonly_skill_source_dsh_is_writable() {
         // dsh 与 agents 的核心区别：可写来源，delete/import 不被只读守卫拦截
         assert!(!is_readonly_skill_source("dsh"));
+    }
+
+    #[test]
+    fn test_validate_import_skill_name_rejects_empty_and_dot() {
+        // 空串与单点会让 join 解析回 skills 根，触发「删除原目标」时清空整个 skills 目录；
+        // 绝对路径与父级穿越维持既有拒绝。回归 CodeRabbit 指出的 dsh 可写后放大边界。
+        assert!(validate_import_skill_name("").is_err());
+        assert!(validate_import_skill_name(".").is_err());
+        assert!(validate_import_skill_name("/abs/path").is_err());
+        assert!(validate_import_skill_name("../up").is_err());
+        // 合法名称放行（含相对子路径，import flatten 会取最后一段）
+        assert!(validate_import_skill_name("ntd-usage").is_ok());
+        assert!(validate_import_skill_name("creative/joke-teller").is_ok());
     }
 
     // ── extract_yaml_front_matter() tests ───────────────────────────────
