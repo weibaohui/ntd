@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock, Mutex};
 use zip::write::FileOptions;
 use zip::ZipArchive;
 
@@ -1426,63 +1427,82 @@ pub async fn sync_skill(
     Ok(ApiResponse::ok(msg))
 }
 
-/// 把已就绪的 `temp` 目录原子换入 `dest`：「备份 → 换入 → 成功才删备份」。
+/// 各目标 dest 的提交互斥锁注册表（进程内）。
 ///
-/// 为什么不能「先删 dest 再 rename」：rename 与整树拷贝兜底双失败的瞬间，
-/// 旧内容已经不存在了——调用方只能报错，但用户的原始 skill 无法恢复。
-/// 先把 dest 挪进备份目录，保证任何一个失败点都能把现场原样还原：
-/// - 备份这一步自身失败 → 什么都没动过，直接报错；
-/// - rename(temp→dest) 失败 → 试整树拷贝兜底（部分文件系统不允许覆盖式 rename）；
-///   兜底也失败时清掉半成品 dest、把备份 rename 回去再报错，原始数据完好；
-/// - 只有提交确认成功后才删除备份。
-///
-/// 并发安全：备份目录名带 PID + staging 计数器唯一后缀。若同 skill 的并行操作
-/// 共享一个备份名，本请求入口的清理会删掉对方刚移入的旧数据，对方提交失败后
-/// 就无从恢复（CodeRabbit Major 级发现）；唯一名让每个请求的备份互不可见。
-///
-/// 错误统一返回 String 消息（调用方各自的 errors/AppError 口径自行包装）。
-fn commit_swap_with_backup(temp: &std::path::Path, dest: &std::path::Path) -> Result<(), String> {
+/// 为什么不用文件锁（fd-lock/fs4）：import/sync 的全部 API 流量都收敛在单个
+/// daemon 进程里，进程内互斥已覆盖全部真实并发面；跨进程写同一 skill 目录的
+/// 唯一来源是 CLI `ntd skill install`，而它不走这条提交流程。为长尾场景引入
+/// 新依赖不划算。局限：键取调用方构造的原始路径，符号链接别名会绕过锁——
+/// 两个 handler 构造 dest 的方式一致，正常运行不会出现别名。
+static COMMIT_LOCKS: LazyLock<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// 取出与 `dest` 绑定的提交互斥体；返回 Arc 让其生命周期独立于注册表写竞态，
+/// 即使后续条目被清理也不会影响正在持有的 permit。
+fn acquire_commit_lock(dest: &Path) -> Arc<Mutex<()>> {
+    // 注册表本身要可变（entry 插入新条目），Mutex 内部可变性 + mut 绑定
+    let mut registry = COMMIT_LOCKS.lock().unwrap_or_else(|e| e.into_inner());
+    registry
+        .entry(dest.to_path_buf())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone()
+}
+
+/// 提交前把现有 dest 整体挪入同目录下的唯一备份目录，返回备份路径；
+/// dest 不存在时返回 None（首次安装，无需恢复语义）。
+fn backup_existing(dest: &Path) -> Result<Option<PathBuf>, String> {
+    if !dest.exists() {
+        return Ok(None);
+    }
+    // 备份与 temp 同目录放置：保证同一文件系统内 rename 才能保持原子性；
+    // 名字带 PID + staging 计数器唯一后缀：并发请求各持独立备份，
+    // 一方的入口清理不会删掉另一方刚移入的旧数据（CodeRabbit 二轮 Major）
     let parent = dest.parent().unwrap_or(dest);
-    // 备份与 temp 同目录放置：保证同一文件系统内 rename 才能保持原子性
     let backup = parent.join(format!(
         "{}.old.tmp.{}.{}",
         dest.file_name().and_then(|n| n.to_str()).unwrap_or("skill"),
         std::process::id(),
         next_staging_id()
     ));
-    let had_existing = dest.exists();
-    if had_existing {
-        std::fs::rename(dest, &backup)
-            .map_err(|e| format!("Failed to backup existing destination: {}", e))?;
-    }
+    std::fs::rename(dest, &backup)
+        .map_err(|e| format!("Failed to backup existing destination: {}", e))?;
+    Ok(Some(backup))
+}
 
-    // 快路径：rename 直接换入成功
-    if std::fs::rename(temp, dest).is_ok() {
-        if had_existing {
-            let _ = std::fs::remove_dir_all(&backup);
-        }
-        return Ok(());
+/// 提交确认成功后删除备份。清理失败仅静默：残留只是磁盘垃圾，不影响正确性
+/// （真正的数据丢失风险只存在于「删除后才失败」的顺序错误里，本流程已排除）。
+fn discard_backup(backup: &Option<PathBuf>) {
+    if let Some(b) = backup {
+        let _ = std::fs::remove_dir_all(b);
     }
+}
 
-    // 慢路径：rename 失败时整树拷贝兜底（跨设备/不支持覆盖的 fs）
+/// rename 直接换入失败后的整树拷贝兜底与双失败还原。
+///
+/// 注意 copy 回退**不清空 dest**：若此刻已有并发者提交了新内容，逐文件叠加
+/// 会把两份内容合并成污染树且双双报成功——这正是外层必须先持有 per-dest 锁
+/// 的原因：锁保证走到这里时 dest 是我们自己腾出的空位或本就不存在。
+/// 双失败时清掉半成品并还原备份；还原也失败必须拼进错误信息暴露给调用方，
+/// 绝不能静默吞掉「现场已非原始状态」的事实。
+fn finish_via_copy_fallback(
+    temp: &Path,
+    dest: &Path,
+    backup: &Option<PathBuf>,
+) -> Result<(), String> {
     match copy_dir_recursive_flat(temp, dest, true) {
         Ok(()) => {
             let _ = std::fs::remove_dir_all(temp);
-            if had_existing {
-                let _ = std::fs::remove_dir_all(&backup);
-            }
+            discard_backup(backup);
             Ok(())
         }
         Err(copy_err) => {
-            // 双失败：清掉半成品 dest 并还原备份。还原本身也失败时必须把该事实
-            // 写进错误信息暴露给调用方——绝不能静默吞掉「现场已非原始状态」。
             let _ = std::fs::remove_dir_all(dest);
             let mut msg = format!("{} (rename fallback also failed)", copy_err);
-            if had_existing {
-                if let Err(e) = std::fs::rename(&backup, dest) {
+            if let Some(b) = backup {
+                if let Err(e) = std::fs::rename(b, dest) {
                     msg.push_str(&format!(
                         "; CRITICAL: failed to restore backup {} back to {}: {}",
-                        backup.display(),
+                        b.display(),
                         dest.display(),
                         e
                     ));
@@ -1492,6 +1512,29 @@ fn commit_swap_with_backup(temp: &std::path::Path, dest: &std::path::Path) -> Re
             Err(msg)
         }
     }
+}
+
+/// 把已就绪的 `temp` 目录原子换入 `dest`：「加锁 → 备份 → 换入 → 成功才删备份」。
+///
+/// 为什么不能「先删 dest 再 rename」：rename 与整树拷贝兜底双失败的瞬间，
+/// 旧内容已经不存在了——调用方只能报错，但用户的原始 skill 无法恢复。
+/// 先把 dest 挪进唯一备份目录，保证任何一个失败点都能把现场原样还原。
+///
+/// 并发模型：整个「检查→备份→换入→恢复→清理」区间持有 per-dest 进程内互斥
+/// （见 COMMIT_LOCKS），堵住「A 备份走旧目录后 B 完整提交、A 再以 copy 回退
+/// 叠加合并进 B 结果」的交错（CodeRabbit 三轮 Major）。成功才删备份、失败必还原。
+/// 错误统一返回 String，由调用方按各自口径包装。
+fn commit_swap_with_backup(temp: &Path, dest: &Path) -> Result<(), String> {
+    // 先绑定 Arc 再取锁：guard 借用必须活过整条语句，链式写法会让临时 Arc
+    // 在语句末尾即被丢弃（E0716）
+    let commit_lock = acquire_commit_lock(dest);
+    let _permit = commit_lock.lock().unwrap_or_else(|e| e.into_inner());
+    let backup = backup_existing(dest)?;
+    if std::fs::rename(temp, dest).is_ok() {
+        discard_backup(&backup);
+        return Ok(());
+    }
+    finish_via_copy_fallback(temp, dest, &backup)
 }
 
 /// Copy directory recursively, optionally flattening subdirectories
@@ -1762,6 +1805,47 @@ mod tests {
 
         assert!(dest.join("f.txt").exists(), "首次安装内容应就位");
         assert!(!staging.exists(), "staging 应被消费");
+    }
+
+    #[test]
+    fn test_commit_swap_with_backup_serializes_same_dest() {
+        // 回归 CodeRabbit 三轮 Major：A 备份走旧目录后、B 在 A 换入前完成提交，
+        // A 随后的 rename 落到非空目录会走 copy 回退、把内容**叠加合并**进 B 的
+        // 结果并双双报成功。修复语义：持有同 dest 提交锁期间其它提交必须等待，
+        // 放行后才允许落地——用「阻塞中不落盘」做确定性断言（50ms 窗口内，
+        // 即使调度延迟导致检查偏弱，join 后的成功提交仍验证核心正确性）。
+        let root = tempfile::tempdir().expect("tempdir");
+        let dest = root.path().join("shared-skill");
+        std::fs::create_dir_all(&dest).expect("create old skill dir");
+        std::fs::write(dest.join("old.txt"), b"old").expect("write old marker");
+
+        let staging = root.path().join(".shared-skill.staging");
+        std::fs::create_dir_all(&staging).expect("create staging");
+        std::fs::write(staging.join("new.txt"), b"new").expect("write new marker");
+
+        // 主线程先占住该 dest 的提交锁，模拟一个进行中的提交区间
+        let held = acquire_commit_lock(&dest);
+        let permit = held.lock().unwrap_or_else(|e| e.into_inner());
+
+        let dest_for_worker = dest.clone();
+        let staging_for_worker = staging.clone();
+        let worker = std::thread::spawn(move || {
+            commit_swap_with_backup(&staging_for_worker, &dest_for_worker)
+        });
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert!(
+            !dest.join("new.txt").exists(),
+            "提交锁被持有时，其它提交必须处于等待而非完成落盘"
+        );
+        assert!(staging.exists(), "等待中的提交不应消费自己的 staging");
+
+        drop(permit);
+        assert!(
+            worker.join().expect("worker 不应 panic").is_ok(),
+            "锁放行后提交应成功"
+        );
+        assert!(dest.join("new.txt").exists(), "放行后新内容应就位");
     }
 
     // ── extract_yaml_front_matter() tests ───────────────────────────────
