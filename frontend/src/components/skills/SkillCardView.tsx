@@ -15,10 +15,13 @@ interface SkillCardViewProps {
 }
 
 // 执行器固定顺序（与 EXECUTORS 保持一致，但只取有 skills_dir 的执行器）
-// dsh 是可写 skill 来源，排在 agents 之后（两者都非执行器）
+// dsh 是可写 skill 来源，排在 agents 之后（两者都非执行器）。
+// codewhale/kilo 必须在此登记：activeExecutors 用本表过滤后端返回的来源，
+// 漏登的来源不会报错而是直接从卡片视图消失（#1081 曾因此看不到这两个执行器）
 const EXECUTOR_ORDER = [
   'claudecode', 'codebuddy', 'opencode', 'mobilecoder', 'atomcode',
-  'hermes', 'kimi', 'codex', 'pi', 'mimo', 'zhanlu', 'agents', 'dsh',
+  'hermes', 'kimi', 'codex', 'codewhale', 'pi', 'mimo',
+  'zhanlu', 'kilo', 'agents', 'dsh',
 ];
 
 // 渐变背景色生成器，基于 skill 名称 hash

@@ -793,16 +793,38 @@ fn add_dir_to_zip<W: std::io::Write + std::io::Seek>(
     Ok(())
 }
 
-/// 校验 import 的 skill_name，拒绝会让 target_dir 指向 skills 根目录的取值。
+/// 校验 import 的 skill_name：**仅允许单层普通目录名**（不含分隔符、不以点开头）。
 ///
-/// 空串与 "." 都会使 `skills_dir.join(name)` 解析回 skills 根目录本身，
-/// 后续「删除原目标目录 + 原子替换」步骤会把整个 skills 目录清空再替换，
-/// 造成不可恢复的批量误删。dsh 作为可写来源接入后，该存量边界的影响面
-/// 扩大到 `~/.dsh/skills` 根，必须在 join 前集中拦截。
+/// 为什么收紧到这个程度：
+/// 1. 名字会被 format! 原样拼进 staging/backup 目录名——"./"、"." 一类输入能拼出含 ".."
+///    的逃逸组件，在 canonicalize 拦截前就在 skills 根之外建目录/写文件（CodeRabbit
+///    二轮实测路径）。字符串层面在这里一次性封死，比事后 canonicalize 更早、更可靠。
+/// 2. 各执行器的 skill 目录都是 `<skills>/<name>/` 两层布局，嵌套名没有真实用途：
+///    sync 目标本就 rsplit 取末段拍平，delete 也拒子路径；此前允许嵌套反而造成
+///    「首次导入父目录不存在 → rename ENOENT → 500」的口径分裂。
+/// 3. 与 delete_skill 的「拒 '/' 与 '..'」口径对齐，同一 skill 名在所有写接口下语义一致。
 fn validate_import_skill_name(name: &str) -> Result<(), AppError> {
-    if name.is_empty() || name == "." || name.starts_with('/') || name.contains("..") {
+    if name.is_empty()
+        || name.starts_with('.')
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains("..")
+    {
         return Err(AppError::BadRequest(
-            "Invalid skill name: empty, '.', absolute paths and parent directory traversal are not allowed".to_string(),
+            "Invalid skill name: expected a plain single-segment directory name (no separators, no leading dot, no traversal)"
+                .to_string(),
+        ));
+    }
+    // Windows 兜底：CI 产出 nt.exe，"C:foo" 这类盘符相对路径没有任何分隔符也能解析到
+    // skills_dir 之外。Path::components() 按 OS 语义解析，Normal 之外的任意组件
+    // （Prefix/RootDir/CurDir/ParentDir）一律拒绝。
+    if !std::path::Path::new(name)
+        .components()
+        .all(|c| matches!(c, std::path::Component::Normal(_)))
+    {
+        return Err(AppError::BadRequest(
+            "Invalid skill name: expected a plain single-segment directory name (no separators, no leading dot, no traversal)"
+                .to_string(),
         ));
     }
     Ok(())
@@ -960,34 +982,15 @@ pub async fn import_skill(
         }
     };
 
-    // 提取成功：原子替换 target_dir
-    // 1. 如果 target_dir 已存在（更新场景），先备份到 .old 暂存，原子替换后删 .old
-    // 2. 失败时用 .old 恢复
-    let backup_dir = skills_dir.join(format!(".{}.old.tmp.{}", skill_name, std::process::id()));
-    let _ = std::fs::remove_dir_all(&backup_dir); // 清残留
-    let had_existing = target_dir.exists();
-
-    if had_existing {
-        // rename 在某些 fs 上不能覆盖已存在目录；用 .old 暂存中转
-        std::fs::rename(&target_dir, &backup_dir)
-            .map_err(|e| AppError::Internal(format!("Failed to backup existing skill: {}", e)))?;
-    }
-
-    let swap_result = std::fs::rename(&staging_dir, &target_dir);
-
-    if let Err(e) = swap_result {
-        // 替换失败：恢复 backup 到 target_dir，保留旧数据
-        if had_existing {
-            let _ = std::fs::rename(&backup_dir, &target_dir);
-        }
-        let _ = std::fs::remove_dir_all(&staging_dir);
-        return Err(AppError::Internal(format!("Failed to commit import: {}", e)));
-    }
-
-    // 替换成功：清理 backup
-    if had_existing {
-        let _ = std::fs::remove_dir_all(&backup_dir);
-    }
+    // 提取成功：原子替换 target_dir。
+    // 「备份 → 换入 → 成功才删备份」的提交细节统一收敛到 commit_swap_with_backup：
+    // 与 sync 的提交流程同源同语义，避免两处各自演化出不同的失败恢复口径。
+    // 成功时 staging 已被 rename 消费、这里的 remove 是无害 no-op；
+    // 失败时（备份失败/换入双失败）则负责把 staging 清掉，不让临时垃圾残留磁盘。
+    let commit_result = commit_swap_with_backup(&staging_dir, &target_dir);
+    let _ = std::fs::remove_dir_all(&staging_dir);
+    // 错误统一按 Internal 返回（与历史「Failed to commit import」口径一致）
+    commit_result.map_err(|e| AppError::Internal(format!("Failed to commit import: {}", e)))?;
 
     Ok(ApiResponse::ok(ImportResult {
         skill_name,
@@ -1376,7 +1379,14 @@ pub async fn sync_skill(
         let dest = target_dir.join(target_skill_name);
 
         // Use temporary directory for atomic replace
-        let temp_dest = target_dir.join(format!("{}.tmp.{}", target_skill_name, std::process::id()));
+        // temp 名加唯一后缀（PID+计数器）：并发同步同一 skill 到同一目标时，
+        // 各请求持有独立临时目录，A 的清理动作不会删掉 B 正在拷贝的半成品
+        let temp_dest = target_dir.join(format!(
+            "{}.tmp.{}.{}",
+            target_skill_name,
+            std::process::id(),
+            next_staging_id()
+        ));
 
         // Clean up any existing temp dir from previous failed runs
         if temp_dest.exists() {
@@ -1386,26 +1396,16 @@ pub async fn sync_skill(
         // Copy to temporary directory
         match copy_dir_recursive_flat(&skill_dir, &temp_dest, true) {
             Ok(_) => {
-                // Remove existing destination if present
-                if dest.exists() {
-                    if let Err(e) = std::fs::remove_dir_all(&dest) {
-                        errors.push(format!("Failed to remove existing {}: {}", target, e));
-                        let _ = std::fs::remove_dir_all(&temp_dest);
-                        continue;
-                    }
+                // 提交走共享的「备份 → 换入 → 成功才删备份」流程：
+                // 先删 dest 的旧写法在 rename+copy 双失败时会静默丢掉用户原 skill。
+                // 本目标提交失败只记 errors、不中断剩余目标（与既有行为一致）；
+                // 失败路径下 staging 会被留在原地，统一清掉再继续。
+                let commit_result = commit_swap_with_backup(&temp_dest, &dest);
+                let _ = std::fs::remove_dir_all(&temp_dest);
+                match commit_result {
+                    Ok(()) => synced.push(format!("{} ({})", target, target_skill_name)),
+                    Err(msg) => errors.push(format!("Failed to sync to {}: {}", target, msg)),
                 }
-
-                // Atomically rename temp to destination
-                if let Err(e) = std::fs::rename(&temp_dest, &dest) {
-                    // On some systems rename cannot overwrite, try copy+remove
-                    if let Err(e2) = copy_dir_recursive_flat(&temp_dest, &dest, true) {
-                        errors.push(format!("Failed to sync to {}: {} (rename failed: {})", target, e2, e));
-                        let _ = std::fs::remove_dir_all(&temp_dest);
-                        continue;
-                    }
-                    let _ = std::fs::remove_dir_all(&temp_dest);
-                }
-                synced.push(format!("{} ({})", target, target_skill_name));
             }
             Err(e) => {
                 let _ = std::fs::remove_dir_all(&temp_dest);
@@ -1424,6 +1424,74 @@ pub async fn sync_skill(
     }
 
     Ok(ApiResponse::ok(msg))
+}
+
+/// 把已就绪的 `temp` 目录原子换入 `dest`：「备份 → 换入 → 成功才删备份」。
+///
+/// 为什么不能「先删 dest 再 rename」：rename 与整树拷贝兜底双失败的瞬间，
+/// 旧内容已经不存在了——调用方只能报错，但用户的原始 skill 无法恢复。
+/// 先把 dest 挪进备份目录，保证任何一个失败点都能把现场原样还原：
+/// - 备份这一步自身失败 → 什么都没动过，直接报错；
+/// - rename(temp→dest) 失败 → 试整树拷贝兜底（部分文件系统不允许覆盖式 rename）；
+///   兜底也失败时清掉半成品 dest、把备份 rename 回去再报错，原始数据完好；
+/// - 只有提交确认成功后才删除备份。
+///
+/// 并发安全：备份目录名带 PID + staging 计数器唯一后缀。若同 skill 的并行操作
+/// 共享一个备份名，本请求入口的清理会删掉对方刚移入的旧数据，对方提交失败后
+/// 就无从恢复（CodeRabbit Major 级发现）；唯一名让每个请求的备份互不可见。
+///
+/// 错误统一返回 String 消息（调用方各自的 errors/AppError 口径自行包装）。
+fn commit_swap_with_backup(temp: &std::path::Path, dest: &std::path::Path) -> Result<(), String> {
+    let parent = dest.parent().unwrap_or(dest);
+    // 备份与 temp 同目录放置：保证同一文件系统内 rename 才能保持原子性
+    let backup = parent.join(format!(
+        "{}.old.tmp.{}.{}",
+        dest.file_name().and_then(|n| n.to_str()).unwrap_or("skill"),
+        std::process::id(),
+        next_staging_id()
+    ));
+    let had_existing = dest.exists();
+    if had_existing {
+        std::fs::rename(dest, &backup)
+            .map_err(|e| format!("Failed to backup existing destination: {}", e))?;
+    }
+
+    // 快路径：rename 直接换入成功
+    if std::fs::rename(temp, dest).is_ok() {
+        if had_existing {
+            let _ = std::fs::remove_dir_all(&backup);
+        }
+        return Ok(());
+    }
+
+    // 慢路径：rename 失败时整树拷贝兜底（跨设备/不支持覆盖的 fs）
+    match copy_dir_recursive_flat(temp, dest, true) {
+        Ok(()) => {
+            let _ = std::fs::remove_dir_all(temp);
+            if had_existing {
+                let _ = std::fs::remove_dir_all(&backup);
+            }
+            Ok(())
+        }
+        Err(copy_err) => {
+            // 双失败：清掉半成品 dest 并还原备份。还原本身也失败时必须把该事实
+            // 写进错误信息暴露给调用方——绝不能静默吞掉「现场已非原始状态」。
+            let _ = std::fs::remove_dir_all(dest);
+            let mut msg = format!("{} (rename fallback also failed)", copy_err);
+            if had_existing {
+                if let Err(e) = std::fs::rename(&backup, dest) {
+                    msg.push_str(&format!(
+                        "; CRITICAL: failed to restore backup {} back to {}: {}",
+                        backup.display(),
+                        dest.display(),
+                        e
+                    ));
+                    return Err(msg);
+                }
+            }
+            Err(msg)
+        }
+    }
 }
 
 /// Copy directory recursively, optionally flattening subdirectories
@@ -1631,9 +1699,69 @@ mod tests {
         assert!(validate_import_skill_name(".").is_err());
         assert!(validate_import_skill_name("/abs/path").is_err());
         assert!(validate_import_skill_name("../up").is_err());
-        // 合法名称放行（含相对子路径，import flatten 会取最后一段）
+        // 合法名称放行：单层普通目录名（与 delete/sync 的单层口径一致）
         assert!(validate_import_skill_name("ntd-usage").is_ok());
-        assert!(validate_import_skill_name("creative/joke-teller").is_ok());
+    }
+
+    #[test]
+    fn test_validate_import_skill_name_rejects_separator_and_curdir_variants() {
+        // 回归 CodeRabbit 二轮指出旁路："./"、"./." 不等于 "." 但同样解析回根，
+        // 且经 format! 拼进 staging 目录名后会生成含 ".." 的逃逸组件，
+        // 在 canonicalize 拦截前就已越界建目录。
+        // 另回归嵌套相对路径：首次导入会因父目录缺失 ENOENT 500，
+        // 口径统一为「仅允许单层目录名」后与 delete/sync 一致（sync 本来就拍平、delete 本来就拒子路径）。
+        assert!(validate_import_skill_name("./").is_err());
+        assert!(validate_import_skill_name("./.").is_err());
+        assert!(validate_import_skill_name("./ntd-usage").is_err());
+        assert!(validate_import_skill_name(".//").is_err());
+        assert!(validate_import_skill_name("creative/joke-teller").is_err());
+        // Windows 反斜杠分隔符同拒（CI 产出 windows 二进制）
+        assert!(validate_import_skill_name("ns\\skill").is_err());
+    }
+
+    // ── commit_swap_with_backup() tests ─────────────────────────────────
+
+    #[test]
+    fn test_commit_swap_with_backup_replaces_existing_dest_cleanly() {
+        // 更新场景回归：dest 已存在时必须整体换成新内容，且成功路径
+        // 不得残留任何备份目录（旧行为「先删后换」在失败时会丢原数据）。
+        let root = tempfile::tempdir().expect("tempdir");
+        let dest = root.path().join("skill-a");
+        std::fs::create_dir_all(dest.join("sub")).expect("create old skill dir");
+        std::fs::write(dest.join("sub/old.txt"), b"old").expect("write old content");
+
+        let staging = root.path().join(".skill-a.staging");
+        std::fs::create_dir_all(&staging).expect("create staging");
+        std::fs::write(staging.join("new.txt"), b"new").expect("write new content");
+
+        commit_swap_with_backup(&staging, &dest).expect("replace should succeed");
+
+        assert!(dest.join("new.txt").exists(), "新内容应就位");
+        assert!(!dest.join("old.txt").exists(), "旧内容应被整体替换");
+        assert!(!staging.exists(), "staging 应被 rename 消费");
+        // 成功提交后备份目录必须清理干净，否则磁盘上会积累 .skill-a.old.tmp.* 垃圾
+        let leftovers: Vec<String> = std::fs::read_dir(root.path())
+            .expect("read root")
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.contains(".old.tmp."))
+            .collect();
+        assert!(leftovers.is_empty(), "backup leaked: {:?}", leftovers);
+    }
+
+    #[test]
+    fn test_commit_swap_with_backup_fresh_install_creates_dest() {
+        // 首次安装场景：dest 不存在时不走备份分支也要能正确落位
+        let root = tempfile::tempdir().expect("tempdir");
+        let dest = root.path().join("brand-new");
+        let staging = root.path().join(".brand-new.staging");
+        std::fs::create_dir_all(&staging).expect("create staging");
+        std::fs::write(staging.join("f.txt"), b"x").expect("write file");
+
+        commit_swap_with_backup(&staging, &dest).expect("fresh install should succeed");
+
+        assert!(dest.join("f.txt").exists(), "首次安装内容应就位");
+        assert!(!staging.exists(), "staging 应被消费");
     }
 
     // ── extract_yaml_front_matter() tests ───────────────────────────────
