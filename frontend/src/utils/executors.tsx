@@ -73,6 +73,9 @@ export const EXECUTORS: ExecutorOption[] = [
   // `agents` is read-only skill source (`~/.agents/skills`), not shown in executor management.
   // Included here so it appears in Skills overview/sync tabs.
   { value: 'agents',     label: 'Agents',    color: '#2d3436', icon: <FaSquare color="#2d3436" size={14} /> },
+  // `dsh`（DeepSeek Harness）是可写 skill 来源（`~/.dsh/skills`），非执行器：
+  // 不参与 Todo 执行（无 resumable），但 Skills 总览/对比/同步/删除/导入均可用。
+  { value: 'dsh',        label: 'Dsh',       color: '#7c3aed', icon: <FaSquare color="#7c3aed" size={14} /> },
 ];
 
 export const EXECUTOR_COLORS: Record<string, string> = {
@@ -92,6 +95,8 @@ export const EXECUTOR_COLORS: Record<string, string> = {
   zhanlu: '#0f766e',
   kilo: '#e67700',
   agents: '#2d3436',
+  // dsh 用紫罗兰色，与全部现有来源色（含 pi 的 #8e44ad 偏暗紫）保持视觉可分
+  dsh: '#7c3aed',
   // Aliases for backward compatibility with database names
   'claude_code': '#e17055',
   'claude': '#e17055',
@@ -131,8 +136,12 @@ export function getExecutorOption(value: string): ExecutorOption {
   return EXECUTORS.find(e => e.value === normalized) || EXECUTORS[0];
 }
 
-/** 不包含 `agents` 的执行器列表，用于执行器选择 UI（agents 是只读 skill 来源，不是执行器）。 */
-export const EXECUTORS_FOR_PICKER = EXECUTORS.filter(e => e.value !== 'agents');
+/** 非执行器的 skill 来源：只出现在 Skills 管理 UI，不进入执行器选择。
+ *  agents 只读、dsh 可写，二者都没有 CLI 执行链，不能执行 Todo。 */
+const NON_EXECUTOR_SOURCES = new Set(['agents', 'dsh']);
+
+/** 不包含 agents/dsh 的执行器列表，用于执行器选择 UI（新建任务、批量换执行器、默认执行器、@提及）。 */
+export const EXECUTORS_FOR_PICKER = EXECUTORS.filter(e => !NON_EXECUTOR_SOURCES.has(e.value));
 
 /** 支持继续对话的执行器 value 集合。从 EXECUTORS 的 resumable 标志自动派生，无需手动维护。 */
 export const RESUMABLE_EXECUTORS = new Set(EXECUTORS.filter(e => e.resumable).map(e => e.value));

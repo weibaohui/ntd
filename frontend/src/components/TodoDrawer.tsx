@@ -3,7 +3,8 @@ import { Drawer, Input, Button, App, Divider, Switch } from 'antd';
 import * as db from '@/utils/database';
 
 import type { Todo, ExecutorConfig, ExecutorOption, SkillMeta, ExecutorSkills, TodoTemplate } from '@/types';
-import { EXECUTORS, executorConfigToOption, getExecutorColor } from '@/types';
+import { executorConfigToOption, getExecutorColor } from '@/types';
+import { EXECUTORS_FOR_PICKER } from '@/utils/executors';
 import { getDefaultExecutor } from '@/utils/executors';
 import { getLastExecutor, setLastExecutor } from '@/constants';
 import { ExecutorPicker } from './todo-drawer/ExecutorPicker';
@@ -41,7 +42,9 @@ export function TodoDrawer({ open, todo, onClose, onSaved, defaultWorkspaceId }:
   const [formState, dispatch] = useReducer(todoFormReducer, undefined, createInitialFormState);
 
   // UI 相关的状态（不属于表单数据）
-  const [executorOptions, setExecutorOptions] = useState<ExecutorOption[]>(EXECUTORS);
+  // 初始回退用 EXECUTORS_FOR_PICKER 而非 EXECUTORS：后端配置未加载/为空时，
+  // agents/dsh 这类非执行器 skill 来源不应出现在 Todo 执行器下拉里
+  const [executorOptions, setExecutorOptions] = useState<ExecutorOption[]>(EXECUTORS_FOR_PICKER);
   // 保留原始 ExecutorConfig（含 default_model），供 ModelPicker 展示当前执行器的默认模型。
   const [executorConfigs, setExecutorConfigs] = useState<ExecutorConfig[]>([]);
   const [allExecutorSkills, setAllExecutorSkills] = useState<ExecutorSkills[]>([]);

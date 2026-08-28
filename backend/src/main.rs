@@ -353,11 +353,15 @@ fn executor_skills_dir(et: &str) -> Option<PathBuf> {
     handlers::skills::executor_skills_dir_str(et)
 }
 
-// Known executors (不含 agents，agents 是只读 skill 来源，用 --all 单独注入）
+// Known executors (不含 agents，agents 是只读 skill 来源，用 --all 单独注入；
+// dsh 是可写 skill 来源，与其余执行器一致默认安装，故直接列入)
+// kilo 与 codewhale 同批补齐：本 PR（#1081）给它加了 skills 目录映射并纳入
+// ALL_SKILL_SOURCES，若漏在默认安装清单外，「13 个执行器全覆盖」就不成立
+// （现象：ntd skill install / skill install --all 都不会写入 ~/.kilo/skills）
 const KNOWN_EXECUTORS: &[&str] = &[
     "claudecode", "hermes", "codex", "codebuddy",
     "opencode", "atomcode", "kimi", "mobilecoder", "codewhale", "pi", "mimo",
-    "zhanlu",
+    "zhanlu", "kilo", "dsh",
 ];
 
 /// Install embedded ntd-usage skill to executor skill directories.

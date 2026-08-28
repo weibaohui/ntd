@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock, Mutex};
 use zip::write::FileOptions;
 use zip::ZipArchive;
 
@@ -36,6 +37,11 @@ pub fn executor_skills_dir_str(et: &str) -> Option<PathBuf> {
         "codebuddy" => Some(home.join(".codebuddy").join("skills")),
         "opencode" => Some(home.join(".opencode").join("skills")),
         "atomcode" => Some(home.join(".atomcode").join("skills")),
+        // codewhale / kilo：历史 PR（#428 / Kilo）漏加了 skills 目录映射，
+        // 导致 Skills 管理、对比矩阵、skill install 一直看不到这两个执行器；
+        // 本次接 dsh 时一并补齐（session 目录见 adapters::EXECUTORS 注册表）
+        "codewhale" => Some(home.join(".codewhale").join("skills")),
+        "kilo" => Some(home.join(".kilo").join("skills")),
         "kimi" => Some(home.join(".kimi").join("skills")),
         "mobilecoder" => Some(home.join(".mobile-coder").join("skills")),
         "pi" => Some(home.join(".pi").join("skills")),
@@ -45,6 +51,9 @@ pub fn executor_skills_dir_str(et: &str) -> Option<PathBuf> {
         "zhanlu" => Some(home.join(".local/share/zhanlu").join("skills")),
         // agents 是只读 skill 来源：扫描但不参与执行器管理/Todo 执行
         "agents" => Some(home.join(".agents").join("skills")),
+        // dsh（DeepSeek Harness）：可写 skill 来源，非 ExecutorType、不参与 Todo 执行，
+        // 但 delete/import/sync 等写操作全部放行（与只读的 agents 相区别）
+        "dsh" => Some(home.join(".dsh").join("skills")),
         _ => None,
     }
 }
@@ -533,7 +542,7 @@ fn discover_skills_for(name: &str, label: &str) -> ExecutorSkills {
 
 // ── API handlers ────────────────────────────────────────────────────────
 
-/// 参与 skill 扫描/对比的所有来源：9 个执行器 + 只读来源 `agents`。
+/// 参与 skill 扫描/对比的所有来源：13 个执行器 + 只读来源 `agents` + 可写来源 `dsh`。
 ///
 /// 用字符串数组而非 `ExecutorType` 数组，方便容纳非 ExecutorType 来源。
 /// **新增来源时**：
@@ -544,7 +553,10 @@ const ALL_SKILL_SOURCES: &[&str] = &[
     "claudecode", "codebuddy", "opencode", "atomcode",
     "hermes", "kimi", "mobilecoder", "codex",
     "pi", "mimo", "zhanlu",
+    // codewhale/kilo 历史漏登记（见 executor_skills_dir_str 注释），随 dsh 一并补齐
+    "codewhale", "kilo",
     "agents",
+    "dsh",
 ];
 
 /// 把 source 名字转成 UI 显示名。
@@ -556,6 +568,8 @@ fn executor_label_for_source(name: &str) -> &'static str {
     match name {
         // 特殊来源走专门分支，避开 parse_executor_type 的解析开销
         "agents" => "Agents",
+        // dsh（DeepSeek Harness）：可写 skill 来源，UI 显示名
+        "dsh" => "Dsh",
         other => {
             // 解析失败的回退：返回空串，调用方会兜底用 name 当 label
             if let Some(et) = crate::adapters::parse_executor_type(other) {
@@ -571,7 +585,7 @@ fn executor_label_for_source(name: &str) -> &'static str {
 ///
 /// GET /api/skills - List skills grouped by executor
 ///
-/// 扫描 11 个 ExecutorType 之外，还扫 `~/.agents/skills`（只读 skill 来源）。
+/// 扫描所有执行器之外，还扫 `~/.agents/skills`（只读）与 `~/.dsh/skills`（可写）两个非执行器来源。
 /// agents 不参与 Todo 执行，但能在 Skills 总览/对比/同步里看到并使用。
 ///
 /// 实现选择：每个来源的目录 IO 放在 `spawn_blocking` 里跑，
@@ -581,7 +595,7 @@ pub async fn list_skills(
 ) -> Result<ApiResponse<Vec<ExecutorSkills>>, AppError> {
     // spawn_blocking：磁盘 IO 不能跑在 tokio reactor 上，否则会卡住其他请求
     let result = tokio::task::spawn_blocking(move || {
-        // 顺序遍历 12 个来源：单次调用只 IO 一次，顺序 vs 并行收益不大，
+        // 顺序遍历所有来源：单次调用只 IO 一次，顺序 vs 并行收益不大，
         // 而且顺序能保证响应里 source 顺序稳定，方便前端按位置渲染 Tab
         ALL_SKILL_SOURCES
             .iter()
@@ -680,11 +694,10 @@ pub async fn delete_skill(
             query.executor
         )));
     }
-    let et = crate::adapters::parse_executor_type(&query.executor)
+    // 用字符串映射而非 parse_executor_type：dsh 这类非 ExecutorType 的可写来源
+    // 也能删除（映射不到的未知名字仍然 400，安全性不降级）
+    let skills_dir = executor_skills_dir_str(&query.executor)
         .ok_or_else(|| AppError::BadRequest(format!("Unknown executor: {}", query.executor)))?;
-
-    let skills_dir = executor_skills_dir(et)
-        .ok_or_else(|| AppError::BadRequest("No skills directory for this executor".to_string()))?;
 
     // Reject skill names with path separators or parent traversal
     if query.skill_name.contains('/') || query.skill_name.contains('\\') || query.skill_name.contains("..") {
@@ -781,6 +794,43 @@ fn add_dir_to_zip<W: std::io::Write + std::io::Seek>(
     Ok(())
 }
 
+/// 校验 import 的 skill_name：**仅允许单层普通目录名**（不含分隔符、不以点开头）。
+///
+/// 为什么收紧到这个程度：
+/// 1. 名字会被 format! 原样拼进 staging/backup 目录名——"./"、"." 一类输入能拼出含 ".."
+///    的逃逸组件，在 canonicalize 拦截前就在 skills 根之外建目录/写文件（CodeRabbit
+///    二轮实测路径）。字符串层面在这里一次性封死，比事后 canonicalize 更早、更可靠。
+/// 2. 各执行器的 skill 目录都是 `<skills>/<name>/` 两层布局，嵌套名没有真实用途：
+///    sync 目标本就 rsplit 取末段拍平，delete 也拒子路径；此前允许嵌套反而造成
+///    「首次导入父目录不存在 → rename ENOENT → 500」的口径分裂。
+/// 3. 与 delete_skill 的「拒 '/' 与 '..'」口径对齐，同一 skill 名在所有写接口下语义一致。
+fn validate_import_skill_name(name: &str) -> Result<(), AppError> {
+    if name.is_empty()
+        || name.starts_with('.')
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains("..")
+    {
+        return Err(AppError::BadRequest(
+            "Invalid skill name: expected a plain single-segment directory name (no separators, no leading dot, no traversal)"
+                .to_string(),
+        ));
+    }
+    // Windows 兜底：CI 产出 nt.exe，"C:foo" 这类盘符相对路径没有任何分隔符也能解析到
+    // skills_dir 之外。Path::components() 按 OS 语义解析，Normal 之外的任意组件
+    // （Prefix/RootDir/CurDir/ParentDir）一律拒绝。
+    if !std::path::Path::new(name)
+        .components()
+        .all(|c| matches!(c, std::path::Component::Normal(_)))
+    {
+        return Err(AppError::BadRequest(
+            "Invalid skill name: expected a plain single-segment directory name (no separators, no leading dot, no traversal)"
+                .to_string(),
+        ));
+    }
+    Ok(())
+}
+
 /// POST /api/skills/import - Import skill from .zip
 pub async fn import_skill(
     State(_state): State<AppState>,
@@ -794,11 +844,10 @@ pub async fn import_skill(
             params.executor
         )));
     }
-    let et = crate::adapters::parse_executor_type(&params.executor)
+    // 用字符串映射而非 parse_executor_type：dsh 这类非 ExecutorType 的可写来源
+    // 也能导入（映射不到的未知名字仍然 400，安全性不降级）
+    let skills_dir = executor_skills_dir_str(&params.executor)
         .ok_or_else(|| AppError::BadRequest(format!("Unknown executor: {}", params.executor)))?;
-
-    let skills_dir = executor_skills_dir(et)
-        .ok_or_else(|| AppError::BadRequest("No skills directory for this executor".to_string()))?;
 
     std::fs::create_dir_all(&skills_dir)
         .map_err(|e| AppError::Internal(format!("Failed to create skills dir: {}", e)))?;
@@ -811,10 +860,10 @@ pub async fn import_skill(
     let flatten = params.flatten.unwrap_or(true);
     let skill_name = params.skill_name.clone().unwrap_or_else(|| "imported-skill".to_string());
 
-    // Validate skill_name: reject absolute paths and parent directory traversal
-    if skill_name.starts_with('/') || skill_name.contains("..") {
-        return Err(AppError::BadRequest("Invalid skill name: absolute paths and parent directory traversal are not allowed".to_string()));
-    }
+    // 校验 skill_name：空串/单点/绝对路径/父级穿越都会让 target_dir 偏离预期
+    // （空与 "." 会让 join 解析回 skills 根，后续替换会删整个 skills 目录），
+    // 在 join 前由专门函数统一拦截
+    validate_import_skill_name(&skill_name)?;
 
     let target_dir = skills_dir.join(&skill_name);
 
@@ -934,34 +983,15 @@ pub async fn import_skill(
         }
     };
 
-    // 提取成功：原子替换 target_dir
-    // 1. 如果 target_dir 已存在（更新场景），先备份到 .old 暂存，原子替换后删 .old
-    // 2. 失败时用 .old 恢复
-    let backup_dir = skills_dir.join(format!(".{}.old.tmp.{}", skill_name, std::process::id()));
-    let _ = std::fs::remove_dir_all(&backup_dir); // 清残留
-    let had_existing = target_dir.exists();
-
-    if had_existing {
-        // rename 在某些 fs 上不能覆盖已存在目录；用 .old 暂存中转
-        std::fs::rename(&target_dir, &backup_dir)
-            .map_err(|e| AppError::Internal(format!("Failed to backup existing skill: {}", e)))?;
-    }
-
-    let swap_result = std::fs::rename(&staging_dir, &target_dir);
-
-    if let Err(e) = swap_result {
-        // 替换失败：恢复 backup 到 target_dir，保留旧数据
-        if had_existing {
-            let _ = std::fs::rename(&backup_dir, &target_dir);
-        }
-        let _ = std::fs::remove_dir_all(&staging_dir);
-        return Err(AppError::Internal(format!("Failed to commit import: {}", e)));
-    }
-
-    // 替换成功：清理 backup
-    if had_existing {
-        let _ = std::fs::remove_dir_all(&backup_dir);
-    }
+    // 提取成功：原子替换 target_dir。
+    // 「备份 → 换入 → 成功才删备份」的提交细节统一收敛到 commit_swap_with_backup：
+    // 与 sync 的提交流程同源同语义，避免两处各自演化出不同的失败恢复口径。
+    // 成功时 staging 已被 rename 消费、这里的 remove 是无害 no-op；
+    // 失败时（备份失败/换入双失败）则负责把 staging 清掉，不让临时垃圾残留磁盘。
+    let commit_result = commit_swap_with_backup(&staging_dir, &target_dir);
+    let _ = std::fs::remove_dir_all(&staging_dir);
+    // 错误统一按 Internal 返回（与历史「Failed to commit import」口径一致）
+    commit_result.map_err(|e| AppError::Internal(format!("Failed to commit import: {}", e)))?;
 
     Ok(ApiResponse::ok(ImportResult {
         skill_name,
@@ -1027,7 +1057,7 @@ pub struct SkillFileContentResponse {
 
 /// GET /api/skills/compare - Cross-executor skill comparison matrix
 ///
-/// 比 8 个 ExecutorType 多扫了 `agents`（`~/.agents/skills`），让用户
+/// 除执行器外还扫 `agents`/`dsh` 等非执行器来源，让用户
 /// 能看到 "lark-doc" 这类 skill 在哪些来源里有、版本是不是落后。
 ///
 /// 输出结构：每个 skill 一行，每个来源一列，单元格标记 present/version。
@@ -1303,11 +1333,13 @@ pub async fn sync_skill(
     let mut errors = Vec::new();
 
     for target in &req.target_executors {
-        // agents 已允许作为同步目标（复制安装到 ~/.agents/skills），
-        // 但 delete/import 等其他写操作仍保持只读保护。
-        let target_dir = if *target == "agents" {
-            // agents 不在 ExecutorType 枚举中，用 executor_skills_dir_str 单独解析
-            match executor_skills_dir_str("agents") {
+        // 非 ExecutorType 的 skill 来源（无 CLI 执行链，但目录可作为同步目标）：
+        // agents（delete/import 仍只读保护）与 dsh（完全可写）。
+        // 用集合而非字面量比较，后续新增非执行器来源只需往集合加一项。
+        const NON_EXECUTOR_SOURCES: &[&str] = &["agents", "dsh"];
+        let target_dir = if NON_EXECUTOR_SOURCES.contains(&target.as_str()) {
+            // 这些来源不在 ExecutorType 枚举中，用 executor_skills_dir_str 单独解析
+            match executor_skills_dir_str(target) {
                 Some(d) => d,
                 None => {
                     errors.push(format!("No skills directory for {}", target));
@@ -1348,7 +1380,14 @@ pub async fn sync_skill(
         let dest = target_dir.join(target_skill_name);
 
         // Use temporary directory for atomic replace
-        let temp_dest = target_dir.join(format!("{}.tmp.{}", target_skill_name, std::process::id()));
+        // temp 名加唯一后缀（PID+计数器）：并发同步同一 skill 到同一目标时，
+        // 各请求持有独立临时目录，A 的清理动作不会删掉 B 正在拷贝的半成品
+        let temp_dest = target_dir.join(format!(
+            "{}.tmp.{}.{}",
+            target_skill_name,
+            std::process::id(),
+            next_staging_id()
+        ));
 
         // Clean up any existing temp dir from previous failed runs
         if temp_dest.exists() {
@@ -1358,26 +1397,16 @@ pub async fn sync_skill(
         // Copy to temporary directory
         match copy_dir_recursive_flat(&skill_dir, &temp_dest, true) {
             Ok(_) => {
-                // Remove existing destination if present
-                if dest.exists() {
-                    if let Err(e) = std::fs::remove_dir_all(&dest) {
-                        errors.push(format!("Failed to remove existing {}: {}", target, e));
-                        let _ = std::fs::remove_dir_all(&temp_dest);
-                        continue;
-                    }
+                // 提交走共享的「备份 → 换入 → 成功才删备份」流程：
+                // 先删 dest 的旧写法在 rename+copy 双失败时会静默丢掉用户原 skill。
+                // 本目标提交失败只记 errors、不中断剩余目标（与既有行为一致）；
+                // 失败路径下 staging 会被留在原地，统一清掉再继续。
+                let commit_result = commit_swap_with_backup(&temp_dest, &dest);
+                let _ = std::fs::remove_dir_all(&temp_dest);
+                match commit_result {
+                    Ok(()) => synced.push(format!("{} ({})", target, target_skill_name)),
+                    Err(msg) => errors.push(format!("Failed to sync to {}: {}", target, msg)),
                 }
-
-                // Atomically rename temp to destination
-                if let Err(e) = std::fs::rename(&temp_dest, &dest) {
-                    // On some systems rename cannot overwrite, try copy+remove
-                    if let Err(e2) = copy_dir_recursive_flat(&temp_dest, &dest, true) {
-                        errors.push(format!("Failed to sync to {}: {} (rename failed: {})", target, e2, e));
-                        let _ = std::fs::remove_dir_all(&temp_dest);
-                        continue;
-                    }
-                    let _ = std::fs::remove_dir_all(&temp_dest);
-                }
-                synced.push(format!("{} ({})", target, target_skill_name));
             }
             Err(e) => {
                 let _ = std::fs::remove_dir_all(&temp_dest);
@@ -1396,6 +1425,116 @@ pub async fn sync_skill(
     }
 
     Ok(ApiResponse::ok(msg))
+}
+
+/// 各目标 dest 的提交互斥锁注册表（进程内）。
+///
+/// 为什么不用文件锁（fd-lock/fs4）：import/sync 的全部 API 流量都收敛在单个
+/// daemon 进程里，进程内互斥已覆盖全部真实并发面；跨进程写同一 skill 目录的
+/// 唯一来源是 CLI `ntd skill install`，而它不走这条提交流程。为长尾场景引入
+/// 新依赖不划算。局限：键取调用方构造的原始路径，符号链接别名会绕过锁——
+/// 两个 handler 构造 dest 的方式一致，正常运行不会出现别名。
+static COMMIT_LOCKS: LazyLock<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// 取出与 `dest` 绑定的提交互斥体；返回 Arc 让其生命周期独立于注册表写竞态，
+/// 即使后续条目被清理也不会影响正在持有的 permit。
+fn acquire_commit_lock(dest: &Path) -> Arc<Mutex<()>> {
+    // 注册表本身要可变（entry 插入新条目），Mutex 内部可变性 + mut 绑定
+    let mut registry = COMMIT_LOCKS.lock().unwrap_or_else(|e| e.into_inner());
+    registry
+        .entry(dest.to_path_buf())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone()
+}
+
+/// 提交前把现有 dest 整体挪入同目录下的唯一备份目录，返回备份路径；
+/// dest 不存在时返回 None（首次安装，无需恢复语义）。
+fn backup_existing(dest: &Path) -> Result<Option<PathBuf>, String> {
+    if !dest.exists() {
+        return Ok(None);
+    }
+    // 备份与 temp 同目录放置：保证同一文件系统内 rename 才能保持原子性；
+    // 名字带 PID + staging 计数器唯一后缀：并发请求各持独立备份，
+    // 一方的入口清理不会删掉另一方刚移入的旧数据（CodeRabbit 二轮 Major）
+    let parent = dest.parent().unwrap_or(dest);
+    let backup = parent.join(format!(
+        "{}.old.tmp.{}.{}",
+        dest.file_name().and_then(|n| n.to_str()).unwrap_or("skill"),
+        std::process::id(),
+        next_staging_id()
+    ));
+    std::fs::rename(dest, &backup)
+        .map_err(|e| format!("Failed to backup existing destination: {}", e))?;
+    Ok(Some(backup))
+}
+
+/// 提交确认成功后删除备份。清理失败仅静默：残留只是磁盘垃圾，不影响正确性
+/// （真正的数据丢失风险只存在于「删除后才失败」的顺序错误里，本流程已排除）。
+fn discard_backup(backup: &Option<PathBuf>) {
+    if let Some(b) = backup {
+        let _ = std::fs::remove_dir_all(b);
+    }
+}
+
+/// rename 直接换入失败后的整树拷贝兜底与双失败还原。
+///
+/// 注意 copy 回退**不清空 dest**：若此刻已有并发者提交了新内容，逐文件叠加
+/// 会把两份内容合并成污染树且双双报成功——这正是外层必须先持有 per-dest 锁
+/// 的原因：锁保证走到这里时 dest 是我们自己腾出的空位或本就不存在。
+/// 双失败时清掉半成品并还原备份；还原也失败必须拼进错误信息暴露给调用方，
+/// 绝不能静默吞掉「现场已非原始状态」的事实。
+fn finish_via_copy_fallback(
+    temp: &Path,
+    dest: &Path,
+    backup: &Option<PathBuf>,
+) -> Result<(), String> {
+    match copy_dir_recursive_flat(temp, dest, true) {
+        Ok(()) => {
+            let _ = std::fs::remove_dir_all(temp);
+            discard_backup(backup);
+            Ok(())
+        }
+        Err(copy_err) => {
+            let _ = std::fs::remove_dir_all(dest);
+            let mut msg = format!("{} (rename fallback also failed)", copy_err);
+            if let Some(b) = backup {
+                if let Err(e) = std::fs::rename(b, dest) {
+                    msg.push_str(&format!(
+                        "; CRITICAL: failed to restore backup {} back to {}: {}",
+                        b.display(),
+                        dest.display(),
+                        e
+                    ));
+                    return Err(msg);
+                }
+            }
+            Err(msg)
+        }
+    }
+}
+
+/// 把已就绪的 `temp` 目录原子换入 `dest`：「加锁 → 备份 → 换入 → 成功才删备份」。
+///
+/// 为什么不能「先删 dest 再 rename」：rename 与整树拷贝兜底双失败的瞬间，
+/// 旧内容已经不存在了——调用方只能报错，但用户的原始 skill 无法恢复。
+/// 先把 dest 挪进唯一备份目录，保证任何一个失败点都能把现场原样还原。
+///
+/// 并发模型：整个「检查→备份→换入→恢复→清理」区间持有 per-dest 进程内互斥
+/// （见 COMMIT_LOCKS），堵住「A 备份走旧目录后 B 完整提交、A 再以 copy 回退
+/// 叠加合并进 B 结果」的交错（CodeRabbit 三轮 Major）。成功才删备份、失败必还原。
+/// 错误统一返回 String，由调用方按各自口径包装。
+fn commit_swap_with_backup(temp: &Path, dest: &Path) -> Result<(), String> {
+    // 先绑定 Arc 再取锁：guard 借用必须活过整条语句，链式写法会让临时 Arc
+    // 在语句末尾即被丢弃（E0716）
+    let commit_lock = acquire_commit_lock(dest);
+    let _permit = commit_lock.lock().unwrap_or_else(|e| e.into_inner());
+    let backup = backup_existing(dest)?;
+    if std::fs::rename(temp, dest).is_ok() {
+        discard_backup(&backup);
+        return Ok(());
+    }
+    finish_via_copy_fallback(temp, dest, &backup)
 }
 
 /// Copy directory recursively, optionally flattening subdirectories
@@ -1548,6 +1687,31 @@ mod tests {
     }
 
     #[test]
+    fn test_executor_label_for_source_dsh() {
+        // dsh 是可写 skill 来源（非 ExecutorType），显示名走专门分支；
+        // 若忘了加分支会返回空串，UI 退化显示原始名 "dsh"
+        assert_eq!(executor_label_for_source("dsh"), "Dsh");
+    }
+
+    #[test]
+    fn test_executor_skills_dir_str_dsh() {
+        // 目录映射是 dsh 接入的唯一事实源：list/compare/sync/delete/import 全部经此解析
+        let home = dirs::home_dir().expect("home 目录应存在");
+        assert_eq!(
+            executor_skills_dir_str("dsh"),
+            Some(home.join(".dsh").join("skills"))
+        );
+    }
+
+    #[test]
+    fn test_all_skill_sources_contains_dsh() {
+        // ALL_SKILL_SOURCES 驱动 list/compare/version-update 三个接口的来源枚举，
+        // 漏加则 dsh 在总览/对比/版本检测里完全不可见
+        assert!(ALL_SKILL_SOURCES.contains(&"dsh"),
+            "ALL_SKILL_SOURCES should contain dsh");
+    }
+
+    #[test]
     fn test_executor_label_for_source_unknown_returns_empty() {
         assert_eq!(executor_label_for_source("does_not_exist"), "");
     }
@@ -1562,6 +1726,126 @@ mod tests {
     #[test]
     fn test_is_readonly_skill_source_kilo_is_not_readonly() {
         assert!(!is_readonly_skill_source("kilo"));
+    }
+
+    #[test]
+    fn test_is_readonly_skill_source_dsh_is_writable() {
+        // dsh 与 agents 的核心区别：可写来源，delete/import 不被只读守卫拦截
+        assert!(!is_readonly_skill_source("dsh"));
+    }
+
+    #[test]
+    fn test_validate_import_skill_name_rejects_empty_and_dot() {
+        // 空串与单点会让 join 解析回 skills 根，触发「删除原目标」时清空整个 skills 目录；
+        // 绝对路径与父级穿越维持既有拒绝。回归 CodeRabbit 指出的 dsh 可写后放大边界。
+        assert!(validate_import_skill_name("").is_err());
+        assert!(validate_import_skill_name(".").is_err());
+        assert!(validate_import_skill_name("/abs/path").is_err());
+        assert!(validate_import_skill_name("../up").is_err());
+        // 合法名称放行：单层普通目录名（与 delete/sync 的单层口径一致）
+        assert!(validate_import_skill_name("ntd-usage").is_ok());
+    }
+
+    #[test]
+    fn test_validate_import_skill_name_rejects_separator_and_curdir_variants() {
+        // 回归 CodeRabbit 二轮指出旁路："./"、"./." 不等于 "." 但同样解析回根，
+        // 且经 format! 拼进 staging 目录名后会生成含 ".." 的逃逸组件，
+        // 在 canonicalize 拦截前就已越界建目录。
+        // 另回归嵌套相对路径：首次导入会因父目录缺失 ENOENT 500，
+        // 口径统一为「仅允许单层目录名」后与 delete/sync 一致（sync 本来就拍平、delete 本来就拒子路径）。
+        assert!(validate_import_skill_name("./").is_err());
+        assert!(validate_import_skill_name("./.").is_err());
+        assert!(validate_import_skill_name("./ntd-usage").is_err());
+        assert!(validate_import_skill_name(".//").is_err());
+        assert!(validate_import_skill_name("creative/joke-teller").is_err());
+        // Windows 反斜杠分隔符同拒（CI 产出 windows 二进制）
+        assert!(validate_import_skill_name("ns\\skill").is_err());
+    }
+
+    // ── commit_swap_with_backup() tests ─────────────────────────────────
+
+    #[test]
+    fn test_commit_swap_with_backup_replaces_existing_dest_cleanly() {
+        // 更新场景回归：dest 已存在时必须整体换成新内容，且成功路径
+        // 不得残留任何备份目录（旧行为「先删后换」在失败时会丢原数据）。
+        let root = tempfile::tempdir().expect("tempdir");
+        let dest = root.path().join("skill-a");
+        std::fs::create_dir_all(dest.join("sub")).expect("create old skill dir");
+        std::fs::write(dest.join("sub/old.txt"), b"old").expect("write old content");
+
+        let staging = root.path().join(".skill-a.staging");
+        std::fs::create_dir_all(&staging).expect("create staging");
+        std::fs::write(staging.join("new.txt"), b"new").expect("write new content");
+
+        commit_swap_with_backup(&staging, &dest).expect("replace should succeed");
+
+        assert!(dest.join("new.txt").exists(), "新内容应就位");
+        assert!(!dest.join("old.txt").exists(), "旧内容应被整体替换");
+        assert!(!staging.exists(), "staging 应被 rename 消费");
+        // 成功提交后备份目录必须清理干净，否则磁盘上会积累 .skill-a.old.tmp.* 垃圾
+        let leftovers: Vec<String> = std::fs::read_dir(root.path())
+            .expect("read root")
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.contains(".old.tmp."))
+            .collect();
+        assert!(leftovers.is_empty(), "backup leaked: {:?}", leftovers);
+    }
+
+    #[test]
+    fn test_commit_swap_with_backup_fresh_install_creates_dest() {
+        // 首次安装场景：dest 不存在时不走备份分支也要能正确落位
+        let root = tempfile::tempdir().expect("tempdir");
+        let dest = root.path().join("brand-new");
+        let staging = root.path().join(".brand-new.staging");
+        std::fs::create_dir_all(&staging).expect("create staging");
+        std::fs::write(staging.join("f.txt"), b"x").expect("write file");
+
+        commit_swap_with_backup(&staging, &dest).expect("fresh install should succeed");
+
+        assert!(dest.join("f.txt").exists(), "首次安装内容应就位");
+        assert!(!staging.exists(), "staging 应被消费");
+    }
+
+    #[test]
+    fn test_commit_swap_with_backup_serializes_same_dest() {
+        // 回归 CodeRabbit 三轮 Major：A 备份走旧目录后、B 在 A 换入前完成提交，
+        // A 随后的 rename 落到非空目录会走 copy 回退、把内容**叠加合并**进 B 的
+        // 结果并双双报成功。修复语义：持有同 dest 提交锁期间其它提交必须等待，
+        // 放行后才允许落地——用「阻塞中不落盘」做确定性断言（50ms 窗口内，
+        // 即使调度延迟导致检查偏弱，join 后的成功提交仍验证核心正确性）。
+        let root = tempfile::tempdir().expect("tempdir");
+        let dest = root.path().join("shared-skill");
+        std::fs::create_dir_all(&dest).expect("create old skill dir");
+        std::fs::write(dest.join("old.txt"), b"old").expect("write old marker");
+
+        let staging = root.path().join(".shared-skill.staging");
+        std::fs::create_dir_all(&staging).expect("create staging");
+        std::fs::write(staging.join("new.txt"), b"new").expect("write new marker");
+
+        // 主线程先占住该 dest 的提交锁，模拟一个进行中的提交区间
+        let held = acquire_commit_lock(&dest);
+        let permit = held.lock().unwrap_or_else(|e| e.into_inner());
+
+        let dest_for_worker = dest.clone();
+        let staging_for_worker = staging.clone();
+        let worker = std::thread::spawn(move || {
+            commit_swap_with_backup(&staging_for_worker, &dest_for_worker)
+        });
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert!(
+            !dest.join("new.txt").exists(),
+            "提交锁被持有时，其它提交必须处于等待而非完成落盘"
+        );
+        assert!(staging.exists(), "等待中的提交不应消费自己的 staging");
+
+        drop(permit);
+        assert!(
+            worker.join().expect("worker 不应 panic").is_ok(),
+            "锁放行后提交应成功"
+        );
+        assert!(dest.join("new.txt").exists(), "放行后新内容应就位");
     }
 
     // ── extract_yaml_front_matter() tests ───────────────────────────────
